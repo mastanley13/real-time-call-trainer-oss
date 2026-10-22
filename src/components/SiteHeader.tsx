@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
-import { Menu, X, PhoneCall } from "lucide-react";
+import { Menu, X } from "lucide-react";
+import LogoMark from "@/components/LogoMark";
 import { useAuth } from "@/contexts/AuthContext";
 
 const links = [
@@ -26,7 +27,7 @@ export default function SiteHeader() {
           key={l.href}
           href={l.href}
           onClick={() => setOpen(false)}
-          className={`rounded-lg px-3 py-2 text-sm font-medium ${pathname === l.href ? "bg-primary-soft text-primary" : "text-ink-soft hover:bg-slate-100"}`}
+          className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${pathname === l.href ? "bg-primary-soft text-primary" : "text-ink-soft hover:bg-slate-100 hover:text-ink"}`}
         >
           {l.label}
         </Link>
@@ -35,17 +36,15 @@ export default function SiteHeader() {
   );
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-white/90 backdrop-blur">
+    <header className="glass sticky top-0 z-40 border-x-0 border-t-0">
       {demo && (
         <div className="bg-accent-soft px-4 py-1 text-center text-xs font-medium text-ink">
           Demo mode: login is skipped and sessions stay in this browser.
         </div>
       )}
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
-        <Link href="/" className="flex items-center gap-2 font-heading text-base font-bold text-ink">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white">
-            <PhoneCall size={16} aria-hidden />
-          </span>
+        <Link href="/" className="flex items-center gap-2.5 rounded-lg font-heading text-base font-bold text-ink">
+          <LogoMark size={32} />
           <span className="hidden min-[400px]:inline">Real-Time Call Trainer</span>
           <span className="min-[400px]:hidden">Call Trainer</span>
         </Link>
@@ -72,7 +71,7 @@ export default function SiteHeader() {
           )}
         </div>
 
-        <button className="rounded-lg p-2 md:hidden" aria-label="Toggle menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <button className="rounded-lg p-2 hover:bg-slate-100 md:hidden" aria-label="Toggle menu" aria-expanded={open} onClick={() => setOpen(!open)}>
           {open ? <X size={22} /> : <Menu size={22} />}
         </button>
       </div>

@@ -4,22 +4,152 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationProvider, useConversation } from "@elevenlabs/react";
-import { Mic, MicOff, PhoneOff, Phone, Send, Keyboard, Settings2 } from "lucide-react";
+import { Mic, MicOff, PhoneOff, Send, Keyboard, Settings2, BookOpen, X, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Scenario, buildAgentPrompt } from "@/lib/scenarios";
 import { listScenarios } from "@/lib/scenarioStore";
 import { saveSession, StoredTurn } from "@/lib/sessionStore";
 import type { Evaluation } from "@/lib/grader-types";
+import { formatDuration } from "@/lib/format";
+import CallOrb, { type AgentState } from "@/components/CallOrb";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 
 type Mode = "voice" | "text";
 type Phase = "idle" | "live" | "grading";
 
-/** Rendered inside ConversationProvider; owns the ElevenLabs session. */
+interface TextInput { value: string; onChange: (v: string) => void; onSend: () => void; busy: boolean }
+
+interface StageProps {
+  scenario: Scenario;
+  turns: StoredTurn[];
+  elapsed: number;
+  orbState: AgentState;
+  status: string;
+  grading: boolean;
+  onEnd: () => void;
+  muted?: boolean;
+  onToggleMute?: () => void;
+  getInputVolume?: () => number;
+  getOutputVolume?: () => number;
+  manual?: { input: number; output: number };
+  text?: TextInput;
+  typing?: boolean;
+}
+
+const initial = (name: string) => name.trim().charAt(0).toUpperCase() || "?";
+
+function TalkTrack({ scenario, className = "" }: { scenario: Scenario; className?: string }) {
+  return (
+    <div className={className}>
+      <p className="eyebrow">Your goal</p>
+      <p className="mt-1 text-sm text-ink">{scenario.traineeGoal}</p>
+      <p className="eyebrow mt-4">Talk track</p>
+      <pre className="mt-1 whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink-soft">{scenario.callScript || "No script."}</pre>
+    </div>
+  );
+}
+
+/** Live-call screen: orb, status, chat transcript, talk-track drawer and the bottom control bar. */
+function CallStage({ scenario, turns, elapsed, orbState, status, grading, onEnd, muted, onToggleMute, getInputVolume, getOutputVolume, manual, text, typing }: StageProps) {
+  const logRef = useRef<HTMLDivElement>(null);
+  const [showTrack, setShowTrack] = useState(false);
+  const persona = scenario.aiPersona;
+
+  useEffect(() => {
+    setShowTrack(window.matchMedia("(min-width: 1024px)").matches);
+  }, []);
+  useEffect(() => {
+    logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
+  }, [turns, typing]);
+
+  return (
+    <div className="enter lg:grid lg:grid-cols-[1fr_auto] lg:gap-6">
+      <section className="flex min-w-0 flex-col overflow-hidden rounded-3xl border border-line bg-white shadow-card lg:min-h-[600px]" aria-label="Call">
+        <div className="relative flex flex-col items-center bg-gradient-to-b from-primary-soft/60 to-white px-4 pb-4 pt-5 text-center sm:pt-6">
+          <CallOrb state={orbState} getInputVolume={getInputVolume} getOutputVolume={getOutputVolume} manual={manual} className="h-28 w-28 sm:h-40 sm:w-40" />
+          <h2 className="mt-2 text-lg font-bold sm:text-xl">{persona.name}</h2>
+          <p className="text-sm text-ink-muted">{persona.role}</p>
+          <p className="mt-2 inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-sm font-medium text-ink shadow-sm ring-1 ring-line" role="status">
+            {grading ? <Loader2 size={14} className="animate-spin text-primary" aria-hidden /> : <span className={`h-2 w-2 rounded-full ${orbState === "talking" ? "bg-accent motion-safe:animate-pulse" : orbState === "thinking" ? "bg-amber-500" : "bg-primary"}`} aria-hidden />}
+            {status}
+          </p>
+        </div>
+
+        <div ref={logRef} className="flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6 lg:max-h-[360px]" aria-live="polite" aria-label="Live transcript">
+          {turns.length === 0 && !typing && <p className="py-6 text-center text-sm text-ink-muted">The transcript appears here as you talk.</p>}
+          {turns.map((t, i) => {
+            const me = t.role === "user";
+            return (
+              <div key={i} className={`flex gap-2.5 ${me ? "justify-end" : "justify-start"}`}>
+                {!me && <span className="mt-5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-bold text-ink" aria-hidden>{initial(persona.name)}</span>}
+                <div className={`max-w-[85%] sm:max-w-[75%] ${me ? "items-end" : "items-start"} flex flex-col`}>
+                  <span className="mb-1 px-1 text-xs font-medium text-ink-muted">
+                    {me ? "You" : persona.name}
+                    {t.timestamp && <span className="ml-1.5 font-normal">{new Date(t.timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>}
+                  </span>
+                  <p className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${me ? "rounded-br-md bg-primary text-white" : "rounded-bl-md bg-slate-100 text-ink"}`}>{t.text}</p>
+                </div>
+              </div>
+            );
+          })}
+          {typing && (
+            <div className="flex gap-2.5">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-bold text-ink" aria-hidden>{initial(persona.name)}</span>
+              <p className="flex items-center gap-1 rounded-2xl rounded-bl-md bg-slate-100 px-4 py-3" aria-label={`${persona.name} is typing`}>
+                {[0, 150, 300].map((d) => <span key={d} className="h-1.5 w-1.5 rounded-full bg-ink-muted motion-safe:animate-bounce" style={{ animationDelay: `${d}ms` }} />)}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Control bar: fixed to the bottom on phones, inline on desktop. */}
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white/95 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur lg:static lg:px-6">
+          {text && !grading && (
+            <form className="mx-auto mb-3 flex max-w-2xl gap-2" onSubmit={(e) => { e.preventDefault(); text.onSend(); }}>
+              <input className="input !rounded-full !px-4" value={text.value} onChange={(e) => text.onChange(e.target.value)} placeholder="Type what you would say…" aria-label="Your reply" disabled={text.busy} autoFocus />
+              <button className="btn-primary btn-pill !px-4" disabled={text.busy || !text.value.trim()} aria-label="Send"><Send size={16} /></button>
+            </form>
+          )}
+          <div className="mx-auto flex max-w-2xl items-center justify-between gap-3">
+            <p className="min-w-0 truncate text-sm text-ink-soft">
+              <span className="hidden sm:inline">{scenario.title} <span className="mx-1 text-line">|</span></span>
+              <span className="font-mono font-semibold tabular-nums text-ink" aria-label={`Elapsed ${formatDuration(elapsed)}`}>{formatDuration(elapsed)}</span>
+            </p>
+            <div className="flex items-center gap-2">
+              {onToggleMute && (
+                <button className={`btn-ghost btn-pill !h-11 !w-11 !p-0 ${muted ? "!border-red-200 !bg-red-50 !text-red-700" : ""}`} onClick={onToggleMute} aria-pressed={muted} aria-label={muted ? "Unmute microphone" : "Mute microphone"} disabled={grading}>
+                  {muted ? <MicOff size={18} /> : <Mic size={18} />}
+                </button>
+              )}
+              <button className="btn-danger btn-pill !px-5" onClick={onEnd} disabled={grading}><PhoneOff size={16} /> End call</button>
+              <button className={`btn-ghost btn-pill !h-11 !w-11 !p-0 ${showTrack ? "!border-primary !text-primary" : ""}`} onClick={() => setShowTrack((v) => !v)} aria-pressed={showTrack} aria-label="Toggle talk track"><BookOpen size={18} /></button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {showTrack && (
+        <aside className="enter fixed inset-x-3 bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-20 max-h-[50vh] overflow-y-auto rounded-2xl border border-line bg-white p-5 shadow-pop lg:static lg:inset-auto lg:max-h-none lg:w-80 lg:shadow-card" aria-label="Talk track">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="font-heading text-base font-bold">Talk track</h2>
+            <button className="rounded-lg p-1.5 text-ink-muted hover:bg-slate-100" onClick={() => setShowTrack(false)} aria-label="Close talk track"><X size={16} /></button>
+          </div>
+          <TalkTrack scenario={scenario} />
+        </aside>
+      )}
+    </div>
+  );
+}
+
+/** Rendered inside ConversationProvider; owns the ElevenLabs session and feeds the shared stage. */
 function VoiceSession({
-  scenario, active, onTurn, onEnded, onError, registerEnd,
+  scenario, active, grading, turns, elapsed, onTurn, onEnded, onError, registerEnd,
 }: {
   scenario: Scenario;
   active: boolean;
+  grading: boolean;
+  turns: StoredTurn[];
+  elapsed: number;
   onTurn: (t: StoredTurn) => void;
   onEnded: () => void;
   onError: (msg: string) => void;
@@ -30,7 +160,7 @@ function VoiceSession({
     onError: (m: unknown) => onError(typeof m === "string" ? m : "Voice connection error"),
     onDisconnect: () => onEnded(),
   });
-  const { startSession, endSession, status, isSpeaking, isMuted, setMuted } = conv;
+  const { startSession, endSession, status, isSpeaking, isMuted, setMuted, getInputVolume, getOutputVolume } = conv;
   const startedRef = useRef(false);
 
   useEffect(() => registerEnd(() => endSession()), [endSession, registerEnd]);
@@ -62,17 +192,15 @@ function VoiceSession({
     if (!active) startedRef.current = false;
   }, [active]);
 
-  if (!active) return null;
+  const connected = status === "connected";
+  const orbState: AgentState = grading || !connected ? "thinking" : isSpeaking ? "talking" : "listening";
+  const label = grading ? "Grading your call…" : !connected ? "Connecting… allow microphone access" : isMuted ? "Muted" : isSpeaking ? `${scenario.aiPersona.name} is speaking` : "Listening…";
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 p-3 text-sm">
-      <span className="flex items-center gap-2">
-        <span className={`h-2.5 w-2.5 rounded-full ${status === "connected" ? (isSpeaking ? "animate-pulse bg-accent" : "bg-primary") : "bg-amber-400"}`} />
-        {status === "connected" ? (isSpeaking ? `${scenario.aiPersona.name} is speaking` : "Listening…") : "Connecting… allow microphone access"}
-      </span>
-      <button className="btn-ghost !min-h-[36px]" onClick={() => setMuted(!isMuted)} aria-pressed={isMuted}>
-        {isMuted ? <MicOff size={16} /> : <Mic size={16} />} {isMuted ? "Unmute" : "Mute"}
-      </button>
-    </div>
+    <CallStage
+      scenario={scenario} turns={turns} elapsed={elapsed} orbState={orbState} status={label} grading={grading}
+      onEnd={() => endSession()} muted={isMuted} onToggleMute={() => setMuted(!isMuted)}
+      getInputVolume={getInputVolume} getOutputVolume={getOutputVolume}
+    />
   );
 }
 
@@ -92,13 +220,17 @@ export default function TrainerClient() {
   const endVoice = useRef<() => void>(() => {});
   const finishing = useRef(false);
   const turnsRef = useRef<StoredTurn[]>([]);
-  const logRef = useRef<HTMLDivElement>(null);
+  const [replyTalking, setReplyTalking] = useState(false);
+  const talkTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => () => clearTimeout(talkTimer.current), []);
 
   useEffect(() => {
     const all = listScenarios();
     setScenarios(all);
     const wanted = new URLSearchParams(window.location.search).get("scenario");
-    setScenarioId(all.find((s) => s.id === wanted)?.id ?? all[0].id);
+    // Functional update: never overwrite a scenario the user already picked.
+    setScenarioId((prev) => prev || (all.find((s) => s.id === wanted)?.id ?? all[0].id));
   }, []);
 
   useEffect(() => {
@@ -117,10 +249,6 @@ export default function TrainerClient() {
     const t = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt.current) / 1000)), 1000);
     return () => clearInterval(t);
   }, [phase]);
-
-  useEffect(() => {
-    logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
-  }, [turns]);
 
   const addTurn = useCallback((t: StoredTurn) => {
     const stamped = { ...t, timestamp: new Date().toISOString() };
@@ -165,6 +293,7 @@ export default function TrainerClient() {
     turnsRef.current = [];
     setTurns([]);
     finishing.current = false;
+    setReplyTalking(false);
     startedAt.current = Date.now();
     setElapsed(0);
     setPhase("live");
@@ -191,6 +320,10 @@ export default function TrainerClient() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Simulation failed");
       addTurn({ role: "assistant", text: data.reply });
+      // No audio in text mode: let the orb "talk" for roughly as long as the reply would take to say.
+      setReplyTalking(true);
+      clearTimeout(talkTimer.current);
+      talkTimer.current = setTimeout(() => setReplyTalking(false), Math.min(4000, 900 + data.reply.length * 25));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Simulation failed");
     } finally {
@@ -198,105 +331,107 @@ export default function TrainerClient() {
     }
   }
 
-  if (!scenario || !capabilities) return <div className="page text-ink-muted">Loading…</div>;
+  if (!scenario || !capabilities) return <PageSkeleton rows={2} />;
   const live = phase === "live";
-  const mmss = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
+  const grading = phase === "grading";
+  const inCall = live || grading;
+  const total = scenario.rubric.reduce((a, c) => a + c.weight, 0);
+  const persona = scenario.aiPersona;
+
+  const textOrb: AgentState = grading || busy ? "thinking" : replyTalking ? "talking" : "listening";
+  const textStatus = grading ? "Grading your call…" : busy ? `${persona.name} is typing…` : replyTalking ? `${persona.name} is replying` : "Your turn";
+
+  const onVoiceError = (m: string) => { setError(m); if (turnsRef.current.length === 0) setPhase("idle"); };
 
   return (
-    <div className="page grid gap-6 lg:grid-cols-[360px_1fr]">
-      <aside className="space-y-4">
-        <div className="card">
-          <label htmlFor="scenario" className="label">Scenario</label>
-          <select id="scenario" className="input" value={scenarioId} disabled={phase !== "idle"} onChange={(e) => setScenarioId(e.target.value)}>
-            {scenarios.map((s) => <option key={s.id} value={s.id}>{s.title}{s.builtIn ? "" : " (custom)"}</option>)}
-          </select>
-          <div className="mt-4 space-y-3 text-sm">
-            <div className="flex flex-wrap gap-2">
-              <span className="badge bg-primary-soft text-primary">{scenario.industry || "General"}</span>
-              <span className="badge bg-accent-soft text-ink">{scenario.difficulty}</span>
-            </div>
-            <p><span className="font-semibold">You’re talking to:</span> {scenario.aiPersona.name}, {scenario.aiPersona.role}</p>
-            <p><span className="font-semibold">Your goal:</span> {scenario.traineeGoal}</p>
-            <details className="rounded-xl bg-slate-50 p-3">
-              <summary className="cursor-pointer font-semibold">Talk track</summary>
-              <pre className="mt-2 whitespace-pre-wrap font-sans text-xs text-ink-soft">{scenario.callScript || "No script."}</pre>
-            </details>
-            <details className="rounded-xl bg-slate-50 p-3">
-              <summary className="cursor-pointer font-semibold">Rubric ({scenario.rubric.length})</summary>
-              <ul className="mt-2 space-y-1 text-xs text-ink-soft">
-                {scenario.rubric.map((c) => <li key={c.id}>• {c.name} ({Math.round(c.weight)}%)</li>)}
-              </ul>
-            </details>
-          </div>
-          <Link href="/trainer/scenarios" className="btn-ghost mt-4 w-full"><Settings2 size={16} /> Edit scenarios</Link>
-        </div>
-      </aside>
+    <div className={`page ${inCall ? `space-y-4 ${mode === "text" ? "pb-44" : "pb-28"} lg:pb-10` : "grid gap-6 lg:grid-cols-[1fr_400px]"}`}>
+      <h1 className={`font-bold lg:col-span-2 ${inCall ? "truncate text-lg sm:text-2xl" : "text-xl sm:text-3xl"}`}>Practice: {scenario.title}</h1>
+      {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 lg:col-span-2">{error}</p>}
 
-      <section className="card flex min-h-[520px] flex-col">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 text-sm font-semibold" role="tablist">
-            {(["voice", "text"] as const).map((m) => (
-              <button key={m} role="tab" aria-selected={mode === m} disabled={phase !== "idle"} onClick={() => setMode(m)}
-                className={`flex min-h-[40px] items-center justify-center gap-2 rounded-lg px-3 ${mode === m ? "bg-white text-primary shadow-sm" : "text-ink-muted"}`}>
-                {m === "voice" ? <Mic size={15} /> : <Keyboard size={15} />}{m === "voice" ? "Voice call" : "Text simulation"}
-              </button>
-            ))}
-          </div>
-          {live && <span className="font-mono text-sm text-ink-muted" aria-live="off">{mmss}</span>}
-        </div>
-
-        {mode === "voice" && !voiceReady && (
-          <div className="banner-warn mb-4" role="status">
-            <strong>ElevenLabs not configured.</strong> Set <code>ELEVENLABS_API_KEY</code> and <code>ELEVENLABS_AGENT_ID</code> to enable voice calls, or switch to the text simulation.
-          </div>
-        )}
-        {mode === "text" && !capabilities.llm && (
-          <div className="banner-warn mb-4" role="status">
-            No LLM key set: the caller will reply with the scenario’s scripted lines and grading will use the keyword heuristic.
-          </div>
-        )}
-        {error && <p role="alert" className="mb-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-
-        {voiceReady && mode === "voice" && (
+      {inCall ? (
+        mode === "voice" ? (
           <ConversationProvider>
-            <VoiceSession scenario={scenario} active={live} onTurn={addTurn} onEnded={onVoiceEnded} onError={(m) => { setError(m); if (turnsRef.current.length === 0) setPhase("idle"); }} registerEnd={(fn) => { endVoice.current = fn; }} />
+            <VoiceSession scenario={scenario} active={live} grading={grading} turns={turns} elapsed={elapsed} onTurn={addTurn} onEnded={onVoiceEnded} onError={onVoiceError} registerEnd={(fn) => { endVoice.current = fn; }} />
           </ConversationProvider>
-        )}
-
-        <div ref={logRef} className="my-3 flex-1 space-y-3 overflow-y-auto" aria-live="polite" style={{ maxHeight: 420 }}>
-          {turns.length === 0 && (
-            <p className="py-10 text-center text-sm text-ink-muted">
-              {phase === "idle" ? "Pick a scenario and start the call. The transcript appears here." : "Waiting for the caller…"}
-            </p>
-          )}
-          {turns.map((t, i) => (
-            <div key={i} className={`flex ${t.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${t.role === "user" ? "bg-primary text-white" : "bg-slate-100 text-ink"}`}>
-                <p className="mb-0.5 text-[11px] font-semibold uppercase opacity-70">{t.role === "user" ? "You" : scenario.aiPersona.name}</p>
-                {t.text}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {phase === "grading" ? (
-          <p className="rounded-xl bg-primary-soft p-3 text-center text-sm font-medium text-primary" role="status">Grading your call…</p>
-        ) : live ? (
-          <div className="flex flex-col gap-3 sm:flex-row">
-            {mode === "text" && (
-              <form className="flex flex-1 gap-2" onSubmit={(e) => { e.preventDefault(); void sendText(); }}>
-                <input className="input" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Type what you would say…" aria-label="Your reply" disabled={busy} autoFocus />
-                <button className="btn-primary" disabled={busy || !input.trim()} aria-label="Send"><Send size={16} /></button>
-              </form>
-            )}
-            <button className="btn-danger" onClick={hangUp}><PhoneOff size={16} /> End &amp; grade</button>
-          </div>
         ) : (
-          <button className="btn-accent w-full sm:w-auto sm:self-start" onClick={begin} disabled={mode === "voice" && !voiceReady}>
-            <Phone size={16} /> Start {mode === "voice" ? "call" : "simulation"}
-          </button>
-        )}
-      </section>
+          <CallStage
+            scenario={scenario} turns={turns} elapsed={elapsed} orbState={textOrb} status={textStatus} grading={grading} onEnd={hangUp}
+            manual={{ input: textOrb === "listening" ? 0.25 : 0, output: textOrb === "talking" ? 0.6 : 0 }}
+            text={{ value: input, onChange: setInput, onSend: () => void sendText(), busy }} typing={busy}
+          />
+        )
+      ) : (
+        <>
+          {/* Pre-call: on phones the orb and Start button come first, scenario details below. */}
+          <section className="enter order-1 flex flex-col items-center rounded-3xl border border-line bg-gradient-to-b from-primary-soft/60 via-white to-white p-5 text-center shadow-card sm:p-8 lg:order-2 lg:justify-center">
+            <CallOrb state={null} className="h-32 w-32 sm:h-48 sm:w-48" />
+            <p className="eyebrow mt-3">Ready when you are</p>
+            <h2 className="mt-1 text-xl font-bold sm:text-2xl">{persona.name}</h2>
+            <p className="text-sm text-ink-muted">{persona.role}</p>
+
+            <div className="mt-4 grid w-full max-w-xs grid-cols-2 gap-1 rounded-full bg-slate-100 p-1 text-sm font-semibold" role="tablist" aria-label="Practice mode">
+              {(["voice", "text"] as const).map((m) => (
+                <button key={m} role="tab" aria-selected={mode === m} onClick={() => setMode(m)}
+                  className={`flex min-h-[40px] items-center justify-center gap-2 rounded-full px-3 transition ${mode === m ? "bg-white text-primary shadow-sm" : "text-ink-muted hover:text-ink"}`}>
+                  {m === "voice" ? <Mic size={15} /> : <Keyboard size={15} />}{m === "voice" ? "Voice" : "Text"}
+                </button>
+              ))}
+            </div>
+
+            {mode === "voice" && !voiceReady && (
+              <div className="banner-warn mt-4 w-full text-left" role="status">
+                <p><strong>Voice calls aren’t set up yet.</strong> You can still practise by typing.</p>
+                <button className="btn-primary mt-2 w-full" onClick={() => setMode("text")}><Keyboard size={16} /> Use text simulation</button>
+              </div>
+            )}
+            {mode === "text" && !capabilities.llm && (
+              <div className="banner-warn mt-4 w-full text-left" role="status">
+                AI isn’t connected, so the caller answers with simple scripted replies and grading is an automatic estimate.
+              </div>
+            )}
+
+            <button className="btn-accent btn-pill btn-xl mt-5 w-full max-w-xs shadow-orb" onClick={begin} disabled={mode === "voice" && !voiceReady}>
+              <Mic size={20} /> Start {mode === "voice" ? "call" : "simulation"}
+            </button>
+            <p className="mt-3 text-xs text-ink-muted">{mode === "voice" ? "Your browser will ask for microphone access." : "Type your side of the call; the caller replies instantly."}</p>
+          </section>
+
+          <aside className="order-2 space-y-4 lg:order-1">
+            <div className="card">
+              <label htmlFor="scenario" className="label">Scenario</label>
+              <select id="scenario" className="input" value={scenarioId} onChange={(e) => {
+                setScenarioId(e.target.value);
+                // Keep the choice in the URL so a remount/reload restores it.
+                window.history.replaceState(null, "", `/trainer?scenario=${encodeURIComponent(e.target.value)}`);
+              }}>
+                {scenarios.map((s) => <option key={s.id} value={s.id}>{s.title}{s.builtIn ? "" : " (custom)"}</option>)}
+              </select>
+              <div className="mt-4 space-y-4 text-sm">
+                <div className="flex flex-wrap gap-2">
+                  <span className="badge bg-primary-soft text-primary">{scenario.industry || "General"}</span>
+                  <span className="badge bg-accent-soft text-ink">{scenario.difficulty}</span>
+                </div>
+                <p><span className="eyebrow block">You’re talking to</span>{persona.name}, {persona.role}</p>
+                <p><span className="eyebrow block">Your goal</span>{scenario.traineeGoal}</p>
+                <details className="group rounded-xl bg-slate-50 p-3">
+                  <summary className="cursor-pointer font-semibold">Talk track</summary>
+                  <pre className="mt-2 whitespace-pre-wrap font-sans text-xs leading-relaxed text-ink-soft">{scenario.callScript || "No script."}</pre>
+                </details>
+                <details className="rounded-xl bg-slate-50 p-3">
+                  <summary className="cursor-pointer font-semibold">Rubric ({scenario.rubric.length})</summary>
+                  <ul className="mt-2 space-y-1 text-xs text-ink-soft">
+                    {scenario.rubric.map((c) => <li key={c.id} className="flex justify-between gap-2"><span>{c.name}</span><span className="font-semibold">{Math.round(c.weight)}%</span></li>)}
+                  </ul>
+                  <p className={`mt-2 text-xs ${Math.round(total) === 100 ? "text-ink-muted" : "font-semibold text-amber-800"}`}>
+                    Weights total {Math.round(total)}%{Math.round(total) === 100 ? "" : " (not 100, so scores are rescaled)"}
+                  </p>
+                </details>
+              </div>
+              <Link href="/trainer/scenarios" className="btn-ghost mt-4 w-full"><Settings2 size={16} /> Edit scenarios</Link>
+            </div>
+          </aside>
+        </>
+      )}
     </div>
   );
 }

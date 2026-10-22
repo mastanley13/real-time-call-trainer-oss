@@ -3,8 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Mic, Trash2 } from "lucide-react";
+import { Mic, Trash2, PhoneCall, ChevronRight } from "lucide-react";
+import { PageSkeleton } from "@/components/ui/Skeleton";
+import EmptyState from "@/components/ui/EmptyState";
 import { useAuth } from "@/contexts/AuthContext";
+import { formatDuration } from "@/lib/format";
 import { deleteLocalSession, listLocalSessions } from "@/lib/sessionStore";
 
 interface Row {
@@ -43,14 +46,14 @@ export default function DashboardPage() {
       count: rows?.length ?? 0,
       avg: scored.length ? Math.round(scored.reduce((a, r) => a + r.score, 0) / scored.length) : null,
       best: scored.length ? Math.max(...scored.map((r) => r.score)) : null,
-      minutes: Math.round((rows ?? []).reduce((a, r) => a + r.durationSeconds, 0) / 60),
+      practised: formatDuration((rows ?? []).reduce((a, r) => a + r.durationSeconds, 0)),
     };
   }, [rows]);
 
-  if (!rows) return <div className="page text-ink-muted">Loading…</div>;
+  if (!rows) return <PageSkeleton />;
 
   return (
-    <div className="page space-y-6">
+    <div className="page enter space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold sm:text-3xl">Welcome{user?.firstName ? `, ${user.firstName}` : ""}</h1>
@@ -61,28 +64,38 @@ export default function DashboardPage() {
       {error && <p className="banner-warn">{error}</p>}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {[["Sessions", stats.count], ["Average score", stats.avg ?? "—"], ["Best score", stats.best ?? "—"], ["Minutes practised", stats.minutes]].map(([k, v]) => (
-          <div key={k as string} className="card !p-4">
+        {[["Sessions", stats.count], ["Average score", stats.avg ?? "—"], ["Best score", stats.best ?? "—"], ["Time practised", stats.practised]].map(([k, v]) => (
+          <div key={k as string} className="card card-hover !p-4 sm:!p-5">
             <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted">{k}</p>
-            <p className="mt-1 font-heading text-3xl font-bold text-primary">{v}</p>
+            <p className="mt-1.5 font-heading text-3xl font-bold text-ink">{v}</p>
           </div>
         ))}
       </div>
 
       <div className="card !p-0 overflow-hidden">
         {rows.length === 0 ? (
-          <p className="p-8 text-center text-ink-muted">No sessions yet. <Link href="/trainer" className="font-semibold text-primary">Run your first scenario</Link>.</p>
+          <EmptyState icon={PhoneCall} title="No practice calls yet"><p>Run your first scenario and your scores, quotes and progress will show up here.</p><Link href="/trainer" className="btn-primary btn-pill mt-4"><Mic size={16} /> Start your first call</Link></EmptyState>
         ) : (
           <ul className="divide-y divide-line">
             {rows.map((r) => (
-              <li key={r.id} className="flex items-center justify-between gap-3 p-4">
-                <Link href={`/trainer/debrief/${r.id}`} className="min-w-0 flex-1">
+              <li key={r.id} className="group flex items-center justify-between gap-3 p-4 transition-colors hover:bg-slate-50">
+                <Link href={`/trainer/debrief/${r.id}`} className="min-w-0 flex-1 rounded-lg">
                   <p className="truncate font-semibold">{r.title}</p>
-                  <p className="text-xs text-ink-muted">{new Date(r.createdAt).toLocaleString()} · {Math.max(1, Math.round(r.durationSeconds / 60))} min{r.id.startsWith("local-") ? " · this browser" : ""}</p>
+                  <p className="text-xs text-ink-muted">{new Date(r.createdAt).toLocaleString()} · {formatDuration(r.durationSeconds)}{r.id.startsWith("local-") ? " · this browser" : ""}</p>
                 </Link>
-                <span className="badge bg-primary-soft text-primary">{r.score !== null ? `${r.score} · ${r.grade}` : "Ungraded"}</span>
+                <span className={`badge ${r.score === null ? "bg-slate-100 text-ink-soft" : r.score >= 80 ? "bg-accent-soft text-accent-darker" : r.score >= 60 ? "bg-primary-soft text-primary" : "bg-amber-100 text-amber-900"}`}>{r.score !== null ? `${r.score} · ${r.grade}` : "Ungraded"}</span>
+                <ChevronRight size={16} className="hidden text-ink-muted sm:block" aria-hidden />
                 {r.id.startsWith("local-") && (
-                  <button aria-label="Delete session" className="rounded-lg p-2 text-ink-muted hover:bg-slate-100" onClick={() => { deleteLocalSession(r.id); setRows(rows.filter((x) => x.id !== r.id)); }}><Trash2 size={16} /></button>
+                  <button
+                    aria-label={`Delete session: ${r.title}, ${new Date(r.createdAt).toLocaleString()}`}
+                    title="Delete session"
+                    className="inline-flex h-11 min-h-[44px] w-11 min-w-[44px] items-center justify-center rounded-lg text-ink-muted hover:bg-slate-100 hover:text-red-700"
+                    onClick={() => {
+                      if (!window.confirm(`Delete "${r.title}"? This can't be undone.`)) return;
+                      deleteLocalSession(r.id);
+                      setRows(rows.filter((x) => x.id !== r.id));
+                    }}
+                  ><Trash2 size={18} aria-hidden /></button>
                 )}
               </li>
             ))}

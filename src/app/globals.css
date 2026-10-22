@@ -3,22 +3,38 @@
 @tailwind utilities;
 
 @layer base {
-  html { -webkit-text-size-adjust: 100%; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
   body { @apply bg-background font-sans text-ink antialiased; }
   h1, h2, h3, h4 { @apply font-heading tracking-tight text-ink; }
   :focus-visible { @apply outline-2 outline-offset-2 outline-primary; }
+  ::selection { @apply bg-primary-soft; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  }
 }
 
 @layer components {
+  /* Spacing scale: 4 / 8 / 12 / 16 / 24 / 32 (Tailwind 1,2,3,4,6,8). Radii: 12 controls, 16 cards, full pills. */
   .card { @apply rounded-2xl border border-line bg-white p-5 shadow-card sm:p-6; }
-  .btn { @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50; }
-  .btn-primary { @apply btn bg-primary text-white hover:bg-primary-hover; }
-  .btn-accent { @apply btn bg-accent text-ink hover:bg-accent-hover; }
-  .btn-ghost { @apply btn border border-line bg-white text-ink hover:bg-slate-50; }
+  .card-hover { @apply transition duration-200 hover:-translate-y-0.5 hover:shadow-pop; }
+  .btn { @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition duration-150 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100; }
+  .btn-primary { @apply btn bg-primary text-white shadow-sm hover:bg-primary-hover; }
+  .btn-accent { @apply btn bg-accent-dark text-white shadow-sm hover:bg-accent-darker; }
+  .btn-ghost { @apply btn border border-line bg-white text-ink hover:border-slate-300 hover:bg-slate-50; }
   .btn-danger { @apply btn bg-red-600 text-white hover:bg-red-700; }
-  .input { @apply w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink placeholder:text-ink-muted focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20; }
-  .label { @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-muted; }
+  .btn-pill { @apply rounded-full; }
+  .btn-xl { @apply min-h-[56px] px-8 text-base; }
+  .input { @apply w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink transition placeholder:text-ink-muted hover:border-slate-300 focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/15; }
+  .input[aria-invalid="true"] { @apply border-red-600 ring-4 ring-red-600/15; }
+  .field-msg { @apply mt-1 text-xs font-medium text-red-700; }
+  .label { @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-ink-muted; }
   .badge { @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold; }
   .page { @apply mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 sm:py-10; }
   .banner-warn { @apply rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900; }
+  .skeleton { @apply rounded-xl bg-[linear-gradient(90deg,#EEF2F7_25%,#F8FAFC_50%,#EEF2F7_75%)] bg-[length:200%_100%] motion-safe:animate-shimmer; }
+  .enter { @apply animate-fade-up; }
+  .eyebrow { @apply text-xs font-semibold uppercase tracking-wider text-accent-dark; }
+  .quote { @apply rounded-r-xl border-l-4 border-accent bg-slate-50 py-2.5 pl-4 pr-3 text-sm text-ink; }
+  .glass { @apply border border-line bg-white/90 backdrop-blur; }
 }

@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { chat } from "@/lib/llm";
+import { scriptedReply } from "@/lib/scriptedCaller";
 import { llmKey } from "@/lib/serverConfig";
 
 const Body = z.object({
@@ -13,7 +14,7 @@ const Body = z.object({
 
 /**
  * Text-only simulated caller. Uses the configured LLM when available;
- * otherwise walks through the scenario's scripted sampleReplies.
+ * otherwise answers from the scenario's scripted replies by matching the trainee's intent.
  */
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
@@ -34,7 +35,9 @@ export async function POST(req: NextRequest) {
       const reply = await chat(
         [
           { role: "system", content: `${buildAgentPrompt(scenario)}\n\nThis call is happening over text chat; keep replies short and conversational.` },
-          // The persona is the "assistant"; the trainee is the "user".
+          // The persona is the "assistant"; the trainee is the "user". Some
+          // providers (Anthropic) require the first turn to be from the user.
+          ...(history[0]?.role === "assistant" ? [{ role: "user" as const, content: "(The call connects.)" }] : []),
           ...history.map((h) => ({ role: h.role, content: h.text })),
         ],
         { maxTokens: 200, temperature: 0.8 },
@@ -45,12 +48,5 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const callerTurns = history.filter((h) => h.role === "assistant").length;
-  const scripted = scenario.sampleReplies;
-  if (scripted.length === 0) {
-    return NextResponse.json({ reply: "Mm-hm. Go on.", source: "scripted" });
-  }
-  // The opening line counts as the first caller turn; replies start at index 0.
-  const reply = scripted[Math.max(0, callerTurns - 1) % scripted.length];
-  return NextResponse.json({ reply, source: "scripted" });
+  return NextResponse.json({ reply: scriptedReply(scenario, history), source: "scripted" });
 }

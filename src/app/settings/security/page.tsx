@@ -1,5 +1,6 @@
 "use client";
 
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import React, { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import QRCode from "qrcode";
@@ -117,18 +118,14 @@ export default function SecuritySettingsPage() {
   };
 
   if (!me) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-slate-500">
-        Loading…
-      </div>
-    );
+    return <PageSkeleton rows={2} />;
   }
 
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="max-w-2xl mx-auto p-4 sm:p-8">
         <header className="mb-6">
-          <p className="text-xs uppercase tracking-widest text-slate-500">
+          <p className="text-xs uppercase tracking-widest text-slate-600">
             Security
           </p>
           <h1 className="text-2xl font-bold text-slate-900">
@@ -216,7 +213,7 @@ export default function SecuritySettingsPage() {
                     className="w-48 h-48 border border-slate-200 rounded-lg bg-white"
                   />
                 ) : (
-                  <div className="w-48 h-48 border border-dashed border-slate-300 rounded-lg flex items-center justify-center text-slate-400 text-xs">
+                  <div className="w-48 h-48 border border-dashed border-slate-300 rounded-lg flex items-center justify-center text-slate-600 text-xs">
                     Generating QR…
                   </div>
                 )}
@@ -262,7 +259,7 @@ export default function SecuritySettingsPage() {
                   setCode("");
                   setQrDataUri(null);
                 }}
-                className="mt-3 text-xs text-slate-500 hover:text-slate-700"
+                className="mt-3 text-xs text-slate-600 hover:text-slate-700"
               >
                 Cancel enrollment
               </button>
@@ -270,7 +267,7 @@ export default function SecuritySettingsPage() {
           ) : (
             <>
               <div className="flex items-center gap-2 mb-3">
-                <ShieldOff className="w-5 h-5 text-slate-500" />
+                <ShieldOff className="w-5 h-5 text-slate-600" />
                 <h2 className="text-sm font-semibold text-slate-900">
                   MFA is off
                 </h2>
