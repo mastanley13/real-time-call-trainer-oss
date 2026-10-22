@@ -87,6 +87,9 @@ See [DEPLOY.md](DEPLOY.md).
 ## Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Code of Conduct
+This project follows the Contributor Covenant. See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
 ## Credits
 Originally based on OpenAI's openai-realtime-agents demo (MIT). See [LICENSE](LICENSE).
 
