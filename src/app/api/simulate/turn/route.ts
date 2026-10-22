@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
-import { rateLimit } from "@/lib/rateLimit";
+import { rateLimit, ipLimitResponse, readJsonLimited, MAX_TURNS, MAX_TRANSCRIPT_CHARS } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { chatFull } from "@/lib/llm";
 import { scriptedReply } from "@/lib/scriptedCaller";
@@ -9,8 +9,8 @@ import { llmKey } from "@/lib/serverConfig";
 
 const Body = z.object({
   scenario: ScenarioSchema,
-  history: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(4000) })).max(200),
-});
+  history: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(4000) })).max(MAX_TURNS),
+}).refine((b) => b.history.reduce((n, t) => n + t.text.length, 0) <= MAX_TRANSCRIPT_CHARS, { message: "history too long" });
 
 const END_TOKEN = "[END_CALL]";
 const GOODBYE_RE = /\b(good-?bye|bye(-bye)?|talk to you (later|soon)|have a (good|great|nice|wonderful) (day|one|evening|afternoon|night)|take care)\b[^?]*$/i;
@@ -41,14 +41,16 @@ function mergeTurns(h: { role: "user" | "assistant"; text: string }[]) {
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
+  const ipLimited = ipLimitResponse(req, "caller");
+  if (ipLimited) return ipLimited;
   const limit = rateLimit({ key: `simulate:${auth.id}`, limit: 40, windowMs: 60_000 });
   if (!limit.allowed) return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
 
   let body: z.infer<typeof Body>;
   try {
-    body = Body.parse(await req.json());
+    body = Body.parse(await readJsonLimited(req));
   } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    return NextResponse.json({ error: "That conversation is too long or malformed to continue. End the call to get graded." }, { status: 400 });
   }
   const { scenario, history } = body;
 

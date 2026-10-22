@@ -50,6 +50,10 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. See [TESTING.md](TEST
 | `DATABASE_URL` | For accounts | Postgres connection string |
 | `JWT_SECRET` | For accounts | 32+ random bytes (`node generate-jwt-secret.js`) |
 | `CRON_SECRET` | Optional | Bearer secret for `/api/cron/purge-expired` |
+| `TRAINER_ACCESS_CODE` | Optional | When set, every page and API route (except `/api/health`) requires this code via `/access`. Cookie is an HMAC keyed by `JWT_SECRET`, valid 30 days. Unset = no gate |
+| `RATE_LIMIT_CALLER_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/simulate/*`. Default 30 per 300 s |
+| `RATE_LIMIT_GRADING_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/evaluate-call`. Default 10 per 3600 s |
+| `RATE_LIMIT_TOKEN_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/elevenlabs/token`. Default 10 per 3600 s |
 | `DEMO_MODE` | Optional | `true` skips login; sessions stay in the browser. Never on a public deployment |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Optional | Used by `npm run db:seed` to create a platform admin |
 
@@ -85,3 +89,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credits
 Originally based on OpenAI's openai-realtime-agents demo (MIT). See [LICENSE](LICENSE).
+
+> **Rate limits:** counters are in-memory (fixed window) and per server instance. On Vercel/serverless they are best-effort: each warm instance counts separately and cold starts reset them. Use a shared store (e.g. Upstash Redis) for strict enforcement. Requests are also capped at 200 turns / 20,000 transcript characters / 200 KB body to bound LLM cost. `/api/access` attempts are limited to 10 per 15 min per IP.

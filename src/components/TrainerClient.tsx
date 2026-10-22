@@ -190,7 +190,7 @@ function VoiceSession({
       try {
         const res = await fetch("/api/elevenlabs/token");
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.message || "Could not get a voice token.");
+        if (!res.ok) throw new Error(data.message || "Could not get a voice token.");  // 429 carries a friendly message
         startSession({
           conversationToken: data.token,
           connectionType: "webrtc",
@@ -296,6 +296,7 @@ export default function TrainerClient() {
         body: JSON.stringify({ scenario, transcript }),
       });
       if (res.ok) evaluation = await res.json();
+      else if (res.status === 429) setError((await res.json().catch(() => ({}))).message || "Grading limit reached. The transcript was saved without a score; try again later.");
       else setError("Grading failed; the transcript was saved without a score.");
     } catch {
       setError("Grading failed; the transcript was saved without a score.");
@@ -343,7 +344,7 @@ export default function TrainerClient() {
           body: JSON.stringify({ scenario, history: sent.map(({ role, text }) => ({ role, text })) }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Simulation failed");
+        if (!res.ok) throw new Error(data.message || data.error || "Simulation failed");
         if (finishing.current) break;
         // Slot the reply in right after the messages it answered; later queued messages stay unanswered for the next round.
         const reply: StoredTurn = { role: "assistant", text: data.reply, timestamp: new Date().toISOString() };

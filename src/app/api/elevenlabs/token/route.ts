@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/apiAuth";
-import { rateLimit } from "@/lib/rateLimit";
+import { rateLimit, ipLimitResponse } from "@/lib/rateLimit";
 
 /**
  * Mints a short-lived WebRTC conversation token for the configured
@@ -9,6 +9,9 @@ import { rateLimit } from "@/lib/rateLimit";
 export async function GET(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
+
+  const ipLimited = ipLimitResponse(req, "token");
+  if (ipLimited) return ipLimited;
 
   const apiKey = process.env.ELEVENLABS_API_KEY;
   const agentId = process.env.ELEVENLABS_AGENT_ID;

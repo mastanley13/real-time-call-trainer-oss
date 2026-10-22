@@ -38,3 +38,9 @@ Example: `DEMO_MODE=true npm run dev`.
 3. Text tab → *Start simulation*. Try: "Thanks for calling, this is Sam. How urgent is the leak and where is it?", "What's the age of the unit, and have you shut the water off?", "Can I get your name, address and best callback number?", "There's a diagnostic fee of $89, applied to the repair. I can book you this afternoon between 2 and 4."
 4. *End & grade* → verify every criterion has a score and cited quotes.
 5. Add `LLM_API_KEY` and repeat: scores become rationale-driven, and every quote must appear in the transcript (unverifiable quotes are dropped).
+
+## Access code and rate limits
+
+- Access gate: run with `TRAINER_ACCESS_CODE=letmein`. Any page redirects to `/access`; `curl -i localhost:3000/api/config` returns 401; `/api/health` returns 200. A wrong code shows an error; the right one sets an httpOnly cookie and lands on the app. Unset the variable and the gate disappears. 11 wrong attempts within 15 min from one IP return 429.
+- Rate limits: set `RATE_LIMIT_GRADING_MAX=2`, finish three calls; the third shows "You're going a bit fast…" in the trainer and the response carries `Retry-After`. Same pattern for `RATE_LIMIT_CALLER_MAX` (text mode) and `RATE_LIMIT_TOKEN_MAX` (voice).
+- Size caps: a transcript over 200 turns or 20,000 characters is rejected with 400.
