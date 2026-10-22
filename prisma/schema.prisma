@@ -1,0 +1,140 @@
+// Real-Time Call Trainer — core data model
+//
+// Design notes:
+// - Multi-tenant by Organization. Every user and every training record
+//   belongs to an org. The only exception is a platform-wide admin flag
+//   on the User row for the application owner ("owner of application").
+// - Org code is a stable 3-digit string (may expand later; stored as text).
+// - All user data lives in this DB; there is no third-party CRM dependency.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  // For Neon (pooled): when running `prisma migrate deploy`, set
+  // DATABASE_URL to the DIRECT (non-pooled) URL. The pooled URL is
+  // still used at runtime by the app.
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Organizations & users
+// ─────────────────────────────────────────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  /// 3-digit join code issued at signup, displayed to managers / shared with
+  /// their team. Unique across the platform.
+  code      String   @unique
+  name      String
+  /// Subscription tier; "free" until billing/webhook sets otherwise.
+  planTier  String   @default("free")
+  /// Nullable = keep training records indefinitely. When set, the nightly
+  /// purge job deletes TrainerSession rows older than this many days.
+  sessionRetentionDays Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users           User[]
+  trainerSessions TrainerSession[]
+}
+
+enum UserRole {
+  trainee   // default
+  manager   // can see their org's trainees + reports
+  owner     // an org admin (can manage users in the org)
+}
+
+model User {
+  id               String   @id @default(cuid())
+  email            String   @unique
+  passwordHash     String
+  firstName        String?
+  lastName         String?
+  phone            String?
+  role             UserRole @default(trainee)
+  /// Platform-level admin flag for the APPLICATION owner. Independent of
+  /// the user's role inside their own org.
+  isPlatformAdmin  Boolean  @default(false)
+  /// Optional for platform admins who don't need an org.
+  organizationId   String?
+  organization     Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  lastLoginAt      DateTime?
+  failedLoginCount Int      @default(0)
+  lockedUntil      DateTime?
+  /// TOTP MFA state. `mfaSecret` holds the base32 secret while enrollment
+  /// is pending; once the user proves possession it stays put and
+  /// `mfaEnabled` flips true.
+  mfaSecret        String?
+  mfaEnabled       Boolean  @default(false)
+  mfaEnrolledAt    DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  trainerSessions TrainerSession[]
+  auditEvents     AuditEvent[]
+
+  @@index([organizationId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Training sessions
+// ─────────────────────────────────────────────────────────────────────────
+
+model TrainerSession {
+  id                 String   @id @default(cuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId     String
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Client-generated id for the practice session (voice or text). The column
+  /// name predates the ElevenLabs migration and is kept to avoid a data migration.
+  realtimeSessionId  String?
+  scenarioId         String
+  scenarioCategory   String?
+  scenarioDifficulty String?
+  scenarioTitle      String?
+  durationSeconds    Int      @default(0)
+  /// Raw transcript turns.
+  transcript         Json
+  /// Full structured evaluation object (or null if eval failed).
+  evaluation         Json?
+  /// Denormalized overall score + grade for fast listing / filtering.
+  overallScore       Int?
+  grade              String?
+  goalAchieved       Boolean?
+  /// Free-form supervisor feedback visible on the debrief page. Nullable
+  /// until a manager/owner adds notes.
+  supervisorNotes     String?
+  supervisorNotesBy   String?
+  supervisorNotesAt   DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([scenarioId])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Audit log
+// ─────────────────────────────────────────────────────────────────────────
+
+model AuditEvent {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  resource   String?
+  ip         String?
+  userAgent  String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
