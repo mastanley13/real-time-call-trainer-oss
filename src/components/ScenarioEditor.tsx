@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { useEffect, useRef, useState } from "react";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { Copy, Plus, Trash2, Save, Play } from "lucide-react";
 import { Scenario, ScenarioSchema, newBlankScenario } from "@/lib/scenarios";
 import { ZodIssue } from "zod";
@@ -38,6 +40,28 @@ export default function ScenarioEditor() {
   const [formError, setFormError] = useState("");
   const [saved, setSaved] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [toast, setToast] = useState("");
+  const editorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(""), 3000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  function duplicate() {
+    if (!draft) return;
+    const c = duplicateScenario(draft);
+    refresh(c.id);
+    setToast("Scenario duplicated");
+    // Wait for the new draft to render, then bring the editor into view and focus the title.
+    setTimeout(() => {
+      editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      const title = document.getElementById("t") as HTMLInputElement | null;
+      title?.focus({ preventScroll: true });
+    }, 50);
+  }
 
   const clearErrors = (prefix?: string) => {
     setFormError("");
@@ -139,16 +163,16 @@ export default function ScenarioEditor() {
         </ul>
       </aside>
 
-      <div className="card space-y-5">
+      <div ref={editorRef} className="card scroll-mt-20 space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-xl font-bold sm:text-2xl">{readOnly ? "Built-in scenario" : "Edit scenario"}: {savedTitle}</h1>
           <div className="flex flex-wrap gap-2">
             <Link href={`/trainer?scenario=${encodeURIComponent(draft.id)}`} className="btn-ghost"><Play size={16} /> Practice</Link>
             {all.some((s) => s.id === draft.id) && (
-              <button className="btn-ghost" onClick={() => { const c = duplicateScenario(draft); refresh(c.id); }}><Copy size={16} /> Duplicate</button>
+              <button className="btn-ghost" onClick={duplicate}><Copy size={16} /> Duplicate</button>
             )}
             {!readOnly && all.some((s) => s.id === draft.id) && (
-              <button className="btn-ghost text-red-600" onClick={() => { if (confirm("Delete this scenario?")) { deleteCustomScenario(draft.id); clearErrors(); refresh(listScenarios()[0].id); } }}><Trash2 size={16} /> Delete</button>
+              <button className="btn-ghost text-red-600" onClick={() => setConfirmDelete(true)}><Trash2 size={16} /> Delete</button>
             )}
             {!readOnly && <button className="btn-primary" onClick={save}><Save size={16} /> Save</button>}
           </div>
@@ -211,6 +235,17 @@ export default function ScenarioEditor() {
             <textarea id="sr" rows={4} className={field} {...bad("sampleReplies")} value={draft.sampleReplies.join("\n")} onChange={(e) => patch({ sampleReplies: e.target.value.split("\n") })} />{msg("sampleReplies")}</div>
         </fieldset>
       </div>
+      {confirmDelete && draft && (
+        <ConfirmDialog title="Delete this scenario?" message={`“${savedTitle}” will be removed from this browser.`} confirmLabel="Delete"
+          onConfirm={() => { setConfirmDelete(false); deleteCustomScenario(draft.id); clearErrors(); refresh(listScenarios()[0].id); }}
+          onCancel={() => setConfirmDelete(false)} />
+      )}
+      {toast && createPortal(
+        <div className="pointer-events-none fixed inset-x-3 z-[100] flex justify-center" style={{ bottom: "max(1rem, env(safe-area-inset-bottom))" }}>
+          <div role="status" className="max-w-md rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-pop">{toast}</div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }

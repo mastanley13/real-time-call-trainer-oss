@@ -56,10 +56,18 @@ function softenContradiction(rationale: string, evidence: CriterionResult["evide
   if (!quotes.length) return rationale;
   for (const m of rationale.matchAll(NEGATION_RE)) {
     const hit = keywordsOf(m[1]).map(wordRe).some((re) => quotes.some((q) => re.test(q.quote)));
-    if (hit) return `${rationale} (Note: the quoted evidence shows the trainee did address part of this, so treat the "missed" wording as partial.)`;
+    if (hit) return rationale.replace(m[0], (s) => softenClause(s));
   }
   return rationale;
 }
+
+/** Rewrites a "did not ..." clause into neutral wording, e.g. "did not mention X" -> "partly covered X". */
+function softenClause(clause: string): string {
+  const rest = clause.replace(NEGATION_LEAD_RE, "").trim();
+  return rest ? `partly covered ${rest}` : "partly covered this";
+}
+const NEGATION_LEAD_RE = /^(?:did not|didn't|never|missed|failed to|did no)\s+(?:(?:mention|address|cover|ask|explain|offer|confirm|acknowledge|provide|include|discuss)\s+)?/i;
+
 
 async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluation> {
   const rubric = normalizeWeights(scenario.rubric);

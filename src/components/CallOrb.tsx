@@ -11,7 +11,7 @@ const ORB_COLORS: [string, string] = ["#BFD3FF", "#9FE7DD"];
 /** Static brand gradient: SSR/loading state, reduced-motion users, and browsers without WebGL. */
 function OrbFallback({ state }: { state: AgentState }) {
   return (
-    <div className="flex h-full w-full items-center justify-center" aria-hidden>
+    <div className="absolute inset-0 flex items-center justify-center" aria-hidden>
       <div
         className={`h-[78%] w-[78%] rounded-full bg-[radial-gradient(circle_at_30%_25%,#5eead4,#1D4ED8_70%)] shadow-orb ${state === "talking" ? "motion-safe:animate-orb-talk" : state ? "motion-safe:animate-orb-breathe" : ""}`}
       />
@@ -41,6 +41,7 @@ interface Props {
 
 export default function CallOrb({ state, getInputVolume, getOutputVolume, manual, className = "" }: Props) {
   const [animated, setAnimated] = useState(false);
+  const [settled, setSettled] = useState(false);
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -50,18 +51,24 @@ export default function CallOrb({ state, getInputVolume, getOutputVolume, manual
     return () => mq.removeEventListener("change", update);
   }, []);
 
+  // Keep the soft placeholder under the WebGL canvas until it has had time to draw, so there is no blank frame.
+  useEffect(() => {
+    if (!animated) return;
+    const t = setTimeout(() => setSettled(true), 900);
+    return () => clearTimeout(t);
+  }, [animated]);
+
   return (
     <div className={`relative aspect-square ${className}`}>
-      {animated ? (
-        <Orb
+      {(!animated || !settled) && <OrbFallback state={animated ? null : state} />}
+      {animated && (
+        <div className="absolute inset-0"><Orb
           colors={ORB_COLORS}
           agentState={state}
           {...(manual
             ? { volumeMode: "manual" as const, manualInput: manual.input, manualOutput: manual.output }
             : { getInputVolume, getOutputVolume })}
-        />
-      ) : (
-        <OrbFallback state={state} />
+        /></div>
       )}
     </div>
   );

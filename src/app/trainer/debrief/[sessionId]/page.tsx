@@ -7,7 +7,7 @@ import { Printer, RotateCcw, Quote, CheckCircle2, TrendingUp, Target, ArrowRight
 import { useAuth } from "@/contexts/AuthContext";
 import { getLocalSession } from "@/lib/sessionStore";
 import type { Evaluation } from "@/lib/grader-types";
-import { goalStatusOf, isLegacyGrader, scoreLabel } from "@/lib/grader-types";
+import { goalStatusOf, isLegacyGrader, scoreLabel, stripGraderNote } from "@/lib/grader-types";
 import { formatDuration } from "@/lib/format";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 
@@ -23,8 +23,10 @@ interface View {
 }
 
 /** Older heuristic sessions stored keyword-stem rationales; never show those to users. */
-const friendlyRationale = (r: string) =>
-  /^Keyword match:/.test(r) ? r.replace(/^Keyword match: the trainee touched on (\d+) of (\d+) themes from this criterion.*$/, "You addressed $1 of $2 expected points for this area.") : r;
+const friendlyRationale = (raw: string) => {
+  const r = stripGraderNote(raw);
+  return /^Keyword match:/.test(r) ? r.replace(/^Keyword match: the trainee touched on (\d+) of (\d+) themes from this criterion.*$/, "You addressed $1 of $2 expected points for this area.") : r;
+};
 const friendlySummary = (ev: Evaluation) =>
   /^Heuristic score/.test(ev.summary) ? `Automatic estimate: ${ev.overallScore}/100, based on how many of the rubric's topics you covered.` : ev.summary;
 

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 interface Props {
   title: string;
@@ -16,12 +17,15 @@ const FOCUSABLE = "button:not([disabled]), [href], input, select, textarea, [tab
 export default function ConfirmDialog({ title, message, confirmLabel, onConfirm, onCancel }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   useEffect(() => {
+    if (!mounted) return;
     const opener = document.activeElement as HTMLElement | null;
     cancelRef.current?.focus();
     return () => opener?.focus();
-  }, []);
+  }, [mounted]);
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Escape") { e.stopPropagation(); onCancel(); return; }
@@ -33,8 +37,9 @@ export default function ConfirmDialog({ title, message, confirmLabel, onConfirm,
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   }
 
-  return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-ink/50 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
+  if (!mounted) return null;
+  return createPortal(
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-ink/50 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
       <div ref={ref} role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-desc" onKeyDown={onKeyDown} className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-pop">
         <h2 id="confirm-title" className="text-lg font-bold">{title}</h2>
         <p id="confirm-desc" className="mt-2 text-sm text-ink-soft">{message}</p>
@@ -43,6 +48,7 @@ export default function ConfirmDialog({ title, message, confirmLabel, onConfirm,
           <button className="btn-danger" onClick={onConfirm}>{confirmLabel}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

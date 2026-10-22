@@ -77,11 +77,11 @@ function CallStage({ scenario, turns, elapsed, orbState, status, grading, onEnd,
   return (
     <div className="enter flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[1fr_auto] lg:gap-6">
       <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-3xl border border-line bg-white shadow-card lg:min-h-[600px]" aria-label="Call">
-        <div className="relative flex shrink-0 flex-col items-center bg-gradient-to-b from-primary-soft/60 to-white px-4 pb-4 pt-5 text-center sm:pt-6 [@media(max-height:700px)]:pb-2 [@media(max-height:700px)]:pt-3">
-          <CallOrb state={orbState} getInputVolume={getInputVolume} getOutputVolume={getOutputVolume} manual={manual} className="h-28 w-28 sm:h-40 sm:w-40 [@media(max-height:700px)]:h-20 [@media(max-height:700px)]:w-20" />
-          <h2 className="mt-2 text-lg font-bold sm:text-xl">{persona.name}</h2>
-          <p className="text-sm text-ink-muted">{persona.role}</p>
-          <p className="mt-2 inline-flex h-8 items-center gap-2 rounded-full bg-white px-3 py-1 text-sm font-medium text-ink shadow-sm ring-1 ring-line" role="status">
+        <div className="relative flex shrink-0 flex-col items-center bg-gradient-to-b from-primary-soft/60 to-white px-4 pb-2 pt-3 text-center sm:pb-4 sm:pt-6">
+          <CallOrb state={orbState} getInputVolume={getInputVolume} getOutputVolume={getOutputVolume} manual={manual} className="h-16 w-16 sm:h-40 sm:w-40" />
+          <h2 className="mt-1 max-w-full truncate text-base font-bold sm:mt-2 sm:text-xl">{persona.name}</h2>
+          <p className="hidden text-sm text-ink-muted sm:block">{persona.role}</p>
+          <p className="mt-1.5 inline-flex h-8 items-center gap-2 rounded-full bg-white px-3 py-1 text-sm font-medium text-ink shadow-sm ring-1 ring-line" role="status">
             {grading ? <Loader2 size={14} className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" aria-hidden /> : <span className={`h-2 w-2 rounded-full ${orbState === "talking" ? "bg-accent motion-safe:animate-pulse" : orbState === "thinking" ? "bg-amber-500" : "bg-primary"}`} aria-hidden />}
             {status}
           </p>
@@ -431,16 +431,14 @@ export default function TrainerClient() {
               </div>
             )}
 
-            <button className="btn-accent btn-pill btn-xl mt-5 w-full max-w-xs shadow-orb" onClick={begin} disabled={mode === "voice" && !voiceReady} aria-describedby="start-hint">
+            <button className="btn-accent btn-pill btn-xl mt-5 w-full max-w-xs shadow-orb" onClick={begin} disabled={mode === "voice" && !voiceReady} aria-describedby={mode === "voice" && !voiceReady ? undefined : "start-hint"}>
               {mode === "voice" ? <Mic size={20} /> : <Keyboard size={20} />} Start {mode === "voice" ? "call" : "simulation"}
             </button>
-            <p className="mt-3 max-w-xs text-xs text-ink-soft" id="start-hint">
-              {mode === "voice" && !voiceReady
-                ? "Start is unavailable: voice calls aren’t configured on this server. Switch to Text to practise, or ask your admin to add ElevenLabs."
-                : mode === "voice"
-                  ? "Your browser will ask for microphone access when the call starts."
-                  : "Type your side of the call; the caller replies instantly."}
-            </p>
+            {!(mode === "voice" && !voiceReady) && (
+              <p className="mt-3 max-w-xs text-xs text-ink-soft" id="start-hint">
+                {mode === "voice" ? "Your browser will ask for microphone access when the call starts." : "Type your side of the call; the caller replies instantly."}
+              </p>
+            )}
           </section>
 
           <aside className="order-2 space-y-4 lg:order-1">

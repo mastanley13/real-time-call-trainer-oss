@@ -39,3 +39,8 @@ export function goalStatusOf(ev: Pick<Evaluation, "goalAchievement">): GoalStatu
 
 /** Legacy = keyword/heuristic grader from before versioning. LLM-graded sessions (round 2) lack graderVersion but are not legacy. */
 export const isLegacyGrader = (ev: Pick<Evaluation, "graderVersion" | "method"> | null | undefined) => !!ev && !ev.graderVersion && ev.method !== "llm";
+
+/** Removes the internal post-check note that older gradings appended to rationales. */
+export function stripGraderNote(r: string): string {
+  return r.replace(/\s*\(Note: the quoted evidence shows[^)]*\)/g, "").trim();
+}
