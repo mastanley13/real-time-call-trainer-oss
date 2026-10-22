@@ -43,7 +43,7 @@ export default function DashboardPage() {
     setRows((cur) => cur && cur.filter((x) => x.id !== r.id));
     setUndo({ session, title: r.title });
     clearTimeout(undoTimer.current);
-    undoTimer.current = setTimeout(() => setUndo(null), 10000); // after this the delete is final
+    undoTimer.current = setTimeout(() => setUndo(null), 12000); // after this the delete is final
   }, []);
 
   function undoDelete() {
@@ -157,13 +157,15 @@ export default function DashboardPage() {
       )}
 
       {confirmReset && <ConfirmDialog title="Reset demo data?" message="This clears all practice sessions and custom scenarios stored in this browser." confirmLabel="Reset" onConfirm={resetDemo} onCancel={() => setConfirmReset(false)} />}
-      {notice && <div role="status" className="fixed inset-x-3 top-20 z-[60] mx-auto max-w-md rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-pop sm:top-auto sm:bottom-4">{notice}</div>}
+      {notice && <div role="status" className="fixed inset-x-3 bottom-4 z-[60] mx-auto max-w-md rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-pop">{notice}</div>}
       {undo && (
-        <div role="status" className="fixed inset-x-3 top-20 z-[60] mx-auto flex max-w-md items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-pop sm:top-auto sm:bottom-4 mx-auto flex max-w-md items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-pop">
+        <div role="status" className="fixed inset-x-3 bottom-4 z-[60] mx-auto flex max-w-md items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-pop">
           <span className="min-w-0 break-words">Deleted “{undo.title}”.</span>
           <button className="shrink-0 rounded-lg px-3 py-1.5 font-semibold text-accent underline underline-offset-2 hover:bg-white/10" onClick={undoDelete}>Undo</button>
         </div>
       )}
+      {/* Reserve space under the content so the fixed toast never covers Reset/Delete controls. */}
+      {(undo || notice) && <div aria-hidden className="h-28" />}
     </div>
   );
 }
