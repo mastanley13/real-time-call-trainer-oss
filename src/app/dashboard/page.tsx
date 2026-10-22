@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Mic, Trash2, PhoneCall, ChevronRight, RotateCcw } from "lucide-react";
 import { PageSkeleton } from "@/components/ui/Skeleton";
@@ -33,6 +34,8 @@ export default function DashboardPage() {
   const [notice, setNotice] = useState("");
   const noticeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [undo, setUndo] = useState<{ session: StoredSession; title: string } | null>(null);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const undoTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => { clearTimeout(undoTimer.current); clearTimeout(noticeTimer.current); }, []);
 
@@ -157,12 +160,17 @@ export default function DashboardPage() {
       )}
 
       {confirmReset && <ConfirmDialog title="Reset demo data?" message="This clears all practice sessions and custom scenarios stored in this browser." confirmLabel="Reset" onConfirm={resetDemo} onCancel={() => setConfirmReset(false)} />}
-      {notice && <div role="status" className="fixed inset-x-3 bottom-4 z-[60] mx-auto max-w-md rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-pop">{notice}</div>}
-      {undo && (
-        <div role="status" className="fixed inset-x-3 bottom-4 z-[60] mx-auto flex max-w-md items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-pop">
-          <span className="min-w-0 break-words">Deleted “{undo.title}”.</span>
-          <button className="shrink-0 rounded-lg px-3 py-1.5 font-semibold text-accent underline underline-offset-2 hover:bg-white/10" onClick={undoDelete}>Undo</button>
-        </div>
+      {mounted && createPortal(
+        <div className="pointer-events-none fixed inset-x-3 z-[100] flex flex-col items-center gap-2" style={{ bottom: "max(1rem, env(safe-area-inset-bottom))" }}>
+        {notice && <div role="status" className="pointer-events-auto max-w-md rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-pop">{notice}</div>}
+        {undo && (
+          <div role="status" className="pointer-events-auto flex max-w-md items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-pop">
+            <span className="min-w-0 break-words">Deleted “{undo.title}”.</span>
+            <button className="shrink-0 rounded-lg px-3 py-1.5 font-semibold text-accent underline underline-offset-2 hover:bg-white/10" onClick={undoDelete}>Undo</button>
+          </div>
+        )}
+        </div>,
+        document.body,
       )}
       {/* Reserve space under the content so the fixed toast never covers Reset/Delete controls. */}
       {(undo || notice) && <div aria-hidden className="h-28" />}

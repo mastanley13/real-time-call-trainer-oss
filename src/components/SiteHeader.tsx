@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Menu, X } from "lucide-react";
 import LogoMark from "@/components/LogoMark";
 import { useAuth } from "@/contexts/AuthContext";
@@ -35,8 +35,19 @@ export default function SiteHeader() {
     </>
   );
 
+  const headerRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const set = () => document.documentElement.style.setProperty("--header-h", `${el.offsetHeight}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   return (
-    <header className="glass sticky top-0 z-40 border-x-0 border-t-0">
+    <header ref={headerRef} className="glass sticky top-0 z-40 border-x-0 border-t-0">
       {demo && (
         <div className="bg-accent-soft px-4 py-1 text-center text-xs font-medium text-ink">
           Demo mode: login is skipped and sessions stay in this browser.

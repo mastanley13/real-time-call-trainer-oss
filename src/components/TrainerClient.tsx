@@ -75,14 +75,14 @@ function CallStage({ scenario, turns, elapsed, orbState, status, grading, onEnd,
   }, [lastRole, turns.length]);
 
   return (
-    <div className="enter lg:grid lg:grid-cols-[1fr_auto] lg:gap-6">
-      <section className="flex h-[calc(100dvh-9.5rem)] min-h-[360px] min-w-0 flex-col overflow-hidden rounded-3xl border border-line bg-white shadow-card lg:h-auto lg:min-h-[600px]" aria-label="Call">
+    <div className="enter flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[1fr_auto] lg:gap-6">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-3xl border border-line bg-white shadow-card lg:min-h-[600px]" aria-label="Call">
         <div className="relative flex shrink-0 flex-col items-center bg-gradient-to-b from-primary-soft/60 to-white px-4 pb-4 pt-5 text-center sm:pt-6 [@media(max-height:700px)]:pb-2 [@media(max-height:700px)]:pt-3">
           <CallOrb state={orbState} getInputVolume={getInputVolume} getOutputVolume={getOutputVolume} manual={manual} className="h-28 w-28 sm:h-40 sm:w-40 [@media(max-height:700px)]:h-20 [@media(max-height:700px)]:w-20" />
           <h2 className="mt-2 text-lg font-bold sm:text-xl">{persona.name}</h2>
           <p className="text-sm text-ink-muted">{persona.role}</p>
-          <p className="mt-2 inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-sm font-medium text-ink shadow-sm ring-1 ring-line" role="status">
-            {grading ? <Loader2 size={14} className="animate-spin text-primary" aria-hidden /> : <span className={`h-2 w-2 rounded-full ${orbState === "talking" ? "bg-accent motion-safe:animate-pulse" : orbState === "thinking" ? "bg-amber-500" : "bg-primary"}`} aria-hidden />}
+          <p className="mt-2 inline-flex h-8 items-center gap-2 rounded-full bg-white px-3 py-1 text-sm font-medium text-ink shadow-sm ring-1 ring-line" role="status">
+            {grading ? <Loader2 size={14} className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" aria-hidden /> : <span className={`h-2 w-2 rounded-full ${orbState === "talking" ? "bg-accent motion-safe:animate-pulse" : orbState === "thinking" ? "bg-amber-500" : "bg-primary"}`} aria-hidden />}
             {status}
           </p>
         </div>
@@ -139,7 +139,7 @@ function CallStage({ scenario, turns, elapsed, orbState, status, grading, onEnd,
                   {muted ? <MicOff size={18} /> : <Mic size={18} />}
                 </button>
               )}
-              <button className="btn-danger btn-pill !h-11 !px-5" onClick={onEnd} disabled={grading}><PhoneOff size={16} /> {text?.hungUp ? "Grade call" : "End call"}</button>
+              <button className="btn-danger btn-pill !h-11 !px-5" onClick={onEnd} disabled={grading} aria-label={text?.hungUp ? "Grade call" : "End and grade call"}><PhoneOff size={16} /> {text?.hungUp ? "Grade call" : "End & grade"}</button>
               <button className={`btn-ghost btn-pill !h-11 !w-11 !min-h-11 !p-0 ${showTrack ? "!border-primary !text-primary" : ""}`} onClick={() => setShowTrack((v) => !v)} aria-pressed={showTrack} aria-label="Toggle talk track"><BookOpen size={18} /></button>
             </div>
           </div>
@@ -384,9 +384,9 @@ export default function TrainerClient() {
   const onVoiceError = (m: string) => { setError(m); if (turnsRef.current.length === 0) setPhase("idle"); };
 
   return (
-    <div className={`page ${inCall ? "space-y-4 !pb-4 lg:!pb-10" : "grid gap-6 lg:grid-cols-[1fr_400px]"}`}>
-      <h1 className={`font-bold lg:col-span-2 ${inCall ? "truncate text-lg sm:text-2xl" : "text-xl sm:text-3xl"}`}>Practice: {scenario.title}</h1>
-      {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 lg:col-span-2">{error}</p>}
+    <div className={`page ${inCall ? "flex h-[calc(100dvh-var(--header-h,4rem))] min-h-0 flex-col gap-3 !py-3 sm:!py-4 lg:block lg:h-auto lg:space-y-4 lg:!pb-10" : "grid gap-6 lg:grid-cols-[1fr_400px]"}`}>
+      <h1 className={`font-bold lg:col-span-2 ${inCall ? "shrink-0 truncate text-lg sm:text-2xl" : "text-xl sm:text-3xl"}`}>Practice: {scenario.title}</h1>
+      {error && <p role="alert" className="shrink-0 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 lg:col-span-2">{error}</p>}
 
       {inCall ? (
         mode === "voice" ? (
