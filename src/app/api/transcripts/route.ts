@@ -80,6 +80,6 @@ export async function GET(req: NextRequest) {
     select: { id: true, scenarioId: true, scenarioTitle: true, scenarioCategory: true, durationSeconds: true, overallScore: true, grade: true, goalAchieved: true, createdAt: true, evaluation: true },
   });
   // Only expose the grader version, not the whole evaluation blob.
-  const sessions = rows.map(({ evaluation, ...r }) => ({ ...r, graderVersion: (evaluation as { graderVersion?: string } | null)?.graderVersion ?? null }));
+  const sessions = rows.map(({ evaluation, ...r }) => ({ ...r, graderVersion: (evaluation as { graderVersion?: string } | null)?.graderVersion ?? null, graderMethod: (evaluation as { method?: string } | null)?.method ?? null }));
   return NextResponse.json({ sessions });
 }

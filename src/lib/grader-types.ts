@@ -37,4 +37,5 @@ export function goalStatusOf(ev: Pick<Evaluation, "goalAchievement">): GoalStatu
   return ev.goalAchievement.status ?? (ev.goalAchievement.achieved ? "achieved" : "not_achieved");
 }
 
-export const isLegacyGrader = (ev: Pick<Evaluation, "graderVersion"> | null | undefined) => !!ev && !ev.graderVersion;
+/** Legacy = keyword/heuristic grader from before versioning. LLM-graded sessions (round 2) lack graderVersion but are not legacy. */
+export const isLegacyGrader = (ev: Pick<Evaluation, "graderVersion" | "method"> | null | undefined) => !!ev && !ev.graderVersion && ev.method !== "llm";

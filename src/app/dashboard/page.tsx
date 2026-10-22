@@ -6,6 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Mic, Trash2, PhoneCall, ChevronRight, RotateCcw } from "lucide-react";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import EmptyState from "@/components/ui/EmptyState";
+import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import { isLegacyGrader } from "@/lib/grader-types";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatDuration } from "@/lib/format";
 import { deleteLocalSession, getLocalSession, listLocalSessions, resetDemoData, restoreLocalSession, type StoredSession } from "@/lib/sessionStore";
@@ -27,9 +29,12 @@ export default function DashboardPage() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState("");
   const [showLegacy, setShowLegacy] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [notice, setNotice] = useState("");
+  const noticeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [undo, setUndo] = useState<{ session: StoredSession; title: string } | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  useEffect(() => () => clearTimeout(undoTimer.current), []);
+  useEffect(() => () => { clearTimeout(undoTimer.current); clearTimeout(noticeTimer.current); }, []);
 
   const removeRow = useCallback((r: Row) => {
     const session = getLocalSession(r.id);
@@ -38,7 +43,7 @@ export default function DashboardPage() {
     setRows((cur) => cur && cur.filter((x) => x.id !== r.id));
     setUndo({ session, title: r.title });
     clearTimeout(undoTimer.current);
-    undoTimer.current = setTimeout(() => setUndo(null), 6000); // after this the delete is final
+    undoTimer.current = setTimeout(() => setUndo(null), 10000); // after this the delete is final
   }, []);
 
   function undoDelete() {
@@ -46,29 +51,32 @@ export default function DashboardPage() {
     clearTimeout(undoTimer.current);
     restoreLocalSession(undo.session);
     const s = undo.session;
-    const row: Row = { id: s.id, title: s.scenario.title, createdAt: s.createdAt, durationSeconds: s.durationSeconds, score: s.evaluation?.overallScore ?? null, grade: s.evaluation?.grade ?? null, legacy: !!s.evaluation && !s.evaluation.graderVersion };
+    const row: Row = { id: s.id, title: s.scenario.title, createdAt: s.createdAt, durationSeconds: s.durationSeconds, score: s.evaluation?.overallScore ?? null, grade: s.evaluation?.grade ?? null, legacy: isLegacyGrader(s.evaluation) };
     setRows((cur) => (cur ? [...cur, row].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : cur));
     setUndo(null);
   }
 
   function resetDemo() {
-    if (!window.confirm("Reset demo data? This clears all practice sessions and custom scenarios stored in this browser.")) return;
+    setConfirmReset(false);
     resetDemoData();
     clearTimeout(undoTimer.current);
     setUndo(null);
     setRows([]);
+    setNotice("Demo data reset.");
+    clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(""), 5000);
   }
 
   useEffect(() => {
     if (!capabilities || isLoading) return;
     if (!isAuthenticated) { router.replace("/login"); return; }
-    const local: Row[] = listLocalSessions().map((s) => ({ id: s.id, title: s.scenario.title, createdAt: s.createdAt, durationSeconds: s.durationSeconds, score: s.evaluation?.overallScore ?? null, grade: s.evaluation?.grade ?? null, legacy: !!s.evaluation && !s.evaluation.graderVersion }));
+    const local: Row[] = listLocalSessions().map((s) => ({ id: s.id, title: s.scenario.title, createdAt: s.createdAt, durationSeconds: s.durationSeconds, score: s.evaluation?.overallScore ?? null, grade: s.evaluation?.grade ?? null, legacy: isLegacyGrader(s.evaluation) }));
     if (capabilities.demoMode || !capabilities.database) { setRows(local); return; }
     fetch("/api/transcripts")
       .then(async (r) => {
         if (!r.ok) throw new Error("Could not load sessions.");
         const { sessions } = await r.json();
-        const remote: Row[] = sessions.map((s: { id: string; scenarioTitle: string | null; scenarioId: string; createdAt: string; durationSeconds: number; overallScore: number | null; grade: string | null; graderVersion: string | null }) => ({ id: s.id, title: s.scenarioTitle ?? s.scenarioId, createdAt: s.createdAt, durationSeconds: s.durationSeconds, score: s.overallScore, grade: s.grade, legacy: s.overallScore !== null && !s.graderVersion }));
+        const remote: Row[] = sessions.map((s: { id: string; scenarioTitle: string | null; scenarioId: string; createdAt: string; durationSeconds: number; overallScore: number | null; grade: string | null; graderVersion: string | null; graderMethod: string | null }) => ({ id: s.id, title: s.scenarioTitle ?? s.scenarioId, createdAt: s.createdAt, durationSeconds: s.durationSeconds, score: s.overallScore, grade: s.grade, legacy: s.overallScore !== null && !s.graderVersion && s.graderMethod !== "llm" }));
         setRows([...remote, ...local].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
       })
       .catch((e) => { setError(e.message); setRows(local); });
@@ -80,7 +88,7 @@ export default function DashboardPage() {
       count: rows?.length ?? 0,
       avg: scored.length ? Math.round(scored.reduce((a, r) => a + r.score, 0) / scored.length) : null,
       best: scored.length ? Math.max(...scored.map((r) => r.score)) : null,
-      practised: formatDuration((rows ?? []).reduce((a, r) => a + r.durationSeconds, 0)),
+      practised: formatDuration((rows ?? []).filter((r) => showLegacy || !r.legacy).reduce((a, r) => a + r.durationSeconds, 0)),
     };
   }, [rows, showLegacy]);
   const legacyCount = (rows ?? []).filter((r) => r.legacy).length;
@@ -120,19 +128,19 @@ export default function DashboardPage() {
         ) : (
           <ul className="divide-y divide-line">
             {rows.map((r) => (
-              <li key={r.id} className="group flex items-center justify-between gap-3 p-4 transition-colors hover:bg-slate-50">
-                <Link href={`/trainer/debrief/${r.id}`} className="min-w-0 flex-1 rounded-lg">
+              <li key={r.id} className="group flex flex-wrap items-center gap-x-3 gap-y-2 p-4 sm:flex-nowrap transition-colors hover:bg-slate-50">
+                <Link href={`/trainer/debrief/${r.id}`} className="min-w-0 basis-full rounded-lg sm:basis-auto sm:flex-1">
                   <p className="break-words font-semibold">{r.title}</p>
                   <p className="text-xs text-ink-muted">{new Date(r.createdAt).toLocaleString()} · {formatDuration(r.durationSeconds)}{r.id.startsWith("local-") ? " · this browser" : ""}</p>
                 </Link>
                 <span className={`badge ${r.score === null ? "bg-slate-100 text-ink-soft" : r.score >= 80 ? "bg-accent-soft text-accent-darker" : r.score >= 60 ? "bg-primary-soft text-primary" : "bg-amber-100 text-amber-900"}`}>{r.score !== null ? `${r.score} · ${r.grade}` : "Ungraded"}</span>
                 {r.legacy && <span className="badge shrink-0 bg-slate-100 text-ink-soft">Legacy grader</span>}
-                <ChevronRight size={16} className="hidden text-ink-muted sm:block" aria-hidden />
+                <ChevronRight size={16} className="ml-auto hidden text-ink-muted sm:block" aria-hidden />
                 {r.id.startsWith("local-") && (
                   <button
                     aria-label={`Delete session: ${r.title}, ${new Date(r.createdAt).toLocaleString()}`}
                     title="Delete session"
-                    className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-ink-muted hover:bg-slate-100 hover:text-red-700"
+                    className="ml-auto inline-flex min-h-[44px] items-center sm:ml-0 justify-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-ink-muted hover:bg-slate-100 hover:text-red-700"
                     onClick={() => removeRow(r)}
                   ><Trash2 size={18} aria-hidden /><span>Delete</span></button>
                 )}
@@ -144,12 +152,14 @@ export default function DashboardPage() {
       {capabilities?.demoMode && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-line p-4 text-sm">
           <p className="text-ink-soft">Demo mode: sessions and custom scenarios live in this browser only.</p>
-          <button className="btn-ghost" onClick={resetDemo}><RotateCcw size={16} /> Reset demo data</button>
+          <button className="btn-ghost" onClick={() => setConfirmReset(true)}><RotateCcw size={16} /> Reset demo data</button>
         </div>
       )}
 
+      {confirmReset && <ConfirmDialog title="Reset demo data?" message="This clears all practice sessions and custom scenarios stored in this browser." confirmLabel="Reset" onConfirm={resetDemo} onCancel={() => setConfirmReset(false)} />}
+      {notice && <div role="status" className="fixed inset-x-3 top-20 z-[60] mx-auto max-w-md rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-pop sm:top-auto sm:bottom-4">{notice}</div>}
       {undo && (
-        <div role="status" className="fixed inset-x-3 bottom-4 z-50 mx-auto flex max-w-md items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-pop">
+        <div role="status" className="fixed inset-x-3 top-20 z-[60] mx-auto flex max-w-md items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-pop sm:top-auto sm:bottom-4 mx-auto flex max-w-md items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-pop">
           <span className="min-w-0 break-words">Deleted “{undo.title}”.</span>
           <button className="shrink-0 rounded-lg px-3 py-1.5 font-semibold text-accent underline underline-offset-2 hover:bg-white/10" onClick={undoDelete}>Undo</button>
         </div>

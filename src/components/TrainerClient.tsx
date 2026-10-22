@@ -116,14 +116,14 @@ function CallStage({ scenario, turns, elapsed, orbState, status, grading, onEnd,
 
         {/* Control bar: pinned to the bottom of the call card (the transcript takes the remaining height). */}
         <div className="shrink-0 border-t border-line bg-white px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 lg:px-6">
-          {text?.hungUp && !grading && (
-            <div className="mx-auto mb-3 flex max-w-2xl flex-col items-center gap-2 rounded-2xl bg-amber-50 p-3 text-center text-sm text-amber-900 sm:flex-row sm:justify-between sm:text-left" role="status">
+          {text?.hungUp && (
+            <div inert={grading} className={`${grading ? "invisible " : ""}mx-auto mb-3 flex max-w-2xl flex-col items-center gap-2 rounded-2xl bg-amber-50 p-3 text-center text-sm text-amber-900 sm:flex-row sm:justify-between sm:text-left`} role="status">
               <span><strong>{persona.name} hung up.</strong> The call is over.</span>
               <button className="btn-primary btn-pill" onClick={onEnd}>Grade this call</button>
             </div>
           )}
-          {text && !grading && !text.hungUp && (
-            <form className="mx-auto mb-3 flex max-w-2xl gap-2" onSubmit={(e) => { e.preventDefault(); text.onSend(); }}>
+          {text && !text.hungUp && (
+            <form inert={grading} className={`${grading ? "invisible " : ""}mx-auto mb-3 flex max-w-2xl gap-2`} onSubmit={(e) => { e.preventDefault(); text.onSend(); }}>
               <input className="input !rounded-full !px-4" value={text.value} onChange={(e) => text.onChange(e.target.value)} placeholder="Type what you would say…" aria-label="Your reply" autoFocus />
               <button className="btn-primary btn-pill !px-4" disabled={!text.value.trim()} aria-label="Send"><Send size={16} /></button>
             </form>
@@ -431,7 +431,7 @@ export default function TrainerClient() {
             )}
 
             <button className="btn-accent btn-pill btn-xl mt-5 w-full max-w-xs shadow-orb" onClick={begin} disabled={mode === "voice" && !voiceReady} aria-describedby="start-hint">
-              <Mic size={20} /> Start {mode === "voice" ? "call" : "simulation"}
+              {mode === "voice" ? <Mic size={20} /> : <Keyboard size={20} />} Start {mode === "voice" ? "call" : "simulation"}
             </button>
             <p className="mt-3 max-w-xs text-xs text-ink-soft" id="start-hint">
               {mode === "voice" && !voiceReady

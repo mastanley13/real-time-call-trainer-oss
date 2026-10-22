@@ -48,6 +48,19 @@ const LlmOutput = z.object({
   goalExplanation: z.string().default(""),
 });
 
+const NEGATION_RE = /\b(?:did not|didn't|never|missed|failed to|did no)\b([^.!?]*)/gi;
+
+/** If a rationale says the trainee missed a concept that a trainee quote under the same criterion contains, flag it rather than leave a contradiction. */
+function softenContradiction(rationale: string, evidence: CriterionResult["evidence"]): string {
+  const quotes = evidence.filter((e) => e.speaker === "trainee");
+  if (!quotes.length) return rationale;
+  for (const m of rationale.matchAll(NEGATION_RE)) {
+    const hit = keywordsOf(m[1]).map(wordRe).some((re) => quotes.some((q) => re.test(q.quote)));
+    if (hit) return `${rationale} (Note: the quoted evidence shows the trainee did address part of this, so treat the "missed" wording as partial.)`;
+  }
+  return rationale;
+}
+
 async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluation> {
   const rubric = normalizeWeights(scenario.rubric);
   const system = [
@@ -55,6 +68,8 @@ async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluati
     "The TRAINEE is the human practising. The CALLER is an AI persona. Grade only the trainee.",
     "For EVERY rubric criterion give a 0-100 score, a one-or-two sentence rationale, and 1-3 evidence quotes.",
     "Evidence quotes MUST be copied verbatim from the transcript (a contiguous substring of one turn). Never invent or paraphrase. If there is no supporting evidence, return an empty evidence array and score low.",
+    "VERIFY BEFORE CLAIMING A MISS: before you write that the trainee missed, skipped, never did or did not do something, search the whole TRAINEE transcript for it first. If it appears anywhere, it is NOT a miss: credit it and quote it.",
+    "Evidence quotes belong ONLY under the criterion they directly support; never reuse a quote under an unrelated criterion. The rationale and evidence of a criterion must agree: never say the trainee 'did not' do something that a quote under the same criterion shows they did.",
     "Calibration: score what the trainee actually did, on a fair 0-100 scale (50 = attempted but weak, 70 = competent, 90+ = excellent). Give PARTIAL credit (roughly 50-70) for a criterion when the trainee made a real attempt, even if the caller did not agree or the step was not completed.",
     "Booking/closing/next-step criteria: if the trainee proposed a concrete appointment slot (a specific day and/or time window) but the caller never confirmed it, award partial credit (about 55-70). Award 80+ only when the slot was confirmed and the trainee recapped the details. Score below 30 only when no slot or next step was offered at all. Do not penalise the trainee for the caller's refusal or silence.",
     "goalStatus: 'achieved' (goal fully met, e.g. appointment confirmed), 'partial' (clear progress, e.g. a concrete slot was offered but not confirmed), or 'not_achieved' (little or no progress).",
@@ -84,7 +99,7 @@ async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluati
       name: c.name,
       weight: c.weight,
       score: Math.max(0, Math.min(100, Math.round(r?.score ?? 0))),
-      rationale: r?.rationale ?? "The grader returned no assessment for this criterion.",
+      rationale: r ? softenContradiction(r.rationale, evidence) : "The grader returned no assessment for this criterion.",
       evidence,
     };
   });
