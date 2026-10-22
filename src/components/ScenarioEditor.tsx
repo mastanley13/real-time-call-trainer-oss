@@ -85,6 +85,8 @@ export default function ScenarioEditor() {
     setErrors((e) => Object.fromEntries(Object.entries(e).filter(([k]) => !Object.keys(p).some((f) => (f === "rubric" ? k.startsWith("rubric") : k === f || k.startsWith(`${f}.`))))));
   };
   const patchPersona = (p: Partial<Scenario["aiPersona"]>) => patch({ aiPersona: { ...draft.aiPersona, ...p } });
+  // Heading shows the saved name until the draft is saved, so clearing the field mid-edit doesn't flip it to "Untitled".
+  const savedTitle = all.find((s) => s.id === draft.id)?.title || draft.title.trim() || "New scenario";
   const total = Math.round(draft.rubric.reduce((a, c) => a + (Number(c.weight) || 0), 0));
   const err = (k: string) => errors[k];
   const bad = (k: string) => ({ "aria-invalid": err(k) ? (true as const) : undefined, "aria-describedby": err(k) ? `err-${k}` : undefined });
@@ -139,7 +141,7 @@ export default function ScenarioEditor() {
 
       <div className="card space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-xl font-bold sm:text-2xl">{readOnly ? "Built-in scenario" : "Edit scenario"}: {draft.title || "Untitled"}</h1>
+          <h1 className="text-xl font-bold sm:text-2xl">{readOnly ? "Built-in scenario" : "Edit scenario"}: {savedTitle}</h1>
           <div className="flex flex-wrap gap-2">
             <Link href={`/trainer?scenario=${encodeURIComponent(draft.id)}`} className="btn-ghost"><Play size={16} /> Practice</Link>
             {all.some((s) => s.id === draft.id) && (
@@ -188,16 +190,17 @@ export default function ScenarioEditor() {
             </div>
             <div className="space-y-3">
               {draft.rubric.map((c, i) => (
-                <div key={c.id + i} className={`grid gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_90px_auto] ${Object.keys(errors).some((k) => k.startsWith(`rubric.${i}.`)) ? "border-red-600 bg-red-50/50" : "border-line"}`}>
+                <div key={c.id + i} className={`grid items-end gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_100px_auto] ${Object.keys(errors).some((k) => k.startsWith(`rubric.${i}.`)) ? "border-red-600 bg-red-50/50" : "border-line"}`}>
                   <div>
                   <input id={`rn-${i}`} aria-label={`Criterion ${i + 1} name`} placeholder="Name" className={field} {...bad(`rubric.${i}.name`)} value={c.name} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)) })} />
                   {msg(`rubric.${i}.name`)}
                   </div>
                   <div>
+                  <label htmlFor={`rw-${i}`} className="label !mb-1 whitespace-nowrap">Weight (%)</label>
                   <input id={`rw-${i}`} aria-label={`Criterion ${i + 1} weight`} type="number" min={0} max={100} className={field} {...bad(`rubric.${i}.weight`)} value={c.weight} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, weight: Number(e.target.value) } : r)) })} />
                   {msg(`rubric.${i}.weight`)}
                   </div>
-                  {!readOnly && <button type="button" aria-label={`Remove criterion ${i + 1}`} className="btn-ghost text-red-600" disabled={draft.rubric.length <= 1} onClick={() => patch({ rubric: draft.rubric.filter((_, j) => j !== i) })}><Trash2 size={16} /></button>}
+                  {!readOnly && <button type="button" aria-label={`Remove criterion ${i + 1}`} className="btn-ghost self-end text-red-700" disabled={draft.rubric.length <= 1} onClick={() => patch({ rubric: draft.rubric.filter((_, j) => j !== i) })}><Trash2 size={16} aria-hidden /> Remove</button>}
                   <div className="sm:col-span-3"><textarea id={`rd-${i}`} aria-label={`Criterion ${i + 1} description`} placeholder="What good looks like" rows={2} className={field} {...bad(`rubric.${i}.description`)} value={c.description} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, description: e.target.value } : r)) })} />{msg(`rubric.${i}.description`)}</div>
                 </div>
               ))}

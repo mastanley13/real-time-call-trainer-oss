@@ -47,6 +47,8 @@ export function Orb({
           antialias: true,
           premultipliedAlpha: true,
         }}
+        onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}
+        style={{ background: "transparent" }}
       >
         <Scene
           colors={colors}
@@ -231,8 +233,15 @@ function Scene({
   }, [gl])
 
   const uniforms = useMemo(() => {
+    // Noise is raw data (not colour): repeat-wrap, plain linear filtering (mipmaps
+    // cause seams where atan() wraps), and no sRGB decode.
     perlinNoiseTexture.wrapS = THREE.RepeatWrapping
     perlinNoiseTexture.wrapT = THREE.RepeatWrapping
+    perlinNoiseTexture.minFilter = THREE.LinearFilter
+    perlinNoiseTexture.magFilter = THREE.LinearFilter
+    perlinNoiseTexture.generateMipmaps = false
+    perlinNoiseTexture.colorSpace = THREE.NoColorSpace
+    perlinNoiseTexture.needsUpdate = true
     const isDark =
       typeof document !== "undefined" &&
       document.documentElement.classList.contains("dark")
@@ -481,17 +490,18 @@ void main() {
     color.rgb = 1.0 - (1.0 - color.rgb) * (1.0 - ringColor * totalRingAlpha);
 
     // Define colours to ramp against greyscale (could increase the amount of colours in the ramp)
-    vec3 color1 = vec3(0.0, 0.0, 0.0); // Black
-    vec3 color2 = uColor1; // Darker Color
-    vec3 color3 = uColor2; // Lighter Color
-    vec3 color4 = vec3(1.0, 1.0, 1.0); // White
+    // Soft ramp: no pure black or white stops, so wedges blend instead of reading as hard pinwheel blades.
+    vec3 color1 = uColor1 * 0.7;
+    vec3 color2 = uColor1;
+    vec3 color3 = uColor2;
+    vec3 color4 = mix(uColor2, vec3(1.0), 0.45);
 
     // Convert grayscale color to the color ramp
     float luminance = mix(color.r, 1.0 - color.r, uInverted);
     color.rgb = colorRamp(luminance, color1, color2, color3, color4); // Apply the color ramp
 
     // Apply fade-in opacity
-    color.a *= uOpacity;
+    color.a *= uOpacity * smoothstep(1.0, 0.9, radius);
 
     gl_FragColor = color;
 }

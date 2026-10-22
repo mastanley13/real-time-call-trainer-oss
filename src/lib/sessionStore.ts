@@ -74,3 +74,19 @@ export async function saveSession(s: Omit<StoredSession, "id" | "createdAt">, us
   }
   return saveLocal(s);
 }
+
+/** Re-insert a deleted session (undo), keeping newest-first order. */
+export function restoreLocalSession(s: StoredSession) {
+  const all = readLocal().filter((x) => x.id !== s.id);
+  localStorage.setItem(KEY, JSON.stringify([s, ...all].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50)));
+}
+
+/** Demo mode: wipe browser-stored sessions, custom scenarios and the editor draft. */
+export function resetDemoData() {
+  for (const k of [KEY, "rtct.scenarios.v1"]) localStorage.removeItem(k);
+  try {
+    sessionStorage.removeItem("rtct.editor.draft.v1");
+  } catch {
+    /* ignore */
+  }
+}

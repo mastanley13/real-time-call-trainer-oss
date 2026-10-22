@@ -16,6 +16,14 @@ export async function chat(
   messages: ChatMessage[],
   opts: { json?: boolean; maxTokens?: number; temperature?: number } = {},
 ): Promise<string> {
+  return (await chatFull(messages, opts)).text;
+}
+
+/** Like chat(), but also reports whether the model stopped because it hit max_tokens. */
+export async function chatFull(
+  messages: ChatMessage[],
+  opts: { json?: boolean; maxTokens?: number; temperature?: number } = {},
+): Promise<{ text: string; truncated: boolean }> {
   const key = llmKey();
   if (!key) throw new Error("LLM_NOT_CONFIGURED");
   const base = (process.env.LLM_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
@@ -53,7 +61,8 @@ export async function chat(
   const raw = data?.choices?.[0]?.message?.content;
   const text = Array.isArray(raw) ? raw.map((p: { text?: string }) => p?.text ?? "").join("") : raw;
   if (typeof text !== "string") throw new Error("LLM_BAD_RESPONSE");
-  return text;
+  const reason = data?.choices?.[0]?.finish_reason ?? data?.stop_reason;
+  return { text, truncated: reason === "length" || reason === "max_tokens" };
 }
 
 /** Parse a JSON object from model text that may be fenced or surrounded by prose. */

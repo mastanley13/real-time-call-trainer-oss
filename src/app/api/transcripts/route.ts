@@ -77,7 +77,9 @@ export async function GET(req: NextRequest) {
     where: { userId: auth.id },
     orderBy: { createdAt: "desc" },
     take: 100,
-    select: { id: true, scenarioId: true, scenarioTitle: true, scenarioCategory: true, durationSeconds: true, overallScore: true, grade: true, goalAchieved: true, createdAt: true },
+    select: { id: true, scenarioId: true, scenarioTitle: true, scenarioCategory: true, durationSeconds: true, overallScore: true, grade: true, goalAchieved: true, createdAt: true, evaluation: true },
   });
-  return NextResponse.json({ sessions: rows });
+  // Only expose the grader version, not the whole evaluation blob.
+  const sessions = rows.map(({ evaluation, ...r }) => ({ ...r, graderVersion: (evaluation as { graderVersion?: string } | null)?.graderVersion ?? null }));
+  return NextResponse.json({ sessions });
 }

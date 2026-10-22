@@ -20,8 +20,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en" className={`${inter.variable} ${sora.variable}`}>
       <body className="min-h-screen">
         <AuthProvider>
+          <a href="#main" className="skip-link">Skip to content</a>
           <SiteHeader />
-          <main>{children}</main>
+          <main id="main" tabIndex={-1} className="outline-none">{children}</main>
         </AuthProvider>
       </body>
     </html>

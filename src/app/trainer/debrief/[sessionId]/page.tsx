@@ -7,7 +7,7 @@ import { Printer, RotateCcw, Quote, CheckCircle2, TrendingUp, Target, ArrowRight
 import { useAuth } from "@/contexts/AuthContext";
 import { getLocalSession } from "@/lib/sessionStore";
 import type { Evaluation } from "@/lib/grader-types";
-import { scoreLabel } from "@/lib/grader-types";
+import { goalStatusOf, isLegacyGrader, scoreLabel } from "@/lib/grader-types";
 import { formatDuration } from "@/lib/format";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 
@@ -113,14 +113,21 @@ export default function DebriefPage() {
             <div className="flex flex-col items-center gap-2">
               <ScoreRing score={ev.overallScore} grade={ev.grade} />
               <p className="font-heading text-lg font-bold">{scoreLabel(ev.overallScore)}</p>
-              <span className="badge bg-slate-100 text-ink-soft">{ev.method === "llm" ? "AI-graded" : "Automatic estimate"}</span>
+              <span className="badge bg-slate-100 text-ink-soft">{isLegacyGrader(ev) ? "Legacy grader" : ev.method === "llm" ? "AI-graded" : "Automatic estimate"}</span>
             </div>
             <div className="min-w-0 flex-1 space-y-4">
               <p className="text-base leading-relaxed text-ink-soft">{friendlySummary(ev)}</p>
-              <p className={`flex items-start gap-2 rounded-xl p-3 text-sm ${ev.goalAchievement.achieved ? "bg-accent-soft text-ink" : "bg-amber-50 text-amber-900"}`}>
-                <Target size={16} className="mt-0.5 shrink-0" aria-hidden />
-                <span><strong>Goal {ev.goalAchievement.achieved ? "achieved" : "not achieved"}.</strong> {ev.goalAchievement.explanation}</span>
-              </p>
+              {(() => {
+                const gs = goalStatusOf(ev);
+                const tone = { achieved: "bg-accent-soft text-ink", partial: "bg-blue-50 text-blue-950", not_achieved: "bg-amber-50 text-amber-900" }[gs];
+                const label = { achieved: "Goal achieved", partial: "Goal partially achieved", not_achieved: "Goal not achieved" }[gs];
+                return (
+                  <p className={`flex items-start gap-2 rounded-xl p-3 text-sm ${tone}`}>
+                    <Target size={16} className="mt-0.5 shrink-0" aria-hidden />
+                    <span><strong>{label}.</strong> {ev.goalAchievement.explanation}</span>
+                  </p>
+                );
+              })()}
             </div>
           </div>
 
@@ -156,7 +163,7 @@ export default function DebriefPage() {
             {ev.criteria.map((c) => (
               <div key={c.id} className="card">
                 <div className="flex items-baseline justify-between gap-3">
-                  <h3 className="text-base font-semibold">{c.name} <span className="ml-1 text-xs font-normal text-ink-muted">weight {Math.round(c.weight)}%</span></h3>
+                  <h3 className="text-base font-semibold">{c.name} <span className="ml-1 whitespace-nowrap text-xs font-normal text-ink-muted">weight {Math.round(c.weight)}%</span></h3>
                   <span className={`font-heading text-xl font-bold ${scoreText(c.score)}`}>{c.score}<span className="text-sm">/100</span></span>
                 </div>
                 <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100" role="meter" aria-label={`${c.name} score`} aria-valuenow={c.score} aria-valuemin={0} aria-valuemax={100}>

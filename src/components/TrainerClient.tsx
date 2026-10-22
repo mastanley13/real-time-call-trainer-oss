@@ -17,7 +17,7 @@ import { PageSkeleton } from "@/components/ui/Skeleton";
 type Mode = "voice" | "text";
 type Phase = "idle" | "live" | "grading";
 
-interface TextInput { value: string; onChange: (v: string) => void; onSend: () => void; busy: boolean }
+interface TextInput { value: string; onChange: (v: string) => void; onSend: () => void; hungUp?: boolean }
 
 interface StageProps {
   scenario: Scenario;
@@ -53,19 +53,31 @@ function TalkTrack({ scenario, className = "" }: { scenario: Scenario; className
 function CallStage({ scenario, turns, elapsed, orbState, status, grading, onEnd, muted, onToggleMute, getInputVolume, getOutputVolume, manual, text, typing }: StageProps) {
   const logRef = useRef<HTMLDivElement>(null);
   const [showTrack, setShowTrack] = useState(false);
+  const stickRef = useRef(true);
   const persona = scenario.aiPersona;
 
   useEffect(() => {
     setShowTrack(window.matchMedia("(min-width: 1024px)").matches);
   }, []);
+  // Follow new messages and the typing indicator, unless the user scrolled up to read.
   useEffect(() => {
-    logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
+    const el = logRef.current;
+    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [turns, typing]);
+  const lastRole = turns[turns.length - 1]?.role;
+  useEffect(() => {
+    // Sending your own message always jumps back to the bottom.
+    if (lastRole === "user") {
+      stickRef.current = true;
+      const el = logRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+  }, [lastRole, turns.length]);
 
   return (
     <div className="enter lg:grid lg:grid-cols-[1fr_auto] lg:gap-6">
-      <section className="flex min-w-0 flex-col overflow-hidden rounded-3xl border border-line bg-white shadow-card lg:min-h-[600px]" aria-label="Call">
-        <div className="relative flex flex-col items-center bg-gradient-to-b from-primary-soft/60 to-white px-4 pb-4 pt-5 text-center sm:pt-6">
+      <section className="flex h-[calc(100dvh-9.5rem)] min-h-[360px] min-w-0 flex-col overflow-hidden rounded-3xl border border-line bg-white shadow-card lg:h-auto lg:min-h-[600px]" aria-label="Call">
+        <div className="relative flex shrink-0 flex-col items-center bg-gradient-to-b from-primary-soft/60 to-white px-4 pb-4 pt-5 text-center sm:pt-6">
           <CallOrb state={orbState} getInputVolume={getInputVolume} getOutputVolume={getOutputVolume} manual={manual} className="h-28 w-28 sm:h-40 sm:w-40" />
           <h2 className="mt-2 text-lg font-bold sm:text-xl">{persona.name}</h2>
           <p className="text-sm text-ink-muted">{persona.role}</p>
@@ -75,7 +87,7 @@ function CallStage({ scenario, turns, elapsed, orbState, status, grading, onEnd,
           </p>
         </div>
 
-        <div ref={logRef} className="flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6 lg:max-h-[360px]" aria-live="polite" aria-label="Live transcript">
+        <div ref={logRef} onScroll={(e) => { const el = e.currentTarget; stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6 lg:max-h-[360px]" aria-live="polite" aria-label="Live transcript">
           {turns.length === 0 && !typing && <p className="py-6 text-center text-sm text-ink-muted">The transcript appears here as you talk.</p>}
           {turns.map((t, i) => {
             const me = t.role === "user";
@@ -102,12 +114,18 @@ function CallStage({ scenario, turns, elapsed, orbState, status, grading, onEnd,
           )}
         </div>
 
-        {/* Control bar: fixed to the bottom on phones, inline on desktop. */}
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-white/95 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur lg:static lg:px-6">
-          {text && !grading && (
+        {/* Control bar: pinned to the bottom of the call card (the transcript takes the remaining height). */}
+        <div className="shrink-0 border-t border-line bg-white px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 lg:px-6">
+          {text?.hungUp && !grading && (
+            <div className="mx-auto mb-3 flex max-w-2xl flex-col items-center gap-2 rounded-2xl bg-amber-50 p-3 text-center text-sm text-amber-900 sm:flex-row sm:justify-between sm:text-left" role="status">
+              <span><strong>{persona.name} hung up.</strong> The call is over.</span>
+              <button className="btn-primary btn-pill" onClick={onEnd}>Grade this call</button>
+            </div>
+          )}
+          {text && !grading && !text.hungUp && (
             <form className="mx-auto mb-3 flex max-w-2xl gap-2" onSubmit={(e) => { e.preventDefault(); text.onSend(); }}>
-              <input className="input !rounded-full !px-4" value={text.value} onChange={(e) => text.onChange(e.target.value)} placeholder="Type what you would say…" aria-label="Your reply" disabled={text.busy} autoFocus />
-              <button className="btn-primary btn-pill !px-4" disabled={text.busy || !text.value.trim()} aria-label="Send"><Send size={16} /></button>
+              <input className="input !rounded-full !px-4" value={text.value} onChange={(e) => text.onChange(e.target.value)} placeholder="Type what you would say…" aria-label="Your reply" autoFocus />
+              <button className="btn-primary btn-pill !px-4" disabled={!text.value.trim()} aria-label="Send"><Send size={16} /></button>
             </form>
           )}
           <div className="mx-auto flex max-w-2xl items-center justify-between gap-3">
@@ -121,7 +139,7 @@ function CallStage({ scenario, turns, elapsed, orbState, status, grading, onEnd,
                   {muted ? <MicOff size={18} /> : <Mic size={18} />}
                 </button>
               )}
-              <button className="btn-danger btn-pill !px-5" onClick={onEnd} disabled={grading}><PhoneOff size={16} /> End call</button>
+              <button className="btn-danger btn-pill !px-5" onClick={onEnd} disabled={grading}><PhoneOff size={16} /> {text?.hungUp ? "Grade call" : "End call"}</button>
               <button className={`btn-ghost btn-pill !h-11 !w-11 !p-0 ${showTrack ? "!border-primary !text-primary" : ""}`} onClick={() => setShowTrack((v) => !v)} aria-pressed={showTrack} aria-label="Toggle talk track"><BookOpen size={18} /></button>
             </div>
           </div>
@@ -129,7 +147,7 @@ function CallStage({ scenario, turns, elapsed, orbState, status, grading, onEnd,
       </section>
 
       {showTrack && (
-        <aside className="enter fixed inset-x-3 bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-20 max-h-[50vh] overflow-y-auto rounded-2xl border border-line bg-white p-5 shadow-pop lg:static lg:inset-auto lg:max-h-none lg:w-80 lg:shadow-card" aria-label="Talk track">
+        <aside className="enter fixed inset-x-3 bottom-[calc(6rem+env(safe-area-inset-bottom))] z-20 max-h-[50vh] overflow-y-auto rounded-2xl border border-line bg-white p-5 shadow-pop lg:static lg:inset-auto lg:max-h-none lg:w-80 lg:shadow-card" aria-label="Talk track">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="font-heading text-base font-bold">Talk track</h2>
             <button className="rounded-lg p-1.5 text-ink-muted hover:bg-slate-100" onClick={() => setShowTrack(false)} aria-label="Close talk track"><X size={16} /></button>
@@ -215,6 +233,8 @@ export default function TrainerClient() {
   const [input, setInput] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [hungUp, setHungUp] = useState(false);
+  const pendingRef = useRef(false); // a reply request is in flight or queued messages are waiting
   const [elapsed, setElapsed] = useState(0);
   const startedAt = useRef(0);
   const endVoice = useRef<() => void>(() => {});
@@ -294,6 +314,9 @@ export default function TrainerClient() {
     setTurns([]);
     finishing.current = false;
     setReplyTalking(false);
+    setHungUp(false);
+    setBusy(false);
+    pendingRef.current = false;
     startedAt.current = Date.now();
     setElapsed(0);
     setPhase("live");
@@ -305,30 +328,47 @@ export default function TrainerClient() {
     else void finish();
   }
 
-  async function sendText() {
-    const text = input.trim();
-    if (!text || busy || !scenario) return;
-    setInput("");
-    addTurn({ role: "user", text });
+  /** Drains queued trainee messages: each round answers everything said so far in one turn; nothing is dropped. */
+  async function drainReplies() {
+    if (pendingRef.current || !scenario) return;
+    pendingRef.current = true;
     setBusy(true);
     try {
-      const res = await fetch("/api/simulate/turn", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scenario, history: turnsRef.current.map(({ role, text }) => ({ role, text })) }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Simulation failed");
-      addTurn({ role: "assistant", text: data.reply });
-      // No audio in text mode: let the orb "talk" for roughly as long as the reply would take to say.
-      setReplyTalking(true);
-      clearTimeout(talkTimer.current);
-      talkTimer.current = setTimeout(() => setReplyTalking(false), Math.min(4000, 900 + data.reply.length * 25));
+      // Keep going while the newest turn is the trainee's (they sent more while we waited).
+      while (!finishing.current && turnsRef.current[turnsRef.current.length - 1]?.role === "user") {
+        const sent = turnsRef.current;
+        const res = await fetch("/api/simulate/turn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ scenario, history: sent.map(({ role, text }) => ({ role, text })) }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Simulation failed");
+        if (finishing.current) break;
+        // Slot the reply in right after the messages it answered; later queued messages stay unanswered for the next round.
+        const reply: StoredTurn = { role: "assistant", text: data.reply, timestamp: new Date().toISOString() };
+        turnsRef.current = [...turnsRef.current.slice(0, sent.length), reply, ...turnsRef.current.slice(sent.length)];
+        setTurns(turnsRef.current);
+        // No audio in text mode: let the orb "talk" for roughly as long as the reply would take to say.
+        setReplyTalking(true);
+        clearTimeout(talkTimer.current);
+        talkTimer.current = setTimeout(() => setReplyTalking(false), Math.min(4000, 900 + data.reply.length * 25));
+        if (data.ended) { setHungUp(true); break; }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Simulation failed");
     } finally {
+      pendingRef.current = false;
       setBusy(false);
     }
+  }
+
+  function sendText() {
+    const text = input.trim();
+    if (!text || !scenario || hungUp || finishing.current) return;
+    setInput("");
+    addTurn({ role: "user", text });
+    void drainReplies();
   }
 
   if (!scenario || !capabilities) return <PageSkeleton rows={2} />;
@@ -339,12 +379,12 @@ export default function TrainerClient() {
   const persona = scenario.aiPersona;
 
   const textOrb: AgentState = grading || busy ? "thinking" : replyTalking ? "talking" : "listening";
-  const textStatus = grading ? "Grading your call…" : busy ? `${persona.name} is typing…` : replyTalking ? `${persona.name} is replying` : "Your turn";
+  const textStatus = grading ? "Grading your call…" : hungUp ? `${persona.name} hung up` : busy ? `${persona.name} is typing…` : replyTalking ? `${persona.name} is replying` : "Your turn";
 
   const onVoiceError = (m: string) => { setError(m); if (turnsRef.current.length === 0) setPhase("idle"); };
 
   return (
-    <div className={`page ${inCall ? `space-y-4 ${mode === "text" ? "pb-44" : "pb-28"} lg:pb-10` : "grid gap-6 lg:grid-cols-[1fr_400px]"}`}>
+    <div className={`page ${inCall ? "space-y-4 !pb-4 lg:!pb-10" : "grid gap-6 lg:grid-cols-[1fr_400px]"}`}>
       <h1 className={`font-bold lg:col-span-2 ${inCall ? "truncate text-lg sm:text-2xl" : "text-xl sm:text-3xl"}`}>Practice: {scenario.title}</h1>
       {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 lg:col-span-2">{error}</p>}
 
@@ -357,7 +397,7 @@ export default function TrainerClient() {
           <CallStage
             scenario={scenario} turns={turns} elapsed={elapsed} orbState={textOrb} status={textStatus} grading={grading} onEnd={hangUp}
             manual={{ input: textOrb === "listening" ? 0.25 : 0, output: textOrb === "talking" ? 0.6 : 0 }}
-            text={{ value: input, onChange: setInput, onSend: () => void sendText(), busy }} typing={busy}
+            text={{ value: input, onChange: setInput, onSend: sendText, hungUp }} typing={busy && !hungUp}
           />
         )
       ) : (
@@ -390,10 +430,16 @@ export default function TrainerClient() {
               </div>
             )}
 
-            <button className="btn-accent btn-pill btn-xl mt-5 w-full max-w-xs shadow-orb" onClick={begin} disabled={mode === "voice" && !voiceReady}>
+            <button className="btn-accent btn-pill btn-xl mt-5 w-full max-w-xs shadow-orb" onClick={begin} disabled={mode === "voice" && !voiceReady} aria-describedby="start-hint">
               <Mic size={20} /> Start {mode === "voice" ? "call" : "simulation"}
             </button>
-            <p className="mt-3 text-xs text-ink-muted">{mode === "voice" ? "Your browser will ask for microphone access." : "Type your side of the call; the caller replies instantly."}</p>
+            <p className="mt-3 max-w-xs text-xs text-ink-soft" id="start-hint">
+              {mode === "voice" && !voiceReady
+                ? "Start is unavailable: voice calls aren’t configured on this server. Switch to Text to practise, or ask your admin to add ElevenLabs."
+                : mode === "voice"
+                  ? "Your browser will ask for microphone access when the call starts."
+                  : "Type your side of the call; the caller replies instantly."}
+            </p>
           </section>
 
           <aside className="order-2 space-y-4 lg:order-1">
@@ -420,7 +466,7 @@ export default function TrainerClient() {
                 <details className="rounded-xl bg-slate-50 p-3">
                   <summary className="cursor-pointer font-semibold">Rubric ({scenario.rubric.length})</summary>
                   <ul className="mt-2 space-y-1 text-xs text-ink-soft">
-                    {scenario.rubric.map((c) => <li key={c.id} className="flex justify-between gap-2"><span>{c.name}</span><span className="font-semibold">{Math.round(c.weight)}%</span></li>)}
+                    {scenario.rubric.map((c) => <li key={c.id} className="flex justify-between gap-2"><span>{c.name}</span><span className="shrink-0 whitespace-nowrap font-semibold">{Math.round(c.weight)}%</span></li>)}
                   </ul>
                   <p className={`mt-2 text-xs ${Math.round(total) === 100 ? "text-ink-muted" : "font-semibold text-amber-800"}`}>
                     Weights total {Math.round(total)}%{Math.round(total) === 100 ? "" : " (not 100, so scores are rescaled)"}

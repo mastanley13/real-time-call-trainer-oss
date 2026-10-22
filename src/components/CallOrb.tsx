@@ -6,7 +6,7 @@ import type { AgentState } from "@/components/ui/orb";
 
 export type { AgentState };
 
-const ORB_COLORS: [string, string] = ["#1D4ED8", "#14B8A6"];
+const ORB_COLORS: [string, string] = ["#BFD3FF", "#9FE7DD"];
 
 /** Static brand gradient: SSR/loading state, reduced-motion users, and browsers without WebGL. */
 function OrbFallback({ state }: { state: AgentState }) {

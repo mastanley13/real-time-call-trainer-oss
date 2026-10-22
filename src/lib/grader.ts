@@ -9,7 +9,8 @@ export interface Turn {
   text: string;
 }
 
-import type { CriterionResult, Evaluation } from "./grader-types";
+import type { CriterionResult, Evaluation, GoalStatus } from "./grader-types";
+import { GRADER_VERSIONS } from "./grader-types";
 export type { CriterionResult, Evaluation };
 
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").replace(/[“”]/g, '"').replace(/[‘’]/g, "'").trim();
@@ -42,7 +43,8 @@ const LlmOutput = z.object({
   ),
   strengths: z.array(z.string()).default([]),
   improvements: z.array(z.string()).default([]),
-  goalAchieved: z.boolean(),
+  goalStatus: z.enum(["achieved", "partial", "not_achieved"]).optional(),
+  goalAchieved: z.boolean().optional(),
   goalExplanation: z.string().default(""),
 });
 
@@ -53,7 +55,10 @@ async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluati
     "The TRAINEE is the human practising. The CALLER is an AI persona. Grade only the trainee.",
     "For EVERY rubric criterion give a 0-100 score, a one-or-two sentence rationale, and 1-3 evidence quotes.",
     "Evidence quotes MUST be copied verbatim from the transcript (a contiguous substring of one turn). Never invent or paraphrase. If there is no supporting evidence, return an empty evidence array and score low.",
-    "Respond with JSON only: {summary, criteria:[{id, score, rationale, evidence:[{speaker:'trainee'|'caller', quote}]}], strengths:[], improvements:[], goalAchieved:boolean, goalExplanation}.",
+    "Calibration: score what the trainee actually did, on a fair 0-100 scale (50 = attempted but weak, 70 = competent, 90+ = excellent). Give PARTIAL credit (roughly 50-70) for a criterion when the trainee made a real attempt, even if the caller did not agree or the step was not completed.",
+    "Booking/closing/next-step criteria: if the trainee proposed a concrete appointment slot (a specific day and/or time window) but the caller never confirmed it, award partial credit (about 55-70). Award 80+ only when the slot was confirmed and the trainee recapped the details. Score below 30 only when no slot or next step was offered at all. Do not penalise the trainee for the caller's refusal or silence.",
+    "goalStatus: 'achieved' (goal fully met, e.g. appointment confirmed), 'partial' (clear progress, e.g. a concrete slot was offered but not confirmed), or 'not_achieved' (little or no progress).",
+    "Respond with JSON only: {summary, criteria:[{id, score, rationale, evidence:[{speaker:'trainee'|'caller', quote}]}], strengths:[], improvements:[], goalStatus:'achieved'|'partial'|'not_achieved', goalExplanation}.",
   ].join("\n");
   const user = [
     `SCENARIO: ${scenario.title} (${scenario.industry})`,
@@ -84,15 +89,17 @@ async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluati
     };
   });
   const overallScore = weightedOverall(criteria);
+  const status: GoalStatus = out.goalStatus ?? (out.goalAchieved ? "achieved" : "not_achieved");
   return {
     method: "llm",
+    graderVersion: GRADER_VERSIONS.llm,
     overallScore,
     grade: gradeFor(overallScore),
     summary: out.summary,
     criteria,
     strengths: out.strengths.slice(0, 5),
     improvements: out.improvements.slice(0, 5),
-    goalAchievement: { achieved: out.goalAchieved, explanation: out.goalExplanation },
+    goalAchievement: { achieved: status === "achieved", status, explanation: out.goalExplanation },
   };
 }
 
@@ -109,6 +116,18 @@ const keywordsOf = (s: string) => [...new Set(norm(s).replace(/[^a-z0-9' ]/g, " 
 
 const MAX_HITS_PER_SENTENCE = 2;
 const GREETING_RE = /\b(hello|hi|hey|good (?:morning|afternoon|evening)|thanks? (?:you )?for calling|thank you for calling|this is|my name is|speaking|how can i help)\b/i;
+
+const BOOKING_CRITERION_RE = /book|clos|appoint|schedul|next.?step|commit|confirm|wrap/i;
+const SLOT_TIME_RE = /\b(\d{1,2}(:\d{2})?\s?(a\.?m\.?|p\.?m\.?)|noon|tomorrow|today|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week|this (morning|afternoon|evening|week)|(morning|afternoon|evening) (window|slot))\b/i;
+const SLOT_OFFER_RE = /\b(how about|would .* work|does .* work|can (do|offer|get|send|have)|i have|we have|available|opening|slot|window|come out|stop by|schedule|book|appointment|visit|see you)\b/i;
+const SLOT_CONFIRM_RE = /\b(confirm(ed|ing)?|you're (booked|all set|scheduled)|i've (booked|scheduled|put you)|locked in|see you (then|at|on|tomorrow)|all set)\b/i;
+
+/** Trainee proposed a concrete day/time slot (offered) and/or confirmed one (confirmed). */
+export function detectSlotOffer<T extends { text: string; line: number }>(sentences: T[]): { offered?: T; confirmed?: T } {
+  const offered = sentences.find((s) => SLOT_TIME_RE.test(s.text) && SLOT_OFFER_RE.test(s.text));
+  const confirmed = offered ? sentences.find((s) => SLOT_TIME_RE.test(s.text) && SLOT_CONFIRM_RE.test(s.text)) : undefined;
+  return { offered, confirmed };
+}
 
 interface Sentence {
   line: number; // 1-based transcript position
@@ -148,6 +167,7 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
     turnNo++;
   });
   const rep = repetitionPenalty(sentences);
+  const slot = detectSlotOffer(sentences);
 
   const criteria: CriterionResult[] = rubric.map((c) => {
     const kws = keywordsOf(`${c.name} ${c.description}`);
@@ -182,7 +202,16 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
       bonus += Math.min(15, 5 * sentences.filter((s) => s.text.includes("?")).length);
     }
     const raw = 20 + coverage * 80 + bonus;
-    const score = sentences.length === 0 ? 0 : Math.max(0, Math.min(100, Math.round(raw * (1 - 0.4 * rep))));
+    let score = sentences.length === 0 ? 0 : Math.max(0, Math.min(100, Math.round(raw * (1 - 0.4 * rep))));
+    // Offering a concrete slot earns partial booking/closing credit; confirming it earns more.
+    let slotNote = "";
+    if (BOOKING_CRITERION_RE.test(`${c.id} ${c.name}`) && slot.offered) {
+      const floor = slot.confirmed ? 80 : 60;
+      if (score < floor) score = floor;
+      const s = slot.confirmed ?? slot.offered;
+      evidenceSentences.unshift(s);
+      slotNote = slot.confirmed ? "You offered a concrete slot and confirmed it." : "You offered a concrete appointment slot (not yet confirmed), which earns partial credit.";
+    }
     const seenLines = new Set<number>();
     const evidence = evidenceSentences
       .filter((s) => !seenLines.has(s.line) && seenLines.add(s.line))
@@ -193,17 +222,19 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
       name: c.name,
       weight: c.weight,
       score,
-      rationale: evidence.length
+      rationale: slotNote ? slotNote : evidence.length
         ? `You addressed ${Math.min(credited, kws.length)} of ${kws.length} expected points for this area${rep > 0.3 ? ", but repeated yourself a lot" : ""}.`
         : "Nothing you said clearly addressed this area.",
       evidence,
     };
   });
   const overallScore = weightedOverall(criteria);
+  const goalStatus: GoalStatus = overallScore >= 70 || (slot.confirmed && overallScore >= 60) ? "achieved" : overallScore >= 45 || slot.offered ? "partial" : "not_achieved";
   const weak = criteria.filter((c) => c.score < 60);
   const strong = criteria.filter((c) => c.score >= 75);
   return {
     method: "heuristic",
+    graderVersion: GRADER_VERSIONS.heuristic,
     overallScore,
     grade: gradeFor(overallScore),
     summary: `Automatic estimate: ${overallScore}/100, based on how many of the rubric's topics you covered.`,
@@ -211,7 +242,8 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
     strengths: strong.map((c) => `${c.name}: you covered this well.`),
     improvements: weak.map((c) => `${c.name}: ${rubric.find((r) => r.id === c.id)?.description || "bring this up more clearly."}`),
     goalAchievement: {
-      achieved: overallScore >= 70,
+      achieved: goalStatus === "achieved",
+      status: goalStatus,
       explanation: `Goal: ${scenario.traineeGoal} (estimated from your overall score).`,
     },
     note: note ?? "This is an automatic estimate that counts topic coverage. It can't judge tone or quality like AI grading can.",
