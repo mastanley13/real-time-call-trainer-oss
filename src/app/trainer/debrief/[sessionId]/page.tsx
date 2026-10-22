@@ -165,7 +165,8 @@ export default function DebriefPage() {
             {ev.criteria.map((c) => (
               <div key={c.id} className="card">
                 <div className="flex items-baseline justify-between gap-3">
-                  <h3 className="text-base font-semibold">{c.name} <span className="ml-1 whitespace-nowrap text-xs font-normal text-ink-muted">weight {Math.round(c.weight)}%</span></h3>
+                  <h3 className="min-w-0 flex-1 text-base font-semibold">{c.name}</h3>
+                  <span className="shrink-0 whitespace-nowrap text-xs font-normal text-ink-muted">weight {Math.round(c.weight)}%</span>
                   <span className={`font-heading text-xl font-bold ${scoreText(c.score)}`}>{c.score}<span className="text-sm">/100</span></span>
                 </div>
                 <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100" role="meter" aria-label={`${c.name} score`} aria-valuenow={c.score} aria-valuemin={0} aria-valuemax={100}>

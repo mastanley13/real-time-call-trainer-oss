@@ -48,26 +48,18 @@ const LlmOutput = z.object({
   goalExplanation: z.string().default(""),
 });
 
-const NEGATION_RE = /\b(?:did not|didn't|never|missed|failed to|did no)\b([^.!?]*)/gi;
+const NEGATION_RE = /\b(?:did not|didn't|never|missed|failed to|did no)\b(.*)/i;
 
-/** If a rationale says the trainee missed a concept that a trainee quote under the same criterion contains, flag it rather than leave a contradiction. */
-function softenContradiction(rationale: string, evidence: CriterionResult["evidence"]): string {
+/** Drops any sentence claiming a miss for a concept that a trainee quote under the same criterion contains. */
+function dropContradictions(rationale: string, evidence: CriterionResult["evidence"]): string {
   const quotes = evidence.filter((e) => e.speaker === "trainee");
   if (!quotes.length) return rationale;
-  for (const m of rationale.matchAll(NEGATION_RE)) {
-    const hit = keywordsOf(m[1]).map(wordRe).some((re) => quotes.some((q) => re.test(q.quote)));
-    if (hit) return rationale.replace(m[0], (s) => softenClause(s));
-  }
-  return rationale;
+  const kept = splitSentences(rationale).filter((sentence) => {
+    const m = NEGATION_RE.exec(sentence);
+    return !(m && keywordsOf(m[1]).map(wordRe).some((re) => quotes.some((q) => re.test(q.quote))));
+  });
+  return kept.length ? kept.join(" ") : "You made a real attempt at this; see the quotes below.";
 }
-
-/** Rewrites a "did not ..." clause into neutral wording, e.g. "did not mention X" -> "partly covered X". */
-function softenClause(clause: string): string {
-  const rest = clause.replace(NEGATION_LEAD_RE, "").trim();
-  return rest ? `partly covered ${rest}` : "partly covered this";
-}
-const NEGATION_LEAD_RE = /^(?:did not|didn't|never|missed|failed to|did no)\s+(?:(?:mention|address|cover|ask|explain|offer|confirm|acknowledge|provide|include|discuss)\s+)?/i;
-
 
 async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluation> {
   const rubric = normalizeWeights(scenario.rubric);
@@ -76,7 +68,8 @@ async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluati
     "The TRAINEE is the human practising. The CALLER is an AI persona. Grade only the trainee.",
     "For EVERY rubric criterion give a 0-100 score, a one-or-two sentence rationale, and 1-3 evidence quotes.",
     "Evidence quotes MUST be copied verbatim from the transcript (a contiguous substring of one turn). Never invent or paraphrase. If there is no supporting evidence, return an empty evidence array and score low.",
-    "VERIFY BEFORE CLAIMING A MISS: before you write that the trainee missed, skipped, never did or did not do something, search the whole TRAINEE transcript for it first. If it appears anywhere, it is NOT a miss: credit it and quote it.",
+    "VERIFY BEFORE CLAIMING A MISS: before you write that the trainee missed, skipped, never did or did not do something, search the whole TRAINEE transcript for it first. If it appears anywhere, it is NOT a miss: credit it and quote it. If something was only partly covered, say so in a natural, complete sentence (e.g. 'You mentioned the fee but did not explain how it is billed.'); never use stock phrases or fragments.",
+    "VOICE: write ALL feedback (summary, rationales, strengths, improvements, goalExplanation) in the second person, addressing the trainee as 'you'. Never use the trainee's name, 'the trainee', or 'the rep'. Every item must be a natural, grammatical, complete sentence.",
     "Evidence quotes belong ONLY under the criterion they directly support; never reuse a quote under an unrelated criterion. The rationale and evidence of a criterion must agree: never say the trainee 'did not' do something that a quote under the same criterion shows they did.",
     "Calibration: score what the trainee actually did, on a fair 0-100 scale (50 = attempted but weak, 70 = competent, 90+ = excellent). Give PARTIAL credit (roughly 50-70) for a criterion when the trainee made a real attempt, even if the caller did not agree or the step was not completed.",
     "Booking/closing/next-step criteria: if the trainee proposed a concrete appointment slot (a specific day and/or time window) but the caller never confirmed it, award partial credit (about 55-70). Award 80+ only when the slot was confirmed and the trainee recapped the details. Score below 30 only when no slot or next step was offered at all. Do not penalise the trainee for the caller's refusal or silence.",
@@ -107,7 +100,7 @@ async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluati
       name: c.name,
       weight: c.weight,
       score: Math.max(0, Math.min(100, Math.round(r?.score ?? 0))),
-      rationale: r ? softenContradiction(r.rationale, evidence) : "The grader returned no assessment for this criterion.",
+      rationale: r ? dropContradictions(r.rationale, evidence) : "The grader returned no assessment for this criterion.",
       evidence,
     };
   });
@@ -262,12 +255,12 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
     grade: gradeFor(overallScore),
     summary: `Automatic estimate: ${overallScore}/100, based on how many of the rubric's topics you covered.`,
     criteria,
-    strengths: strong.map((c) => `${c.name}: you covered this well.`),
-    improvements: weak.map((c) => `${c.name}: ${rubric.find((r) => r.id === c.id)?.description || "bring this up more clearly."}`),
+    strengths: strong.map((c) => `You covered ${c.name} well.`),
+    improvements: weak.map((c) => `You could cover ${c.name} more clearly and completely.`),
     goalAchievement: {
       achieved: goalStatus === "achieved",
       status: goalStatus,
-      explanation: `Goal: ${scenario.traineeGoal} (estimated from your overall score).`,
+      explanation: `Your goal was: ${scenario.traineeGoal.replace(/[.!?\s]+$/, "")}. This status is estimated from your overall score.`,
     },
     note: note ?? "This is an automatic estimate that counts topic coverage. It can't judge tone or quality like AI grading can.",
   };
