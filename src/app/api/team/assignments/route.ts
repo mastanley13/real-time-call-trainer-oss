@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
+import { LIBRARY } from "@/lib/personas";
 import { AssignmentInputSchema, assignmentInputMessage, assignmentProgress, canManageTeam, parseDueAt, teamIdsOf, toAssignmentView } from "@/lib/team";
 import { forbidden, limitFor, loadActor, loadAssignmentViews, noOrganization, orgMembers, serverError, teamIsLocal, toAssignment } from "../_lib/server";
 
@@ -18,6 +19,7 @@ import { forbidden, limitFor, loadActor, loadAssignmentViews, noOrganization, or
 
 const Scope = z.enum(["team", "mine"]).optional();
 const IdParam = z.string().trim().min(1).max(64);
+const LIBRARY_IDS = new Set(LIBRARY.map((s) => s.id));
 const localOnly = () =>
   NextResponse.json({ error: "local_only", message: "Demo mode keeps assignments in this browser. Connect a database to share them with your team." }, { status: 400 });
 const writeLimit = (userId: string) => limitFor(`team:assign:${userId}`, 20, 60_000);
@@ -61,6 +63,12 @@ export async function POST(req: NextRequest) {
     body = parsed.data;
   } catch {
     return NextResponse.json({ error: "invalid_request", message: "The request body was not valid JSON." }, { status: 400 });
+  }
+
+  // Only library personas: the server grades them on its own copy of the rubric, so completion means the same for
+  // everyone. A custom persona's rubric lives in one browser, and a rep could write an easy one to complete it.
+  if (!LIBRARY_IDS.has(body.scenarioId)) {
+    return NextResponse.json({ error: "invalid_persona", message: "Only library personas can be assigned. Pick one from the list." }, { status: 400 });
   }
 
   const now = new Date();

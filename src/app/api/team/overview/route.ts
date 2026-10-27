@@ -64,17 +64,24 @@ export async function GET(req: NextRequest) {
     ]);
 
     const title = (id: string, t: string | null) => t ?? titles.get(id) ?? id;
+    // A custom persona's rubric comes from the rep's own browser, so its grade can't be compared across the team:
+    // the call still counts as practice, but its score, criteria and goal stay out of team numbers.
+    const ownRubric = (id: string) => !titles.has(id);
+    const unscored = { score: null, criteria: [], goalAchieved: null };
     const sessions: TeamSession[] = [
       // gradeOf drops criteria along with the score for legacy keyword-grader rows, so they never reach the matrix or queue.
       ...windowRows.map((r) => ({
         id: r.id, userId: r.userId, scenarioId: r.scenarioId, scenarioTitle: title(r.scenarioId, r.scenarioTitle),
         ...gradeOf(r.overallScore, r.evaluation), goalAchieved: r.goalAchieved,
+        ...(ownRubric(r.scenarioId) ? unscored : {}),
         createdAt: r.createdAt.toISOString(), hasNotes: !!r.supervisorNotes,
       })),
       // Without the evaluation we cannot spot legacy-grader rows here; they predate versioning and are rare.
       ...historyRows.map((r) => ({
         id: r.id, userId: r.userId, scenarioId: r.scenarioId, scenarioTitle: title(r.scenarioId, r.scenarioTitle),
-        score: r.overallScore, goalAchieved: r.goalAchieved, criteria: [], createdAt: r.createdAt.toISOString(), hasNotes: false,
+        score: r.overallScore, goalAchieved: r.goalAchieved, criteria: [],
+        ...(ownRubric(r.scenarioId) ? unscored : {}),
+        createdAt: r.createdAt.toISOString(), hasNotes: false,
       })),
     ];
     const lastSeen = Object.fromEntries(lastSeenRows.flatMap((r) => (r._max.createdAt ? [[r.userId, r._max.createdAt.toISOString()]] : [])));
