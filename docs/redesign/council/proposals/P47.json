@@ -1,0 +1,271 @@
+{
+  "id": "P47",
+  "lens": "Generative UI: the AI composes the debrief and coaching layout per call (AI SDK generative UI)",
+  "name": "Composed Coaching Console",
+  "one_liner": "A fixed design system in which the AI composes each call's live coaching and debrief from a closed set of typed blocks, so every layout is personal to the call yet unmistakably on-brand.",
+  "lens_followed_or_changed": "Followed: the debrief is composed per call. The grader streams an ordered plan of typed blocks (ScoreHero, MomentReplay, CriterionCard, PatternCallout, DrillCTA), and the coach streams cue blocks during the call. Changed: research showed the AI SDK's streamUI (React Server Components) is marked experimental, so I use AI SDK UI (useChat plus typed tool parts) with a client-side block registry. The model picks blocks and their order from a closed catalogue and never emits markup, which protects brand, accessibility and reliability. Every block must cite transcript turn IDs that validate against the transcript, with a classic fixed-order debrief as fallback. Self-scores (1-10): A 8, B 7, C 8, D 6 (only if cue latency stays under about 1.5 s), E 6, F1 6, F2 5, F3 3 (leans worth building).",
+  "ui_stack": [
+    {
+      "name": "shadcn/ui on Radix primitives",
+      "role": "Component source: Dialog, Tabs, Slider, Toggle Group, Sheet, Command",
+      "why": "Copy-in code owned in the repo; MIT; contributors can read every component"
+    },
+    {
+      "name": "Tailwind CSS v4",
+      "role": "Design tokens in CSS via @theme, replacing tailwind.config token values",
+      "why": "CSS-first tokens and fewer config files; migrate the existing v3 classes once"
+    },
+    {
+      "name": "AI SDK UI (ai, @ai-sdk/react, @ai-sdk/openai)",
+      "role": "Streamed text, typed tool parts for blocks, partial structured output for debrief plans",
+      "why": "Official streaming path; the RSC streamUI route is experimental"
+    },
+    {
+      "name": "Vercel AI Elements",
+      "role": "Conversation, Message, Tool and PromptInput for the coach rail and the persona wizard",
+      "why": "Built on shadcn, so it matches the component layer and needs no extra theme"
+    },
+    {
+      "name": "Motion (motion.dev)",
+      "role": "Block streaming, layout transitions, meter tweens, cue enter and exit",
+      "why": "Honours prefers-reduced-motion; replaces the CSS fade-up keyframes"
+    },
+    {
+      "name": "Recharts via shadcn Chart",
+      "role": "Criterion trend small multiples and team heatmap",
+      "why": "Standard React charting that shadcn already styles"
+    },
+    {
+      "name": "Geist Sans and Geist Mono",
+      "role": "UI type; mono for timers, scores and timestamps",
+      "why": "Two families replace Inter plus Sora; mono makes numbers read as instruments"
+    },
+    {
+      "name": "zod and lucide-react",
+      "role": "Shared block and persona schemas for server and client; icons",
+      "why": "Keeps grader output and renderer in one contract; icons are already in use"
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "--bg",
+        "hex": "#0A0E14",
+        "use": "Dark canvas, default theme; light counterpart #F6F7F9"
+      },
+      {
+        "token": "--surface",
+        "hex": "#111821",
+        "use": "Cards, rail, dock; light counterpart #FFFFFF"
+      },
+      {
+        "token": "--line",
+        "hex": "#1E2A38",
+        "use": "One-pixel hairlines replace soft shadows; light counterpart #E3E8EF"
+      },
+      {
+        "token": "--ink",
+        "hex": "#E7EEF7",
+        "use": "Primary text; light counterpart #0B1320"
+      },
+      {
+        "token": "--ink-muted",
+        "hex": "#8D9BB0",
+        "use": "Labels, timestamps, evidence captions"
+      },
+      {
+        "token": "--signal",
+        "hex": "#2DD4BF",
+        "use": "Primary action and every AI-generated element; keeps the teal lineage of the current brand"
+      },
+      {
+        "token": "--coach",
+        "hex": "#F5B942",
+        "use": "Whisper cues and talk-track progress only"
+      },
+      {
+        "token": "--alert",
+        "hex": "#FB7185",
+        "use": "Objection alerts and failed criteria"
+      },
+      {
+        "token": "--pass",
+        "hex": "#4ADE80",
+        "use": "Scores at or above 80 and goal met"
+      }
+    ],
+    "typography": "Geist Sans: 600 for display, 400 for body at 16/24 minimum. Geist Mono for timers, scores and timestamps. Debrief grade numeral set at 56/60 in Mono.",
+    "shape_and_depth": "Radius 14px cards, 10px controls, 999px chips. Depth from hairlines and tonal surface steps. Live elements get a 1px signal glow ring. No blurred gradient orb.",
+    "motion": "Blocks stream in with a 180ms rise and fade. Meters tween over 600ms. Cue cards enter from the rail edge and dismiss after 8s unless pinned. Everything reduces to opacity under prefers-reduced-motion.",
+    "iconography": "lucide-react at 16 and 20px, stroke 1.75. AI-generated content carries a single spark glyph in signal colour so the rep always knows what the model wrote.",
+    "theme_modes": "Dark default for the live console and focus; light for the library, progress and print-friendly debrief. Both via :root tokens with data-theme, following prefers-color-scheme when unset."
+  },
+  "navigation_and_ia": "Top bar: Practice, Library, Progress, Team (org accounts only), a Cmd/Ctrl+K palette to start any persona, and a primary Build persona button. Routes: /, /library, /library/[slug], /wizard, /practice/[scenario], /call/[id], /debrief/[id], /progress, /team. Mobile uses a bottom tab bar: Practice, Library, Progress, Me. Coach mode (Blind, Guided, Coached) is visible before, during and after every call, not buried in settings.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Full-bleed dark hero. Left: Rehearse the call. Get coached live. Know why you scored. Two CTAs: Try text practice (no sign-in) and Browse personas. Right: a working composite of a live call in which a cue card lands, a rubric meter ticks and a debrief block composes. Below: a strip labelled Built on OpenAI with three model slots (Realtime voice, grader, persona wizard), a persona pack preview row, and a contributor band with the count of good-first-issues and a Read CONTRIBUTING button.",
+      "key_components": "Live hero composite, model strip, persona preview row, contributor band, README badges (MIT, Codex, Next.js 15).",
+      "change_vs_today": "Replaces the blurred-orb card and four generic feature cards with a real product demo and visible proof of OpenAI usage."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Left 260px filter rail: job family (SDR cold, AE discovery, CS, support, collections, recruiting), industry, difficulty, objection type, mode. Top: search with Cmd/Ctrl+K hint, active filter chips and a count such as 37 of 150. Main: three-column card grid. Each card shows role and seniority, temperament chips, top two objections, a personal-best ring once practised, and Start and Tune buttons. The first tile is a dashed Build your own persona that opens the wizard. Mobile: filters in a bottom sheet.",
+      "key_components": "FilterRail, PersonaCard, ObjectionChip, BestScoreRing, Command palette, empty state with wizard tile.",
+      "change_vs_today": "Replaces a three-item select with a browsable, filterable catalogue that is built from data packs."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Four-step header: Source, Draft, Tune, Rehearse. Source: three entry cards (Paste context, Describe it, Import from URL) plus a drop zone for a job description, CRM note or call transcript. Draft: chat on the left (AI Elements Conversation); on the right a persona card and scenario that fill field by field, each field carrying a source chip that links to the snippet it came from. Tune: chat edits such as make them more skeptical. Rehearse: a 60-second test call, then Save as persona pack.",
+      "key_components": "StepperHeader, SourceCards, ConversationPanel, PersonaDraftCard with provenance chips, TunePresets, RehearseBar.",
+      "change_vs_today": "Replaces a blank scenario form with a guided, evidence-linked draft that the rep can test before saving."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Twelve-column grid. Left seven: the goal as a large sentence, a persona card showing what they know and do not know, temperament as three labelled sliders, and the talk track as a six-node horizontal stepper instead of collapsibles. Right five: rubric as a weighted donut with criteria chips, a Coach mode segmented control (Blind, Guided, Coached) with a one-line explanation of each, a Voice or Text toggle, a mic level check, and a full-width Start call button.",
+      "key_components": "GoalHeadline, PersonaCard, TalkTrackStepper, RubricDonut, CoachModeToggle, MicCheck, StartBar.",
+      "change_vs_today": "Replaces the scenario select and collapsible sections with a briefing that sets expectations and coaching intensity before the call."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Three zones. Centre: transcript as a speaker-lane timeline; each rep turn carries micro score chips such as +3 Discovery. Top: persona header with a temperament meter and an objection tag when one is detected, plus a five-criterion live rubric strip that tweens as coverage grows. Right rail (coach): amber whisper cue cards that dismiss after 8s, a next-best-question chip, and talk-track progress. Bottom dock: waveform driven by real mic level, Geist Mono timer, mute, Ask coach (Guided and Coached only), and a red End and grade.",
+      "key_components": "TranscriptTimeline, LiveRubricStrip, CueCard, ObjectionTag, TalkTrackProgress, AudioWaveform, CallDock.",
+      "change_vs_today": "Replaces chat bubbles and the blurred orb with a coaching console. Nothing on the current screen reacts to the rep during the call."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Opens with ScoreHero: large Mono grade, a skill band from Novice to Advanced, a one-sentence verdict, and goal status with its evidence count. Then the AI-chosen block sequence, usually a MomentReplay (your turning point: what you said against a stronger line, with timestamp), then CriterionCards collapsed to score and one-line reason, expandable to quotes that jump to the transcript and play audio in voice mode. PatternCallouts and a DrillCTA for the weakest criterion follow. Footer shows grader model, rubric version and token cost. Transcript sits in a bottom drawer.",
+      "key_components": "ScoreHero, MomentReplay, CriterionCard, EvidenceQuote, PatternCallout, DrillCTA, ProvenanceFooter, TranscriptDrawer.",
+      "change_vs_today": "Replaces one long scroll of identical cards with a composed story that leads with the moment that mattered."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Top row: four stat tiles (sessions, average, best, time practised) in Mono with deltas. Hero chart: small multiples, one line per rubric criterion across sessions, with hover revealing the call. Right column: a Next rep card generated from the weakest criterion, and readiness meters per job family (for example Price too high at 62%). Bottom: call timeline with a sparkline and objection tags per call. Range filter: 7, 30, 90 days.",
+      "key_components": "StatTile, CriterionSmallMultiples, NextRepCard, ReadinessMeter, CallTimeline.",
+      "change_vs_today": "Replaces four numbers and a plain list with a trajectory and a recommended next rep."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Team heatmap at top: rows are reps, columns are rubric criteria, cell colour is average score, and clicking opens that rep's calls. KPI strip: team readiness, calls this week, weakest criterion across the team. Below: a coach queue of reps needing review, each with an AI-drafted note that cites one debrief moment and can be edited before sending. Right: assign scenario and track completion. Org accounts only, built on the existing supervisor-notes model.",
+      "key_components": "TeamHeatmap, KpiStrip, CoachQueue, CoachNoteDraft, AssignPanel.",
+      "change_vs_today": "Adds the team surface that the data model already supports but the UI never shows."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "390px single column. Sticky top: persona name, Your turn pill, and five-dot rubric strip. Transcript scrolls beneath. Cue cards rise as a bottom sheet above the composer, swipe to dismiss, tap to see the rubric line. Talk-track steps as a horizontal chip carousel. Bottom bar: 56px text or voice toggle, composer, and a full-width End and grade button 52px high. 16px gutters, no horizontal scroll, 44px minimum targets.",
+      "key_components": "StickyHeader, RubricDots, CueSheet, StepCarousel, Composer, EndBar.",
+      "change_vs_today": "Fixes the cramped header and crowded footer in the current mobile capture, where the timer is clipped and the End button competes with the dev badge."
+    }
+  ],
+  "live_coaching_and_scoring": "Two streams. The coach runs a small OpenAI-compatible model on each rep turn, debounced, and streams typed cue blocks (whisper, objection alert, next question, talk-track step) plus rubric deltas. Each cue cites the transcript turn it reacts to, and the persona never sees coaching. Coach mode fades scaffolding: Blind shows only the score after the call, Guided adds cues and live meters, Coached adds interrupt-style nudges. Live scores are labelled as estimates. The final grade still comes from the full rubric grader with verbatim quotes. Cap at three cues per minute so the rail never overwhelms the rep, and show a small cost meter for the session.",
+  "persona_library_and_wizard": "The library ships as data packs: one JSON or YAML file per persona holding role, seniority, temperament, objections, opening line, voice ID and rubric weights, validated by zod in CI. Target at launch: about 150 personas across the 18 industries in the brief and six job families (SDR cold, AE discovery, CS, support, collections, recruiting). The wizard turns a job description, product URL, CRM note or pasted call into a draft pack, with provenance chips on every field and a rehearsal before save. Its export is the same pack file, so the wizard doubles as a contributor on-ramp for the open-source core.",
+  "signature_moments": [
+    "The debrief opens on the one moment that cost the deal, not on a letter grade.",
+    "A whisper cue appears in amber, quotes the exact line that triggered it, then fades.",
+    "The live rubric strip ticks up in real time as the rep covers each criterion.",
+    "Every AI-composed block carries a why chip that links to validated transcript turns.",
+    "A three-position Coach mode dial (Blind, Guided, Coached) that makes scaffolding visible.",
+    "The persona wizard streams a persona card field by field, each field with a source chip."
+  ],
+  "openai_fund_angle": "Show the models in the UI: a model-slot strip on the landing page, and in every debrief footer the grader model name, rubric version and token cost, so reviewers see efficient use of API credits. Offer the OpenAI Realtime API as a voice path beside the ElevenLabs default. Invite contributors by design: persona packs and blocks are plain files with an Add a persona with Codex guide, and the wizard exports a PR-ready pack. Use Codex in pull-request review and release notes, and say so in the README, so the project visibly meets the program's PR-review and maintainer-automation criteria. Program scope from the sources: the Codex Open Source Fund grants up to $25,000 in API credits for projects using Codex CLI and OpenAI models, and Codex for Open Source adds a ChatGPT Pro benefit with Codex access and conditional Codex Security for selected maintainers.",
+  "inspirations": [
+    {
+      "source": "Dialpad (Mobbin)",
+      "url": "https://mobbin.com/screens/8ada6545-583d-436a-b58b-5714a49967b3",
+      "borrowed": "AI notes panel with on and off state and a Listening status, used for the coach rail."
+    },
+    {
+      "source": "Hume AI EVI playground (Mobbin)",
+      "url": "https://mobbin.com/screens/54b2cd2e-dc30-44a4-aa4d-c8e7f8dc9867",
+      "borrowed": "Per-turn expression scores under each message, used for live rubric chips on rep turns."
+    },
+    {
+      "source": "Vapi call review (Mobbin)",
+      "url": "https://mobbin.com/screens/007a4823-5c3d-4016-b2d1-8637a49cb015",
+      "borrowed": "Waveform above tabbed transcript and analysis, used for the replayable debrief."
+    },
+    {
+      "source": "Grain scorecard (Mobbin)",
+      "url": "https://mobbin.com/screens/4fa59825-6ba0-4435-bd28-c476750c87d1",
+      "borrowed": "Overview, Scorecard and Metrics tabs after a call."
+    },
+    {
+      "source": "Codecademy skill benchmark (Mobbin)",
+      "url": "https://mobbin.com/screens/fc2dd380-28af-4459-95ba-a21396c65286",
+      "borrowed": "Score gauge with named skill bands, used in the ScoreHero."
+    },
+    {
+      "source": "Duolingo scorecard (Mobbin)",
+      "url": "https://mobbin.com/screens/bdd71dcd-d036-4b71-8726-3f4f7109201b",
+      "borrowed": "Progressive reveal of criteria one tile at a time."
+    },
+    {
+      "source": "Expensify knowledge check (Mobbin)",
+      "url": "https://mobbin.com/screens/8543e7fa-8a5e-4fe4-ba57-d67441670a75",
+      "borrowed": "Pass threshold shown beside the user's own score."
+    },
+    {
+      "source": "Chronicle create-with-AI import (Mobbin)",
+      "url": "https://mobbin.com/flows/bdf79980-7199-410c-99fc-e0b1120b76a6",
+      "borrowed": "Three entry cards: paste text, generate from prompt, import from URL."
+    },
+    {
+      "source": "ChatGPT Creating a GPT (Mobbin)",
+      "url": "https://mobbin.com/flows/6e8f0823-7698-4850-bb22-9100eff40163",
+      "borrowed": "Conversation on the left with the artifact building on the right."
+    },
+    {
+      "source": "HubSpot Generate website (Mobbin)",
+      "url": "https://mobbin.com/flows/1a932f05-d002-46ec-b9a9-22cf5c33f57b",
+      "borrowed": "Three-step AI wizard with an AI badge on the describe field."
+    },
+    {
+      "source": "Whop Start a business (Mobbin)",
+      "url": "https://mobbin.com/flows/bb9abfe9-cdad-4293-999d-7ea18c152632",
+      "borrowed": "Selectable option chips inside a chat for choices such as names."
+    },
+    {
+      "source": "Second Nature (competitor)",
+      "url": "https://secondnature.ai/",
+      "borrowed": "Scenarios built from a team's own decks and call recordings; reference point for the wizard."
+    },
+    {
+      "source": "Hyperbound (competitor)",
+      "url": "https://www.hyperbound.ai/",
+      "borrowed": "Live Call Coaching in private preview; shows live coaching is becoming table stakes."
+    },
+    {
+      "source": "Vercel Academy, AI SDK multi-step and generative UI",
+      "url": "https://vercel.com/academy/ai-sdk/multi-step-and-generative-ui",
+      "borrowed": "Tool parts rendered as custom components, and the AI Elements chat components."
+    },
+    {
+      "source": "AI SDK streaming React components",
+      "url": "https://ai-sdk.dev/docs/ai-sdk-rsc/streaming-react-components",
+      "borrowed": "Read as experimental, so not adopted as the base; the pattern informed the block registry."
+    },
+    {
+      "source": "Codex for Open Source (OpenAI)",
+      "url": "https://developers.openai.com/community/codex-for-oss",
+      "borrowed": "Program scope: API credits for PR review, maintainer automation and release workflows."
+    },
+    {
+      "source": "Codex open source fund (OpenAI)",
+      "url": "https://openai.com/form/codex-open-source-fund/",
+      "borrowed": "Grants up to $25,000 in API credits, reviewed on an ongoing basis."
+    }
+  ],
+  "implementation": {
+    "effort": "L",
+    "migration_path": "Phase 1 (weeks 1-2): Tailwind v4 and shadcn/ui init, token migration, Geist in place of Inter and Sora, rebuilt AppShell, buttons and cards. Phase 2: live call console and block registry behind a feature flag, with the current debrief kept as fallback. Phase 3: debrief composer, then the persona pack loader and library. Phase 4: wizard, landing hero, progress and team views. Scenarios move from localStorage to pack files, with Prisma for org overrides. Existing API routes and the grader contract stay unchanged."
+  },
+  "risks": [
+    "AI-composed layouts can drift or read as inconsistent; mitigate with a closed block registry, a layout grammar and the classic fixed-order fallback.",
+    "Live coach latency and token cost; mitigate with a small model, debounced turns, a cue cap and a visible cost meter.",
+    "Live scores can look authoritative; label them as estimates and keep the final rubric grade canonical.",
+    "Persona quality depends on authoring; mitigate with pack CI, schema validation and a review checklist for contributors.",
+    "Copy-in shadcn code adds maintenance; document ownership and pin versions.",
+    "Streaming cues can overload screen-reader users; use aria-live polite with throttling and a text transcript path.",
+    "Second Nature, Hyperbound and Yoodli already market live coaching; our edge is open, inspectable and forkable, and the team needs to prove it in the demo."
+  ]
+}

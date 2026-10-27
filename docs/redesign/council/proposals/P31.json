@@ -1,0 +1,238 @@
+{
+  "id": "P31",
+  "lens": "Ant Design X (AI-native components): agent chat, thought chains, prompt suggestions as first-class UI",
+  "name": "Signal Coach (Ant Design X cockpit)",
+  "one_liner": "A total redesign on Ant Design X and antd 5: a light, filterable persona library and a wizard, plus a dark live cockpit where a ThoughtChain coach shows its reasons, cues sit beside the transcript, and the rubric scores as the call happens.",
+  "lens_followed_or_changed": "Followed the lens: Ant Design X's AI primitives carry the product. Bubble renders the transcript, Prompts carries next-best-question suggestions, Suggestion chips sit on Sender, ThoughtChain shows why each cue fired, Think shows the grader working, and Welcome and Conversations anchor the library and history. Changed two things. First, the live call is a dark cockpit, not a chat app: Mobbin's in-call AI tools (Dialpad, Zoom AI Companion, Fireflies) all use a persistent side panel for assist content, so the coach gets its own panel. Second, default antd reads as enterprise admin, so I would retheme through tokens and delete the hand-rolled Tailwind component classes rather than run two systems side by side.",
+  "ui_stack": [
+    {
+      "name": "antd 5 with ConfigProvider tokens",
+      "role": "Single theme engine and base components (Form, Table, Steps, Segmented, Drawer, Progress, Switch, Slider)",
+      "why": "One token set for colors, radius and motion; darkAlgorithm scoped to the cockpit subtree"
+    },
+    {
+      "name": "@ant-design/x",
+      "role": "AI-native layer: Bubble, ThoughtChain, Prompts, Sender, Suggestion, Think, Welcome, Conversations, Attachments",
+      "why": "Purpose-built for coaching cues, suggested questions and streamed agent steps, which are this product's core interactions"
+    },
+    {
+      "name": "@ant-design/icons",
+      "role": "Only icon set, replacing lucide-react",
+      "why": "One visual grammar across the product"
+    },
+    {
+      "name": "@ant-design/plots (G2)",
+      "role": "Score trend line, criteria heatmap, objection bar chart, debrief radar",
+      "why": "Same design system as the rest of the UI; lazy-loaded so it stays off the live-call path"
+    },
+    {
+      "name": "Motion (framer-motion)",
+      "role": "Cue entrance, score tick, shared-element transition from library card to pre-call",
+      "why": "Makes the coach feel live without custom animation code"
+    },
+    {
+      "name": "Sora, Inter, JetBrains Mono via next/font",
+      "role": "Display and the big score, UI and transcript, timers and numerals",
+      "why": "Keeps Sora and Inter continuity; mono for tabular timers and weights"
+    },
+    {
+      "name": "OpenAI Realtime API (voice transport) with ElevenLabs Agents as an adapter",
+      "role": "Default voice path",
+      "why": "Showcases OpenAI models for the fund; keeps current ElevenLabs users working"
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "canvas",
+        "hex": "#F6F7FB",
+        "use": "Light page background for landing, library, wizard, pre-call, debrief, dashboard, team"
+      },
+      {
+        "token": "ink",
+        "hex": "#0E1424",
+        "use": "Primary text in light mode and transcript body"
+      },
+      {
+        "token": "cockpit",
+        "hex": "#0A0F1F",
+        "use": "Live-call canvas, dark only; panels use cockpit-surface #131B30"
+      },
+      {
+        "token": "line",
+        "hex": "#E3E7F0",
+        "use": "1px borders in light mode; #243049 inside the cockpit"
+      },
+      {
+        "token": "primary",
+        "hex": "#4F46E5",
+        "use": "Practice and primary actions, selection, links; white text on it passes AA"
+      },
+      {
+        "token": "coach",
+        "hex": "#2DD4BF",
+        "use": "Coaching cues and on-track states in the cockpit; light mode uses #0B7F72 for text"
+      },
+      {
+        "token": "signal",
+        "hex": "#F59E0B",
+        "use": "Amber nudges, objection alerts, criterion in progress; fills and icons only, text on amber is ink"
+      },
+      {
+        "token": "alert",
+        "hex": "#E11D48",
+        "use": "End and grade fill with white text (AA), missed criterion, destructive actions"
+      },
+      {
+        "token": "score-ramp",
+        "hex": "#F43F5E / #F59E0B / #22C55E",
+        "use": "Score bands 0-49 rose, 50-74 amber, 75+ green; same bands as the Visitors ring legend"
+      }
+    ],
+    "typography": "Sora 600 and 700 for page titles and the large score; Inter 400, 500 and 600 for UI and transcript (15px desktop, 16px mobile); JetBrains Mono 500 for timers, scores and weights with tabular numerals.",
+    "shape_and_depth": "Cards 14px radius, inputs 10px, pills 999px for chips and the Voice or Text Segmented control. Light mode uses a 1px line border and a faint shadow. The cockpit uses a 1px inner rim highlight instead of shadows. The blurry orb is replaced by a crisp monogram avatar and a five-bar live audio meter.",
+    "motion": "160 to 220ms ease-out for panels and drawers. Cue cards slide 12px from the right with one 600ms highlight. Criterion bars tween for 400ms when a score moves. The debrief score ring draws once on load. Under prefers-reduced-motion everything becomes a fade.",
+    "iconography": "@ant-design/icons outlined, 1.5px stroke, 20px in toolbars and 16px inline. No emoji anywhere. The live state uses one filled icon.",
+    "theme_modes": "Light everywhere by default, following prefers-color-scheme with a manual toggle in the rail. The live cockpit is always dark via darkAlgorithm on its subtree, so the call stage reads as a separate mode."
+  },
+  "navigation_and_ia": "Desktop: a left icon rail (72px, expands to 232px on hover or pin) with Practice, Library, Scorecards, Progress, Team (org accounts only) and Settings. Cmd or Ctrl+K opens a command palette that jumps to any persona, scenario or past call. Core path: Library with filters, then a persona sheet that previews the voice and opening line, then Pre-call briefing, then the Cockpit, then the Debrief, with the persona card carried across as a shared-element transition. The persona wizard is a Build a persona action in the library header and in empty states. Mobile: a bottom tab bar (Practice, Library, Progress, Me). The cockpit goes full-screen and hides the tab bar. Filters live in the URL so any view can be shared.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Split hero. Left: headline 'Rehearse the call. Get coached while you talk.', one subhead, primary 'Start a practice call' and secondary 'Browse personas'. Right: a real cockpit screenshot with a coach cue overlay ('Ask about the timeline') and a live score ring, replacing the blurry orb. Under the hero, a 'Built on OpenAI' strip names the models in use: Realtime for voice, GPT for grading, coaching and persona generation. Then three contributor cards: good first issues, add a persona, run the grader eval. Footer: MIT, live demo, docs. The README shows the same first screen.",
+      "key_components": "Welcome (Ant Design X), Button, Tag chips for model names, Progress type circle in the hero, Card grid. A Built with Codex badge in the README.",
+      "change_vs_today": "Replaces the orb hero and four generic feature cards with product proof and a visible OpenAI model strip."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Welcome header with three Prompts chips such as 'Insurance renewal, price objection' and 'SDR cold call, 60 seconds'. Left filter rail (260px): sales job, industry, difficulty (Segmented), objection tags (price, timing, competitor, authority, send me an email, trust). Main: three-column card grid. Each card: monogram avatar, role and company type, one-line behavior, objection tags, difficulty dot, play button for the opening line, primary Practice. Build a persona stays pinned in the header.",
+      "key_components": "Checkbox.Group, Segmented, Tag, Card, Input.Search, Empty, Prompts, Pagination. Filter state in the URL.",
+      "change_vs_today": "Replaces a three-item select dropdown with a browsable, filterable catalog and a visible path to create one."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Steps across the top: Source, Persona, Scenario and rubric, Review. Step 1 is a context composer: Sender with Attachments takes a job-description or product URL, CRM notes, an ICP paragraph or a pasted call. A ThoughtChain on the right streams the build ('Read product page', 'Extracted 4 objections', 'Drafted persona', 'Drafted 5-criterion rubric'); each node expands to its source quote. Steps 2 and 3 are forms where every generated field carries a source badge, and rubric weights auto-balance to 100. Step 4 shows a diff against the nearest template with Save to my library, Export JSON and Open a contribution.",
+      "key_components": "Steps, Sender, Attachments, ThoughtChain, Form, Slider, Alert reading AI-generated, review before use.",
+      "change_vs_today": "Makes the wizard a visible AI workflow with reasoning and sources, not a hidden form prefill."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Light page, three columns on desktop, stacked on mobile. Left: 'Your goal' with success criteria as a checklist, and the talk track as a Steps list with progress. Center: persona card with monogram, one-line situation, behavior meters (skeptical, talkative, time-pressed, 1 to 10) and a Hear opening line button. Right: coach settings. Segmented Quiet, Balanced, Intense for cue frequency; switches for whisper cues, objection alerts, next-question prompts and talk-track progress; Voice or Text toggle. Bottom: three warm-up Prompts and a primary Enter cockpit.",
+      "key_components": "Steps, Descriptions, Slider (read-only meters), Switch, Segmented, Prompts, Progress bars for the rubric preview with weights.",
+      "change_vs_today": "Replaces the scenario dropdown and blurry-orb card with a briefing that sets up the coach before the call starts."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Dark cockpit. Top bar: persona name, Live dot, JetBrains Mono timer, cue-frequency chip, End and grade. Center column: transcript as a Bubble list, rep right and persona left, with small coach tags under rep turns ('Good: asked budget', 'Missed: next step'). Right column (360px) stays open: the current cue with a ThoughtChain showing why it fired, three next-best questions as Prompts, and an amber objection alert when triggered. Below: live rubric with five Progress bars labelled provisional. Bottom dock: Sender with suggestion chips, mute, hint and voice state.",
+      "key_components": "Bubble, ThoughtChain, Prompts, Suggestion, Sender, Think while the coach is working, Progress, Tag, Drawer for the talk track on narrow widths.",
+      "change_vs_today": "Turns a chat app with no coaching into a cockpit where cues, objections, next question and the live rubric sit beside the transcript."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Top: score ring (Progress circle, letter grade inside, rose to amber to green) beside a percentile line ('higher than 62% of past attempts at this persona') and a goal-status pill. Next: a moment-replay timeline across the call with markers for cues and evidence quotes; a click scrolls the transcript to that turn. Below: criterion cards in two columns, each with weight, score, change since last attempt and linked quotes. Strengths and Areas to improve sit as short lists side by side. Primary CTA: 'Drill pricing transparency, 5 min'. Full transcript collapsed by default.",
+      "key_components": "Progress type circle, custom timeline, Card, Collapse, Statistic, Tag, Button, Alert for provisional or heuristic grading.",
+      "change_vs_today": "Turns the long one-column scroll into a scannable scorecard where each score links to the exact moment in the call."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Top row: four Statistic tiles (sessions, average, best, time practised) with week-over-week deltas. Main: score trend line with criterion toggles and a 12-week criteria heatmap. Right: a Next drill card built from the weakest criterion, and a streak tile. Bottom: objections faced versus handled as a grouped bar chart, then a Table of recent calls with score tag, sparkline and a Replay action.",
+      "key_components": "Statistic, Segmented, @ant-design/plots Line, Heatmap and Column, Table, Card.",
+      "change_vs_today": "Adds a real progress story with trends and objection-level skill, where today there are four numbers and a plain list."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Org-only section. Top: three health cards (team average, calls this week, the criterion the team misses most). Main: reps-by-criteria heatmap; clicking a cell opens the calls behind it. Right: a Needs review queue of calls with low grader confidence or flagged objections, each with evidence quotes and an Assign drill action. Bottom: roster Table with avatar, average, last practised and assigned packs. A visible notice says reps see the same views. Supervisor notes open in a drawer from any debrief.",
+      "key_components": "Table, Statistic, Badge, Drawer, Avatar, Heatmap, Alert, Tooltip.",
+      "change_vs_today": "Adds the manager surface the data model already supports but the UI never shows."
+    },
+    {
+      "screen": "Mobile live call (390px)",
+      "layout": "Full-screen cockpit, no tab bar. Top: 56px bar with persona name, timer and cue-frequency icon. Transcript fills the middle at 16px Inter. A sticky one-line cue card sits above the dock: tap to expand the ThoughtChain, swipe to dismiss. Dock: large voice button (hold to switch to text), End and grade in rose, and a rubric peek ('Pricing 31%') that opens a bottom sheet with the full rubric. Controls sit in the thumb zone; 16px side gutters; no horizontal scroll.",
+      "key_components": "Bubble, Popup or bottom Drawer, Progress line, Sender collapsed to a text sheet, Tag.",
+      "change_vs_today": "Replaces a chat-plus-buttons layout with no visible coach by a cue card and a rubric peek."
+    }
+  ],
+  "live_coaching_and_scoring": "The coach runs as a separate model call, never the persona, on each rep turn (every second turn at Quiet cadence). Input: the last N turns, the rubric, the talk track and the goal. Output: typed items (whisper cue, objection alert, next question, talk-track step, criterion update with a confidence value). Every item shows its trigger quote and a ThoughtChain of reasons, so reps can check the coach before trusting it. Rubric scores are labelled provisional during the call and locked at debrief. Target: a cue visible within 2 seconds of the rep finishing a turn; Think shows while waiting and never blocks the rep's next turn. Cues are visual by default; audio whisper is opt-in and headset-only.",
+  "persona_library_and_wizard": "Launch set of 120 personas: 12 sales jobs by 10 industries, 10 per cell, each with 2 to 3 objection tags and three difficulty levels, so every filter combination returns something and gaps show. Sales jobs: SDR cold call, AE discovery, demo and close, renewal, upsell, collections, recruiting screen, customer success save, inbound lead, quote follow-up, service complaint, procurement negotiation. Industries: SaaS, insurance, mortgage, real estate, solar, home services, auto, medical devices, B2B procurement, retail. Every persona is a JSON file against a published schema. The wizard emits the same file, so generated and hand-written personas go through the same review. The contribute page shows empty cells as help wanted.",
+  "signature_moments": [
+    "Cue with receipts: every coach cue opens to the exact transcript line and the reasoning that triggered it.",
+    "Provisional rubric: criterion bars move live and are labelled provisional until the debrief locks them.",
+    "Visible agent run: the persona wizard streams its steps with sources, so the AI build can be inspected.",
+    "Moment replay: the debrief timeline links each score to the moment in the call.",
+    "Model provenance chip: every AI output names its model and prompt version, for example 'graded by gpt-4.1-mini, rubric v3'.",
+    "Coverage map: the library shows empty industry-by-job cells and invites contributions to fill them."
+  ],
+  "openai_fund_angle": "Concrete showcase, proposed. (1) Voice: the OpenAI Realtime API becomes the default transport, with ElevenLabs Agents kept as an adapter. (2) Models: a Settings panel picks the model for grader, coach and persona wizard, and each AI output carries a provenance chip naming the model. (3) Contributors: AGENTS.md at the repo root, a Contribute a persona flow where the wizard emits a schema-valid file for a pull request, and good-first-issue cards on the landing page. (4) Codex in the maintainer workflow: Codex CLI runs PR review and release notes, documented in CONTRIBUTING, with a Built with Codex badge in the README. (5) Stretch: a public grader-eval page comparing AI scores with human-labelled transcripts.",
+  "inspirations": [
+    {
+      "source": "Ant Design X docs (introduction)",
+      "url": "https://x.ant.design/components/introduce/",
+      "borrowed": "Bubble, ThoughtChain, Prompts, Sender, Suggestion and Think as the AI-native component kit."
+    },
+    {
+      "source": "Dialpad (Mobbin)",
+      "url": "https://mobbin.com/screens/3993ae4d-c423-4e1a-a6e6-2901710edf88",
+      "borrowed": "Live transcript and an AI tab in a persistent side panel during a call."
+    },
+    {
+      "source": "Fireflies (Mobbin)",
+      "url": "https://mobbin.com/screens/0faa4442-59e5-4a73-85f5-50a54c634fb5",
+      "borrowed": "Assist mode switcher (General vs Sales Assist) and suggested follow-up prompts."
+    },
+    {
+      "source": "Zoom AI Companion (Mobbin)",
+      "url": "https://mobbin.com/screens/dbb16d99-379c-4c87-a4ff-f56321dd3dd1",
+      "borrowed": "Welcome state with quick-question chips inside an in-call panel."
+    },
+    {
+      "source": "Midjourney personality results (Mobbin)",
+      "url": "https://mobbin.com/screens/d67edcbf-f204-46e9-816b-3cf245781313",
+      "borrowed": "Percentile phrasing ('scored higher than 55 percent of people') and per-facet progress bars."
+    },
+    {
+      "source": "Visitors (Mobbin)",
+      "url": "https://mobbin.com/screens/16a48591-f4ad-4fb6-b19a-cb06804b590c",
+      "borrowed": "Single score ring with labelled 0-49, 50-89 and 90+ bands."
+    },
+    {
+      "source": "Xero Analytics scorecards (Mobbin)",
+      "url": "https://mobbin.com/screens/dd15bfb2-c72b-4380-9ab7-fb16b3f7e9de",
+      "borrowed": "Scorecard table with target and comparison status, for the team view."
+    },
+    {
+      "source": "ClickUp Template Center (Mobbin)",
+      "url": "https://mobbin.com/screens/04818cc9-7502-402a-a6f8-ec356682723b",
+      "borrowed": "Checkbox filter sidebar and category sections for the persona library."
+    },
+    {
+      "source": "Heidi template community (Mobbin)",
+      "url": "https://mobbin.com/screens/bfa0d997-f972-43fc-8adf-7503b23e6c38",
+      "borrowed": "Specialty filters and author credential badges, reused as reviewer badges on personas."
+    },
+    {
+      "source": "Second Nature",
+      "url": "https://secondnature.ai/",
+      "borrowed": "Benchmark: AI role play plus live-deal coaching (Deal Coach). The gap to exploit is coaching on real calls."
+    },
+    {
+      "source": "Yoodli vs Second Nature (Yoodli blog)",
+      "url": "https://yoodli.ai/blog/yoodli-vs-second-nature-which-ai-sales-roleplay-platform-is-better",
+      "borrowed": "Play back the exact moment that needs work; the debrief timeline replay follows that idea."
+    }
+  ],
+  "implementation": {
+    "effort": "XL",
+    "migration_path": "Phase 0 (week 1): add antd 5 and @ant-design/x, ConfigProvider tokens, an AppShell with the rail; keep /trainer and API routes unchanged. Phase 1: the cockpit and pre-call, behind a ?ui=v2 flag, since it is the riskiest and most visible piece. Phase 2: library, persona JSON schema and the wizard with ThoughtChain. Phase 3: debrief timeline and dashboard. Phase 4: team view, mobile polish, and deletion of the Tailwind component classes and lucide-react. Scoring data model and grading stay unchanged, so existing debriefs keep working. The 120-persona set is a content track that runs in parallel."
+  },
+  "risks": [
+    "Default antd plus Ant Design X looks like enterprise admin; the Look score depends on token work and a real design pass, not defaults.",
+    "antd CSS-in-JS and Tailwind preflight can clash during migration; remove Tailwind component classes early or the two systems will fight.",
+    "Verify that @ant-design/x and antd 5 work with React 19 and Next 15 before committing, and pin versions.",
+    "Bundle weight on the live route: lazy-load @ant-design/plots and three.js, and keep the cockpit under a set budget.",
+    "Coaching quality depends on the coach prompt and latency, not layout; a strong cue panel with weak cues fails criterion D.",
+    "120 personas is a content project; wizard output needs human review before it ships in the core.",
+    "Making OpenAI Realtime the default voice path touches the voice pipeline; keep ElevenLabs as an adapter to avoid regressions.",
+    "Mobbin reported high AI usage this month; usage is unlimited during beta and may need paid credits later.",
+    "Council self-scores: A 8, B 8, C 7, D 6, E 5.2, F1 6, F2 4, F3 3 (F3: 1 = clearly worth building, 10 = not worth building)."
+  ]
+}

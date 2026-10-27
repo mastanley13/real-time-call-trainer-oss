@@ -25,13 +25,24 @@ export interface User {
   firstName?: string;
   lastName?: string;
   role?: "trainee" | "manager" | "owner" | "admin";
+  /** Set by the login, MFA and register routes. Display only; the server checks it again on every request. */
+  isPlatformAdmin?: boolean;
 }
 
 export interface Capabilities {
   demoMode: boolean;
   elevenlabs: boolean;
+  /** OpenAI Realtime voice is available (an OpenAI key is set). Optional so older payloads still type-check. */
+  realtime?: boolean;
+  /** Voice engines in the server's preference order; empty or missing means text only. */
+  voiceEngines?: ("openai" | "elevenlabs")[];
+  /** Realtime model id for the voice provenance chip, when realtime is on. */
+  realtimeModel?: string;
   llm: boolean;
   database: boolean;
+  /** Model id for coach, grading and wizard (e.g. "gpt-4.1-mini"). */
+  model?: string;
+  provider?: "openai" | "custom";
 }
 
 export interface MfaChallenge {
@@ -99,7 +110,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           setIsAuthenticated(true);
         }
       })
-      .catch(() => setCapabilities({ demoMode: false, elevenlabs: false, llm: false, database: true }));
+      .catch(() => setCapabilities({ demoMode: false, elevenlabs: false, realtime: false, voiceEngines: [], llm: false, database: true }));
     try {
       const token = localStorage.getItem("authToken");
       const storedUser = localStorage.getItem("userData");

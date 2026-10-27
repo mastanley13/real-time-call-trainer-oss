@@ -1,0 +1,265 @@
+{
+  "id": "P48",
+  "lens": "Analog notebook warmth: paper textures, handwritten coach annotations on transcripts",
+  "name": "Coach's Field Notebook",
+  "one_liner": "A warm paper-and-ink training notebook: each call is an open spread with the coach writing in the margin, and every score is a ruled ledger line traceable to a transcript quote.",
+  "lens_followed_or_changed": "Followed the analog lens for the live call, debrief, pre-call briefing and wizard intake: paper grain, ruled lines, a vermilion handwritten coach voice, stamped grades. Deviated in two places. The persona library and dashboards use a crisp grid, because Mobbin's library and dashboard references (Base44 templates, Klaviyo's goal-grouped library, Gumloop's score dashboard) scan faster without texture. Competitor positioning (Second Nature and Hyperbound, per their own and review blogs) centres on realistic practice and real-call scoring, so the notebook makes traceable, visible coaching the hero rather than decoration.",
+  "ui_stack": [
+    {
+      "name": "shadcn/ui on Base UI primitives",
+      "role": "Component base, copied into the repo",
+      "why": "Contributors own the component code with no lock-in, and the project can ship llms.txt and agent skills for Codex-assisted work. Verify the Base UI default on ui.shadcn.com; a third-party blog reports it as of July 2026."
+    },
+    {
+      "name": "Tailwind CSS v4 with CSS-variable tokens",
+      "role": "Single token layer for paper, ink and coach colours",
+      "why": "Replaces the hard-coded hex values in tailwind.config; one switch drives light, dark and print. The v3 to v4 move is part of phase 0."
+    },
+    {
+      "name": "Motion",
+      "role": "Ink-write, stamp and bar-fill animation",
+      "why": "Declarative, honours reduced-motion, and light enough for every screen."
+    },
+    {
+      "name": "cmdk",
+      "role": "Command palette (Cmd+K)",
+      "why": "Jump to any persona, scenario or past debrief from one input."
+    },
+    {
+      "name": "Recharts",
+      "role": "Trend, distribution and team charts",
+      "why": "Styled through the tokens so dashboards stay in the same ink palette."
+    },
+    {
+      "name": "Fraunces, Instrument Sans, Caveat, JetBrains Mono (Google Fonts)",
+      "role": "Type system",
+      "why": "Serif display for warmth, a neutral UI face for dense screens, a handwriting face for coach notes only, and mono for scores and timers."
+    },
+    {
+      "name": "lucide-react",
+      "role": "Icons",
+      "why": "Already in the stack; set to 1.5px stroke to match the ink lines."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "paper",
+        "hex": "#F4EEE1",
+        "use": "Page background, with a faint SVG grain at 3-4% opacity on the page only"
+      },
+      {
+        "token": "sheet",
+        "hex": "#FBF8F0",
+        "use": "Cards, index cards, debrief panels"
+      },
+      {
+        "token": "ink",
+        "hex": "#1E1A14",
+        "use": "Primary text and the stamped primary button"
+      },
+      {
+        "token": "graphite",
+        "hex": "#5E574B",
+        "use": "Secondary text and caller (persona) lines in the transcript; 6.2:1 on paper"
+      },
+      {
+        "token": "rule",
+        "hex": "#E3D9C4",
+        "use": "Ruled lines and hairline borders, decorative only"
+      },
+      {
+        "token": "rep-ink",
+        "hex": "#1F4E8C",
+        "use": "The rep's own lines and bubbles; 7.2:1 on paper"
+      },
+      {
+        "token": "coach-vermilion",
+        "hex": "#B8432B",
+        "use": "Coach margin notes and objection alerts; 4.7:1 on paper"
+      },
+      {
+        "token": "highlight",
+        "hex": "#F2D675",
+        "use": "Evidence highlighter behind quoted lines at 45% alpha; text stays ink"
+      },
+      {
+        "token": "sage",
+        "hex": "#43704A",
+        "use": "Criterion met and positive deltas; 5.0:1 on paper"
+      },
+      {
+        "token": "amber",
+        "hex": "#8A5A12",
+        "use": "Warnings, fallback-grader notice, weakest criterion; 5.1:1 on paper"
+      }
+    ],
+    "typography": "Fraunces (variable; optical size 72 for the landing headline, 24-36 for section titles and transcript headers). Instrument Sans 400/500/600 for UI and body, 16px minimum. Caveat 500 at 20-22px for coach margin notes only, never body copy. JetBrains Mono for timers, scores, weights and line numbers. Type scale 1.25.",
+    "shape_and_depth": "Cards use a 6px radius and a 1px rule border with no drop shadow. Chips and toggles are pills. Index cards have a 2px radius and a faint ruled top line. Depth comes from a 1-2 degree tilt on sticky notes and grade stamps, plus ink-on-paper contrast, not elevation. Ruled-line backgrounds (28px rhythm) appear only on the transcript and talk-track pages.",
+    "motion": "Coach notes write in with an ink-stroke reveal (about 600ms), one line at a time, without blocking the transcript. Rubric bars fill over 400ms with ease-out. The grade stamp lands with a short scale-and-settle (about 180ms). Checkboxes draw their tick with a stroke animation. Every motion has a static fallback under reduced-motion.",
+    "iconography": "lucide-react at 1.5px stroke in ink or graphite. One hand-drawn accent (underline or circle) on headings and selected cards. No emoji in the UI.",
+    "theme_modes": "Paper (light) is the default. Lamp-lit (dark): background #1A1814, sheet #23211B, text #EFE8D8, graphite #A39B89, rule #3A362D, rep-ink #8DB4E8, coach #F08A5D (7.2:1), highlight #E0B94A at 30%, sage #8CC596. Follows the system colour scheme with a manual toggle stored per viewer. Print renders the debrief as a clean white page with no grain or tilt."
+  },
+  "navigation_and_ia": "Top bar: small stamp wordmark, then Practice, Library, Progress and Team (Team shows only for org accounts), a Cmd+K palette and a New persona button. Routes: /library, /library/[slug], /new-persona, /call/[id]/briefing, /call/[id], /debrief/[id], /progress, /team. Library job families sit as paper index tabs across the top so a rep always sees which sales job they are in. Mobile: bottom tab bar (Practice, Library, Progress, More), hidden during a live call.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Split hero on paper. Left: Fraunces headline 'Rehearse the hard call on paper first', a two-line subhead, a stamped 'Start a practice call' button and an outline 'Browse 120 personas' button. Right: an open notebook spread, transcript left and coach margin right, with a Caveat note writing itself in. Below: three feature strips (live coaching, persona library, evidence-backed grades) and a model strip.",
+      "key_components": "Animated spread with a static PNG fallback for the README (light and dark). Badge row: MIT, Next.js 15, OpenAI Realtime, GPT-4.1 mini. 'Run it locally' card linking to setup. 'Good first issue' cards. Footer credit. The README mirrors the hero and adds an architecture diagram (voice, coach, grader) and a contributor table.",
+      "change_vs_today": "Replaces the blurry orb and four generic feature cards with a product-real spread that shows coaching and grading on the first screen. The README tells the same story, which is what fund reviewers read first."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Left rail (about 240px) with facets: sales job (15 families), industry, difficulty (1-3 dots), objection type and mode (voice or text). Main column: sticky header with search and result count ('132 personas'), job families as paper index tabs, then a grid of index cards: 3 across on desktop, 2 on tablet, 1 on phone.",
+      "key_components": "Index card: illustrated monogram avatar (no stock photos), persona name, role and company type, difficulty dots, top objection tag, length estimate, Practice and Duplicate actions. Active-filter chips with clear-all. Flip-to-see view shows talk track and rubric weights. Final tile: Build a new persona opens the wizard.",
+      "change_vs_today": "Today: a three-item select. Becomes a browsable catalogue of 120 seeded personas across 15 sales jobs. Facets follow the Base44 and Klaviyo library patterns, and the index card carries the notebook lens into the grid."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Six-step intake: a step rail on the left (Source, Persona, Scenario, Talk track, Rubric, Voice and test) and a live index card on the right that fills in as the model streams. Step 1 offers four source cards (job description, product URL, CRM notes or ICP, pasted call transcript) plus a file drop zone.",
+      "key_components": "Character counts and a 'what the model reads' disclosure per source. Typewriter streaming into the card. Inline pencil-edit on any field. Rubric weights auto-suggested from the source, adjusted with sliders that total 100. A 60-second test roleplay before save. Save to my library, or Open a pull request (writes the persona file into the repo's scenarios folder). Model badges: GPT-4.1 mini drafts, gpt-realtime voices.",
+      "change_vs_today": "Today there is no creation path beyond duplicating and editing a long form. This adds a guided intake modelled on PlayAI's stepper with live preview, ElevenLabs' short agent-creation form and HubSpot's source-picker step."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "One spread. Left page: the briefing on ruled paper, with the persona index card, a 'You're talking to' line, the goal as a headline, and the talk track as a numbered checklist the rep can tick. Right page: setup card with a Voice and Text segmented control, coach mode (Silent, Whisper cues, Full coach), a mic check meter, and a large stamped Start call button.",
+      "key_components": "Difficulty and objection chips. 'What this persona will push on' list generated from the scenario. Rubric weights as a stacked bar labelled 'where points come from'. Last score for this persona in Caveat ('Last time 50. Pricing was thin.'). Keyboard hint: Space to start.",
+      "change_vs_today": "Today: a dropdown, a blurry orb and a collapsed talk track. The briefing says what will be scored and lets the rep choose how much coaching they get before the call starts."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Open spread at 1440px. Left page (about 60%): the transcript on ruled paper with line numbers in the margin; rep lines in rep-ink, caller lines in graphite. Right page: the coach margin (a stream of vermilion Caveat notes), a live rubric ledger with six criteria and pencil bars, and talk-track ticks. Footer: composer, mic toggle, next-question chips, and an ink 'End and grade'.",
+      "key_components": "Persona header with portrait, status ('Your turn' or 'Caller speaking') and a JetBrains Mono timer. Whisper pill in voice mode. Objection sticky note (tilted, highlight yellow) naming the objection and linking to the talk-track step. Ledger deltas (+4, -2) per turn, marked provisional. Footer shows 'Coach: gpt-4.1-mini, 0.8 s' so the model is visible.",
+      "change_vs_today": "Today: a chat app with a drawer and no feedback until the end. Becomes a coaching surface where each turn gets a margin note and a score delta, objections raise a sticky note, and the coach never speaks in the persona's voice."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Top: 'Call debrief' header with date and duration, a hand-stamped letter grade with the number in mono beneath, and a goal tick-list ('Goal: partly achieved'). Then two columns: 'What worked' with highlighted quotes, and 'Practise next' with one focus and a Caveat note. Below: the criterion ledger, then the transcript with coach notes in the margin beside each line that moved a score.",
+      "key_components": "Quote chips that jump to and flash the transcript line. Ledger rows with weight, score bar, rationale and quotes. 'Practise this persona again' stamped button. Print gives a clean paper page. Grader status shown as a notebook note: the current 'LLM grader failed, keyword heuristic used' case gets an explanation and a retry, not only a yellow bar.",
+      "change_vs_today": "Today: one long scroll with a score ring and bars. Becomes a review where every point traces to a quote and a transcript line, and the fallback state is explained rather than hidden."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Logbook. Top row: four stat tiles drawn with tally marks (sessions, average, best, minutes practised). Middle: a 12-week practice grid on ruled week lines. Bottom: score trend beside a mastery panel with six criterion sparklines and a 'practise next' callout naming the weakest criterion and the persona to run.",
+      "key_components": "Tally-mark streak counter. Milestone stamps (First objection handled, Five calls over 70, Pricing solved) with outlined locked states, modelled on Base44's levels checklist. 7d, 30d and all-time toggle. Export as PDF.",
+      "change_vs_today": "Today: four numbers and a plain list. Becomes a progress log that shows which criteria are improving and which persona to run next."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Coaching board. Top: team, job-family and date filters, a 'Needs review' queue and an 'Assign practice' action. Main: ledger table with one row per rep, six criterion cells banded sage, amber or vermilion, a six-week sparkline, last call and open notes count. Right drawer: the selected rep's latest debrief with supervisor notes in Caveat.",
+      "key_components": "Score cells show the number as well as the colour. Assign-persona flow with a due date. Supervisor note composer using the existing supervisor-notes data. CSV export. Org switcher in the top bar. A Plane-style widget row for team averages.",
+      "change_vs_today": "Today there is no manager surface, though the data model already has orgs and supervisor notes. Becomes a board that shows a team's weakest criterion and sends targeted practice, aimed at call centres and training firms."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "390px single column. Sticky top strip: persona name, status and timer. Under it, a one-line margin tape showing the latest coach note in Caveat; tap to open the full note sheet. Transcript fills the screen as one ruled column. A live score ring at top right opens the ledger as a bottom sheet. Bottom dock: push-to-talk stamp (voice) or composer (text), next-question chips, and a smaller ink 'End and grade'.",
+      "key_components": "Round in-call controls adapted from Telegram's call screen. 16px side gutters, no horizontal scroll. Header shows persona name only. 44px minimum touch targets and safe-area insets. The Next.js dev badge that now overlaps the timer is hidden in production builds. In text mode the keyboard sits above the dock.",
+      "change_vs_today": "Today the header truncates the title, End and grade crowds the bottom edge, and the coach has nowhere to speak. Becomes a single-column notebook with a margin tape and sheet-based scoring."
+    }
+  ],
+  "live_coaching_and_scoring": "Three coach channels, one rule: the persona never sees coach output, so practice stays realistic. (1) Margin notes: text, always on, written beside the transcript line they refer to. (2) Whisper cue: a short pill in voice mode, visual only in v1 so the caller's speech cannot be confused with it. (3) Objection alert: a sticky note when the coach classifies price, timing, competitor, authority or trust objections, linked to the talk-track step. Rubric deltas refresh after each rep turn from a schema-validated coach call and stay marked provisional until the debrief re-grades. Target latency under 1.5s for text. As-is the app falls short here (no coaching, no live scoring). This design meets the standard only if the coach stream ships.",
+  "persona_library_and_wizard": "Library: 15 job families (SDR cold call, AE discovery, SaaS, insurance, mortgage, real estate, solar, home services, auto, medical devices, B2B procurement, recruiting, retail, customer success, collections), each with 8 or more seeded personas that carry an objection taxonomy, a rubric template and scripted replies. Facets: job, industry, difficulty, objection type, mode. Wizard: six steps from four source types to a schema-validated persona, then a test roleplay, then save or open a pull request. As-is there are 3 built-in scenarios and no wizard. This meets the standard only with roughly 120 quality personas and validated wizard output.",
+  "signature_moments": [
+    "Coach notes write themselves in vermilion beside the transcript line they refer to.",
+    "The grade lands as an ink stamp, tilted a few degrees.",
+    "Index cards in the library: flip one to see its talk track and rubric.",
+    "The wizard's preview card fills in line by line as the model streams.",
+    "Every number in a debrief links to the exact transcript line it came from."
+  ],
+  "openai_fund_angle": "Show OpenAI as the engine, not a logo. The live-call footer names each model and its latency (gpt-realtime for voice, gpt-4.1-mini for coach and grader). The landing page and README carry a How it uses OpenAI diagram. Settings lists the model for each role, with an override for any OpenAI-compatible endpoint so forks can swap models. Contributor invitations: Good first issue cards, persona pull requests from the wizard, a proposed AGENTS.md and Codex skill that drafts persona packs, and a CONTRIBUTING note on how maintainers use Codex for PR review. The persona gallery credits each contributor by GitHub handle.",
+  "inspirations": [
+    {
+      "source": "Mobbin: Delphi live call screen",
+      "url": "https://mobbin.com/screens/f495e1b5-5a89-4592-a7e4-42ee9d511c87",
+      "borrowed": "Centred persona with a ring, status pill and two round controls on a minimal stage for the live call."
+    },
+    {
+      "source": "Mobbin: Telegram call screen",
+      "url": "https://mobbin.com/screens/be8506ea-f0fc-44fc-9416-54f21d1645bc",
+      "borrowed": "Round in-call controls anchored to the bottom of the call view, for the mobile dock."
+    },
+    {
+      "source": "Mobbin: Gumloop score dashboard",
+      "url": "https://mobbin.com/screens/60ec82f0-afbf-4a61-b57a-0c56f540f9b6",
+      "borrowed": "KPI tiles above a score trend, a distribution chart and a records table for the progress and team views."
+    },
+    {
+      "source": "Mobbin: Meetup average event rating",
+      "url": "https://mobbin.com/screens/7daeec59-29c5-4899-b81b-b2cef49d0d79",
+      "borrowed": "Headline score with distribution bars and What went well / What went wrong tag chips for the debrief strengths and gaps."
+    },
+    {
+      "source": "Mobbin: Base44 Levels",
+      "url": "https://mobbin.com/screens/aa7aea9d-42a2-4900-91fd-9ba2e8e1be19",
+      "borrowed": "Milestone checklist with locked future levels, for progress stamps."
+    },
+    {
+      "source": "Mobbin: Base44 App templates",
+      "url": "https://mobbin.com/screens/ce9e93ac-1e3c-4095-a685-049bcbee2db5",
+      "borrowed": "Category chips, sort and filter bar above a card grid with usage counts, for the persona library."
+    },
+    {
+      "source": "Mobbin: Klaviyo Campaigns library",
+      "url": "https://mobbin.com/screens/c3d9bb50-e157-4c6b-baf2-d258935c1f95",
+      "borrowed": "Library grouped by goal with section headers and View all counts, for the job-family structure."
+    },
+    {
+      "source": "Mobbin: Browserbase template modal",
+      "url": "https://mobbin.com/screens/2c3c41fc-b9b1-4f1e-8cde-d27e29ce9dac",
+      "borrowed": "Single-row category filter chips inside a template picker."
+    },
+    {
+      "source": "Mobbin: PlayAI agent creation flow",
+      "url": "https://mobbin.com/flows/cdb50e4c-e541-494b-8e1c-0d4e5df71ccd",
+      "borrowed": "Left step rail with a live preview pane for the persona wizard; colour-tinted category tiles for voice families."
+    },
+    {
+      "source": "Mobbin: HubSpot Customer Agent creation flow",
+      "url": "https://mobbin.com/flows/783fd46c-2d30-4963-92ac-92bed8d63bff",
+      "borrowed": "Two-step source intake (existing content, file upload, public URL) followed by a test-and-preview screen."
+    },
+    {
+      "source": "Mobbin: ElevenLabs Creating an agent flow",
+      "url": "https://mobbin.com/flows/8911f239-62fc-43c6-b31a-0ef364059b3c",
+      "borrowed": "Short name-and-goal form with step dots as the wizard's entry point."
+    },
+    {
+      "source": "Mobbin: Plane dashboard",
+      "url": "https://mobbin.com/screens/33e6bcaf-c6f6-4562-8f21-231df3d4e51b",
+      "borrowed": "Widget grid of bar, pie and cycle-progress cards for team views."
+    },
+    {
+      "source": "Second Nature vs Hyperbound comparison (vendor blog)",
+      "url": "https://secondnature.ai/second-nature-vs-hyperbound-which-ai-sales-roleplay-platform-is-right-for-your-team/",
+      "borrowed": "Positioning reference: real-call scoring is now the category expectation. Vendor-authored; verify before pitch use."
+    },
+    {
+      "source": "Outdoo AI vs Hyperbound vs Second Nature (vendor blog)",
+      "url": "https://www.outdoo.ai/blog/hyperbound-vs-second-nature-vs-outdoo",
+      "borrowed": "Reviewer quotes that practice feels scripted, and the one-scorecard-for-practice-and-live-calls pattern. Vendor-authored; verify."
+    },
+    {
+      "source": "HeroUI: 12 best React UI component libraries 2026",
+      "url": "https://heroui.com/en/blog/best-react-ui-component-libraries",
+      "borrowed": "Comparison of shadcn/ui, HeroUI and Mantine on accessibility and AI tooling; HeroUI kept as the fallback. Vendor-authored."
+    },
+    {
+      "source": "Untitled UI: 15 best React UI component libraries 2026",
+      "url": "https://www.untitledui.com/blog/react-component-libraries",
+      "borrowed": "Source for the claim that shadcn/ui made Base UI its default primitive layer in July 2026. Third-party; verify on ui.shadcn.com."
+    }
+  ],
+  "implementation": {
+    "effort": "XL",
+    "migration_path": "Phase 0 (about 1 week): tokens, fonts and the Tailwind v4 move, with shadcn primitives copied in and a visual-regression baseline. Phase 1 (2 weeks): live call and debrief, the highest-value screens for the live coaching score, plus the coach stream backend. Phase 2 (2 weeks): library data model, facets and 40 seeded personas. Phase 3 (2 weeks): wizard, with the seed grown to 120. Phase 4 (2 weeks): pre-call briefing, progress dashboard, team view, mobile polish and print styles."
+  },
+  "risks": [
+    "Live scoring is only as good as the coach stream. Without a schema-validated, low-latency coach call, the live ledger will mislead; the current debrief already fell back to a keyword heuristic.",
+    "Paper texture and handwriting can read as retro or twee in an enterprise demo. Keep grain under 4% and use Caveat only for coach notes.",
+    "The 120-persona library is a content project, not a UI task. Seed quality drives the persona score.",
+    "Moving Tailwind v3 to v4 and copying components touches every screen; ship it as one branch with visual regression tests.",
+    "HeroUI is the alternative if faster defaults matter more than a custom paper look; choosing it gives up much of the notebook treatment.",
+    "The shadcn Base UI default claim and the competitor weaknesses come from vendor and third-party blogs; verify before using them in pitch copy."
+  ],
+  "scores": "{\"A_look\": 7.5, \"B_user_experience\": 7.5, \"C_unique_design\": 8.5, \"D_live_coaching_and_scoring\": 5.5, \"D_as_is\": 2.0, \"E_persona_library_and_wizard\": 5.5, \"E_as_is\": 2.0, \"F1_as_saas\": 4, \"F2_sell_to_entities\": 6, \"F3_not_worth_it\": 3}"
+}

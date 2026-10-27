@@ -1,0 +1,255 @@
+{
+  "id": "P04",
+  "lens": "Duolingo-style gamification: skill tree of sales skills, streaks, XP, leagues, bite-size levels",
+  "name": "Game Tape Skill Path",
+  "one_liner": "A skill tree, XP and streaks wrap every rep in a dark game-tape coaching stage, so practice feels like a season and every live call is scored.",
+  "lens_followed_or_changed": "Followed: skill tree of sales skills, XP, day streaks, bite-size levels, leagues. Changed: Duolingo's mascot, gems and candy palette would read as childish to call-center managers and training buyers, so the same mechanics use a sports-broadcast game-tape language (dark stage for calls, mono numerals, sparing gold). Leagues are opt-in and team-scoped. Self-scores: A 8, B 7, C 8. Business: F1 6 (streak retention helps, but Second Nature and Hyperbound are funded), F2 7 (manager heatmap and team leagues sell to training firms and call centers), F3 3 (clearly worth building as open core, and the grant funds the core).",
+  "ui_stack": [
+    {
+      "name": "shadcn/ui on Radix Primitives",
+      "role": "Component layer for every screen: dialogs, sheets, tabs, combobox, toasts, forms",
+      "why": "MIT licensed and copied into the repo, so contributors own the code; Tailwind-native and accessible by default, with no vendor lock-in for an open-source project."
+    },
+    {
+      "name": "Tailwind CSS v4 with CSS-variable tokens",
+      "role": "Styling and theming; replaces the hand-rolled .card and .btn classes",
+      "why": "Semantic tokens let the dark stage and the light app share one system; shadcn documents this setup."
+    },
+    {
+      "name": "Motion (motion/react)",
+      "role": "XP pops, score count-up, skill-node unlock, orb and cue entrance",
+      "why": "Spring physics with a reduced-motion fallback, light enough for the live call route."
+    },
+    {
+      "name": "Recharts via shadcn chart",
+      "role": "Score curves, progress radials, manager heatmap",
+      "why": "Themed through the same tokens, so every chart matches the rest of the app."
+    },
+    {
+      "name": "Hand-built SVG skill tree (@xyflow/react only past 60 nodes)",
+      "role": "Skill tree on Progress and the pre-call briefing",
+      "why": "Around 30 nodes fit in a small SVG; React Flow stays as an escape hatch if the tree grows."
+    },
+    {
+      "name": "Lucide React plus custom SVG badges",
+      "role": "Icons, plus skill and league badge artwork",
+      "why": "Keeps the existing icon set; badges give the game layer its own look without cartoon mascots."
+    },
+    {
+      "name": "next/font: Bricolage Grotesque, Inter, JetBrains Mono",
+      "role": "Display titles; UI and transcript text; timers and scores",
+      "why": "Moves away from the default Inter plus Sora template feel; tabular mono numerals stop timers and XP from jittering."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "canvas",
+        "hex": "#F6F7FB",
+        "use": "App background in light mode"
+      },
+      {
+        "token": "surface",
+        "hex": "#FFFFFF",
+        "use": "Cards, sheets, library tiles"
+      },
+      {
+        "token": "ink",
+        "hex": "#0F172A",
+        "use": "Body text and headings"
+      },
+      {
+        "token": "stage",
+        "hex": "#0B1020",
+        "use": "Live call, debrief header and landing hero: the game-tape dark stage"
+      },
+      {
+        "token": "rep-blue",
+        "hex": "#2563EB",
+        "use": "Primary actions and links"
+      },
+      {
+        "token": "xp-gold",
+        "hex": "#F5B301",
+        "use": "XP, level rings, unlocks and league badges only"
+      },
+      {
+        "token": "streak-flame",
+        "hex": "#FF6B2C",
+        "use": "Streak chips and day dots only"
+      },
+      {
+        "token": "mastery-green",
+        "hex": "#16A34A",
+        "use": "Mastered skill nodes and criteria at or above target"
+      },
+      {
+        "token": "cue-violet",
+        "hex": "#8B5CF6",
+        "use": "Whispered coach cues"
+      },
+      {
+        "token": "alert-rose",
+        "hex": "#E11D48",
+        "use": "Objection alerts and End and grade"
+      },
+      {
+        "token": "model-green",
+        "hex": "#10A37F",
+        "use": "Model lab badges naming an OpenAI model; never the OpenAI logo"
+      }
+    ],
+    "typography": "Bricolage Grotesque 600-700 for page titles and the grade letter; Inter 400-600 for UI, transcript and body at 16px; JetBrains Mono with tabular numerals for timers, XP and scores. Type scale 1.25; transcript line height 1.5.",
+    "shape_and_depth": "16px card radius, 12px controls, 1px #E2E8F0 borders on light surfaces and 1px white at 10% on the stage. Shadows only on floating cues and sheets. Primary buttons get a 2px darker bottom edge that compresses on press, a light nod to tactile game buttons without gloss.",
+    "motion": "Springs of 180 to 260ms. XP pops rise 24px and fade. Skill nodes fill with a 400ms ring sweep. Scores count up on debrief entry. Cues slide in from the rail edge. Reduced-motion users get the end state instantly.",
+    "iconography": "Lucide at 1.75px stroke. Flame only for streaks, bolt only for XP, hexagonal custom badges for skills and leagues. No emoji in product UI.",
+    "theme_modes": "Light is the default app theme. The dark stage applies to the live call, debrief header and landing hero in both themes. Honour prefers-color-scheme plus a manual toggle; both modes use the same semantic tokens."
+  },
+  "navigation_and_ia": "Desktop: a 72px icon rail with Path (home), Library, Live, Debriefs, Progress and, for org admins, Team. The top bar carries a streak flame chip, an XP chip with a level ring, and the avatar. Mobile: bottom tabs Path, Library, Call (raised centre button), Progress, Me. Start call is one tap from every screen. The scenario dropdown is retired; Library owns scenario choice, with Build with AI as the first tile. Settings, MFA and the Model lab live under Me.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Full-bleed dark stage hero. Left: headline 'Practice the call before it counts', one subline, primary 'Start a live call' and secondary 'Browse personas'. Right: a looping product frame showing a violet cue card, rubric meters filling and a debrief grade ring. Below the fold: six sales-job tiles (SDR, AE discovery, insurance, mortgage, solar, procurement) with persona counts, then a text strip naming the OpenAI models in use. The README mirrors this with a 10-second live-call GIF.",
+      "key_components": "Hero headline and two CTAs; looping live-call GIF; six job tiles; OpenAI model strip; Contribute a persona CTA; license and star badges.",
+      "change_vs_today": "Replaces the static fake call card and four generic feature cards with a product-in-motion hero and job-based entry points."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Top: search field and tabs (Personas, Scenarios, Skill paths), with a dashed Build with AI tile first in the grid. Left rail, collapsible on tablet: chip filters for role, industry, difficulty (1-4 pips), objection type, and Done by me. Main: three-column card grid; each card shows avatar, persona name, role, objection chips, difficulty pips and a best-score ring. Selecting a card opens a right sheet with persona brief, talk-track preview, rubric weights and Start path.",
+      "key_components": "Filter chips with counts; persona cards with best-score rings; objection tags; right detail sheet; Contribute persona on every card.",
+      "change_vs_today": "Replaces a three-item select dropdown with a browsable library faceted by the six filters the brief requires."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Four-step stepper across the top: Source, Persona, Scenario and rubric, Dry run. Step 1: one large input with source tiles for job description, company or product URL, CRM notes, pasted call transcript and free-text ICP. Steps 2 and 3 use a split view: editable form on the left, filled by model output; a live persona card on the right that streams as fields generate, with a why-this-objection note per field. Step 4: a two-minute text dry run, then Save to library or Open prefilled PR.",
+      "key_components": "Source tiles; streaming persona preview; per-field provenance chips; rubric weight sliders totalling 100; dry-run button; Save and Open PR actions.",
+      "change_vs_today": "Replaces the blank scenario editor form with a guided flow where the model drafts everything and the rep edits and tests it."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Single column on mobile, two columns on desktop. Left: a skill-node card showing where this call sits in the tree ('Pricing transparency, level 2 of 4') with a level ring and the XP at stake. Below it: persona card with name, role, behaviour tags and opening line. Right: 'Win these three things' checklist tied to rubric criteria, each showing your last score. Bottom: Voice/Text segmented control, a 60-second Warm-up button, and a large Start call button labelled Earn 40 XP if goal met.",
+      "key_components": "Skill-node progress ring; persona card; objective checklist with last score; collapsible talk track as steps; mode toggle; XP-at-stake label.",
+      "change_vs_today": "Replaces the blurry gradient orb and collapsed talk track with a briefing that says what to win and why it matters."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Dark stage. Top bar: persona name, mono call timer, streak flame chip (appears after three rubric hits in a row), XP ticker. Centre: a smaller reactive orb with talk-time bar, the transcript below with criterion chips on credited rep turns. Right: a 320px Coach rail with one violet now-cue card (a single whispered line), an amber objection alert when detected, a six-step talk-track path with checkmarks, and five live rubric meters with +delta flashes. Bottom dock: mute, text input, End and grade in rose.",
+      "key_components": "Reactive orb; transcript with criterion chips; now-cue card with throttle; objection alert; talk-track path; live rubric meters; streak and XP ticker; coaching mode toggle (Off, Subtle, Active).",
+      "change_vs_today": "Replaces a chat app with no coaching or live scoring, a static talk-track drawer and a timer tucked in the corner."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Dark stage header: letter-grade ring, one-line verdict, and two reward chips that animate in: +48 XP and a skill node moving from level 2 to 3. Below: a moment timeline scrubber across the call with markers for cues used, objections and score changes. Two columns: left, five criterion cards with score, weight and a one-sentence why; right, evidence quotes with timestamps that jump the timeline. Footer: a Next rep card recommending the objection that would most move the score, and a share image.",
+      "key_components": "Grade ring; XP and node reward chips; moment timeline; criterion cards with weights; timestamped evidence quotes; Next rep card; share image; grader badge (Model graded or Estimate).",
+      "change_vs_today": "Replaces one long vertical scroll with a scannable scorecard where every score links to a moment in the call."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Hero: the skill tree, six branches (Opening, Discovery, Objections, Pricing, Closing, Booking) of five-level nodes. Locked nodes are grey, mastered nodes green with a gold ring, and open contribution nodes carry a small plus mark. Top stat row: day streak with a 7-day dot strip, XP this week, average by criterion as radials, time practised. Right rail: opt-in weekly league ladder (friends or team only) and recent calls with score sparklines and XP per call.",
+      "key_components": "Skill tree with level rings; streak dot strip and freeze status; XP chart; criterion radials; league ladder; recent-calls list with sparklines.",
+      "change_vs_today": "Replaces four stat tiles and a plain list with a visible path of progress and a reason to return tomorrow."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Left: team list with role and streak status. Main: heatmap grid of reps by five rubric criteria, coloured by average, sortable columns, and a coverage bar per skill branch that highlights lagging nodes. Right: coaching queue of calls with the lowest scores or missed objections, each with Assign path and Open debrief. Top: date range, cohort filter, and an opt-in leagues toggle with plain privacy copy. Admin tab: SSO, roles, data retention.",
+      "key_components": "Rep-by-criterion heatmap; branch coverage bars; coaching queue with assign actions; cohort filter; opt-in league toggle; role and retention settings; CSV export.",
+      "change_vs_today": "Adds the team surface the data model already supports but the current UI never shows."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "Full-height dark stage at 390px with 16px gutters and no horizontal scroll. Top strip: persona name, mono timer, streak flame, close. A small centred orb with the last two transcript turns beneath. A violet one-line cue card sits above a collapsed bottom sheet; swipe up for the full Coach rail with talk-track steps and rubric meters. Bottom dock in the thumb zone: large round mic, text field that expands on tap, End and grade in rose at the right edge.",
+      "key_components": "Bottom-sheet coach; one-line cue card; horizontal talk-track stepper; large mic button; expanding text input; End and grade clear of the Next.js dev badge.",
+      "change_vs_today": "Fixes today's mobile call, where the timer sits under the dev badge and the coach is hidden behind a book icon."
+    }
+  ],
+  "live_coaching_and_scoring": "Coaching runs on a second, cheap text model (GPT-4.1 mini by default) reading transcript turns in parallel, so the persona never coaches and its voice stays natural. Cues are capped at one per 20 to 25 seconds, with Off, Subtle and Active modes. Rubric meters update after each rep turn, with evidence chips on the transcript, not after the call. Objection alerts name the rubric criterion they threaten. The debrief states which grader ran: model or keyword heuristic. Heuristic scores show an Estimate badge and withhold XP, fixing the fallback warning seen on today's debrief. Self-score D 5.2: meets the baseline only if cue latency stays under 2 seconds and throttling ships; reaches about 5.8 with moment replay on the debrief timeline.",
+  "persona_library_and_wizard": "Personas ship as versioned files in the repo, with at least ten per sales job at launch across SDR cold call, AE discovery, SaaS, insurance, mortgage, real estate, solar, home services, auto, medical devices, B2B procurement, recruiting, retail, customer success and collections. Each persona carries objection tags, difficulty, rubric weights and a talk track, so the library works as a curriculum. Filters: role, industry, difficulty, objection type. The wizard takes a job description, product URL, CRM notes, ICP or pasted call; a GPT model returns structured persona, scenario and rubric drafts with provenance per field. A two-minute dry run must pass before save. Self-score E 5.6: the faceted library and wizard meet the standard; the dry-run gate and human-reviewed personas push it higher.",
+  "signature_moments": [
+    "Hot-streak flame lights after three rubric hits in a row, with a one-line XP pop.",
+    "A violet now-cue card arrives mid-call; tapping it pins it for the next rep turn.",
+    "Debrief: the skill node rises from level 2 to 3 with a ring sweep as the grade lands.",
+    "Objection cards collect per branch; beating the price objection three times unlocks a Price Pro badge.",
+    "Model lab chip under each cue shows which OpenAI model ran, with latency and token cost.",
+    "Author a persona, merge the PR, and your handle gets a Persona author badge on the library card."
+  ],
+  "openai_fund_angle": "Each OpenAI model has a visible job. The Realtime API runs the voice persona. A small GPT model (GPT-4.1 mini by default) reads each turn to drive cues and grading. A larger GPT model drafts personas in the wizard. A Model lab panel, under Me and on each debrief, lists which model ran each step with latency and token cost per call, showing reviewers efficient use of API credits. Landing and README carry a text strip reading Built on OpenAI Realtime API and GPT models; no logo without brand approval. Contributors: the Library is the contribution surface. Add a persona exports a file and opens a prefilled PR, the skill tree marks open contribution nodes, and contributor XP shows on profiles. The repo's PR review, release notes and maintainer triage will run on Codex, matching the Codex for Open Source criteria.",
+  "inspirations": [
+    {
+      "source": "Duolingo streak goal picker (Mobbin)",
+      "url": "https://mobbin.com/screens/ec3f87db-e37f-40f3-8787-6bb9a1a7d7f8",
+      "borrowed": "Streak goal tiers as the commitment step in onboarding."
+    },
+    {
+      "source": "Duolingo streak goal complete (Mobbin)",
+      "url": "https://mobbin.com/screens/dfc05946-4812-494f-8355-76b6409313a8",
+      "borrowed": "Seven-day dot strip with a reward for hitting the goal."
+    },
+    {
+      "source": "Duolingo practice dashboard (Mobbin)",
+      "url": "https://mobbin.com/screens/e1681332-12ea-4115-8cd1-54603e0006b7",
+      "borrowed": "Daily quests card beside XP chips on the home screen."
+    },
+    {
+      "source": "Duolingo profile (Mobbin)",
+      "url": "https://mobbin.com/screens/d612b47c-f461-4e70-a213-e2da63cce77d",
+      "borrowed": "Streak, league and weekly XP stats as a compact profile."
+    },
+    {
+      "source": "Quo onboarding and call summary (Mobbin)",
+      "url": "https://mobbin.com/screens/5e60926e-c807-4a67-987b-593e386f68b8",
+      "borrowed": "Numbered setup stepper for the wizard, and an AI call summary with next steps for the debrief."
+    },
+    {
+      "source": "Tana meeting screen (Mobbin)",
+      "url": "https://mobbin.com/screens/d89f5122-d42f-42ae-b542-7b267058fa2a",
+      "borrowed": "Live talking-points panel beside the main call surface, for the Coach rail."
+    },
+    {
+      "source": "Delphi live voice call (Mobbin)",
+      "url": "https://mobbin.com/screens/f495e1b5-5a89-4592-a7e4-42ee9d511c87",
+      "borrowed": "Centred orb with a Talking status pill and minimal call controls."
+    },
+    {
+      "source": "Recraft style library (Mobbin)",
+      "url": "https://mobbin.com/screens/3a6e2abf-8507-413b-bf05-aaecf50bf934",
+      "borrowed": "Card grid with a right-hand detail panel for the persona library."
+    },
+    {
+      "source": "Klaviyo content block library (Mobbin)",
+      "url": "https://mobbin.com/screens/e5cb4ebf-3b87-4032-ada8-61866dd0f5ef",
+      "borrowed": "Filter dropdowns and a Build your own tile for the wizard entry point."
+    },
+    {
+      "source": "Sweatpals search (Mobbin)",
+      "url": "https://mobbin.com/screens/06572b00-05f4-4153-bac9-c31d3b8cd038",
+      "borrowed": "Quick filter chip row above results."
+    },
+    {
+      "source": "Telegram call (Mobbin)",
+      "url": "https://mobbin.com/screens/cddafed7-88a6-4122-be08-3959b3629313",
+      "borrowed": "Mobile call dock with large mic and end button."
+    },
+    {
+      "source": "Second Nature vs Hyperbound comparison (secondnature.ai, vendor-written)",
+      "url": "https://secondnature.ai/second-nature-vs-hyperbound-which-ai-sales-roleplay-platform-is-right-for-your-team/",
+      "borrowed": "Competitor framing: AI buyer-persona library and video roleplay. Vendor claims are unverified and not to be repeated."
+    },
+    {
+      "source": "shadcn/ui",
+      "url": "https://ui.shadcn.com/",
+      "borrowed": "Copy-in accessible components and CSS-variable theming on Tailwind."
+    }
+  ],
+  "implementation": {
+    "effort": "L",
+    "migration_path": "Phase 1 (about 1 week): Tailwind v4 and shadcn tokens, replace the .card and .btn classes, add the stage token. Phase 2 (1-2 weeks): live-call coaching rail and debrief, since they carry the grant demo. Phase 3: persona library and wizard, seeded with 10 personas per job. Phase 4: skill tree, streaks, opt-in leagues and the manager view. Keep /trainer and /dashboard routes; add parity tests for voice and text modes and visual checks at 390px in both themes."
+  },
+  "risks": [
+    "Gamification can read as childish to enterprise buyers; mitigate with the restrained stage palette and opt-in leagues.",
+    "Cue latency and noise: the 2-second budget and throttle are unproven; test on recorded calls before the grant demo.",
+    "Today's debrief already falls back to a keyword heuristic; XP built on heuristic scores would reward noise, so XP must be withheld then.",
+    "Tailwind 3 to 4 plus shadcn touches every screen; regression risk without visual tests in both themes and at 390px.",
+    "Competitor marketing claims (Second Nature cites 34% faster ramp) are unverified; do not repeat them in the README.",
+    "Persona quality: 150 personas need human review; ship a rubric-quality gate and label unreviewed personas as drafts."
+  ]
+}

@@ -1,0 +1,267 @@
+{
+  "id": "P50",
+  "lens": "Soft 3D (Spline/clay): 3D persona avatars with react-three-fiber (already a dependency), tactile depth",
+  "name": "Clay Coach",
+  "one_liner": "A warm, tactile call console: a soft-clay 3D caller, coaching cues that appear while the rep talks, and an evidence-backed scorecard, built so contributors can fork and extend every persona.",
+  "lens_followed_or_changed": "Followed the Soft 3D lens (clay, react-three-fiber, tactile depth) but narrowed it. 3D now carries persona identity and the live caller only. Research showed the strongest live-call and data screens (Dialpad, Hume AI, Uxcel) are flat and dense, so scorecards and dashboards stay flat with hairline rules. Changed photoreal avatars to parametric clay busts: fewer likeness and deepfake concerns, and contributors need no 3D skills. Added dark mode, which the app lacks today. Council scores are in council_scores.",
+  "ui_stack": [
+    {
+      "name": "shadcn/ui on Base UI (copy-in)",
+      "role": "Component primitives, restyled through tokens",
+      "why": "Owns the component code so the clay look is ours, and ships MCP, llms.txt and agent skills contributors can use with Codex. Rejected Mantine (about 163 KB gzip for the same screen vs about 127-144 KB for shadcn variants in one benchmark, and it reads as an enterprise dashboard) and HeroUI (strong house style that would fight the clay identity)."
+    },
+    {
+      "name": "Tailwind CSS v4",
+      "role": "Styling and design tokens",
+      "why": "Required by current shadcn components. The v3 to v4 move is the main migration cost. Tokens live on :root and drive light and dark."
+    },
+    {
+      "name": "Motion (motion.dev)",
+      "role": "Layout, cue entry and state transitions",
+      "why": "Spring physics for panels and cue cards; honours reduced motion."
+    },
+    {
+      "name": "react-three-fiber with @react-three/drei",
+      "role": "Clay persona busts and the live caller",
+      "why": "Already a dependency. One WebGL canvas per screen, ContactShadows, a single soft light. Library thumbnails are pre-rendered."
+    },
+    {
+      "name": "Recharts via shadcn chart",
+      "role": "Sparklines, trend lines, radar",
+      "why": "Stays inside the shadcn system. Radar shows skill shape in debrief and dashboard."
+    },
+    {
+      "name": "lucide-react",
+      "role": "Icons",
+      "why": "Kept from today for a consistent 1.75px stroke set."
+    },
+    {
+      "name": "Bricolage Grotesque, Inter, JetBrains Mono (via next/font)",
+      "role": "Type",
+      "why": "Soft display face for identity, neutral UI face, tabular mono for timers and scores."
+    },
+    {
+      "name": "React Hook Form with zod",
+      "role": "Wizard and scenario editor forms",
+      "why": "zod is already in the stack; per-step validation for the persona wizard."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "canvas",
+        "hex": "#F3EFE8",
+        "use": "Light page background (warm clay paper)."
+      },
+      {
+        "token": "surface",
+        "hex": "#FFFDF9",
+        "use": "Cards, drawers and the dock."
+      },
+      {
+        "token": "ink",
+        "hex": "#1D1B18",
+        "use": "Body text, End and grade button fill, amber-cue text."
+      },
+      {
+        "token": "clay",
+        "hex": "#B8502A",
+        "use": "Primary actions and brand accent; white text about 5:1."
+      },
+      {
+        "token": "sage",
+        "hex": "#2F7D64",
+        "use": "On-track halo and coach cues; white text about 5:1."
+      },
+      {
+        "token": "cobalt",
+        "hex": "#2B4CC2",
+        "use": "Scores, deltas and data marks; about 6.9:1 on surface."
+      },
+      {
+        "token": "amber",
+        "hex": "#E0A526",
+        "use": "Objection alerts; ink text only (about 7.9:1)."
+      },
+      {
+        "token": "canvas-dark",
+        "hex": "#151310",
+        "use": "Dark-mode page background."
+      },
+      {
+        "token": "surface-dark",
+        "hex": "#1F1C18",
+        "use": "Dark-mode cards and dock."
+      }
+    ],
+    "typography": "Bricolage Grotesque 600-700 for display and screen titles. Inter 400-600 for UI and body, 16px minimum on mobile. JetBrains Mono with tabular numerals for timers, scores and deltas. Sentence case; all-caps only for 12px eyebrows.",
+    "shape_and_depth": "Clay depth: 24px card radius, 999px pills, 12px control radius. Surfaces use a two-layer shadow (soft lower shadow plus a 1px inner top highlight) so they read as pressable, not glassy. 3D appears only on the persona bust and the live caller; data surfaces are flat with 1px hairlines.",
+    "motion": "Springs (stiffness about 300, damping about 30) for panel and cue entry. The caller breathes slowly, its jaw follows audio level, and the halo changes colour with state. Rubric bars move from hatched provisional to solid in 400 ms. Static stills replace all 3D motion under prefers-reduced-motion and on low-power devices.",
+    "iconography": "lucide-react at 20px in UI and 24px in the call dock, 1.75px stroke. No emoji in product UI. Avatar accessories (headset, glasses, lanyard, clipboard) are 3D primitives, not icons.",
+    "theme_modes": "Light is the default; dark is first-class for dim rooms and screen-share. Both are token sets on :root with a data-theme override and a system-preference fallback. Every clay and sage text-on-fill pair must be verified for WCAG AA in both modes before merge."
+  },
+  "navigation_and_ia": "Top bar: Practice (Pre-call, Live), Library (Personas, Scenarios, Mine, Community), Progress, Team (managers only), Contribute, plus a Cmd-K palette built on shadcn Command. Live call enters a full-screen mode that hides the nav and keeps only the dock. Mobile uses a bottom tab bar (Practice, Library, Progress, More); More holds Team and Contribute. Account, settings and MFA sit in an account menu. Existing URLs (/trainer, /trainer/scenarios, /trainer/debrief/[id], /dashboard) keep working; new library and wizard routes are added beside them.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Split hero. Left: headline 'Rehearse the call. Get coached while you talk.' with a primary 'Start a live call' button and a secondary 'Browse personas'. Right: one 3D clay caller bust beside a captioned transcript and a three-bar rubric that fills on a loop. Below: a persona archetype strip with a featured centre card, a three-step band (Practise, Get coached, Debrief), and a 'Built in the open' band with MIT licence, a Model Ledger preview and a Contribute button. The README reuses the hero as a static poster with a 10-second loop.",
+      "key_components": "Hero canvas (R3F caller), captioned ticker, rubric mini-meter, archetype carousel, Model Ledger preview chip, contributor CTA, README poster image.",
+      "change_vs_today": "Replaces the generic four-card grid and static fake call card with a working product preview and a visible invitation to contribute."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Tabs across the top: Personas, Scenarios, Mine, Community. Left sticky facet rail: role, industry, difficulty (segmented), objection type chips, mode (voice or text), source. Main: responsive grid of persona cards, each with a pre-rendered clay bust, name, role, industry chip, difficulty dots, top objection, and Run and Duplicate actions. The first tile is 'New persona', which opens the wizard with current facets pre-filled. Clicking a card opens a right drawer with the persona recipe, talk-track preview and rubric weights. Empty search shows the archetype carousel.",
+      "key_components": "Facet rail with live counts, persona card, Cmd-K search, detail drawer, source badges (Built-in, Mine, Community).",
+      "change_vs_today": "A three-item select becomes a faceted, searchable library that scales to hundreds of personas and shows community work."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Four steps in a left rail: Source, Persona, Scenario and rubric, Test call. Source offers five tabs (job description, product URL, CRM notes, ICP, pasted call) with a drop zone and a preview of what will be extracted. Persona shows the generated clay bust beside editable traits: temperament sliders, objection chips, opening line, voice. Every generated field carries a source chip that jumps to the sentence it came from. Scenario drafts the rubric with weights summing to 100 and an evidence rule per criterion. Test call runs 60 seconds. Saving exports the same recipe contributors submit as a pull request.",
+      "key_components": "Stepper rail, source-chip field pattern, temperament sliders, rubric weight editor with live sum, 60-second test-call panel.",
+      "change_vs_today": "New capability. Personas are hand-filled forms today with no drafting help."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Two columns. Left, 'Your brief': one-sentence goal, persona card with the clay bust and a two-line bio, 'What they will push on' as three objection chips each with a why-it-matters line, and the talk track as a horizontal six-step rail rather than a collapsed drawer. Right, 'Readiness': voice or text segmented control, mic level check, a 30-second warm-up drill, the last three scores for this scenario as a sparkline, and rubric weights as a stacked bar. A full-width 'Start call' button anchors the bottom of the right column.",
+      "key_components": "Talk-track rail (reused as the live tracker), objection chips, readiness checklist, warm-up drill, sparkline, weight bar.",
+      "change_vs_today": "Talk track and rubric move from collapsed drawers into visible preparation. The dropdown becomes a link into the library."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Call console. Centre: the clay caller, jaw driven by audio level, halo showing state (sage on track, amber objection heard, cobalt caller speaking); captions below in speaker lanes, interim lines dimmed until final. Left rail: six-step talk-track tracker and a 'Next best question' card. Right rail: five rubric bars, hatched while provisional and solid once a transcript quote confirms them, plus whisper cue cards that collapse into a Coach tray. Bottom dock: mic level, mono timer, mute, Coach switch (On, Quiet, Off), text input, 'End and grade' in ink.",
+      "key_components": "R3F caller with audio-driven jaw and halo, speaker-lane captions, talk-track tracker, live rubric meter, whisper cue cards and Coach tray, dock with timer and Coach switch.",
+      "change_vs_today": "A chat app with no feedback becomes a live console where coaching and provisional scoring are visible while the rep speaks. Grading stays post-call."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Two columns. Left: clay medallion with letter grade, percentile phrasing (for example 'ahead of 6 of your last 10 calls'), goal status pill, Replay and Practise-again actions, then a rubric radar. Right: criteria as sorted rows showing weight, score and change against the last three runs. Expanding a row lists evidence quotes with timestamps; tapping a quote scrubs audio and transcript to that second. A timeline strip under the header marks coach cues and whether each was followed or missed. The transcript opens in a side drawer; one next-drill card closes the page.",
+      "key_components": "Grade medallion, rubric radar, sorted criterion rows with delta chips, timestamped evidence quotes, audio scrub, coach-cue timeline, transcript drawer, next-drill card.",
+      "change_vs_today": "One long vertical scroll becomes a two-column scorecard with a timeline, evidence scrubbing and a single next drill."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Top row: four KPI tiles (sessions, average, best, practice time) with tabular mono numerals, 14-day sparklines and a streak chip. Middle: score-by-criterion trend with per-criterion toggles and a 'since first call' delta. Right: skill radar comparing this month with last month. Bottom: a filterable history table (persona, difficulty, objections hit, score ring) where each row opens its debrief. A 'Next focus' card targets the scenario that best fixes the weakest criterion.",
+      "key_components": "KPI tiles with sparklines, trend chart (Recharts), skill radar, history table, Next focus card.",
+      "change_vs_today": "Four numbers and a plain list become trends, skill shape and a recommended next focus."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Sortable team table: clay initials avatar, rep, sessions this week, average, weakest criterion, last session, and a review flag. Top strip: team radar with a selected rep overlaid, and an 'Assign scenario' panel (scenario, reps, due date). A coaching queue lists low-scoring sessions with the existing supervisor-note field. 'Spectate' joins an in-progress call with the rep's consent shown. New teams see a 'Not enough sessions yet' card with a progress bar toward the threshold. Reps see only their own scores unless the org turns on team visibility.",
+      "key_components": "Sortable team table, team radar with overlay, assignment panel, coaching queue, spectate control, consent banner, empty-state card.",
+      "change_vs_today": "No team surface exists in the UI today. This adds one on the existing org, team and supervisor-note data."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "At 390px: full-bleed clay caller in the top third with a compact state pill. Captions show the last three lines. A horizontal talk-track stepper sits under the header. Coach cues arrive as a bottom sheet above the dock, one card at a time, swipe to dismiss. The rubric collapses to a one-line chip such as 'Discovery 62, up 4'; tap to expand. Dock: large mic button, Coach toggle, Type (opens input), 'End and grade' in ink. Thumb-zone controls, 16px gutters, no horizontal scroll. Low-power devices and reduced-motion users get a static clay still.",
+      "key_components": "Full-bleed R3F caller with still fallback, three-line captions, stepper, bottom-sheet cue card, rubric chip, thumb dock.",
+      "change_vs_today": "The chat-bubble layout with a cramped composer becomes a voice-first call screen with coaching within thumb reach."
+    }
+  ],
+  "live_coaching_and_scoring": "The coach is a separate model channel that reads the transcript, never the persona, so the caller stays in character. It emits typed cues (next best question, objection alert, watch-out, talk-track step), each with a confidence score and the transcript line that triggered it. Coach mode: On shows cue cards; Quiet sends them only to the tray; Off logs silently. Live rubric bars are labelled 'live estimate' and stay hatched until a quote confirms them. No final grade appears mid-call. Design budget: a cue within about two seconds of the caller's turn. Slower cues become post-turn hints and are labelled as such.",
+  "persona_library_and_wizard": "Facets: role, industry, difficulty, objection type, mode, and source (built-in, mine, community). Every persona is a versioned JSON recipe: identity, temperament, objections, opening line, voice id, and an avatar recipe (head shape, palette, accessory). Contributors add a persona by editing one file, with no 3D skills. The clay avatar is a parametric primitive set, deliberately non-photoreal to avoid likeness concerns and to signal a synthetic character. Thumbnails are pre-rendered at build time; one live WebGL canvas runs per screen. The wizard drafts persona, scenario and rubric from pasted context and tags each field with its source sentence, so reps can check and correct it.",
+  "signature_moments": [
+    "The caller's jaw follows the caller's audio, and the halo turns amber the moment an objection lands.",
+    "Rubric bars fill hatched, then lock solid when a transcript quote confirms them, so live scores never look final.",
+    "Whisper cue cards slide in beside the transcript and tuck into a Coach tray after the call.",
+    "Tapping any debrief quote scrubs audio and transcript to that exact second.",
+    "The first tile in the library is a 'New persona' card that opens the wizard with the current filters already applied.",
+    "The talk track is a six-step rail before the call and becomes the live progress tracker during it."
+  ],
+  "openai_fund_angle": "Models are visible, not hidden. Every AI surface carries a Model Ledger chip: the voice caller (ElevenLabs Agents today, OpenAI Realtime as a selectable option), the coach and grader on gpt-4.1-mini by default, and the persona builder on a configurable model. Each chip opens model, latency, tokens and estimated cost per call, which shows reviewers exactly how credits are used. A /contribute page makes the repo a contributor front door: an 'Add a persona' recipe flow that needs no 3D skills, a good-first-issue board, a Codex CLI quickstart, a PR template and a PR-review status tile. The debrief links grader reasoning and agreement with a human-scored golden set, giving reviewers evidence of quality. Cite model names only, never the OpenAI logo.",
+  "inspirations": [
+    {
+      "source": "Emergent (Wingman) on Mobbin",
+      "url": "https://mobbin.com/screens/d4e6fc44-1598-4d23-8cb7-b35e48968ec0",
+      "borrowed": "Role-archetype carousel with a featured centre card for the landing persona strip."
+    },
+    {
+      "source": "Higgsfield character picker on Mobbin",
+      "url": "https://mobbin.com/screens/baac4868-8b0e-4bbd-859e-4bbd82a9a8f6",
+      "borrowed": "'Create new' tile as the first grid item, the entry point to the wizard."
+    },
+    {
+      "source": "Magnific character library on Mobbin",
+      "url": "https://mobbin.com/screens/1baa34c0-4882-46a5-aba1-0a9caf44a9cc",
+      "borrowed": "Handle labels and a 'My Characters' filter, adapted to Mine and Community tabs."
+    },
+    {
+      "source": "Artlist character grid on Mobbin",
+      "url": "https://mobbin.com/screens/ee2d891a-3a81-4d8e-8f67-d524cae5c908",
+      "borrowed": "Creator badge on community-made characters; dense card grid for persona browsing."
+    },
+    {
+      "source": "Hume AI chat history on Mobbin",
+      "url": "https://mobbin.com/screens/71393937-6a06-4b94-acb6-9ba9d7a68208",
+      "borrowed": "Per-utterance prosody bars under each message, adapted as a tone meter on caller lines."
+    },
+    {
+      "source": "Dialpad live call on Mobbin",
+      "url": "https://mobbin.com/screens/8ada6545-583d-436a-b58b-5714a49967b3",
+      "borrowed": "Instant markers during a call, adapted as coach-cue markers on the debrief timeline."
+    },
+    {
+      "source": "Fireflies live assist on Mobbin",
+      "url": "https://mobbin.com/screens/0faa4442-59e5-4a73-85f5-50a54c634fb5",
+      "borrowed": "Mode selector (General vs Sales Assist) and catch-up chips, adapted to Coach mode and the Next best question card."
+    },
+    {
+      "source": "Hotjar call on Mobbin",
+      "url": "https://mobbin.com/screens/e1ccee4b-2892-4a19-9f74-24eeffce55e5",
+      "borrowed": "Spectator panel and timestamped notes, adapted to the manager Spectate control."
+    },
+    {
+      "source": "Uxcel dashboard on Mobbin",
+      "url": "https://mobbin.com/screens/077b681c-46f4-4b0a-a63b-bd0f1e10e1c3",
+      "borrowed": "Competency radar with peer rankings, adapted to the rubric radar and skill radar."
+    },
+    {
+      "source": "Midjourney profile on Mobbin",
+      "url": "https://mobbin.com/screens/b6f84f72-28a4-49ab-8f4f-ba9e3a9b32e1",
+      "borrowed": "0-50 bar scales with 'more than X% of people' phrasing, adapted to criterion percentile lines."
+    },
+    {
+      "source": "Steep home on Mobbin",
+      "url": "https://mobbin.com/screens/828a7d9d-423f-4e30-8022-7428687779f0",
+      "borrowed": "KPI tiles pairing a number, sparkline and ring gauge, for the progress dashboard."
+    },
+    {
+      "source": "Wix benchmarks on Mobbin",
+      "url": "https://mobbin.com/screens/a9b40b72-ce38-4469-af55-985fd0f97167",
+      "borrowed": "'Not enough data yet' empty state and radar overlay, adapted to the new-team view."
+    },
+    {
+      "source": "Second Nature, 9 best AI role-play platforms",
+      "url": "https://secondnature.ai/the-9-best-ai-role-play-platforms-for-enterprise-sales-training/",
+      "borrowed": "Competitor claim that scored feedback arrives after the session rather than live. This is the gap Clay Coach targets. Vendor-authored; verify."
+    },
+    {
+      "source": "Mindtickle, Second Nature vs Hyperbound",
+      "url": "https://www.mindtickle.com/article/second-nature-vs-hyperbound-ai-sales-role-play-platform/",
+      "borrowed": "Competitor pricing models (custom vs per-user) and LMS certification features as the enterprise bar. Vendor-authored."
+    },
+    {
+      "source": "shadcn/ui vs MUI vs Mantine benchmark",
+      "url": "https://www.alekseialeinikov.com/en/blog/topics/programming/shadcn-ui-vs-mui-vs-mantine",
+      "borrowed": "shadcn now defaults to Base UI; gzip bundle comparison behind the library choice."
+    },
+    {
+      "source": "HeroUI, 12 best React UI libraries 2026",
+      "url": "https://heroui.com/en/blog/best-react-ui-component-libraries",
+      "borrowed": "Comparison showing shadcn ships an MCP server, llms.txt and agent skills, which supports the contributor-with-AI story."
+    }
+  ],
+  "implementation": {
+    "effort": "L",
+    "migration_path": "Phase 1 (1-2 weeks): tokens, Tailwind v4 move, shadcn primitives, app shell, landing page. Phase 2: live call console with coach rail, provisional rubric, talk-track tracker, mobile live call. Phase 3: persona library, recipe format, wizard, clay avatar primitives with build-time thumbnails. Phase 4: debrief timeline, progress dashboard, manager view, dark-mode polish. Keep old routes live until each new screen passes parity tests against current behaviour, including text and voice modes and rubric editing."
+  },
+  "risks": [
+    "Coach latency: a cue within about two seconds needs a fast parallel model channel. If the backend cannot hold that, the live-coaching claim falls back to post-turn hints.",
+    "Voice and grading cost per call may strain a free open-source demo. Cap demo minutes and show cost per call in the Model Ledger.",
+    "3D performance on low-end Android and embedded webviews. One canvas, pre-rendered thumbnails and a static fallback are mandatory.",
+    "The Tailwind v3 to v4 migration and shadcn copy-in drift can fork styling across contributors. Enforce token use with a lint rule.",
+    "Playful clay may read as unserious to enterprise and call-centre buyers. Keep 3D off data surfaces and offer a flat theme.",
+    "Competitor claims (live-coaching gap, pricing) come from vendor blogs and Reddit comments. Verify before using them in the fund application.",
+    "Persona breadth is a content problem. The design does not deliver a large library without a reviewed seed set across all target jobs."
+  ],
+  "council_scores": "[{\"id\": \"A\", \"label\": \"Look\", \"score\": 8.0, \"reason\": \"Clay identity and the caller bust are distinctive; playfulness is kept off data surfaces to stay credible.\"}, {\"id\": \"B\", \"label\": \"UX as a whole\", \"score\": 7.5, \"reason\": \"One IA across all nine screens, a stateful live console and a flat scorecard; not yet tested with reps.\"}, {\"id\": \"C\", \"label\": \"Unique design\", \"score\": 8.5, \"reason\": \"A soft-clay synthetic-character identity is rare in sales-training UI and still answers the core needs.\"}, {\"id\": \"D\", \"label\": \"Live coaching and scoring\", \"score\": 5.6, \"reason\": \"Exceeds the UI spec (visible cues, provisional scores, talk-track tracking). Meets the bar only if the backend coach channel holds about two-second latency.\"}, {\"id\": \"E\", \"label\": \"Persona library and AI wizard\", \"score\": 5.3, \"reason\": \"Facets, recipe format and source-tagged wizard meet the standard. Breadth depends on content work, not design.\"}, {\"id\": \"F1\", \"label\": \"SaaS viability\", \"score\": 6, \"reason\": \"A hosted team tier, managed voice minutes and paid persona packs can carry margin. Realtime voice cost and a crowded market limit it.\"}, {\"id\": \"F2\", \"label\": \"Selling to entities\", \"score\": 7, \"reason\": \"BPOs, training firms and call centres need self-hosting, SSO, SCORM/LTI and manager views. The MIT core lowers trial friction, but enterprise buyers will compare against Second Nature and Mindtickle.\"}, {\"id\": \"F3\", \"label\": \"Not worth building (10 = not worth it)\", \"score\": 3, \"reason\": \"Worth building. Cost concentrates in voice and 3D performance, both manageable with the fallbacks above.\"}]"
+}

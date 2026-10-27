@@ -1,6 +1,7 @@
 "use client";
-/** localStorage-backed custom scenario store. Built-ins are never written. */
-import { BUILT_IN_SCENARIOS, Scenario, ScenarioSchema } from "./scenarios";
+/** localStorage-backed custom scenario store. Library personas are never written. */
+import { Scenario, ScenarioSchema } from "./scenarios";
+import { LIBRARY } from "./personas";
 
 const KEY = "rtct.scenarios.v1";
 
@@ -20,7 +21,7 @@ export function loadCustomScenarios(): Scenario[] {
 }
 
 export function listScenarios(): Scenario[] {
-  return [...BUILT_IN_SCENARIOS, ...loadCustomScenarios()];
+  return [...LIBRARY, ...loadCustomScenarios()];
 }
 
 export function saveCustomScenario(s: Scenario): void {
@@ -37,6 +38,7 @@ export function duplicateScenario(s: Scenario): Scenario {
     ...structuredClone(s),
     id: `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
     title: `${s.title} (copy)`,
+    status: "reviewed",
     builtIn: false,
   };
   saveCustomScenario(copy);

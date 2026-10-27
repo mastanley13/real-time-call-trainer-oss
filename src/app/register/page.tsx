@@ -53,9 +53,9 @@ export default function RegisterPage() {
         <div><label htmlFor="em" className="label">Email</label><input id="em" type="email" className="input" autoComplete="email" value={f.email} onChange={set("email")} required /></div>
         <div><label htmlFor="pw" className="label">Password (10+ characters)</label><input id="pw" type="password" minLength={10} className="input" autoComplete="new-password" value={f.password} onChange={set("password")} required /></div>
 
-        <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-100 p-1 text-sm font-semibold">
+        <div className="grid grid-cols-2 gap-2 rounded-xl bg-sunken p-1 text-sm font-semibold">
           {(["create", "join"] as const).map((m) => (
-            <button type="button" key={m} onClick={() => setMode(m)} className={`min-h-[40px] rounded-lg ${mode === m ? "bg-white text-primary shadow-sm" : "text-ink-muted"}`}>
+            <button type="button" key={m} onClick={() => setMode(m)} aria-pressed={mode === m} className={`min-h-[40px] rounded-lg ${mode === m ? "bg-surface text-primary shadow-sm" : "text-ink-muted"}`}>
               {m === "create" ? "New team" : "Join a team"}
             </button>
           ))}
@@ -65,7 +65,7 @@ export default function RegisterPage() {
         ) : (
           <div><label htmlFor="code" className="label">Team code</label><input id="code" className="input" inputMode="numeric" pattern="[0-9]{3,8}" value={f.orgCode} onChange={set("orgCode")} required /></div>
         )}
-        {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+        {error && <p role="alert" className="text-sm text-alert">{error}</p>}
         <button className="btn-primary w-full" disabled={busy}>{busy ? "Creating…" : "Create account"}</button>
       </form>
       <p className="mt-5 text-center text-sm text-ink-muted">Already registered? <Link href="/login" className="font-semibold text-primary">Sign in</Link></p>

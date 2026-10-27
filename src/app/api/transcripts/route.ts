@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { requireAuth, isDemoUser } from "@/lib/apiAuth";
-import { rateLimit } from "@/lib/rateLimit";
+import { rateLimit, readJsonLimited } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
+import { verifySeal } from "@/lib/gradeSeal";
 
 const Body = z.object({
   sessionId: z.string().min(1).max(128),
-  transcript: z.array(z.object({ role: z.enum(["user", "assistant", "system"]), text: z.string().max(8000), timestamp: z.string().optional() })).min(1).max(2000),
+  transcript: z.array(z.object({ role: z.enum(["user", "assistant", "system"]), text: z.string().max(8000), timestamp: z.string().max(40).optional() })).min(1).max(2000),
   durationSeconds: z.number().int().nonnegative().max(10 * 60 * 60).optional(),
   scenario: z.object({
     id: z.string().max(80),
@@ -15,8 +16,16 @@ const Body = z.object({
     industry: z.string().max(80).optional(),
     difficulty: z.string().max(20).optional(),
   }),
-  evaluation: z.any().optional(),
+  /** The grade from /api/evaluate-call, kept only when `seal` proves the server produced it for this call. */
+  evaluation: z.record(z.unknown()).optional(),
+  seal: z.string().max(128).optional(),
 });
+
+const GradeFields = z.object({
+  overallScore: z.number().finite().min(0).max(100),
+  grade: z.enum(["A", "B", "C", "D", "F"]),
+  goalAchievement: z.object({ achieved: z.boolean() }).passthrough(),
+}).passthrough();
 
 /** Save a completed practice session for the signed-in user. */
 export async function POST(req: NextRequest) {
@@ -30,9 +39,12 @@ export async function POST(req: NextRequest) {
 
   let body: z.infer<typeof Body>;
   try {
-    body = Body.parse(await req.json());
+    body = Body.parse(await readJsonLimited(req));
   } catch (e) {
-    return NextResponse.json({ error: "Invalid request body", details: (e as Error).message }, { status: 400 });
+    if (e instanceof Error && e.message === "too_large") {
+      return NextResponse.json({ error: "payload_too_large", message: "This call is too long to save to the server. It was kept in this browser instead." }, { status: 413 });
+    }
+    return NextResponse.json({ error: "Invalid request body", details: e instanceof z.ZodError ? e.issues.map((i) => `${i.path.join(".")}: ${i.message}`) : undefined }, { status: 400 });
   }
 
   const dbUser = await prisma.user.findUnique({ where: { id: auth.id } });
@@ -40,7 +52,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "User or organization not found" }, { status: 404 });
   }
 
-  const ev = body.evaluation as { overallScore?: number; grade?: string; goalAchievement?: { achieved?: boolean } } | undefined;
+  // Scores feed team KPIs and assignment completion, so only a sealed server grade for exactly this
+  // user, persona and transcript is stored. Anything else is saved ungraded; it can be re-graded later.
+  const sealed = !!body.evaluation && verifySeal({ userId: dbUser.id, scenarioId: body.scenario.id, transcript: body.transcript, evaluation: body.evaluation }, body.seal);
+  const grade = sealed ? GradeFields.safeParse(body.evaluation) : null;
+  const ev = grade?.success ? grade.data : undefined;
   try {
     const created = await prisma.trainerSession.create({
       data: {
@@ -53,16 +69,19 @@ export async function POST(req: NextRequest) {
         scenarioTitle: body.scenario.title,
         durationSeconds: body.durationSeconds ?? 0,
         transcript: body.transcript as unknown as Prisma.InputJsonValue,
-        evaluation: (body.evaluation ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-        overallScore: typeof ev?.overallScore === "number" ? Math.round(ev.overallScore) : null,
+        evaluation: ev ? (body.evaluation as Prisma.InputJsonValue) : Prisma.JsonNull,
+        overallScore: ev ? Math.round(ev.overallScore) : null,
         grade: ev?.grade ?? null,
-        goalAchieved: ev?.goalAchievement?.achieved ?? null,
+        goalAchieved: ev?.goalAchievement.achieved ?? null,
       },
     });
     await prisma.auditEvent.create({
-      data: { userId: dbUser.id, action: "session.saved", resource: created.id, metadata: { scenarioId: body.scenario.id, overallScore: ev?.overallScore ?? null } },
+      data: {
+        userId: dbUser.id, action: "session.saved", resource: created.id,
+        metadata: { scenarioId: body.scenario.id, overallScore: ev?.overallScore ?? null, ...(body.evaluation && !ev ? { gradeRejected: true } : {}) },
+      },
     });
-    return NextResponse.json({ id: created.id });
+    return NextResponse.json({ id: created.id, graded: !!ev });
   } catch (error) {
     console.error("[/api/transcripts] error:", error);
     return NextResponse.json({ error: "Failed to save session" }, { status: 500 });

@@ -1,0 +1,300 @@
+{
+  "id": "P14",
+  "lens": "Material 3 Expressive (Google 2025) via MUI: bold shapes, dynamic color, springy motion",
+  "name": "Expressive Coaching Studio",
+  "one_liner": "A Material 3 Expressive redesign on MUI where each persona's temperament tints the call screen, coaching cues spring into a live side panel, rubric scores fill in during the call, and the OpenAI models doing the work are named in the UI.",
+  "lens_followed_or_changed": "Followed the lens: M3 tonal tokens generated from seed colors with Google's Material Color Utilities, per-persona dynamic color, spring motion, bold pill buttons and 28px corners, MUI as the component base. Changed: the MUI docs I read do not confirm native M3 Expressive shapes or spring motion, so those are a custom theme layer, not a drop-in. Dropped Tailwind and lucide so there is one system. Research: Second Nature's own comparison pages say its scored feedback arrives after a session, while Yoodli and Hyperbound position coaching against real calls (vendor claims, so directional). The live in-call coach is the wedge. Mobbin notice, verbatim: \"Your Mobbin AI usage is high this month. Usage is unlimited during beta. If your usage stays at this level, you may need to purchase more credits once limits take effect.\"",
+  "ui_stack": [
+    {
+      "name": "MUI v7 (@mui/material)",
+      "role": "Component base for every screen: Tabs, Chip, Slider, Dialog, Stepper, Autocomplete, Drawer, ToggleButtonGroup, Snackbar, all themed from M3 tokens.",
+      "why": "Largest mature React component set with a theme API and accessibility built in; replaces hand-rolled Tailwind classes."
+    },
+    {
+      "name": "@material/material-color-utilities",
+      "role": "Generates full tonal palettes from one seed color; each persona temperament is a seed, so the call screen re-tints.",
+      "why": "Google's official M3 color math, so dynamic color stays faithful to the spec."
+    },
+    {
+      "name": "Motion (motion.dev, React)",
+      "role": "Spring physics for taps, cue entrance, chip reflow, shape morph and the tint transition.",
+      "why": "Springs and layout animation without hand-written keyframes; reduced-motion handled in one place."
+    },
+    {
+      "name": "Material Symbols Rounded (variable)",
+      "role": "Iconography across nav, dock and cards, with fill on active states.",
+      "why": "Matches M3 and replaces lucide-react so icons and type share one system."
+    },
+    {
+      "name": "Roboto Flex + JetBrains Mono (Google Fonts)",
+      "role": "Roboto Flex for all UI and headlines using its width and weight axes; JetBrains Mono for timers and score numerals.",
+      "why": "One variable family gives expressive emphasis without extra font loads; mono keeps live numbers from jittering."
+    },
+    {
+      "name": "@react-three/fiber with a custom GLSL orb",
+      "role": "Persona presence: shader orb driven by agent audio level and the persona's tint.",
+      "why": "Keeps the three.js investment but replaces the blurry gradient circle with something that reacts to the call."
+    },
+    {
+      "name": "MUI X Data Grid (community, MIT) and Recharts",
+      "role": "Manager roster table; score-over-time and heatmap charts.",
+      "why": "Sortable tables and charts without a paid tier; both are MIT."
+    },
+    {
+      "name": "OpenAI APIs (Realtime API as an optional voice backend; chat models for coach cues, grading and the wizard)",
+      "role": "Voice persona option, whisper cues, rubric grading and persona generation, each shown in the UI.",
+      "why": "Makes the OpenAI integration the product's visible core, which is what the fund and program reviewers look for."
+    },
+    {
+      "name": "Kept: Next.js 15, React 19, zod, Prisma",
+      "role": "Routing, validation, accounts and orgs stay as they are.",
+      "why": "The redesign is UI-only at the framework level, so the risk stays low."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "primary",
+        "hex": "#2F5BD3",
+        "use": "Primary actions (Start, Save), active nav indicator, links. White text reaches about 5.9:1."
+      },
+      {
+        "token": "onPrimary",
+        "hex": "#FFFFFF",
+        "use": "Text and icons on primary surfaces."
+      },
+      {
+        "token": "primaryContainer",
+        "hex": "#DCE3FF",
+        "use": "Selected filter chips and the wizard progress track."
+      },
+      {
+        "token": "tertiary",
+        "hex": "#00695F",
+        "use": "Coach cues and positive scores. Darker teal than the current #14B8A6 so text passes AA."
+      },
+      {
+        "token": "tertiaryContainer",
+        "hex": "#A8F0E0",
+        "use": "Coach cue card background."
+      },
+      {
+        "token": "error",
+        "hex": "#BA1A1A",
+        "use": "End & grade and objection alerts, always paired with an icon and a label."
+      },
+      {
+        "token": "errorContainer",
+        "hex": "#FFDAD6",
+        "use": "Objection alert background."
+      },
+      {
+        "token": "caution (custom)",
+        "hex": "#7A4B00",
+        "use": "Needs-work scores as text on the #FFDDB3 container, about 5.7:1."
+      },
+      {
+        "token": "surface",
+        "hex": "#F8FAFF",
+        "use": "Page background, close to today's #F8FAFC."
+      },
+      {
+        "token": "surfaceContainerHigh",
+        "hex": "#E4EAF6",
+        "use": "Transcript panel and bottom dock."
+      },
+      {
+        "token": "onSurface",
+        "hex": "#0B1B33",
+        "use": "Body text, the ink color."
+      },
+      {
+        "token": "outlineVariant",
+        "hex": "#C3CAD9",
+        "use": "Hairlines and card borders."
+      },
+      {
+        "token": "persona seed: friendly",
+        "hex": "#1F9D8B",
+        "use": "Seed for warm, cooperative personas. Generates the tonal scheme only; never tints body text."
+      },
+      {
+        "token": "persona seed: skeptical",
+        "hex": "#C77D1A",
+        "use": "Seed for price-focused, skeptical personas."
+      },
+      {
+        "token": "persona seed: hostile",
+        "hex": "#C8413B",
+        "use": "Seed for urgent or hostile personas."
+      }
+    ],
+    "typography": "Roboto Flex (variable weight and width) for all UI. Display 40 to 57px at 600 to 700 with the width axis raised for expressive headlines; body 16px/24px at 400; labels 14px at 500. JetBrains Mono for timers and score numerals. Minimum 16px body on mobile. Replaces both Sora and Inter.",
+    "shape_and_depth": "M3 shape scale: 28px corners on hero and persona cards, 16px on panels, 12px transcript bubbles with the corner toward the speaker squared. Buttons, chips and the dock are full pills. Depth comes from tonal surface steps, not drop shadows; only the floating coach card gets elevation level 1.",
+    "motion": "Springy but bounded. Expressive spring (stiffness about 400, damping about 28) for taps, cue entrance and chip reflow. Slower effects spring (stiffness about 120, damping about 22) for the persona tint, which eases over about 600 ms. Start morphs from pill to a 20px rounded square on press. Orb is a shader driven by agent audio level. prefers-reduced-motion swaps springs for 150 ms fades.",
+    "iconography": "Material Symbols Rounded, variable: weight 400 by default, fill 1 for active nav and selected states, 24px in lists and 20px in chips. Every icon in the live dock has a text label.",
+    "theme_modes": "Light is default. Dark follows prefers-color-scheme and has a manual toggle: surface #0D1424, primary #B3C5FF, tertiary #6FD8C6. Persona tints work in both. A high-contrast toggle raises outline contrast to 3:1 and drops tints."
+  },
+  "navigation_and_ia": "Desktop: M3 navigation rail with Practice, Library, Progress and Team; the avatar menu holds settings, voice and model configuration. Mobile: bottom navigation bar with the same destinations. Library merges today's Scenarios editor and persona data into one browsable place, and editing opens in a drawer rather than a separate page. Practice is a three-step session flow: Briefing, Live call, Debrief, with every debrief kept in history. An extended FAB on Library starts the persona wizard. Team appears only when the account belongs to an org.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Full-width hero on a tinted surface. Left: headline 'Practice the call before it counts', one sub-line, and three buttons: Try a demo call, Browse personas, Run locally. Right: the shader persona orb tinting to a temperament, with a floating coach cue card. Below: a 'Powered by OpenAI' model strip, a three-step how-it-works row, a contributor avatar row, and a footer with the MIT license and contribution link.",
+      "key_components": "Hero with button pair; animated persona orb; model strip naming each OpenAI model and its job; 'Run locally' command panel with copy button; contributor avatars; README badges.",
+      "change_vs_today": "Replaces the blue-on-slate template hero and four generic feature cards with a tonal hero, a visible OpenAI model strip, and a live product preview."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Top: search field and a count line such as '120+ personas, 30 industries'. Tabs: All, Playlists, My personas, Drafts. Desktop left: filter drawer with Role, Industry, Difficulty (1 to 5), and Objection type chips. Main: responsive card grid, three or four columns. Each card has a temperament-tinted header, role and industry labels, objection chips, a Practice button and a Start from template action.",
+      "key_components": "Search; pill filters with counts; temperament-tinted persona cards; playlist rail such as 'Solar door-knock, week 1'; sort menu; quick-start action on each card.",
+      "change_vs_today": "Replaces a three-item dropdown and a long scenario form with a browsable library of persona packs; editing moves into a drawer."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Expressive stepper with a morphing progress shape at the top. Five steps: Source (job description, product URL, CRM note, ICP text or a pasted call), Persona (generated card with trait sliders and a voice picker), Scenario (goal, talk track and a proposed rubric whose weights total 100), Test drive (60-second text run with a Make harder toggle), Save (private, org, or open a GitHub PR). Desktop is split, with a live preview card on the right.",
+      "key_components": "Source chips; drop zone; streamed generation with section-by-section fill; trait sliders for skepticism, talkativeness, budget pressure and technical depth; rubric weight editor with a live total; test-drive panel; Open PR option.",
+      "change_vs_today": "No equivalent exists. Today the user hand-fills persona, script and rubric fields in a long form with no help."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Two columns. Left: scenario summary, goal, what the persona knows, and the talk track as a checklist with a wavy progress indicator. A memory callout points to the weakest criterion from the last session. Right: a persona card tinted to temperament, a Voice/Text segmented control, a mic level meter, a coach level control (Off, Subtle, Whisper), and a large morphing Start button.",
+      "key_components": "Talk-track checklist; rubric weight donut; memory callout; mic check; coach level segmented control; tinted persona card; Start button.",
+      "change_vs_today": "The collapsed talk track and rubric move up front, and the blurry orb becomes a tinted persona with coach settings visible before the call."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Desktop three columns. Left (about 300px): persona orb driven by agent audio, name, temperament tint, and interest and trust meters. Centre: transcript with speaker-tinted bubbles and inline coach markers. Right: coach column with the newest cue springing in at the top, an objection alert chip, a next-best question, a talk-track stepper with the current step pulsing, and seven live rubric meters labelled provisional. Bottom dock: mic, coach level, text field, End & grade.",
+      "key_components": "Shader orb; mood meters; transcript with coach markers; cue stack (at most three, with fade); objection alert; talk-track stepper; live rubric meters with provisional badge; dock.",
+      "change_vs_today": "Replaces a chat app with a side drawer. Coaching runs in a separate channel the persona never sees, so the no-coaching rule holds. Scores update during the call as provisional, then finalise in the debrief."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Top: wavy score ring with grade and goal status, with an 'Automatic estimate' badge when the grader falls back. Under it: a one-line summary, then Strengths and Areas to improve as two cards. Middle: a sparkline of provisional live scores against the final scores, with markers where coach cues fired. Below: criterion accordions with bar, rationale and quotes; tapping a quote scrolls the transcript to that line. Sticky bottom bar: Practice again on a harder persona.",
+      "key_components": "Wavy score ring; goal status chip; live-versus-final sparkline (Recharts); criterion accordions with evidence chips; transcript with jump links; sticky next-step bar; print and export.",
+      "change_vs_today": "Replaces one long scroll with a summary-first layout and jumpable evidence, and adds the live-score timeline the app cannot show today."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Row of four KPI tiles in tonal shapes (sessions, average, best, time practised), each with a trend. Below: a score-by-criterion line chart with toggleable criteria, a criterion-by-week heatmap, a Next up row of three recommended personas, and a streak meter. Right rail: recent calls with score chips.",
+      "key_components": "KPI tiles with sparklines; multi-line chart with legend chips; heatmap; recommended persona cards; recent calls list; streak wavy meter.",
+      "change_vs_today": "Turns four flat numbers and a plain list into trends by criterion and a concrete next practice."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Header with team picker, date range and an Assign playlist action. Top row: team average, sessions this week, and reps below threshold. Main: sortable data grid with rep, sessions, average, weakest criterion, last call and a trend arrow. Row click opens a side sheet with that rep's recent debriefs and supervisor notes. Right: team heatmap by criterion.",
+      "key_components": "Team picker; summary tiles; MUI X data grid; rep side sheet; supervisor note composer; assign-persona action; heatmap.",
+      "change_vs_today": "The data model already has orgs, teams and supervisor notes, but the UI has no manager surface. This adds one, with seeded data in the open-source demo."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "Compact header with a 56px tinted orb, name and a Your turn pill. Transcript fills the middle. Above the input, a single coach strip shows the newest cue; swiping up opens the full coach sheet. A thin wavy talk-track bar sits under the header. Bottom: text field and a large mic button that morphs into an End pill. 16px gutters and no horizontal scroll.",
+      "key_components": "Compact orb; coach strip with bottom sheet; talk-track progress bar; bottom dock with large mic; End & grade pill; 48px minimum tap targets.",
+      "change_vs_today": "Today's mobile call hides coaching and scoring entirely. This brings coaching into a thumb-reachable strip and keeps the transcript readable."
+    }
+  ],
+  "live_coaching_and_scoring": "Coaching is a separate model channel that reads the transcript as it grows and emits typed cues: next-best question, objection alert, talk-track step complete, and a one-line whisper. Cues never reach the persona, so the no-coaching rule holds. Live scoring applies the same rubric as the debrief to a rolling window and shows provisional meters, badged until the final grade. Each cue links to the transcript line that triggered it, so the rep can check the reason. Coach level (Off, Subtle, Whisper) is set per session. Target: a cue within about 2 seconds of the rep finishing a turn. Fallbacks: a deterministic keyword checker tracks talk-track progress when the model is unavailable, and if the coach call fails the call continues with a visible status line saying coaching is paused, never a silent failure.",
+  "persona_library_and_wizard": "Ship a launch library of 120+ personas as YAML packs in the repo, grouped by job: SDR cold call, AE discovery, SaaS, insurance, mortgage, real estate, solar, home services, auto, medical devices, B2B procurement, recruiting, retail, customer success and collections. Each persona carries tags for role, industry, difficulty (1 to 5), objection types and temperament, plus a rubric template. Library filters are shareable in the URL. The AI wizard takes any mix of job description, product page URL, CRM notes, ICP text or a pasted call, and produces a persona, scenario, talk track and proposed rubric, each traceable to the source line it came from. The rep edits, runs a 60-second test drive, then saves locally or opens a GitHub PR with the YAML pack, which is also how contributors add personas.",
+  "signature_moments": [
+    "The persona's temperament tints the whole call screen, and the tint eases over about 600 ms as the persona's mood shifts.",
+    "A coach cue springs into the right column, stays pinned until read, and highlights the transcript line it refers to.",
+    "The debrief score ring morphs from provisional to final, so the rep sees how live scores moved.",
+    "The Start button morphs from a pill into a rounded square on press.",
+    "The wizard's progress is a morphing shape that fills as each generated section lands."
+  ],
+  "openai_fund_angle": "Show the OpenAI models in the product, not only the README. The header strip names each model and its job (Realtime voice option, coach cue model, grader, wizard) with per-session cost, so reviewers can see how API credits turn into product. The landing page repeats the model strip beside a Run locally command. Contributors get a Contribute a persona path: the wizard output becomes a GitHub PR with the YAML pack, and a planned Codex PR-review workflow comments on it; accepted personas show a Codex-reviewed badge in the library. A seeded demo team and a recorded sample call let reviewers see coaching and scoring without setting up keys.",
+  "inspirations": [
+    {
+      "source": "Grain (Mobbin)",
+      "url": "https://mobbin.com/screens/d9198b71-48a8-4db2-bd45-eff6115f91f5",
+      "borrowed": "Coaching panel where a speaker is selected and scored against a scorecard, the model for the debrief trigger."
+    },
+    {
+      "source": "Fireflies (Mobbin)",
+      "url": "https://mobbin.com/screens/a238e95c-72b6-47d9-8602-74caa1c36d07",
+      "borrowed": "Live assist column with suggestion chips and a Catch me up quick action, the model for the coach column."
+    },
+    {
+      "source": "Dialpad (Mobbin)",
+      "url": "https://mobbin.com/screens/8ada6545-583d-436a-b58b-5714a49967b3",
+      "borrowed": "Bottom dock of mic, camera, end and an AI tab on a live call."
+    },
+    {
+      "source": "Codecademy recruiter phone screen (Mobbin)",
+      "url": "https://mobbin.com/screens/cc19b91b-8c45-470e-aeb5-53264e14c815",
+      "borrowed": "Powered by OpenAI badge in a voice practice header, plus a transcript with a voice input bar."
+    },
+    {
+      "source": "PlayAI, Creating an agent (Mobbin flow)",
+      "url": "https://mobbin.com/flows/cdb50e4c-e541-494b-8e1c-0d4e5df71ccd",
+      "borrowed": "Left step rail (Identity, Behavior, Knowledge, Actions, Deploy) with Back and Next in the creation flow."
+    },
+    {
+      "source": "WRITER, Creating a voice (Mobbin flow)",
+      "url": "https://mobbin.com/flows/a223b4bd-c282-462c-bef5-476d6025f415",
+      "borrowed": "Four-step Tune your voice stepper (sample, review, preview, save) that turns sample text into a profile, the model for persona-from-sample."
+    },
+    {
+      "source": "Sana AI, Adding persona (Mobbin flow)",
+      "url": "https://mobbin.com/flows/d657fde3-7b29-4f74-9dac-a172891872b2",
+      "borrowed": "Persona editor with tabs and a live preview pane."
+    },
+    {
+      "source": "ChatGPT, Creating a GPT (Mobbin flow)",
+      "url": "https://mobbin.com/flows/6e8f0823-7698-4850-bb22-9100eff40163",
+      "borrowed": "Chat-to-create on the left with the live preview on the right, the model for wizard conversation."
+    },
+    {
+      "source": "Browserbase templates (Mobbin)",
+      "url": "https://mobbin.com/screens/353269e7-207b-4afc-9088-a975db54c877",
+      "borrowed": "Category chip row and a Quickstart action on each template card."
+    },
+    {
+      "source": "Langdock agent templates (Mobbin)",
+      "url": "https://mobbin.com/screens/6eac5e15-8d92-4912-b620-210111f6f5ce",
+      "borrowed": "Category pills with counts for filtering the library."
+    },
+    {
+      "source": "Material 3 Expressive guidance",
+      "url": "https://m3.material.io/blog/building-with-m3-expressive",
+      "borrowed": "Dynamic color and expressive shape guidance behind the tonal palette and persona tints."
+    },
+    {
+      "source": "Material UI",
+      "url": "https://mui.com/material-ui/",
+      "borrowed": "Component base and theme API for every screen."
+    },
+    {
+      "source": "Second Nature, 9 best AI role play platforms (vendor page)",
+      "url": "https://secondnature.ai/the-9-best-ai-role-play-platforms-for-enterprise-sales-training/",
+      "borrowed": "Landscape framing: role-play-first platforms versus analysis tools. Vendor-written, so directional only."
+    },
+    {
+      "source": "Mindtickle, Second Nature vs Hyperbound",
+      "url": "https://www.mindtickle.com/article/second-nature-vs-hyperbound-ai-sales-role-play-platform/",
+      "borrowed": "Shows that live-call coaching is the gap between practice tools. Third-party comparison, directional."
+    },
+    {
+      "source": "Yoodli, Yoodli vs Second Nature (vendor blog)",
+      "url": "https://yoodli.ai/blog/yoodli-vs-second-nature-which-ai-sales-roleplay-platform-is-better",
+      "borrowed": "Positions coaching against real customer calls as the differentiator. Vendor claim."
+    },
+    {
+      "source": "Hyperbound, Hyperbound vs Second Nature (vendor blog)",
+      "url": "https://www.hyperbound.ai/blog/hyperbound-vs-second-nature-ai-sales-demo",
+      "borrowed": "Deal-level coaching loop from live calls back into practice. Vendor claim."
+    }
+  ],
+  "implementation": {
+    "effort": "XL",
+    "migration_path": "Phase 1: M3 tokens, MUI theme, navigation rail and mobile bottom bar, no feature change. Phase 2: Library with YAML persona packs, then the pre-call briefing. Phase 3: live coach column and live rubric meters behind a flag, text mode first and voice second. Phase 4: debrief timeline and progress dashboard. Phase 5: persona wizard with the PR path, then the manager view. Delete Tailwind globals.css classes and lucide-react screen by screen as each reaches parity. Persona content is a separate workstream sized larger than the UI work."
+  },
+  "risks": [
+    "MUI does not give M3 Expressive shapes or spring motion out of the box (unverified from the docs I read), so expressive styling is custom work that can drift into visual noise. Limit springs to coaching cues and state changes.",
+    "A total rewrite of a working app risks regressions and a long-running fork. Ship in phases behind a flag and keep current screens until each reaches parity.",
+    "Per-turn coaching adds latency and model cost. Needs a small model, a 2-second target, a keyword fallback, and visible per-session cost.",
+    "120 reviewed personas is content work larger than the UI. Launch with a smaller reviewed set and label the rest as community drafts.",
+    "Tinted persona backgrounds and tonal scores must meet WCAG AA. Caution and objection states need text labels, not color alone.",
+    "three.js and MUI X add bundle weight on mobile. Lazy-load the orb and the grid.",
+    "Competitor positioning comes from vendor-written pages (Second Nature, Yoodli, Hyperbound). Treat it as directional, not as market evidence."
+  ]
+}

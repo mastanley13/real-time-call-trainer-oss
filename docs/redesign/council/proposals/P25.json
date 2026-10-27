@@ -1,0 +1,256 @@
+{
+  "id": "P25",
+  "lens": "Voice-first ambient: full-screen FaceTime-like call, orb-centric, chrome disappears during the call",
+  "name": "Ambient Orb Call Room",
+  "one_liner": "A FaceTime-style call room: a breathing orb carries the conversation, the chrome fades mid-call, and live rubric arcs and whisper cues appear only when they matter.",
+  "lens_followed_or_changed": "Followed the voice-first ambient lens for the live call and carried the orb across the whole product as the brand mark, persona avatar and debrief header. Research shaped three choices. Mobbin's Delphi call screen (centered avatar, status pill, two call controls) validated the minimal-chrome call. Second Nature and Hyperbound both lead with video-avatar or chrome-heavy practice, so a voice-first orb is a real differentiator. Descript's side co-pilot pattern fits the wizard better than a long form. Text mode keeps the same canvas with a smaller orb, so the brief's text simulation is not lost.",
+  "ui_stack": [
+    {
+      "name": "shadcn/ui (Radix primitives, copied into the repo)",
+      "role": "Component base for Dialog, Sheet, Command, Tabs, Slider, Checkbox, Toggle group",
+      "why": "The repo has no component library today; Radix gives accessible primitives under MIT, and copy-in source is easy for OSS contributors to read and change."
+    },
+    {
+      "name": "Tailwind CSS 3.4 (kept) with CSS-variable tokens",
+      "role": "Styling and theming",
+      "why": "No migration cost; the existing tailwind.config maps to variables so the orb, halo and surfaces recolor in dark and light mode."
+    },
+    {
+      "name": "Motion (motion.dev)",
+      "role": "Chrome fade, whisper card entrance, halo arc tweens, screen transitions",
+      "why": "Layout-aware animation with built-in reduced-motion handling."
+    },
+    {
+      "name": "React Three Fiber + drei with a custom GLSL orb shader",
+      "role": "The call orb and rubric halo",
+      "why": "Replaces the blurry gradient with a shader driven by the speaker's audio level; the three.js dependency already exists."
+    },
+    {
+      "name": "cmdk (inside shadcn Command)",
+      "role": "Cmd-K search across personas, scenarios and settings",
+      "why": "Keyboard-first library access for power users and maintainers."
+    },
+    {
+      "name": "Vaul",
+      "role": "Mobile bottom sheets for transcript, talk track and coach",
+      "why": "Touch-native drawers with snap points, so mobile call controls stay in the thumb zone."
+    },
+    {
+      "name": "lucide-react (kept)",
+      "role": "Icons",
+      "why": "Already used; consistent stroke weight across rails and call controls."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "canvas-night",
+        "hex": "#0A0E14",
+        "use": "Dark app background and call-room canvas"
+      },
+      {
+        "token": "surface-1",
+        "hex": "#121821",
+        "use": "Panels and cards"
+      },
+      {
+        "token": "surface-2",
+        "hex": "#1A2230",
+        "use": "Raised chips, inputs, hover states"
+      },
+      {
+        "token": "line",
+        "hex": "#252F3F",
+        "use": "Borders and dividers"
+      },
+      {
+        "token": "ink",
+        "hex": "#E7EDF5",
+        "use": "Primary text in dark mode"
+      },
+      {
+        "token": "ink-muted",
+        "hex": "#8A97A8",
+        "use": "Secondary text and labels"
+      },
+      {
+        "token": "orb-rep",
+        "hex": "#2DD4BF",
+        "use": "Rep voice energy and primary action on dark"
+      },
+      {
+        "token": "orb-persona",
+        "hex": "#60A5FA",
+        "use": "Persona voice energy"
+      },
+      {
+        "token": "cue-orchid",
+        "hex": "#C084FC",
+        "use": "Coach whisper cues"
+      },
+      {
+        "token": "alert-coral",
+        "hex": "#FF6B57",
+        "use": "Objection alerts and End call"
+      },
+      {
+        "token": "score-good",
+        "hex": "#34D399",
+        "use": "Rubric band 70 and above"
+      },
+      {
+        "token": "score-warn",
+        "hex": "#F5C451",
+        "use": "Rubric band 40 to 69"
+      },
+      {
+        "token": "score-low",
+        "hex": "#F26B6B",
+        "use": "Rubric band below 40"
+      },
+      {
+        "token": "canvas-day",
+        "hex": "#F6F7F9",
+        "use": "Light-mode background"
+      },
+      {
+        "token": "action-blue",
+        "hex": "#1D4ED8",
+        "use": "Light-mode primary buttons, keeps brand continuity"
+      }
+    ],
+    "typography": "Instrument Sans for UI at 400 to 600 (body 15/24). Instrument Serif italic for whisper cues, the landing hero (64px) and the debrief verdict. Geist Mono with tabular numerals for timers and scores. All three are open-license Google Fonts; Inter and Sora are retired.",
+    "shape_and_depth": "20px card radius, 28px call-room panels, full pills for chips and status. Dark mode uses 1px line borders and a faint top highlight instead of shadows. Only the floating whisper card uses backdrop blur (16px, 8% white). The orb is the single source of glow.",
+    "motion": "Idle orb breathes on a 4s cycle and scales from 0.96 to 1.08 with the speaker's audio level. Chrome fades to 0 after 3s without pointer or touch, at 250ms ease-out. Whisper cards rise in 300ms and dwell 6s. Halo arcs tween over 600ms when criteria change. With prefers-reduced-motion, the orb freezes to a static gradient and transitions become opacity-only.",
+    "iconography": "lucide-react at 1.75 stroke: 20px in rails, 24px in call controls. No emoji in the UI. The logo is the orb glyph, a circle with one arc that doubles as the rubric halo.",
+    "theme_modes": "Dark is the default for landing, pre-call and the call room. Light leads for library, wizard, debrief and dashboard. Respects prefers-color-scheme with a visible toggle. Both modes are token-driven, so the orb and halo recolor without per-component overrides."
+  },
+  "navigation_and_ia": "Five destinations: Practice, Library, Create (wizard), Progress, and Team (shown only to org members with a manager role). Desktop uses a 64px left rail with icons and hover labels; it collapses during a call. Mobile uses a bottom tab bar with four tabs plus More. Cmd-K opens the library and wizard from anywhere. During a live call the rail and tab bar disappear, leaving only the orb, timer and controls. Pre-call and debrief remain linked from the Practice tab so nothing is lost.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Full-bleed dark hero with the orb large and left of center. Headline 'Practice the call before it counts' in Instrument Serif at 64px, with two CTAs: Start a 3-minute voice call and Browse 120 personas. Right side: a live call preview with halo arcs filling and a whisper cue. Below: a 'Built on OpenAI' strip, a persona-job marquee, three steps, and a contributor section that mirrors the README.",
+      "key_components": "Orb hero, animated call preview, OpenAI model strip, persona-job marquee, Contribute a persona CTA, license and CI badges.",
+      "change_vs_today": "Replaces the fake call card and four generic feature cards with a working product preview, and makes OpenAI model use and the contributor path visible."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Three zones. A sticky left rail (about 240px) with checkbox facets for sales job, industry, difficulty, objection type and call type, each with counts. Top: Cmd-K search and a chip row of the 14 sales jobs. Main: a section per job with a View all (n) link and 3-up cards showing an orb tinted by persona voice, a difficulty meter, objection chips and a 3-second voice preview. A right sheet opens the full persona brief with a Practice button.",
+      "key_components": "Facet rail with counts, cmdk search, job chip row, persona card with voice preview, detail Sheet, Duplicate and edit action, community badge on contributed personas.",
+      "change_vs_today": "Replaces a three-item dropdown with a browsable library of 120 seeded personas across 14 sales jobs, filterable by role, industry, difficulty and objection."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Split view modeled on a co-pilot. Left: a conversation pane that accepts a pasted job description, product URL, CRM notes, ICP text or a call transcript, each with its own drop zone. Right: a persona card that fills field by field as the model returns structured output (name, role, temperament, objections, opening line, rubric draft). Each field carries a source chip that highlights the input span it came from. Bottom stepper: Source, Persona, Scenario and rubric, Test call.",
+      "key_components": "Source drop zones, streaming persona card, source chips, rubric draft editor, duplicate check against the nearest library persona, 60-second test call, Save or Export as PR file.",
+      "change_vs_today": "Adds the wizard the app lacks: raw context becomes a runnable persona and rubric, and every generated field traces back to the source text."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "One centered brief, two columns on desktop. Left: persona orb with a 3-second voice preview, a one-line 'You are talking to', the goal, and three 'listen for' chips. The talk track is a numbered progress rail that stays visible; rubric weights appear as a small donut. Right: a large Voice / Text segmented control, a mic level meter with device check, and a full-width Start call button in orb-rep.",
+      "key_components": "Persona preview, goal card, listen-for chips, talk-track rail, rubric donut, device check, mode control, Start call.",
+      "change_vs_today": "Removes the scenario select and collapsed sections; adds a mic check, an always-visible talk track, and a voice preview so the persona has a voice before the call."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Full-viewport canvas. Center: the orb at about 44vh with a rubric halo of five arc segments, one per criterion; arc length is coverage and color is the score band. Above: timer in Geist Mono and a Your turn / Their turn pill. Below the orb: one whisper card in Instrument Serif italic that fades after 6s. An objection turns the halo coral and adds a one-line pivot card. The bottom rail (mute, text, talk-track dots, End and grade) appears on movement; the transcript sits in a drag-up sheet.",
+      "key_components": "Audio-reactive orb, rubric halo, whisper card, objection alert, talk-track progress dots, idle-fade chrome, transcript sheet, End and grade.",
+      "change_vs_today": "Turns the chat app into a call room: coaching and live scoring appear in the orb's space during the call, not after it."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Top band: score in Geist Mono with the letter grade, a goal-status pill, and a two-line verdict in Instrument Serif. Below: a timeline strip of the call with markers where the score moved; clicking one jumps the transcript and replays those 30 seconds. Then a two-column grid of criterion cards with weight, score bar and expandable quotes with timestamps. A Practice this moment card closes the page. A badge states whether the LLM grader or the keyword fallback produced the score.",
+      "key_components": "Score ring, verdict, moments timeline, criterion cards with evidence, transcript side panel with highlighted quotes, grader-source badge, Practice this moment.",
+      "change_vs_today": "Replaces one long vertical scroll with a scannable scorecard, adds a replayable moments timeline, and says plainly when the keyword fallback was used."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "A row of four KPI tiles in Geist Mono with sparklines: sessions, average, best, time practised. Main: a line chart of score per rubric criterion across sessions, with criterion chips that toggle lines. Right column: a heatmap of criterion by sales job showing where practice is thin. Bottom: session timeline cards with orb thumbnails and a Next session card driven by the weakest criterion.",
+      "key_components": "KPI tiles with sparklines, criterion trend chart, job-by-criterion heatmap, session timeline, Next session card.",
+      "change_vs_today": "Goes past four numbers and a plain list: shows trends per rubric criterion and where practice is thin."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Readiness lanes across the page, modeled on SchoolAI's grouped progress: Not started, Developing, Ready. Each lane is a column of rep cards with a score sparkline and a top-gap chip. Team, role and scenario filters sit above. Right panel: a weekly AI digest of team gaps, each claim linked to its sessions. Each rep card opens a drawer with sessions, supervisor notes and an Assign practice action that pins a persona to that rep.",
+      "key_components": "Readiness lanes, rep cards with gap chips, team filters, weekly AI digest with citations, supervisor notes drawer, Assign practice.",
+      "change_vs_today": "Adds the manager surface the data model already supports but the UI never shows, with team trends and practice assignment."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "390px full-screen. The orb sits in the top third at about 240px, with the halo intact. The whisper card floats above the controls. Mute and End and grade are 64px circles in the thumb zone; a grab handle at the bottom opens the transcript and talk-track sheet (Vaul). Only the timer remains in the top bar, and safe-area insets are respected. Text mode collapses the orb into a 96px header with chat below.",
+      "key_components": "Scaled orb with halo, whisper card, thumb-zone controls, Vaul transcript sheet, safe-area padding, text-mode header.",
+      "change_vs_today": "The mobile live call stops being a chat screen with a header; it becomes the same call room, scaled, with controls in the thumb zone."
+    }
+  ],
+  "live_coaching_and_scoring": "A separate coach channel reads the rolling transcript after every rep turn and returns structured JSON: a whisper cue, an objection type, criterion coverage deltas and a talk-track step. The persona never receives coach output, so the persona still cannot coach. Target latency is a cue within about 1.5s of the persona finishing; the default model is gpt-4.1-mini, selectable in settings. Live scores render as a dashed halo labelled live estimate. The full grader, with quotes, replaces it with a solid halo at End and grade. Without an API key, the existing keyword heuristic drives the same halo and shows a heuristic chip. Optional audio whisper: a second Realtime session audible only to the rep, for headphone users.",
+  "persona_library_and_wizard": "The library ships as versioned persona packs in the repo, one YAML file per persona: role, seniority, industry, temperament, objections, difficulty, voice id and rubric preset. A zod schema validates every file in CI. The seed target is 120 personas across 14 jobs: SDR cold call, AE discovery, CS renewal, collections, solar, home services, insurance, mortgage, real estate, auto, medical devices, B2B procurement, recruiting and retail. The wizard runs in four steps: ingest (paste, URL fetch, CRM notes or transcript), a structured-output draft of persona plus rubric, a duplicate check against the nearest library entry, and a test call. Users can save locally or export a PR-ready file to contribute upstream.",
+  "signature_moments": [
+    "The halo: five rubric arcs fill live around the orb as each criterion is covered.",
+    "Chrome dissolves after 3 seconds, leaving only the orb, timer and one whisper.",
+    "Whisper cues appear in Instrument Serif italic, are read once, then fade.",
+    "The wizard fills a persona card field by field, each field carrying a source chip back to the pasted text.",
+    "Debrief moments timeline: click a score jump and replay those 30 seconds.",
+    "Library sections per sales job with View all (n), so the 14 jobs read like a catalogue."
+  ],
+  "openai_fund_angle": "Show the OpenAI stack instead of hiding it. Each screen carries a model provenance line: persona voice (ElevenLabs today, with OpenAI Realtime added as a selectable engine), coach (gpt-4.1-mini), grader (gpt-4.1-mini default, gpt-4.1 selectable), wizard (Structured Outputs). Settings shows estimated cost per call. The repo gets a How this repo uses Codex page covering PR review, maintainer automation and release workflows, the uses the Codex for Open Source program names; the Codex Open Source Fund offers grants up to $25K in API credits. Contributors get a Contribute a persona PR template, good-first-persona labels and a contributor wall. Selection is at OpenAI's discretion, so the page should show real usage rather than promise it.",
+  "inspirations": [
+    {
+      "source": "Mobbin: Delphi call screen",
+      "url": "https://mobbin.com/screens/f495e1b5-5a89-4592-a7e4-42ee9d511c87",
+      "borrowed": "Centered avatar, status pill with live timer, two-control call bar, minimal chrome."
+    },
+    {
+      "source": "Mobbin: Klaviyo Campaigns library",
+      "url": "https://mobbin.com/screens/c3d9bb50-e157-4c6b-baf2-d258935c1f95",
+      "borrowed": "Grouped sections with View all (n) links and filter dropdowns for the persona library."
+    },
+    {
+      "source": "Mobbin: SchoolAI session view",
+      "url": "https://mobbin.com/screens/7e71261b-469e-4bb4-bf36-68ff9d4aa7a9",
+      "borrowed": "Readiness lanes for the team view and a right-hand session insights column."
+    },
+    {
+      "source": "Mobbin: Descript editor",
+      "url": "https://mobbin.com/screens/db9a50c0-3def-4a7a-b0bf-3eae43a3d170",
+      "borrowed": "Co-pilot side panel with context chips for the persona wizard."
+    },
+    {
+      "source": "Mobbin: Meetup average event rating",
+      "url": "https://mobbin.com/screens/7daeec59-29c5-4899-b81b-b2cef49d0d79",
+      "borrowed": "What people liked and what went wrong as chip groups, adapted to strengths and gaps."
+    },
+    {
+      "source": "Mobbin: Base44 App Templates",
+      "url": "https://mobbin.com/screens/ce9e93ac-1e3c-4095-a685-049bcbee2db5",
+      "borrowed": "Category chip row above a card grid for template browsing."
+    },
+    {
+      "source": "Second Nature, The 9 best AI role play platforms for enterprise sales training (2026)",
+      "url": "https://secondnature.ai/the-9-best-ai-role-play-platforms-for-enterprise-sales-training/",
+      "borrowed": "Competitive benchmark: SCORM and LTI delivery, SSO and SCIM, video-avatar practice. Vendor-authored, so treat claims as marketing."
+    },
+    {
+      "source": "Hyperbound, Mindtickle vs Hyperbound vs Second Nature",
+      "url": "https://www.hyperbound.ai/blog/mindtickle-vs-hyperbound-vs-second-nature",
+      "borrowed": "The real-call-to-practice loop as the gap to close: scenario categories such as gatekeeper, voicemail and renewal. Vendor-authored."
+    },
+    {
+      "source": "OpenAI, Codex for Open Source",
+      "url": "https://developers.openai.com/community/codex-for-oss",
+      "borrowed": "Program scope: API credits for projects using Codex in PR review, maintainer automation and release workflows; the repo must demonstrate these uses."
+    }
+  ],
+  "implementation": {
+    "effort": "XL",
+    "migration_path": "Phase 1 (1-2 weeks): move tokens to CSS variables and add shadcn primitives on existing routes, keeping URLs. Phase 2: the call room with orb, halo and coach channel behind a feature flag, with text mode kept. Phase 3: persona seeds, facet library and wizard. Phase 4: debrief timeline, progress dashboard and team lanes. Each phase ships to the live Vercel demo and the README is updated per phase."
+  },
+  "risks": [
+    "Scorecard (proposer self-score; 1-10, with 5 = baseline for D and E): A look 8, B UX 7, C unique 8, D live coaching 5.4, E library and wizard 5.6, F1 SaaS 6, F2 selling to entities 6, F3 not worth it 3 (worth building).",
+    "Chrome-fade can hide controls and evidence; mitigate by never fading focused controls and by a hold-to-reveal transcript sheet.",
+    "Coach latency and per-turn cost; throttle to rep turns and cache identical transcript windows.",
+    "WebGL orb on low-end phones; fall back to a CSS radial gradient carrying the same halo.",
+    "Dark-first can read as generic AI; the orb and halo must carry identity, so the light theme needs equal polish.",
+    "120 seeded personas is content-heavy and needs authoring time and reviewer capacity.",
+    "Enterprise competitors (Second Nature, Hyperbound, Yoodli) already ship SCORM/LTI and video avatars; the open-source core should not chase enterprise parity."
+  ]
+}

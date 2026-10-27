@@ -1,0 +1,250 @@
+{
+  "id": "P28",
+  "lens": "Calm/Headspace confidence: reduce call anxiety, warm palette, guided warm-ups before calls",
+  "name": "Warm Rehearsal",
+  "one_liner": "A calm practice room for hard calls: breathe, rehearse with a persona, get one whispered cue at a time, then reflect on evidence from your own words.",
+  "lens_followed_or_changed": "Followed the Calm/Headspace lens: warm paper-and-terracotta palette, a breathing presence ring instead of the blurry orb, a 60-second warm-up before every call, and a pre-call confidence check compared against the post-call result. One change: calm must not mean soft. Research showed Second Nature, Hyperbound and Yoodli all sell realism and live coaching, so the palette is the differentiator and a Hot persona tier stays adversarial. Best Mobbin matches: Fireflies' live-assist panel and Visitors' score ring. Self-estimates for the council to verify: A 7, B 7, C 7, D 6, E 6, F1 5, F2 6, F3 3 (3 = leaning worth building).",
+  "ui_stack": [
+    {
+      "name": "Tailwind CSS 4 (migrate from 3 in phase 1)",
+      "role": "Token-driven styling via CSS variables across all screens",
+      "why": "One token set drives Paper and Dusk themes; the repo is already Tailwind-first, so the change is a migration, not a rewrite"
+    },
+    {
+      "name": "shadcn/ui (copy-in components)",
+      "role": "Dialog, Sheet, Tabs, Accordion, Select, Command (cmd+K persona search), Sonner toasts",
+      "why": "Component source lives in the repo, so contributors can edit them; no runtime CSS-in-JS"
+    },
+    {
+      "name": "Radix Primitives (or Base UI)",
+      "role": "Accessible behaviour underneath shadcn",
+      "why": "A third-party vendor blog says shadcn's default primitive moved to Base UI in July 2026; verify on shadcn docs before committing"
+    },
+    {
+      "name": "Motion (motion.dev)",
+      "role": "Breathing ring, cue transitions, shared-layout motion from library card to pre-call",
+      "why": "Respects prefers-reduced-motion; replaces three.js on the call screen, cutting bundle weight"
+    },
+    {
+      "name": "Fraunces + Inter (next/font/google)",
+      "role": "Display serif for headings and grade letters; Inter for UI and transcript",
+      "why": "Warm and editorial; both free under open font licences; Inter already in the repo"
+    },
+    {
+      "name": "lucide-react + Recharts",
+      "role": "Icons (existing) and progress trend charts; custom SVG score ring",
+      "why": "lucide already used; Recharts covers trends without a heavy dashboard kit"
+    },
+    {
+      "name": "zod (shared schema)",
+      "role": "One persona, scenario and rubric schema for the wizard, library and contributor PR files",
+      "why": "Validates AI-generated output and community persona files with the same rules"
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "canvas",
+        "hex": "#FAF6F0",
+        "use": "Page background, warm paper"
+      },
+      {
+        "token": "surface",
+        "hex": "#FFFDF9",
+        "use": "Cards, transcript panels, drawers"
+      },
+      {
+        "token": "ink",
+        "hex": "#2A2320",
+        "use": "Primary text"
+      },
+      {
+        "token": "ink-muted",
+        "hex": "#6E6159",
+        "use": "Secondary text, labels (about 5.5:1 on canvas)"
+      },
+      {
+        "token": "line",
+        "hex": "#EADFD3",
+        "use": "Borders and dividers"
+      },
+      {
+        "token": "primary",
+        "hex": "#B4502E",
+        "use": "Primary CTA and active states (about 5.1:1 with white)"
+      },
+      {
+        "token": "sage",
+        "hex": "#3F6F5E",
+        "use": "Strengths, progress, success (about 5.8:1 with white)"
+      },
+      {
+        "token": "honey",
+        "hex": "#F4C36B",
+        "use": "Whispered coach cue accent; cue card background uses honey-soft #FCF0D6"
+      },
+      {
+        "token": "plum",
+        "hex": "#7B4B6E",
+        "use": "Objection alerts only (about 6.8:1 with white)"
+      },
+      {
+        "token": "dusk-canvas",
+        "hex": "#1E1A18",
+        "use": "Dark Dusk mode page background for night practice"
+      }
+    ],
+    "typography": "Fraunces 600 with optical sizing for titles and grade letters; Inter 400/500/600 for UI and transcript; tabular-nums on every score. Scale 40/32/24/18/16/14, body 16px minimum on mobile.",
+    "shape_and_depth": "20px card radius, 999px pill buttons, 1px warm line borders. Depth comes from tinted fills, not heavy shadows. The presence ring is the only glow, kept at low opacity.",
+    "motion": "Breathing rhythm: a 6-second inhale and exhale ring during warm-up and while the persona speaks (scale tied to audio level). Cue cards ease in over 240ms and fade after 8s. prefers-reduced-motion swaps rings for static states and cross-fades.",
+    "iconography": "lucide-react at 1.75px stroke with rounded caps. No emoji. One icon per action label; mic and breath icons mark voice and warm-up.",
+    "theme_modes": "Paper (light) is the default. Dusk (dark) follows prefers-color-scheme and has a manual toggle. Tokens are defined on :root and redefined for dark, so night practice keeps the same calm rhythm."
+  },
+  "navigation_and_ia": "Desktop: 72px icon rail (Practice, Library, Progress, Team, Settings) plus a cmd+K command palette for personas. Mobile: bottom tab bar with the same four. The live call switches to full focus mode and hides chrome. Routes: /, /library, /library/new, /practice/[id], /call/[id], /debrief/[id], /progress, /team. The scenario dropdown is replaced by the library, so pre-call always shows one chosen persona. The glass header is removed.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Split hero on the paper canvas. Left: Fraunces headline 'Rehearse the hard call before it counts', one line of support, primary 'Start a 3-minute warm-up' (text mode, no sign-up) and secondary 'Star on GitHub'. Right: breathing presence ring with a sample honey coach cue. Below: three step cards (Breathe, Practice, Reflect), then a 'Built on OpenAI' strip and a contributor band with the persona count and MIT license.",
+      "key_components": "Hero, presence ring demo, sample cue card, model badges (Realtime-ready voice, GPT-4.1 mini grader, Codex-friendly repo), persona counter, contributor CTA. README mirrors these sections.",
+      "change_vs_today": "Swaps the generic fake call card for a calm live-feeling demo and puts the OpenAI and contributor story above the fold."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Left filter rail (240px): Job (SDR cold call, AE discovery, CS renewal, collections, insurance, mortgage, solar, home services, auto, medical device, procurement, recruiting, retail), Industry, Temperature (Warm, Warm-hot, Hot), Objection type chips. Top: search with cmd+K, result count, sort. Main: three-column card grid. Each card has portrait, name, role, one-line goal, objection chips, temperature bar, minutes, and a Warm-up ready badge. Tabs: Built-in, Community, Mine.",
+      "key_components": "Facet chips, persona card with temperature bar, Command palette, empty state that links to the wizard, Duplicate and Edit on hover.",
+      "change_vs_today": "The three-item dropdown becomes a browsable library of about 150 seeded personas across 20 jobs, filterable on four facets."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Four steps on a slim top rail: Source, Persona, Scenario, Rehearse. Step 1 shows entry cards for a job description, product URL, CRM notes, ICP text or a pasted call. Steps 2 and 3 show a generated persona card and rubric in collapsible sections; every field carries a source line. Rubric weights auto-sum to 100, each with a plain-language reason. Step 4 runs a 30-second dry run, then Save or Export as pull request file.",
+      "key_components": "Source entry cards, step rail, persona card with editable traits, temperament slider, objection list, weighted rubric with reasons, dry-run button, PR export.",
+      "change_vs_today": "Adds a wizard that builds a persona and scenario from any context, which the app does not do today."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Calm arrival page. Center: persona portrait and name, 'What they care about' (two bullets), your goal (one line), and the talk track as six soft steps, collapsed by default. Right: a 60-second warm-up ring (6s inhale, 6s exhale) with an optional record-your-opening-line step. Below: confidence check (1 to 5), Voice/Text toggle with mic test, coaching setting (Whisper, Quiet, Off), and a primary Begin when ready button.",
+      "key_components": "Persona portrait, goal chip, collapsible talk track, breathing warm-up, confidence slider, mode and coaching toggles.",
+      "change_vs_today": "Replaces the dropdown and blurry orb with a warm-up that lowers anxiety and records confidence for a before-and-after comparison."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Three zones. Center: presence ring with persona name and Speaking or Listening label, transcript in calm bubbles with soft turn dividers, composer and mute. Right rail (320px): a coach card with one whispered cue at a time (14 words or fewer, honey background, Why? expander, fades after 8s), plum objection alerts, a six-step talk-track ribbon that checks off as steps are covered, and a Live read of five criteria as thin bars with trend arrows. Top right: timer, Pause and breathe (no score penalty), Wrap up. Red stays reserved for hang-up.",
+      "key_components": "Presence ring, transcript, whisper cue card, objection alert, talk-track ribbon, live-read bars, numbers toggle (off by default), Pause and breathe, Wrap up.",
+      "change_vs_today": "A chat app with no coaching becomes a coached call: real-time cues, talk-track progress and live rubric movement behind a calm default."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Top: one takeaway sentence in Fraunces, for example 'You opened with discovery and lost the pricing thread at line 8'. Beside it: grade ring, growth delta against the last attempt, and pre-call versus post-call confidence. Then Strengths and one Next rep focus card (one skill, not five). Rubric accordion: each criterion shows bar, rationale and evidence quote chips; tapping a quote replays that transcript line. Full transcript is collapsed at the bottom.",
+      "key_components": "Takeaway sentence, grade ring, growth delta, confidence before and after, next-rep card, rubric accordion with quote chips, replay-this-moment, Practice this objection CTA.",
+      "change_vs_today": "A long scroll of five equal cards becomes a one-screen takeaway, with evidence one tap away and a single next step."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Top row: four tinted tiles (sessions, average, best, minutes) and a gentle weekly count ('4 calls this week') in place of a streak that punishes missed days. Main: score trend area chart with a confidence overlay line; a heatmap of criteria by week in sage-to-terracotta tints. Right column: Your next rep card and the past calls list with persona portrait and temperature chip. Filter by job or persona.",
+      "key_components": "Stat tiles, trend chart with confidence overlay, criteria-by-week heatmap, next-rep card, filterable call list.",
+      "change_vs_today": "Four numbers and a plain list become a story of growth, confidence and skill gaps over time."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Header: team readiness ring, calls this week, warm-up completion percent. Left: roster table with avatar, readiness ring, last call, top gap chip and sparkline. Right rail: coaching queue (for example '3 reps stuck on price objections') with Assign persona and Send nudge. Bottom: competency radar with Self, Manager and Peer filter chips. Assignments show due dates. Private rep notes are visible only to managers in that org.",
+      "key_components": "Readiness ring, roster table, gap chips, coaching queue, assign-persona dialog, filtered competency radar, org-scoped notes.",
+      "change_vs_today": "No manager surface exists today. This builds one on the existing org data model, the main hook for entity sales (F2)."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "390px width with 16px gutters. Top: compact presence ring (72px) with persona name and state, timer, and an overflow menu holding End call with confirm. Middle: transcript scrolls under the ring. A coach cue peeks as a sheet above the composer; swipe up for the full cue and why. Talk track shows as six dots. Bottom: large Hold to talk button in voice mode, or text field with send in text mode. Touch targets are 48px; the bottom tab bar hides during the call.",
+      "key_components": "Compact presence ring, peeking cue sheet, six-dot talk-track, Hold to talk, overflow End menu, 48px targets.",
+      "change_vs_today": "Today the mobile call has a full-width red End button and a chat composer; the coach and hang-up move out of the thumb's way."
+    }
+  ],
+  "live_coaching_and_scoring": "The coach is a side channel. The persona session stays in character and never coaches. After each finalized rep turn, a structured-output call (GPT-4.1 mini class, zod schema) returns at most one cue, a talk-track step update and per-criterion deltas, each citing a transcript line. Target: cue within 2 seconds of the rep finishing a turn. Cues are rate-limited (one per 20 seconds; Quiet mode allows three per call). Live scores show as trend arrows, and numbers appear only on toggle. The debrief re-grades the full transcript with the existing weighted rubric, so live and final scores share one rubric and one set of evidence.",
+  "persona_library_and_wizard": "The library ships about 150 seeded personas as JSON files in /personas, validated by one zod schema. They cover 20 jobs, from SDR cold calls to medical device procurement, and each carries rubric weights and a talk track. Four facets filter them: job, industry, temperature and objection type. The wizard accepts five sources (job description, product URL, CRM notes, ICP text, pasted call) and returns a persona, scenario and rubric with source lines. The user edits, runs a dry run, then saves locally or exports a PR-ready file. Community personas get their own tab with credit lines.",
+  "signature_moments": [
+    "Presence ring that breathes with the persona's voice level, replacing the blurry orb",
+    "One whispered cue at a time, with a Why tap and a Quiet mode",
+    "Quote-to-moment: tap evidence in the debrief and the transcript replays that exact line",
+    "Pause and breathe is free and never counts against the score",
+    "Wizard exports a persona as a pull request, so a rep's idea can become a merged contribution"
+  ],
+  "openai_fund_angle": "Showcase, not footnote. Each call screen carries a model chip (voice model, grader, coach) with a per-call cost estimate. A Model lab in settings swaps models and accepts any OpenAI-compatible base URL, and adds OpenAI Realtime API as a voice provider beside today's ElevenLabs Agents path. The wizard is the flagship GPT demo: structured outputs from a job description or URL. For contributors: 'good first persona' issues, a /personas JSON schema plus AGENTS.md so Codex can add personas, Codex-run PR review on persona files (realism, weights summing to 100), and release-note automation. The landing page shows Realtime, GPT-4.1 mini and Codex badges with a live community persona counter.",
+  "inspirations": [
+    {
+      "source": "Fireflies (Mobbin screen)",
+      "url": "https://mobbin.com/screens/2047129f-d283-45ef-81bb-09aa79a32ffe",
+      "borrowed": "Live-assist side panel with quick-action chips, as the model for the coach card"
+    },
+    {
+      "source": "Visitors (Mobbin screen)",
+      "url": "https://mobbin.com/screens/16a48591-f4ad-4fb6-b19a-cb06804b590c",
+      "borrowed": "Large score ring with metric tiles beneath, for the debrief header"
+    },
+    {
+      "source": "Midjourney (Mobbin screen)",
+      "url": "https://mobbin.com/screens/d67edcbf-f204-46e9-816b-3cf245781313",
+      "borrowed": "Gauges plus per-facet bars with plain-language percentile framing, for rubric rows"
+    },
+    {
+      "source": "15Five (Mobbin screen)",
+      "url": "https://mobbin.com/screens/1d575d26-986d-4126-9c12-2dd26aa3d0b3",
+      "borrowed": "Competency radar with Self, Manager and Peer filter chips, for the team view"
+    },
+    {
+      "source": "Skillshare (Mobbin screen)",
+      "url": "https://mobbin.com/screens/19988863-3136-4b9f-8432-bc0833c6564a",
+      "borrowed": "Category rail, filter chips and card grid, for the persona library"
+    },
+    {
+      "source": "Chronicle (Mobbin flow)",
+      "url": "https://mobbin.com/flows/bdf79980-7199-410c-99fc-e0b1120b76a6",
+      "borrowed": "Three entry cards (paste, prompt, import URL) as the wizard's source step"
+    },
+    {
+      "source": "Jasper (Mobbin flow)",
+      "url": "https://mobbin.com/flows/213ae30f-b4f5-4f36-874d-e56b982b88a4",
+      "borrowed": "Collapsible steps with quick picks and add-more-information, for progressive disclosure"
+    },
+    {
+      "source": "HubSpot (Mobbin flow)",
+      "url": "https://mobbin.com/flows/1a932f05-d002-46ec-b9a9-22cf5c33f57b",
+      "borrowed": "Three-step wizard with a step indicator and one primary action per step"
+    },
+    {
+      "source": "Second Nature",
+      "url": "https://secondnature.ai/",
+      "borrowed": "Competitor bar: live deal coaching and real-time feedback. We differentiate on calm plus an open, PR-able persona library"
+    },
+    {
+      "source": "Yoodli vs Second Nature (Yoodli blog, vendor-written)",
+      "url": "https://yoodli.ai/blog/yoodli-vs-second-nature-which-ai-sales-roleplay-platform-is-better",
+      "borrowed": "Gap to close later: coaching on real customer calls, via importing a recording into the debrief"
+    },
+    {
+      "source": "Second Nature vs Hyperbound (Mindtickle)",
+      "url": "https://www.mindtickle.com/article/second-nature-vs-hyperbound-ai-sales-role-play-platform/",
+      "borrowed": "Practice built from real calls and scored against scorecards, as the model for replay-this-moment"
+    },
+    {
+      "source": "shadcn/ui vs Radix UI (Vercel)",
+      "url": "https://vercel.com/i/shadcn-vs-radix",
+      "borrowed": "Copy-in source ownership and the Tailwind-first rationale behind the library choice"
+    },
+    {
+      "source": "HeroUI best React libraries (HeroUI blog, vendor-written)",
+      "url": "https://heroui.com/en/blog/best-react-ui-component-libraries",
+      "borrowed": "Fallback library option (Tailwind v4 plus React Aria). Vendor claims are unverified"
+    }
+  ],
+  "implementation": {
+    "effort": "XL",
+    "migration_path": "Rough phases. Phase 1: Tailwind tokens, shadcn init, icon rail and bottom bar, Fraunces and Inter, replace the orb. Phase 2: move scenarios into /personas JSON with a zod schema, build the library and facet filters. Phase 3: side-channel coach and live read on the call screen. Phase 4: wizard, debrief and progress. Phase 5: manager view, Dusk mode, reduced-motion and mobile QA. Keep the existing grading API contract so debriefs stay backward compatible."
+  },
+  "risks": [
+    "Calm can read as soft. Public reviews of AI sales roleplay tools call the buyer too agreeable or robotic (r/sales thread on Hyperbound and Second Nature). Mitigate with a Hot tier that pushes back and interrupts.",
+    "Cue overload and latency. A per-turn coach call adds cost and can distract. Rate limits and Quiet mode are required, and latency must be measured against the 2-second target.",
+    "Library claims are unverified. A third-party vendor blog (untitledui.com) says shadcn's default primitive moved to Base UI in July 2026 and that Radix is no longer maintained. Verify on shadcn docs before committing.",
+    "The Tailwind 3 to 4 migration touches every screen. Budget for it or stay on v3 and accept more manual work.",
+    "Content cost. About 150 personas need human review; AI-drafted personas risk generic objections.",
+    "Crowded category. Second Nature, Hyperbound and Yoodli are funded. The open-source version must win on self-hosting, transparency and contributor ownership, not on look alone.",
+    "Mobbin notice (show to the user verbatim): **Your Mobbin AI usage is high this month** Usage is unlimited during beta. If your usage stays at this level, you may need to purchase more credits once limits take effect. [View usage and plan options](https://mobbin.com/settings/billing-and-usage)"
+  ]
+}

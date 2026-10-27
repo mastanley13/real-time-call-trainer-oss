@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { Copy, Plus, Trash2, Save, Play } from "lucide-react";
-import { Scenario, ScenarioSchema, newBlankScenario } from "@/lib/scenarios";
+import { CALL_TYPES, CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, OBJECTION_TYPES, Scenario, ScenarioSchema, newBlankScenario } from "@/lib/scenarios";
 import { ZodIssue } from "zod";
 import { deleteCustomScenario, duplicateScenario, listScenarios, saveCustomScenario } from "@/lib/scenarioStore";
 
@@ -86,7 +86,10 @@ export default function ScenarioEditor() {
     } catch {
       /* ignore corrupt draft */
     }
-    setDraft(restored ?? structuredClone(list[0]));
+    // ?id=<scenario> (from the library's "Duplicate & edit") wins over a restored draft.
+    const wanted = new URLSearchParams(window.location.search).get("id");
+    const fromUrl = wanted ? list.find((s) => s.id === wanted) : undefined;
+    setDraft(fromUrl ? structuredClone(fromUrl) : restored ?? structuredClone(list.find((s) => !s.builtIn) ?? list[0]));
     setHydrated(true);
   }, []);
 
@@ -150,17 +153,20 @@ export default function ScenarioEditor() {
         <button className="btn-primary mb-3 w-full" onClick={() => { const b = newBlankScenario(); setDraft(b); setSaved(false); clearErrors(); }}>
           <Plus size={16} /> New scenario
         </button>
+        <p className="label mt-1">Your personas</p>
         <ul className="space-y-1">
-          {all.map((s) => (
+          {all.filter((s) => !s.builtIn || s.id === draft.id).map((s) => (
             <li key={s.id}>
               <button onClick={() => { setDraft(structuredClone(s)); clearErrors(); setSaved(false); }}
-                className={`w-full rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${draft.id === s.id ? "bg-primary-soft font-semibold text-primary" : "hover:bg-slate-50"}`}>
+                className={`w-full rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${draft.id === s.id ? "bg-primary-soft font-semibold text-ink" : "hover:bg-sunken"}`}>
                 {s.title}
-                <span className="block text-xs font-normal text-ink-muted">{s.builtIn ? "Built-in · read-only" : "Custom"}</span>
+                <span className="block text-xs font-normal text-ink-muted">{s.builtIn ? "Library · read-only" : "Mine"}</span>
               </button>
             </li>
           ))}
+          {!all.some((s) => !s.builtIn) && <li className="px-1 text-xs text-ink-muted">Duplicate a library persona or start a new one.</li>}
         </ul>
+        <Link href="/library" className="btn-ghost btn-sm mt-3 w-full">Browse the library</Link>
       </aside>
 
       <div ref={editorRef} className="card scroll-mt-20 space-y-5">
@@ -172,14 +178,14 @@ export default function ScenarioEditor() {
               <button className="btn-ghost" onClick={duplicate}><Copy size={16} /> Duplicate</button>
             )}
             {!readOnly && all.some((s) => s.id === draft.id) && (
-              <button className="btn-ghost text-red-600" onClick={() => setConfirmDelete(true)}><Trash2 size={16} /> Delete</button>
+              <button className="btn-ghost text-alert" onClick={() => setConfirmDelete(true)}><Trash2 size={16} /> Delete</button>
             )}
             {!readOnly && <button className="btn-primary" onClick={save}><Save size={16} /> Save</button>}
           </div>
         </div>
-        {readOnly && <p className="banner-warn">Built-in scenarios can’t be edited. Duplicate one to customise it.</p>}
-        {formError && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm font-medium text-red-700">{formError}</p>}
-        {saved && <p role="status" className="rounded-xl bg-accent-soft p-3 text-sm">Saved to this browser.</p>}
+        {readOnly && <p className="banner-warn">Library personas can’t be edited. Duplicate one to customise it.</p>}
+        {formError && <p role="alert" className="rounded-lg border border-alert/40 bg-alert-soft p-3 text-sm font-medium">{formError}</p>}
+        {saved && <p role="status" className="rounded-lg bg-ok-soft p-3 text-sm">Saved to this browser.</p>}
 
         <fieldset disabled={readOnly} className="space-y-5">
           <div className="grid gap-4 sm:grid-cols-3">
@@ -189,9 +195,19 @@ export default function ScenarioEditor() {
                 <option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option>
               </select></div>
           </div>
-          <div><label className="label" htmlFor="i">Industry</label><input id="i" className={field} {...bad("industry")} value={draft.industry} onChange={(e) => patch({ industry: e.target.value })} />{msg("industry")}</div>
+          <div className="grid gap-4 sm:grid-cols-4">
+            <div className="sm:col-span-2"><label className="label" htmlFor="i">Industry</label><input id="i" className={field} {...bad("industry")} value={draft.industry} onChange={(e) => patch({ industry: e.target.value })} />{msg("industry")}</div>
+            <div><label className="label" htmlFor="role">Sales job</label>
+              <select id="role" className={field} value={draft.role} onChange={(e) => patch({ role: e.target.value })}>
+                {JOB_FAMILIES.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+              </select></div>
+            <div><label className="label" htmlFor="ct">Call type</label>
+              <select id="ct" className={field} value={draft.callType} onChange={(e) => patch({ callType: e.target.value as Scenario["callType"] })}>
+                {CALL_TYPES.map((c) => <option key={c} value={c}>{CALL_TYPE_LABELS[c]}</option>)}
+              </select></div>
+          </div>
 
-          <div className="rounded-2xl border border-line bg-slate-50/50 p-4 sm:p-5">
+          <div className="rounded-panel border border-line bg-sunken/50 p-4 sm:p-5">
             <h2 className="mb-3 text-sm font-semibold">AI persona</h2>
             <div className="grid gap-4 sm:grid-cols-2">
               <div><label className="label" htmlFor="pn">Name</label><input id="pn" className={field} {...bad("aiPersona.name")} value={draft.aiPersona.name} onChange={(e) => patchPersona({ name: e.target.value })} />{msg("aiPersona.name")}</div>
@@ -209,12 +225,12 @@ export default function ScenarioEditor() {
 
           <div>
             <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Rubric <span className={`ml-2 text-xs font-normal ${total === 100 ? "text-ink-muted" : "font-semibold text-amber-800"}`}>Weights total {total}%{total === 100 ? "" : " — should add up to 100% (scores are rescaled when graded)"}</span></h2>
+              <h2 className="text-sm font-semibold">Rubric <span className={`ml-2 text-xs font-normal ${total === 100 ? "text-ink-muted" : "font-semibold text-caution"}`}>Weights total {total}%.{total === 100 ? "" : " Weights should add up to 100%. Scores are rescaled when graded."}</span></h2>
               {!readOnly && <button type="button" className="btn-ghost !min-h-[36px]" onClick={() => patch({ rubric: [...draft.rubric, { id: `c${Date.now().toString(36)}`, name: "", description: "", weight: 10 }] })}><Plus size={14} /> Criterion</button>}
             </div>
             <div className="space-y-3">
               {draft.rubric.map((c, i) => (
-                <div key={c.id + i} className={`grid items-end gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_100px_auto] ${Object.keys(errors).some((k) => k.startsWith(`rubric.${i}.`)) ? "border-red-600 bg-red-50/50" : "border-line"}`}>
+                <div key={c.id + i} className={`grid items-end gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_100px_auto] ${Object.keys(errors).some((k) => k.startsWith(`rubric.${i}.`)) ? "border-alert bg-alert-soft/40" : "border-line"}`}>
                   <div>
                   <input id={`rn-${i}`} aria-label={`Criterion ${i + 1} name`} placeholder="Name" className={field} {...bad(`rubric.${i}.name`)} value={c.name} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)) })} />
                   {msg(`rubric.${i}.name`)}
@@ -224,10 +240,30 @@ export default function ScenarioEditor() {
                   <input id={`rw-${i}`} aria-label={`Criterion ${i + 1} weight`} type="number" min={0} max={100} className={field} {...bad(`rubric.${i}.weight`)} value={c.weight} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, weight: Number(e.target.value) } : r)) })} />
                   {msg(`rubric.${i}.weight`)}
                   </div>
-                  {!readOnly && <button type="button" aria-label={`Remove criterion ${i + 1}`} className="btn-ghost self-end text-red-700" disabled={draft.rubric.length <= 1} onClick={() => patch({ rubric: draft.rubric.filter((_, j) => j !== i) })}><Trash2 size={16} aria-hidden /> Remove</button>}
+                  {!readOnly && <button type="button" aria-label={`Remove criterion ${i + 1}`} className="btn-ghost self-end text-alert" disabled={draft.rubric.length <= 1} onClick={() => patch({ rubric: draft.rubric.filter((_, j) => j !== i) })}><Trash2 size={16} aria-hidden /> Remove</button>}
                   <div className="sm:col-span-3"><textarea id={`rd-${i}`} aria-label={`Criterion ${i + 1} description`} placeholder="What good looks like" rows={2} className={field} {...bad(`rubric.${i}.description`)} value={c.description} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, description: e.target.value } : r)) })} />{msg(`rubric.${i}.description`)}</div>
                 </div>
               ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="text-sm font-semibold">Objections <span className="ml-1 text-xs font-normal text-ink-muted">The live coach uses these to cue you with the prep answer</span></h2>
+              {!readOnly && <button type="button" className="btn-ghost !min-h-[36px]" disabled={draft.objections.length >= 8} onClick={() => patch({ objections: [...draft.objections, { type: "price", line: "", prepAnswer: "" }] })}><Plus size={14} /> Objection</button>}
+            </div>
+            <div className="space-y-3">
+              {draft.objections.map((o, i) => (
+                <div key={i} className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-[160px_1fr_auto]">
+                  <select aria-label={`Objection ${i + 1} type`} className={field} value={o.type} onChange={(e) => patch({ objections: draft.objections.map((x, j) => (j === i ? { ...x, type: e.target.value as Scenario["objections"][number]["type"] } : x)) })}>
+                    {OBJECTION_TYPES.map((t) => <option key={t} value={t}>{OBJECTION_LABELS[t]}</option>)}
+                  </select>
+                  <input aria-label={`Objection ${i + 1} line`} placeholder="What the caller says" className={field} value={o.line} onChange={(e) => patch({ objections: draft.objections.map((x, j) => (j === i ? { ...x, line: e.target.value } : x)) })} />
+                  {!readOnly && <button type="button" aria-label={`Remove objection ${i + 1}`} className="btn-ghost text-alert" onClick={() => patch({ objections: draft.objections.filter((_, j) => j !== i) })}><Trash2 size={16} aria-hidden /></button>}
+                  <input aria-label={`Objection ${i + 1} prep answer`} placeholder="Prep answer the coach can suggest" className={`${field} sm:col-span-3`} value={o.prepAnswer} onChange={(e) => patch({ objections: draft.objections.map((x, j) => (j === i ? { ...x, prepAnswer: e.target.value } : x)) })} />
+                </div>
+              ))}
+              {draft.objections.length === 0 && <p className="text-xs text-ink-muted">No objections yet. Add the pushback this caller should raise.</p>}
             </div>
           </div>
 
@@ -242,7 +278,7 @@ export default function ScenarioEditor() {
       )}
       {toast && createPortal(
         <div className="pointer-events-none fixed inset-x-3 z-[100] flex justify-center" style={{ bottom: "max(1rem, env(safe-area-inset-bottom))" }}>
-          <div role="status" className="max-w-md rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-pop">{toast}</div>
+          <div role="status" className="max-w-md rounded-lg bg-ink px-4 py-3 text-sm text-background shadow-pop">{toast}</div>
         </div>,
         document.body,
       )}

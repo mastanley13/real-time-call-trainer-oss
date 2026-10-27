@@ -15,11 +15,57 @@ export const RubricCriterionSchema = z.object({
   weight: z.number().min(0).max(100),
 });
 
+/** Sales job families used to facet the persona library. Custom scenarios may use any string. */
+export const JOB_FAMILIES = [
+  { id: "sdr", label: "SDR cold calls" },
+  { id: "ae", label: "AE discovery" },
+  { id: "cs", label: "Customer success & renewals" },
+  { id: "home-services", label: "Home services" },
+  { id: "insurance", label: "Insurance" },
+  { id: "mortgage", label: "Mortgage & lending" },
+  { id: "real-estate", label: "Real estate" },
+  { id: "solar", label: "Solar & energy" },
+  { id: "auto", label: "Auto sales" },
+  { id: "medical", label: "Medical devices" },
+  { id: "procurement", label: "B2B procurement" },
+  { id: "recruiting", label: "Recruiting" },
+  { id: "retail", label: "Retail & consumer" },
+  { id: "collections", label: "Collections" },
+  { id: "financial", label: "Financial advising" },
+  { id: "logistics", label: "Logistics & freight" },
+  { id: "telecom", label: "Telecom & utilities" },
+  { id: "general", label: "General sales" },
+] as const;
+
+export const CALL_TYPES = ["inbound", "cold", "discovery", "follow_up", "renewal", "negotiation", "collections", "service"] as const;
+export const CALL_TYPE_LABELS: Record<(typeof CALL_TYPES)[number], string> = {
+  inbound: "Inbound", cold: "Cold call", discovery: "Discovery", follow_up: "Follow-up",
+  renewal: "Renewal", negotiation: "Negotiation", collections: "Collections", service: "Service",
+};
+
+export const OBJECTION_TYPES = ["price", "timing", "competitor", "authority", "trust", "status_quo", "need"] as const;
+export const OBJECTION_LABELS: Record<(typeof OBJECTION_TYPES)[number], string> = {
+  price: "Price", timing: "Timing", competitor: "Competitor", authority: "Authority",
+  trust: "Trust", status_quo: "Status quo", need: "No need",
+};
+
+/** An objection the persona will raise, with a coachable prep answer (used by the live coach and the briefing). */
+export const ObjectionSchema = z.object({
+  type: z.enum(OBJECTION_TYPES),
+  line: z.string().min(1).max(300),
+  prepAnswer: z.string().max(400),
+});
+
 export const ScenarioSchema = z.object({
   id: z.string().min(1).max(80),
   title: z.string().min(1).max(120),
   industry: z.string().max(80),
   difficulty: z.enum(["easy", "medium", "hard"]).default("medium"),
+  /** Job family id from JOB_FAMILIES (free text for custom scenarios). */
+  role: z.string().max(40).default("general"),
+  callType: z.enum(CALL_TYPES).default("inbound"),
+  /** Typical call length in minutes, shown on library cards. */
+  durationMin: z.number().min(1).max(60).default(6),
   callScript: z.string().max(6000),
   aiPersona: z.object({
     name: z.string().min(1).max(80),
@@ -28,16 +74,34 @@ export const ScenarioSchema = z.object({
     openingLine: z.string().max(500),
     /** Optional ElevenLabs voice id override. */
     voiceId: z.string().max(80).optional(),
+    /** Optional OpenAI Realtime voice name (e.g. "cedar"); unknown names fall back to REALTIME_VOICE. */
+    realtimeVoice: z.string().max(40).optional(),
   }),
   traineeGoal: z.string().max(1000),
   rubric: z.array(RubricCriterionSchema).min(1).max(12),
+  objections: z.array(ObjectionSchema).max(8).default([]),
   /** Scripted caller lines used by the offline text simulation (no LLM key). */
   sampleReplies: z.array(z.string().max(500)).max(20).default([]),
+  /** Library personas start as drafts until a maintainer has reviewed them. */
+  status: z.enum(["reviewed", "draft"]).default("reviewed"),
   builtIn: z.boolean().optional(),
 });
 
 export type RubricCriterion = z.infer<typeof RubricCriterionSchema>;
 export type Scenario = z.infer<typeof ScenarioSchema>;
+export type Objection = z.infer<typeof ObjectionSchema>;
+export type ObjectionType = (typeof OBJECTION_TYPES)[number];
+export type CallType = (typeof CALL_TYPES)[number];
+
+export const jobFamilyLabel = (id: string) => JOB_FAMILIES.find((f) => f.id === id)?.label ?? id;
+
+/** Talk-track steps parsed from the numbered call script ("1. Greet ..." lines). */
+export function talkTrackSteps(callScript: string): string[] {
+  return callScript
+    .split("\n")
+    .map((l) => l.replace(/^\s*(\d+[.)]|[-*•])\s*/, "").trim())
+    .filter(Boolean);
+}
 
 export const BUILT_IN_SCENARIOS: Scenario[] = [
   {
@@ -46,6 +110,14 @@ export const BUILT_IN_SCENARIOS: Scenario[] = [
     title: "Inbound lead: leaking water heater",
     industry: "Home services",
     difficulty: "easy",
+    role: "home-services",
+    callType: "inbound",
+    durationMin: 5,
+    status: "reviewed",
+    objections: [
+      { type: "price", line: "What does a visit cost? Nobody mentioned a fee.", prepAnswer: "Fair question. The diagnostic visit is $89, and it's credited toward the repair if you go ahead." },
+      { type: "trust", line: "Can you confirm someone will really show up this afternoon?", prepAnswer: "Yes. You'll get a text with the technician's name when they're on the way, and I'll call you if anything changes." },
+    ],
     callScript: [
       "1. Greet warmly, give company name and your name.",
       "2. Ask what is going on and how urgent it is.",
@@ -83,6 +155,14 @@ export const BUILT_IN_SCENARIOS: Scenario[] = [
     title: "Quote follow-up: roof replacement",
     industry: "Home services",
     difficulty: "medium",
+    role: "home-services",
+    callType: "follow_up",
+    durationMin: 7,
+    status: "reviewed",
+    objections: [
+      { type: "authority", line: "Honestly I need to talk it over with my wife first.", prepAnswer: "That makes sense. What questions do you think she'll have? I'm happy to walk you both through it Thursday evening." },
+      { type: "competitor", line: "I did get another number from someone else. They came in around twelve nine.", prepAnswer: "Thanks for telling me. Can we compare what's included? Our quote covers a 25-year material warranty and full tear-off." },
+    ],
     callScript: [
       "1. Reference the quote sent last week and the prior visit.",
       "2. Ask open questions about what the customer thought of the proposal.",
@@ -119,6 +199,14 @@ export const BUILT_IN_SCENARIOS: Scenario[] = [
     title: "Objection handling: \"your price is too high\"",
     industry: "Sales (general)",
     difficulty: "hard",
+    role: "general",
+    callType: "negotiation",
+    durationMin: 6,
+    status: "reviewed",
+    objections: [
+      { type: "price", line: "This is twice what we pay now. I don't see how it's worth it.", prepAnswer: "I hear you. When you say twice, what are you comparing against, and what does that tool not do for your team today?" },
+      { type: "timing", line: "A 24-month contract is a dealbreaker.", prepAnswer: "Understood. Would a month-to-month trial for the first quarter let you prove the value before committing?" },
+    ],
     callScript: [
       "1. Acknowledge the objection without defending.",
       "2. Ask a clarifying question: too high compared to what?",
@@ -156,11 +244,16 @@ export function newBlankScenario(): Scenario {
     title: "New scenario",
     industry: "",
     difficulty: "medium",
+    role: "general",
+    callType: "inbound",
+    durationMin: 6,
     callScript: "",
     aiPersona: { name: "Caller", role: "", behavior: "", openingLine: "Hello?" },
     traineeGoal: "",
     rubric: [{ id: "c1", name: "Criterion 1", description: "", weight: 100 }],
+    objections: [],
     sampleReplies: [],
+    status: "reviewed",
   };
 }
 

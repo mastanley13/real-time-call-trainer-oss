@@ -1,0 +1,295 @@
+{
+  "id": "P05",
+  "lens": "Whoop/Strava athletic performance analytics: call strain and recovery, trend rings, personal records",
+  "name": "Strain & Form Console",
+  "one_liner": "A Whoop-style performance console for sales reps: call Strain, Form and personal records on every screen, a live coach rail beside every call, and OpenAI models named wherever they do work.",
+  "lens_followed_or_changed": "Followed: Whoop/Strava logic mapped to sales. Call Strain (0 to 21) rates how hard a call was for the rep, from turns, objections faced and persona difficulty. Form (fitness minus fatigue, Strava-style) shows whether the rep is sharp for a hard persona. Trend rings track skills; PRs mark personal bests per persona. Changed: the Mobbin side-panel screens (Dialpad, Fireflies) and competitors (Hyperbound, Second Nature, Yoodli) show live coaching as a rail beside the call, so the live screen is a coach rail plus rings, not rings alone. Whoop and Strava pages were not fetched in this run; those patterns come from general product knowledge and are not cited. Mobbin notice, verbatim: **Your Mobbin AI usage is high this month** Usage is unlimited during beta. If your usage stays at this level, you may need to purchase more credits once limits take effect. [View usage and plan options](https://mobbin.com/settings/billing-and-usage)",
+  "ui_stack": [
+    {
+      "name": "shadcn/ui on Base UI",
+      "role": "Component system: copied, owned source in the repo, on the Base UI primitive layer (default for new shadcn projects since July 2026).",
+      "why": "Contributors and Codex edit real component files, not a locked npm package; shadcn publishes an MCP server, llms.txt and agent skills that help AI-assisted PRs."
+    },
+    {
+      "name": "Tailwind CSS v4",
+      "role": "Styling with CSS-variable tokens for light, dark and night (live) themes.",
+      "why": "Replaces Tailwind 3 and the hand-rolled .card and .btn classes in globals.css; one token block per theme."
+    },
+    {
+      "name": "Motion",
+      "role": "Ring fills, cue slide-ins, layout transitions.",
+      "why": "Small, React 19 compatible, and honours prefers-reduced-motion."
+    },
+    {
+      "name": "Custom SVG Ring, StrainBar, Timeline, CoachCue, ModelChip",
+      "role": "Five in-house primitives that carry the product's visual identity.",
+      "why": "About a few hundred lines with no dependency; replaces the three.js orb, which is removed."
+    },
+    {
+      "name": "Recharts via shadcn Chart",
+      "role": "Fitness vs Fatigue lines, weekly strain bars, team heatmap cells.",
+      "why": "Used only on dashboard and team screens; keeps the live call light."
+    },
+    {
+      "name": "cmdk via shadcn Command",
+      "role": "Cmd/Ctrl+K palette and persona combobox.",
+      "why": "Fast jump to any of 240+ personas from any screen."
+    },
+    {
+      "name": "TanStack Table",
+      "role": "Session history and team roster with sorting and virtualised rows.",
+      "why": "Handles large persona and team datasets without bespoke table code."
+    },
+    {
+      "name": "React Hook Form + zod",
+      "role": "Persona wizard steps and the shared persona JSON schema.",
+      "why": "zod already in the stack; one schema validates the wizard, the API and the seed files contributors PR."
+    },
+    {
+      "name": "OpenAI SDK (official)",
+      "role": "Grader, live coach and persona wizard via structured JSON outputs.",
+      "why": "Showcases OpenAI models directly; OpenAI-compatible base URL kept for other providers."
+    },
+    {
+      "name": "OpenAI Realtime API + @elevenlabs/react",
+      "role": "Two voice engines behind one VoiceProvider interface, user-selectable.",
+      "why": "Puts OpenAI voice on equal footing with ElevenLabs and keeps current voice behaviour working."
+    },
+    {
+      "name": "Geist + Geist Mono",
+      "role": "UI and display type, plus tabular numerals for scores, strain and timers.",
+      "why": "Retires Inter and Sora; mono numerals make live scores feel instrument-like."
+    },
+    {
+      "name": "lucide-react",
+      "role": "Icons (kept), plus custom ring glyphs for Strain, Form and PR.",
+      "why": "Already in the app; no emoji in the UI."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "canvas",
+        "hex": "#F6F7F9",
+        "use": "Light page background; replaces the default slate canvas."
+      },
+      {
+        "token": "surface",
+        "hex": "#FFFFFF",
+        "use": "Cards and sheets in light mode."
+      },
+      {
+        "token": "ink",
+        "hex": "#0B1220",
+        "use": "Primary text and dark-mode surfaces' contrast; not the old #071827."
+      },
+      {
+        "token": "line",
+        "hex": "#E4E7EC",
+        "use": "1px hairline borders; replaces card shadows at rest."
+      },
+      {
+        "token": "night",
+        "hex": "#0A0F1C",
+        "use": "Dark canvas for live call, pre-call briefing and landing hero."
+      },
+      {
+        "token": "signal",
+        "hex": "#2D5BFF",
+        "use": "Primary actions and links; replaces #1D4ED8."
+      },
+      {
+        "token": "form",
+        "hex": "#12B886",
+        "use": "Positive Form, recovery and rubric rings that are on target (graphics only, never body text)."
+      },
+      {
+        "token": "strain",
+        "hex": "#FF7A1A",
+        "use": "Call Strain and effort rings; text on light uses #C2410C for contrast."
+      },
+      {
+        "token": "pr",
+        "hex": "#F5B301",
+        "use": "Personal records: one gold pulse per new PR."
+      },
+      {
+        "token": "coach",
+        "hex": "#22D3EE",
+        "use": "Live coach cues and the active-cue glow, dark surfaces only."
+      },
+      {
+        "token": "alert",
+        "hex": "#E5484D",
+        "use": "Objection alerts and the End call action."
+      }
+    ],
+    "typography": "Geist for UI (400 body, 500 labels) and Geist Mono 500 with tabular-nums for scores, strain, timers and transcript timestamps. Display 40/48 on landing; body 16px on mobile. Loaded with next/font/google.",
+    "shape_and_depth": "Cards 16px radius with 1px line borders and no shadow at rest; controls 12px; chips are pills. Rings use 10px strokes with round caps. Two elevation levels maximum. Live surfaces get one soft glow, on the active ring only.",
+    "motion": "Rings fill over 900ms ease-out on mount and on change; strain bars 600ms. Coach cue slides in over 200ms from the rail and fades after 6s. A new PR gives one gold pulse on its ring, not confetti. Everything is disabled under prefers-reduced-motion, with numbers updating instantly.",
+    "iconography": "lucide-react at 1.75 stroke, 20px in controls, custom ring glyphs for Strain, Form and PR. Model chips use a small monospace label, not vendor logos.",
+    "theme_modes": "Light is the default for practice, library, debrief, progress and team. Night is the default for live call, briefing and landing hero. Respects prefers-color-scheme, with a manual toggle. Each mode is one CSS-variable block so screens never hard-code colours."
+  },
+  "navigation_and_ia": "Desktop top bar: Practice, Library, Progress, Team, Contribute, plus a Cmd/Ctrl+K palette that jumps to any persona or past session. Mobile: bottom tabs Practice, Library, Progress, More; tabs hide during a live call. Practice is a Today page: your Form ring, one recommended persona with its target strain, and your latest PR. Routes: /practice, /library, /library/[slug], /create (wizard), /call/[id] (briefing, then live), /debrief/[id], /progress, /team (manager role), /contribute. Sign-in, MFA and access-code gate move into a single sheet. The demo-mode banner becomes a slim strip under the top bar.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Dark split hero. Left: headline 'Practice the call. Know your Form before it counts.', one line of copy, a primary 'Start a practice call' and a secondary 'Browse 240 personas', then a row of model chips (Graded by gpt-4.1-mini, Voice: OpenAI Realtime, Built with Codex). Right: a session card with a live Strain ring at 13.4 of 21, three rubric rings filling, and a gold PR tag. Below: a three-step strip, an eight-card persona strip, and a contributor band showing open 'good first persona' issues.",
+      "key_components": "Ring cluster, model chips, persona strip, contributor band with live issue count, README hero PNG rendered from the same card.",
+      "change_vs_today": "Replaces the blurred orb and generic feature-card grid with a visible performance product; the README uses the same hero image."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Left 260px faceted sidebar: job family (15), industry, difficulty as Strain tiers 1 to 5 with bars, objection chips (price, timing, competitor, authority, trust, no-need), channel. Top: search, sort (Strain, Your PR, Newest) and a segmented All / For you / Mine. Main: three-column grid of persona cards with monogram, title, role and industry, expected-strain bar with number, objection tags, and a small Form ring showing your recent score or 'New'. Floating 'Create persona' button opens the wizard. Mobile: filters in a bottom sheet.",
+      "key_components": "Faceted filters, strain bar, persona card with Form ring, PR badge for personas you have beaten, detail drawer with talk track and voice sample.",
+      "change_vs_today": "Replaces a three-item dropdown with a browsable library of 240+ personas; difficulty is shown as expected strain, so reps know the load before they start."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Top rail of steps: Source, Persona, Scenario, Rubric, Test call. Source is a 2x2 of entry points: paste a job description, a product URL, CRM or ICP notes, or a real call transcript, each with a note on what gets redacted. Steps 2 to 4 split the view: form on the left, and a persona card on the right that streams in as the model writes (avatar, temperament sliders, objections, opening line). Rubric weights must total 100, checked inline. Footer: model chip, token and cost estimate, 'Run 30-second test call', Save and Export persona file.",
+      "key_components": "Step rail, entry-point tiles, streaming persona card, rubric weight validator, redaction notice, export to a PR-ready JSON file.",
+      "change_vs_today": "Replaces a manual scenario form with a guided flow whose output is a schema-valid persona that contributors can submit as a PR."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Dark briefing page, three columns. Left: persona portrait with a voice sample button, temperament meters (skepticism, urgency, budget) and the opening line. Centre: a Strain forecast card ('14 of 21, Hard'), your Form ring for this persona, and the PR to beat (Pricing transparency 84). Right: talk track as a six-step checklist and rubric weights as small rings. Bottom bar: Voice / Text toggle, a live mic level and talk-time readout, and a large 'Start call' button with a keyboard hint.",
+      "key_components": "Strain forecast card, Form ring, PR-to-beat tag, talk-track checklist, mic check with talk-time meter.",
+      "change_vs_today": "Replaces the blurred gradient orb with a concrete briefing that sets expectations: forecast strain, your Form, and the PR you can beat."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Dark night canvas, three zones. Top strip: live Strain ring, timer, talk-ratio bar with a shaded target band, mute, and a red 'End & grade'. Left rail: elevation timeline of the live score with coach markers. Centre: transcript bubbles with micro-tags ('Discovery +3', 'Objection: price') and provisional scores. Right coach rail: one whisper cue at a time (Ask, Objection, Pace, Step, Close) that fades after 6s, a next-best-question chip, the six-step talk track, and rubric rings drawn dashed while provisional. Composer at the bottom with text and push-to-talk.",
+      "key_components": "Whisper cue card, objection alert, elevation timeline, provisional rubric rings, talk-ratio bar, coach latency badge, six-step talk-track progress.",
+      "change_vs_today": "Replaces a chat app with no feedback by a coach channel: the persona never coaches, while a separate model emits cues and provisional scores."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Top: Session Score ring with letter grade, labelled 'Final grade' (live scores were provisional), a Strain badge, and a PR banner when a record is beaten. A row of three cards: Strengths, Areas to improve, and Next two drills with Practice buttons. Middle: criterion rings in a grid; each opens its evidence quotes, and clicking a quote scrolls and highlights that transcript line. Bottom: score-per-minute timeline, with tabs for Transcript, Logs and 'Under the hood' (model, prompt version, tokens, cost).",
+      "key_components": "Score ring, PR banner, criterion rings with quote drawers, transcript deep links, Under the hood panel.",
+      "change_vs_today": "Replaces one long scroll with a scannable result; every quote links to its transcript line, keeping evidence-backed grading."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Top row: Form ring (7-day against 42-day rolling), Strain this week as bars, streak and PR count. Main: 90-day Fitness vs Fatigue lines, with Form as a shaded band and a 7 / 30 / 90 toggle. Below: four skill rings (Discovery, Objections, Pricing, Booking) with 7-day deltas, and a practice calendar heatmap coloured by strain. Right column: PR wall (Best session, Highest Pricing score, Longest streak, Fastest booking) and a session feed with strain chips.",
+      "key_components": "Form ring, Fitness vs Fatigue chart, skill rings, strain calendar heatmap, PR wall, session feed.",
+      "change_vs_today": "Replaces four stat tiles and a flat list with trends, Form and PRs, so a rep can see when they are ready for a hard call."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Header with week selector and a 'Private PRs' toggle (on by default). Main: roster table with mini rings per rep for Form, weekly Strain, sessions and PR count, plus last-session time. Top-right heatmap: reps by criterion, coloured by average score. A Load column flags overloaded reps (high strain, low Form) and undertrained reps (no session in 7 days). Right rail: coaching queue of flagged sessions with a supervisor note box. Action: assign a persona to a rep or group.",
+      "key_components": "Roster table, mini rings, criterion heatmap, load flags, coaching queue, supervisor notes, assign-persona action.",
+      "change_vs_today": "Adds the manager surface the data model already supports; private PRs by default avoid leaderboard anxiety."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "390px width. Sticky top strip (48px): mini Strain ring, Form, timer, and a red End button. The talk-ratio bar sits under the strip. The transcript shows the last two turns; swipe up for the full log. One whisper cue card above the composer, one line with a 'Why' expand. Bottom: text field, a hold-to-talk mic in the thumb zone, and a quiet toggle. The bottom tab bar is hidden during the call.",
+      "key_components": "Sticky strip, single-line cue card, swipe transcript sheet, hold-to-talk mic, quiet toggle.",
+      "change_vs_today": "Replaces the chat screen; cues and rings are the only chrome, so the rep reads the coach at a glance."
+    }
+  ],
+  "live_coaching_and_scoring": "The coach runs server-side as its own channel. Each rep turn sends the transcript delta, the persona profile and the rubric to a coach model (default gpt-4.1-mini, structured JSON). It returns typed cues with priority, the next best question, objection flags, provisional rubric deltas and the talk-track step. The persona model never sees coach output, so advice cannot leak into the character. Live rings are provisional; the full grader runs on End and replaces them with quoted evidence. Target: a cue within 2.5s p95 after the rep stops talking. Strain is computed live from turns, objections faced and persona difficulty. Self-rated D: 6.5 if latency holds; 4 if cues routinely arrive after 4s.",
+  "persona_library_and_wizard": "Library: 240+ personas stored as persona JSON files in the repo, one per file, validated by a shared zod schema (role, seniority, industry, difficulty 1 to 5 mapped to strain bands, objection types, temperament, opening line, voice, rubric template). Target 15 job families with 16+ personas each, including every sales job in the brief. Filters: family, industry, strain, objection, channel and voice/text. Wizard: four entry points (job description, product URL, CRM or ICP notes, real transcript). Transcripts are redacted for phone numbers, emails and names before any model call. Output: a schema-valid draft, a 30-second test call, then Save or Export as a PR-ready file. Self-rated E: 6.5 if 240 personas ship with the wizard; 4 if fewer than 100 ship.",
+  "signature_moments": [
+    "Form ring: fitness minus fatigue, so a rep sees whether they are sharp for a hard persona before dialing.",
+    "Strain forecast on every persona card and briefing: a pre-call estimate of how hard the call will be.",
+    "Whisper cue rail: one cue at a time, typed (Ask, Objection, Pace, Step, Close), with the reason one tap away.",
+    "Elevation timeline of the live score, with coach markers, so a rep can see exactly where the call dipped.",
+    "Persona wizard streams a live persona card as it writes, then runs a 30-second test call."
+  ],
+  "openai_fund_angle": "Every surface names the model doing the work: model chips for grading, the coach, the persona wizard and voice, where voice is switchable between the OpenAI Realtime API and ElevenLabs. The Under the hood panel on each debrief shows model, prompt version, tokens and cost, so reviewers and users can audit how a score was produced. The landing footer shows Built with Codex, linking to AGENTS.md, which explains how contributors use Codex on persona PRs. Contributor invitations: the Add a persona wizard exports a PR-ready file plus a copyable Codex task prompt; good first persona issues are counted live on the landing page; persona authors are credited on cards (opt-in). Maintainers use Codex for PR review on persona and schema PRs, the PR-review and maintainer-automation workflow the Codex for Open Source program supports.",
+  "inspirations": [
+    {
+      "source": "Mobbin: Lindy template library",
+      "url": "https://mobbin.com/screens/e9cd661f-8937-4421-b41a-6cf4c2b3fc35",
+      "borrowed": "Faceted Role and Use case checkbox sidebar for library filters, with a Most popular section above the grid."
+    },
+    {
+      "source": "Mobbin: Writer agent library",
+      "url": "https://mobbin.com/screens/829c3818-20d9-45f5-9d01-a99747b14ba6",
+      "borrowed": "Recommended for your role row above the full grid, plus colour-dotted industry and function filters."
+    },
+    {
+      "source": "Mobbin: PlayAI Voice Library",
+      "url": "https://mobbin.com/screens/572ce756-a304-4701-a1da-a20d884e76fd",
+      "borrowed": "Category tiles, removable filter chips, and gender and accent metadata rows for the persona voice picker."
+    },
+    {
+      "source": "Mobbin: Langdock Skills",
+      "url": "https://mobbin.com/screens/ca1733a1-58a5-479a-96e2-42b49ce81a56",
+      "borrowed": "Add menu with Create with chat, Write instructions and Upload file, used as wizard entry points."
+    },
+    {
+      "source": "Mobbin: Visitors",
+      "url": "https://mobbin.com/screens/16a48591-f4ad-4fb6-b19a-cb06804b590c",
+      "borrowed": "Score ring (98, Excellent) beside five metric readouts, for the Form and debrief summary."
+    },
+    {
+      "source": "Mobbin: Perplexity Health",
+      "url": "https://mobbin.com/screens/5e42f20d-0ce8-4423-bda5-a4235d18c5e6",
+      "borrowed": "Seven-day mini-bar trend card and Ask about this result chips for debrief follow-ups."
+    },
+    {
+      "source": "Mobbin: Todoist productivity modal",
+      "url": "https://mobbin.com/screens/cd29c218-cdc9-4a78-8687-14ec98176cda",
+      "borrowed": "Goal ring with Daily / Weekly tabs and a streak line for the practice goal."
+    },
+    {
+      "source": "Mobbin: Dialpad live call",
+      "url": "https://mobbin.com/screens/8ada6545-583d-436a-b58b-5714a49967b3",
+      "borrowed": "Live AI notes panel with action items beside the call; the coach rail pattern."
+    },
+    {
+      "source": "Mobbin: Fireflies Sales Assist",
+      "url": "https://mobbin.com/screens/a238e95c-72b6-47d9-8602-74caa1c36d07",
+      "borrowed": "Live suggestion feed beside the transcript, with a paused-credits state to design for."
+    },
+    {
+      "source": "Mobbin: Preply talk time",
+      "url": "https://mobbin.com/screens/82d67cb1-1a50-4442-a83a-afb56472ca75",
+      "borrowed": "Live microphone-driven talk-time panel as the talk-ratio pattern."
+    },
+    {
+      "source": "Mobbin: Vapi call log",
+      "url": "https://mobbin.com/screens/007a4823-5c3d-4016-b2d1-8637a49cb015",
+      "borrowed": "Duration and cost header, waveform, and tabs for transcript, logs and analysis in the debrief."
+    },
+    {
+      "source": "Hyperbound",
+      "url": "https://www.hyperbound.ai/",
+      "borrowed": "Live Call Coaching private preview: the bar that live coaching in criterion D has to clear."
+    },
+    {
+      "source": "Second Nature",
+      "url": "https://secondnature.ai/",
+      "borrowed": "Deal Coach concept (coaching on live deals) as a competitor benchmark for the coach rail."
+    },
+    {
+      "source": "Yoodli: Yoodli vs Hyperbound",
+      "url": "https://yoodli.ai/blog/yoodli-vs-hyperbound-which-ai-roleplay-platform-is-right-for-your-organization",
+      "borrowed": "Coaching before, during and after real calls, plus follow-up roleplays built from the call itself."
+    },
+    {
+      "source": "Mindtickle: Second Nature vs Hyperbound",
+      "url": "https://www.mindtickle.com/article/second-nature-vs-hyperbound-ai-sales-role-play-platform/",
+      "borrowed": "Proficiency heatmaps and cohort comparisons, adapted for the manager team view."
+    },
+    {
+      "source": "Alekseia Leinikov: shadcn/ui vs MUI vs Mantine",
+      "url": "https://www.alekseialeinikov.com/en/blog/topics/programming/shadcn-ui-vs-mui-vs-mantine",
+      "borrowed": "Base UI as shadcn default since July 2026, and the bundle-size and owned-code data behind the library choice (MUI 140.2 KB, shadcn on Base UI 144.3 KB gzip)."
+    }
+  ],
+  "implementation": {
+    "effort": "XL",
+    "migration_path": "1) Tailwind v4 and shadcn init on the Base UI preset, with the new token block, on a feature branch. 2) Build primitives: Ring, StrainBar, Timeline, CoachCue, ModelChip. 3) Persona JSON schema and seed the 240 personas; ship library and wizard. 4) Server-side coach channel with structured output and provisional scoring. 5) Screens in order: live call, mobile live call, debrief, briefing, progress, library, wizard, landing, team. 6) Remove the three.js orb and old component classes last. Each step is its own PR with before and after screenshots."
+  },
+  "risks": [
+    "Coach latency: cues that arrive after about 3s feel stale on voice. Mitigate with streaming, a small model and a rubric-only fallback if the coach times out.",
+    "Gamification: Strain and PRs can reward volume over quality or create anxiety. Keep PRs private by default and show Form as a range, not a verdict.",
+    "Trust: live provisional scores that disagree with the final grade erode confidence. Label provisional clearly and show the delta on the debrief.",
+    "Owned shadcn code means contributors maintain copied components. Pin components.json and add a CI check for drift.",
+    "Tailwind 3 to 4 and the token rewrite touch every screen; migrate screen by screen behind a flag.",
+    "Persona quality and stereotyping across 15 job families and industries need a review rubric and a verified badge before merge.",
+    "Council self-scores (my estimates): A 8, B 7, C 8, D 6.5, E 6.5. F1 SaaS 6 (crowded: Second Nature, Hyperbound and Yoodli already sell live coaching; the open-source core and Form retention are the wedge). F2 selling to entities 6 (licensing to training firms and call centres). F3 not worth building 3 (worth building as an open-source flagship, but not a clear win)."
+  ]
+}

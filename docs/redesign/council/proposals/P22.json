@@ -1,0 +1,284 @@
+{
+  "id": "P22",
+  "lens": "Swiss editorial minimalism (Stripe Press-like): typographic hierarchy, strict grids, restraint",
+  "name": "Editorial Ledger",
+  "one_liner": "A Swiss-grid, paper-and-ink app where coaching appears as margin notes and the rubric ticks live, built on shadcn/ui over Base UI. Self-scores: A 8, B 7.5, C 7, D 6, E 5.5, F1 4, F2 6, F3 3 (F3 is 3 = clearly worth building, but the SaaS-only path is thin).",
+  "lens_followed_or_changed": "Followed the Swiss lens: a 12-column grid, a strict type scale with a serif display voice, hairline rules instead of cards and shadows, and one signal color. Changed three things after research. (1) Primary buttons are ink, not blue, but the live call switches to a night theme, because the live-call screens on Mobbin (Fireflies, Dialpad, ElevenLabs) signal \"live\" through a state change. (2) I kept a real component library (shadcn/ui on Base UI) because hand-built menus, dialogs and comboboxes will not reach accessible quality in time. (3) I added visible live cues and an Export as PR path, because Second Nature, Yoodli and Outdoo compete hardest on realism and real-call coaching, and an open-source core needs a contributor path.",
+  "ui_stack": [
+    {
+      "name": "Next.js 15 App Router + React 19",
+      "role": "Keep the shell, routes and Vercel deploy",
+      "why": "Existing code and server actions already work; the redesign is a UI migration, not a rewrite."
+    },
+    {
+      "name": "Tailwind CSS (v3 now, tokens as CSS variables)",
+      "role": "Styling layer with paper, ink and signal tokens on :root",
+      "why": "Current classes migrate screen by screen; night mode is a token swap, not a second stylesheet."
+    },
+    {
+      "name": "shadcn/ui (Base UI flavor)",
+      "role": "Owned, copy-in source for dialog, popover, menu, tabs, select, combobox, tooltip",
+      "why": "MIT and the source lives in the repo, so contributors can change it. ShadcnDeck reports Base UI became the default for new shadcn projects in July 2026: https://www.shadcndeck.com/blog/radix-vs-base-ui"
+    },
+    {
+      "name": "@base-ui/react",
+      "role": "Accessible unstyled primitives under shadcn",
+      "why": "Stable v1.0 since Dec 2025 and maintained by the MUI team; Radix stays supported if a primitive is missing."
+    },
+    {
+      "name": "Motion (motion.dev)",
+      "role": "Cue entrances, panel transitions, one-time score tweens",
+      "why": "Small and reduced-motion aware; replaces the CSS fade-up and breathing orb."
+    },
+    {
+      "name": "cmdk",
+      "role": "Cmd+K palette to jump to any persona, scenario or debrief",
+      "why": "A proven command menu that pairs with the shadcn Command component."
+    },
+    {
+      "name": "Hand-rolled SVG",
+      "role": "Score rings, rubric bars, skills radar, heatmap cells",
+      "why": "These shapes do not need a chart library; the bundle stays small and the marks stay exact."
+    },
+    {
+      "name": "Recharts",
+      "role": "Dashboard time series only",
+      "why": "Only the trend lines justify a chart library."
+    },
+    {
+      "name": "Newsreader, Inter, JetBrains Mono (next/font)",
+      "role": "Display serif, UI sans, data mono",
+      "why": "The serif gives the editorial voice; tabular mono makes scores and timers scan at a glance."
+    },
+    {
+      "name": "OpenAI Realtime API and OpenAI chat models",
+      "role": "Voice backend option beside ElevenLabs; cue and grading models",
+      "why": "Named in the colophon on every screen that uses them, which makes OpenAI usage visible to reviewers."
+    },
+    {
+      "name": "zod, Prisma, lucide-react (keep)",
+      "role": "Persona and rubric schemas, accounts, supervisor notes, icons",
+      "why": "The persona zod schema doubles as the contributor contract."
+    },
+    {
+      "name": "three.js orb (retired)",
+      "role": "Optional setting on the live call only, lazy-loaded",
+      "why": "The orb is the most generic element on the current app; keeping it behind a flag costs no LCP on other screens."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "paper",
+        "hex": "#F6F4EF",
+        "use": "Page background; replaces the cool slate #F8FAFC"
+      },
+      {
+        "token": "surface",
+        "hex": "#FFFFFF",
+        "use": "Working canvas only: transcript and debrief sheet"
+      },
+      {
+        "token": "ink",
+        "hex": "#161514",
+        "use": "Primary text and primary buttons (replaces blue #1D4ED8)"
+      },
+      {
+        "token": "muted",
+        "hex": "#6B6861",
+        "use": "Secondary text, metadata, mono timestamps"
+      },
+      {
+        "token": "rule",
+        "hex": "#D9D5CB",
+        "use": "1px hairlines that replace cards and shadows"
+      },
+      {
+        "token": "signal",
+        "hex": "#C43B22",
+        "use": "The single accent: coach cues, objection alerts, End and grade"
+      },
+      {
+        "token": "pass",
+        "hex": "#2E6B4F",
+        "use": "Threshold met, goal achieved, check marks only"
+      },
+      {
+        "token": "night",
+        "hex": "#0F0F0E",
+        "use": "Live-call background; text on it uses paper"
+      }
+    ],
+    "typography": "Display: Newsreader variable, 44 to 96px on landing, 32 to 40px page titles. UI: Inter 14 to 16px with tabular numerals for every score. Data: JetBrains Mono 12 to 13px for timers, scores and model IDs. Labels: Inter 11px uppercase, 0.08em tracking. Grid: 12 columns, 1200px max, 24px gutters, 8px baseline.",
+    "shape_and_depth": "Hairline rules and whitespace replace cards and shadows. Radius 2px on controls and 0 on panels. One elevation only: mobile cue sheets use a 1px ink border. Focus is a 2px ink outline with a 2px offset.",
+    "motion": "Motion library, 180 to 240ms ease-out for panel changes; cues slide in from the margin in 160ms; score bars and deltas tween once per change. The only looping motion is a small waveform strip on the live call. prefers-reduced-motion turns tweens off and keeps state changes instant.",
+    "iconography": "lucide-react at 1.5px stroke, 16px inline, ink or muted only. No emoji and no decorative icons. Each cue type gets one glyph.",
+    "theme_modes": "Paper is the default light theme. Night applies automatically on the live call and is selectable elsewhere. Tokens sit on :root with a data-theme switch, and both themes meet WCAG AA for text."
+  },
+  "navigation_and_ia": "Four top-level destinations sit in a 56px top rule: Library, Practice, Progress and Team (Team shows only when an org exists). The wordmark sits left and an ink Start a call button sits right. Cmd+K opens a palette that jumps to any persona, scenario or past debrief. Routes: /library (facet rail), /library/new (wizard), /practice/[id] (briefing), /call/[id] (live room in night theme), /debrief/[id], /progress and /team. Existing URLs redirect. There is no sidebar outside Library and no glass header. On mobile the nav collapses to a bottom bar with Library, Practice, Progress and a menu for Team and Settings.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Twelve-column grid, 1200px max. Left seven columns: a Newsreader headline, 'Practice the call before it counts.', at 80px, one Inter sub-line, an ink 'Start a practice call' button and a text link 'Browse the library'. Right five columns: a real annotated transcript excerpt with one vermilion margin cue. Below, a hairline-ruled row of four numbered features. The footer is a colophon. The README uses the same composition as a 1280x640 image.",
+      "key_components": "Headline, annotated transcript excerpt, numbered feature ledger (01 Coach, 02 Score with evidence, 03 Persona library, 04 Bring your own model), colophon with the OpenAI models and MIT license, Contribute a persona link.",
+      "change_vs_today": "Replaces the blurry orb card and generic feature cards with a real product excerpt, and adds the OpenAI colophon and a contributor path."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "240px facet rail on the left: Role, Industry, Difficulty (1 to 3), Objection, Source (Built-in, Community), each with counts. Main area: search with a result count ('38 of 200'), active filters as removable chips, then a three-column grid of persona cards on paper. Each card shows a role eyebrow, persona name in Newsreader, a one-line situation, difficulty ticks, up to three objection chips, and Start and Preview actions. Filters write to the URL.",
+      "key_components": "Facet rail with counts, active filter chips, persona card, preview drawer with buyer brief and rubric weights, Fork action for built-ins, Contribute persona button.",
+      "change_vs_today": "Replaces a three-item dropdown with a browsable 200-persona library. Built-ins can be forked, and rubric weights are visible before the rep starts."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Four steps under a numbered stepper, labeled 'Step 2 of 4' style. 1 Source: paste a job description, product URL, CRM note, ICP text or call transcript, in any mix. 2 Buyer: role, seniority and industry as editable chips. 3 Objections and goal: generated rows with toggles and rubric weight sliders that must total 100. 4 Review: an opening line, a 60-second text dry run, then Save or Export as PR. A right column shows the persona card updating as fields change.",
+      "key_components": "Source drop zone with URL and paste, stepper, editable chip fields that show the source snippet each value came from, weight sliders totaling 100, live persona card, dry-run panel, Export as PR button.",
+      "change_vs_today": "No wizard exists; the scenario editor is one long form. Every generated field now cites the input it came from, so reps and maintainers can check it."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Two columns on the 12-column grid. Left eight columns: a briefing document with an eyebrow for industry and difficulty, the persona as a serif headline, then hairline sections: Your goal, Buyer context (what they know, what they fear), and the talk track as numbered steps with checkboxes that tick during the call. Right four columns: a sticky start sheet with a Voice and Text segmented control, a mic level meter, coaching intensity (Silent, Cues, Cues and live score) and an ink Start call button.",
+      "key_components": "Serif persona headline, goal block, talk-track checklist, coaching intensity radio group, mic meter, Voice and Text control, provenance line such as 'Voice: ElevenLabs or OpenAI Realtime (configured) · Grader: gpt-4.1-mini'.",
+      "change_vs_today": "The blurry orb card and dropdown become a briefing document. The talk track becomes a live checklist, and coaching intensity is chosen before the call."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Full-bleed night theme in three columns. Left 280px: a talk-track ledger with ticks and the current step in signal color. Center: the transcript as one column of turns, with small-caps speaker labels, mono timestamps and a rule marking the rep's lines. Coach cues sit in the margin, pinned to the line that caused them. Right 300px: a rubric-in-motion panel with six criteria as thin bars, provisional 'est.' numbers and deltas. Bottom composer with next-best-question chips, mic or text, timer, mute and End and grade.",
+      "key_components": "Talk-track ledger, margin cue notes, one-line objection alert in signal color, rubric-in-motion panel with est. scores and deltas, next-best-question chips, persona waveform strip in place of the orb, End and grade button.",
+      "change_vs_today": "Chat bubbles and a hidden talk-track drawer become a control room. Coaching and live scoring are visible during the call for the first time."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "A report on paper. Top: scenario title in serif, date and duration in mono. Left: the overall score as a 120px serif numeral with the grade and 'Evidence: 9 of 9 claims quoted'. Right: goal status as one plain sentence with a check. Below that, Strengths and Work on as two numbered lists, each item linked to a transcript line. Then a criteria ledger with weight, a 1 to 5 segmented scale, a bar, and expandable verbatim quotes with line numbers. Grader status sits in the colophon, not a yellow banner.",
+      "key_components": "Overall numeral, goal sentence, numbered strengths and gaps linked to lines, criteria ledger with weights and segmented scale, expandable quotes, next-rep card, colophon with rubric version and models used.",
+      "change_vs_today": "A long vertical scroll of cards becomes a two-level report: the summary first, with evidence one tap deeper. The 'keyword heuristic used' warning moves into the colophon as a status line."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Top row: four typographic stats (sessions, average, best, minutes practised) as large numerals with a mono delta line, separated by vertical rules rather than tiles. Below, left eight columns: six small-multiple sparklines, one per rubric criterion, on a shared hairline grid. Right four columns: a skills radar comparing the first three calls with the last three. Bottom: a sortable session ledger table, with a single 'Focus this week' criterion above it.",
+      "key_components": "Stat numerals, criterion small multiples, first-versus-latest radar, sortable session table, Focus this week card, job-family filter.",
+      "change_vs_today": "Four generic tiles and a plain list become per-criterion trends, a skills radar and one weekly focus."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Same grid with a team lens. Header: team name and a 7, 30 and 90 day segmented control. Top row: fraction stats such as '18 of 21 reps practised this week'. Main: a rep by criterion heatmap with paper-to-ink cell shading and mono numbers, sortable; clicking a cell opens that rep's quotes. Right rail: a coaching queue of three reps with their weakest criterion and an Assign roleplay button. Supervisor notes open in a side sheet.",
+      "key_components": "Fraction stat row, rep-by-criterion heatmap, coaching queue, Assign roleplay action, supervisor-note sheet, team scenario list, placeholder slot for real-call data.",
+      "change_vs_today": "No team UI exists today. The org and supervisor-note data already in the model becomes a heatmap and a coaching queue."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "390px single column with safe-area padding. Top bar: persona name, mono timer, and End as a text button that asks for confirmation. A 2px rule across the top shows talk-track progress. The rubric is a row of six mini bars that expands on tap. The transcript fills the body with the latest turn at the bottom. A coach cue appears as a one-line strip above the composer, and swipe-up opens the detail. The composer is fixed at the bottom with a text field and an ink mic button.",
+      "key_components": "Talk-track progress rule, six-bar rubric strip, cue strip with swipe-up sheet, fixed composer, End confirmation dialog, waveform strip in place of the orb.",
+      "change_vs_today": "Removes the red pill in the thumb zone and the orb. Cues and score fit on a phone without covering the transcript."
+    }
+  ],
+  "live_coaching_and_scoring": "A separate coach model call runs after each rep turn, using the rubric and talk track. It never runs inside the persona prompt, so the persona stays in character. It returns typed JSON: a cue (objection, next_question, talk_track or warning), rubric deltas, and talk-track ticks. Target: a cue appears within 1.5 seconds of the turn ending, with at most one cue per turn so the rep is not overloaded. Live numbers show as \"est.\" until the debrief grader replaces them with quoted evidence, and the debrief lists which numbers changed. Voice runs on the OpenAI Realtime API or ElevenLabs. Latency and per-turn cost are the main risks. If latency misses the target, the coach runs after the turn and is labeled \"coached after the turn\", which drops D toward baseline.",
+  "persona_library_and_wizard": "Personas live as one versioned file each in /personas, validated by a zod schema and a CI lint, so a contributor adds a persona by pull request. Target: 200 seeded personas across 20 sales jobs, including SDR cold call, AE discovery, SaaS, insurance, mortgage, real estate, solar, home services, auto, medical devices, B2B procurement, recruiting, retail, customer success and collections. Facets come straight from the fields: role, industry, difficulty 1 to 3 and objection tags. The wizard accepts any mix of job description, product URL, CRM notes, ICP text or a pasted call. Each generated field cites its source snippet, and the output must validate against the schema and pass a dry run before it is saved. Content is the bottleneck, not code: ship 60 polished personas first and label the rest as community drafts. Self-score E: 5.5.",
+  "signature_moments": [
+    "Margin cues: each coaching note is pinned to the transcript line that triggered it, so the rep can see why it appeared.",
+    "Colophon: every debrief and the landing footer print the grader, the voice model and the rubric version, so OpenAI usage is visible to anyone who opens the page.",
+    "Export as PR: the persona wizard ends in a pull request, which turns users into contributors.",
+    "Night mode on the live call only: the UI darkens only while a call is live, so the state reads in peripheral vision.",
+    "Evidence by default: every criterion score links to verbatim quotes with line numbers."
+  ],
+  "openai_fund_angle": "The fund supports projects that use Codex CLI and OpenAI models, so the repo makes both visible. (1) OpenAI models are named where they run: the OpenAI Realtime API as a voice backend beside ElevenLabs, a small chat model for live cues, and gpt-4.1-mini for grading. These appear in the colophon and on the pre-call sheet. (2) Codex CLI is part of the repo's own workflow. An AGENTS.md describes the persona schema and rubric rules, and Codex reviews each persona pull request alongside the schema lint. (3) The UI invites contributors: Export as PR in the wizard, good-first-persona labels and contributor credit on each card. (4) Program fit: Codex for Open Source offers six months of ChatGPT Pro with Codex, conditional Codex Security, and API credits for PR review, maintainer automation and release work (https://openai.com/form/codex-for-oss/).",
+  "inspirations": [
+    {
+      "source": "Fireflies live Assist (Mobbin)",
+      "url": "https://mobbin.com/screens/0faa4442-59e5-4a73-85f5-50a54c634fb5",
+      "borrowed": "Quick-action chips for next-best question and catch-up, plus a mode selector for the knowledge base behind suggestions."
+    },
+    {
+      "source": "Dialpad live meeting (Mobbin)",
+      "url": "https://mobbin.com/screens/832127c0-b62a-4b8a-8362-c47ef41ea43e",
+      "borrowed": "Transcript and notes panel beside the live stage, with an AI on/off switch."
+    },
+    {
+      "source": "ElevenLabs agent conversation (Mobbin)",
+      "url": "https://mobbin.com/screens/cf492872-e47b-453b-b476-0b5495411a83",
+      "borrowed": "Minimal live-call stage with a transcript column; the orb is a state, not decoration."
+    },
+    {
+      "source": "Grain coaching scorecard (Mobbin)",
+      "url": "https://mobbin.com/screens/5ba5ca46-2c2d-4823-b771-0a75e817589a",
+      "borrowed": "Per-criterion 1 to 5 segmented scale with an inline note field."
+    },
+    {
+      "source": "Uxcel skills radar (Mobbin)",
+      "url": "https://mobbin.com/screens/077b681c-46f4-4b0a-a63b-bd0f1e10e1c3",
+      "borrowed": "Competency radar with a score bar and a reliability figure beside it."
+    },
+    {
+      "source": "Deel 360 review summary (Mobbin)",
+      "url": "https://mobbin.com/screens/2c77e1ea-1c97-406a-a52c-fbb7ad8ca936",
+      "borrowed": "Stat cards with 'x of y' fractions for team completion."
+    },
+    {
+      "source": "Heidi template community (Mobbin)",
+      "url": "https://mobbin.com/screens/9e937a34-cd26-404d-9b17-c08aa390ab14",
+      "borrowed": "Faceted chip rows above a card grid for filtering a library."
+    },
+    {
+      "source": "Adobe Express explore (Mobbin)",
+      "url": "https://mobbin.com/screens/695b842e-f913-440f-8223-de3aa242f976",
+      "borrowed": "Left filter rail with collapsible facet groups."
+    },
+    {
+      "source": "HubSpot Generate website (Mobbin flow)",
+      "url": "https://mobbin.com/flows/1a932f05-d002-46ec-b9a9-22cf5c33f57b",
+      "borrowed": "Three-step AI wizard with a numbered stepper and a plain generating state."
+    },
+    {
+      "source": "Linktree AI bio (Mobbin flow)",
+      "url": "https://mobbin.com/flows/58dc18c7-43c1-4d0e-940b-96331caa6862",
+      "borrowed": "Inline AI field action with Try again and Reset."
+    },
+    {
+      "source": "Polywork onboarding (Mobbin flow)",
+      "url": "https://mobbin.com/flows/a2c8ab21-a49d-4f75-ad79-f33ed93f931d",
+      "borrowed": "Paste a URL and watch the profile build, a model for the wizard's source step."
+    },
+    {
+      "source": "Gumloop onboarding (Mobbin flow)",
+      "url": "https://mobbin.com/flows/a91e29a5-28f5-486a-a159-184e2ed2bc01",
+      "borrowed": "Role picker with a live preview pane beside the choices."
+    },
+    {
+      "source": "Second Nature (web)",
+      "url": "https://secondnature.ai/",
+      "borrowed": "Benchmark: a persona library and in-session real-time feedback. This is the realism bar to beat."
+    },
+    {
+      "source": "Yoodli vs Second Nature (web, vendor content)",
+      "url": "https://yoodli.ai/blog/yoodli-vs-second-nature-which-ai-sales-roleplay-platform-is-better",
+      "borrowed": "Positioning claim that one rubric grades practice and real calls. Treat as a competitor claim, not fact."
+    },
+    {
+      "source": "Outdoo AI comparison (web)",
+      "url": "https://www.outdoo.ai/blog/hyperbound-vs-second-nature-vs-outdoo",
+      "borrowed": "Roleplays built from a rep's own calls and transcripts, scored on the same card as live calls."
+    },
+    {
+      "source": "Radix vs Base UI (ShadcnDeck)",
+      "url": "https://www.shadcndeck.com/blog/radix-vs-base-ui",
+      "borrowed": "Base UI as the default primitive layer for new shadcn/ui projects since July 2026."
+    },
+    {
+      "source": "Codex for Open Source (OpenAI)",
+      "url": "https://openai.com/form/codex-for-oss/",
+      "borrowed": "Program scope: ChatGPT Pro with Codex, conditional Codex Security, API credits for PR review and release work."
+    }
+  ],
+  "implementation": {
+    "effort": "XL",
+    "migration_path": "Phase 1: paper and ink tokens plus shadcn/Base UI primitives behind the current class names; redo the landing, pre-call and debrief first. Phase 2: persona JSON schema, library facets and the wizard, keeping the old scenario editor until it is migrated. Phase 3: the live-call coach channel and night theme, then mobile. Phase 4: the team heatmap and skills radar. Each phase ships behind a flag, and existing routes redirect."
+  },
+  "risks": [
+    "Swiss restraint can read as austere. Mitigate with one signal color and serif display only on landing, pre-call and debrief.",
+    "Live cue latency and per-turn model cost. If cues miss about 2 seconds, they become post-turn and D falls to baseline.",
+    "The 200-persona library is a content lift. Seed 60 polished personas first and label the rest as community drafts.",
+    "Base UI is 1.x and newer than Radix. Combobox and multi-select edge cases may need a React Aria fallback.",
+    "Competitors (Second Nature, Hyperbound, Yoodli, Outdoo, MindTickle) already sell AI roleplay. Differentiation rests on self-hosting and bring-your-own model keys, not feature parity (F1 is weak at 4).",
+    "Three font families plus a 3D orb add weight. Subset the fonts and lazy-load the orb to protect LCP on the landing page."
+  ]
+}

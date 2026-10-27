@@ -1,0 +1,268 @@
+{
+  "id": "P29",
+  "lens": "Microsoft Fluent 2: Teams-native look for enterprise sales orgs",
+  "name": "Fluent Live Coach",
+  "one_liner": "A Fluent 2 component system tuned to a deep teal brand, with a live coach rail that scores every turn against the rubric and an evidence-linked debrief.",
+  "lens_followed_or_changed": "Followed the Fluent 2 lens: @fluentui/react-components v9 as the one component system (FluentProvider, Griffel tokens), Fluent System Icons, Segoe-first type on a 4px grid, enterprise density and Teams-like layout discipline. Changed three things. (1) Brand: a custom teal ramp via createLightTheme (seed #0F766E) so the app does not read as a Teams or Microsoft product. (2) Signature: a violet coach accent kept separate from score and alert colors. (3) A dark call mode for the live stage, because a light Teams surface washes out coaching colors. Research: Second Nature, Hyperbound and Yoodli all put feedback inside practice or real calls, and Yoodli's coach replays the exact moment; a pure Teams skin would not beat them on C. Self-scores (1-10): A 6.5, B 7.5, C 5.5, D 5.8, E 5.6, F1 4, F2 7, F3 3.",
+  "ui_stack": [
+    {
+      "name": "@fluentui/react-components (v9)",
+      "role": "Single component system: Button, Card, DataGrid, Tree, Accordion, Persona, Avatar, ProgressBar, SearchBox, Drawer, MessageBar, Toast, Tabs, ToggleButton, Dialog.",
+      "why": "MIT, accessible by default, enterprise-familiar to sales org buyers, one token system. Use v9 only; v8 is a separate, older line."
+    },
+    {
+      "name": "Griffel (makeStyles, tokens)",
+      "role": "Styling layer; replaces Tailwind and the custom .card, .btn-primary, .input classes in globals.css.",
+      "why": "Ships with Fluent, keeps styles tied to tokens, and avoids two competing styling systems."
+    },
+    {
+      "name": "@fluentui/react-icons",
+      "role": "Icon set; replaces lucide-react.",
+      "why": "Same design language as the components; MIT."
+    },
+    {
+      "name": "Recharts",
+      "role": "Trend lines, sparklines and the skill heatmap on the progress and team views.",
+      "why": "MIT, React-native API, easy to color with Fluent tokens. No three.js in the call path."
+    },
+    {
+      "name": "Custom SVG",
+      "role": "Score ring, level meter, timeline and the live rubric bars.",
+      "why": "Lightweight and fast on mobile; replaces the blurry gradient orb."
+    },
+    {
+      "name": "Inter (Google Fonts)",
+      "role": "Web fallback for Segoe UI Variable on macOS, Linux and Android.",
+      "why": "Keeps typography consistent across platforms without loading a Windows-only face."
+    },
+    {
+      "name": "Kept: Next.js 15, React 19, zod, Prisma, ElevenLabs, OpenAI-compatible grading",
+      "role": "Unchanged infrastructure.",
+      "why": "The redesign is UI and interaction; the data model already supports orgs and notes."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "brand.seed",
+        "hex": "#0F766E",
+        "use": "Seed for the custom brand ramp in createLightTheme; primary actions and score accents. White text contrast is about 5.5:1."
+      },
+      {
+        "token": "neutralBackground1",
+        "hex": "#FFFFFF",
+        "use": "Default app surface"
+      },
+      {
+        "token": "neutralBackground3",
+        "hex": "#F5F5F5",
+        "use": "Rail and card-well surfaces"
+      },
+      {
+        "token": "neutralForeground1",
+        "hex": "#242424",
+        "use": "Headings and body text"
+      },
+      {
+        "token": "neutralForeground2",
+        "hex": "#424242",
+        "use": "Secondary text and metadata"
+      },
+      {
+        "token": "neutralStroke1",
+        "hex": "#D1D1D1",
+        "use": "Card borders and dividers"
+      },
+      {
+        "token": "coach.accent",
+        "hex": "#5B5FC7",
+        "use": "Coach whisper cues and coach model-role chips in light mode; use #7F85F5 in dark mode"
+      },
+      {
+        "token": "status.success",
+        "hex": "#107C10",
+        "use": "On-rubric signal and passing grades"
+      },
+      {
+        "token": "status.warning",
+        "hex": "#F7630C",
+        "use": "Objection alert fill; use #BC4B09 for warning text"
+      },
+      {
+        "token": "status.danger",
+        "hex": "#C50F1F",
+        "use": "End call and destructive actions only"
+      },
+      {
+        "token": "callSurface.dark",
+        "hex": "#141414",
+        "use": "Live call stage in dark call mode"
+      }
+    ],
+    "typography": "Segoe UI Variable Display and Text through Fluent tokens, with Inter as the web fallback. Mono is Cascadia Code, falling back to JetBrains Mono, for timers and scores. Fluent scale: caption 12/16, body 14/20, subtitle 16/22, title-3 20/28, title-1 32/40. The landing hero is a custom 48/56.",
+    "shape_and_depth": "4px radius on controls, 8px on cards and drawers, circular avatars and presence dots. Fluent shadow-2 on cards and shadow-16 on drawers and cue cards. Layered neutrals instead of gradients; no blurry orb or glow.",
+    "motion": "Fluent durations of 150ms and 200ms with cubic-bezier(0.33, 0, 0.67, 1). A coach whisper enters with a 200ms fade and an 8px rise. Rubric bars ease over 300ms when a score changes. prefers-reduced-motion turns off bar and cue animation.",
+    "iconography": "@fluentui/react-icons, regular at 20px and filled for active states. One custom brand mark. Replaces lucide-react.",
+    "theme_modes": "Light is the default app theme (webLightTheme with the custom brand ramp). Dark uses webDarkTheme and follows prefers-color-scheme. The live call stage uses dark call mode in both themes. Target WCAG AA, and verify the coach colors on #141414."
+  },
+  "navigation_and_ia": "Top bar: Practice, Library, Progress, Team (managers only), plus a Create persona button and a command palette (Cmd+K) for personas and drills. Practice is one path: Library, then Briefing, then Live, then Debrief, shown as breadcrumbs. The live call hides the nav and shows only End and a coach toggle. Keep the existing routes (/trainer, /trainer/debrief/[id], /dashboard) and add /library, /library/new (wizard) and /team. Settings, MFA and the grader and model status move into an avatar menu. Mobile uses a four-item bottom bar, which disappears during a call.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Split hero. Left: headline 'Practice the call before it counts', one proof line, primary 'Start a live drill' and secondary 'Browse personas'. Right: a replay of a 20-second coached sample call with a violet whisper cue and rubric bars filling. Below: a strip of model roles (voice, coach, grader, persona wizard) with the model name for each. Footer: MIT, Codex-ready, contributor path.",
+      "key_components": "Card, Badge, Button; SVG call replay; model-role strip; 'Built with Codex' badge; README hero GIF, three-command quickstart and an 'Add a persona' link.",
+      "change_vs_today": "Replaces the blurry orb and four generic feature cards with product proof that shows coaching, and makes the README the front door for OpenAI reviewers."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Left rail of 264px with filters: sales job (SDR cold call, AE discovery, CS renewal, collections, B2B procurement), industry, difficulty and objection type. Top: SearchBox and 'Create persona with AI'. Main: responsive grid of cards, min 280px, each with a Persona avatar, role, industry chip, difficulty dots, top two objections and a Practice button. Toggle to a DataGrid list view.",
+      "key_components": "Tree, SearchBox, Card, Persona, Badge, DataGrid, Switch for list view; 'Good first persona' tag for contributors; count line 'N personas across M industries'.",
+      "change_vs_today": "Replaces a three-item select with a browsable library, and merges personas and scenarios into one object."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Four-step full-page flow, not a modal. 1 Source: a drop zone and five source tiles (job description, product URL, CRM notes, ICP, pasted call). 2 Persona: generated fields, each with a 'why' chip that links to the source sentence. 3 Scenario and rubric: talk-track beats and weights that are proposed automatically and must total 100. 4 Test drive: a 90-second text drill, then Save or Export as a persona file for a pull request. A right rail shows source evidence as you edit.",
+      "key_components": "Tabs as a stepper, Textarea, Input with validation, Slider for difficulty, custom drop zone, ProgressBar, Drawer for evidence; status line naming the model and an estimated token cost.",
+      "change_vs_today": "Replaces a blank long form with a guided flow that drafts from context, shows its sources and tests the result before saving."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Two columns. Left: a large persona card with presence badge, one-line situation, 'They will push on' objection chips, and goal with success criteria. The talk track is a numbered checklist that lights up during the call. Right: rubric preview as weighted bars, the last three scores for this persona as a sparkline, and a 60-second cram card. Sticky footer: Voice or Text ToggleButton group, mic check meter, primary 'Start drill'.",
+      "key_components": "Persona, Card, ToggleButton group, Checkbox list, ProgressBar, Recharts sparkline, Button, keyboard shortcut hint.",
+      "change_vs_today": "Replaces the scenario select and collapsed talk track with a briefing that states the goal, expected objections and scoring before the call starts."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Dark call stage in three zones. Left (300px): persona avatar with speaking ring, timer, mic level, mute and End. Center: speaker-labeled transcript with inline beat tags such as 'Discovery' and 'Pricing: not yet'; push-to-talk or text composer at the bottom. Right coach rail: live rubric bars with change arrows, talk-track progress, one violet whisper cue at a time, and an amber objection alert with a suggested reply. Hold Space to open the full coach.",
+      "key_components": "Persona, ProgressBar, Badge, cue card with shadow-16, Drawer on narrow screens, Tooltip, custom SVG level meter.",
+      "change_vs_today": "Replaces the chat app and the talk-track drawer with a coach and rubric that react to every turn. Today nothing reacts until the call ends."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Top: custom SVG score ring with numeric score and grade, goal-status chip, and a grader provenance chip (for example 'Graded by gpt-4.1-mini, 14 quotes', or an amber 'Keyword fallback'). Next: a moments timeline of the score across the call, with markers that jump to transcript lines. Body: an accordion per criterion (weight, score, change vs last attempt, timestamped quotes) beside a sticky transcript with quoted lines highlighted. Footer: Practice again, Export PDF, Assign to team.",
+      "key_components": "Accordion, ProgressBar, Badge, MessageBar for the fallback notice, Card, Button, SVG ring and timeline, print stylesheet.",
+      "change_vs_today": "Replaces one long scroll with an evidence-first layout where each score links to exact quotes and the grader model is visible."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Top row: four KPI cards (sessions, average, best, minutes), each with a four-week delta. Middle: score trend by criterion as a Recharts line with criterion toggles, and a heatmap of criteria by week. Right: a 'Next drill' card recommending a persona for the weakest criterion. Bottom: a sessions DataGrid with persona, score, grade, duration, top gap and a link to the debrief.",
+      "key_components": "Card, Recharts, token-colored heatmap, DataGrid, Badge, Tabs for time range, Button.",
+      "change_vs_today": "Replaces four numbers and a plain list with trend, weakness and next-step guidance tied to rubric criteria."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Team header with a readiness percentage and cohort filter. Main: a DataGrid roster with rep (Persona avatar), sessions this week, average, a heat cell per rubric criterion, and a certified badge per persona. A right drawer opens rep detail with recent debriefs and supervisor notes. Bulk action: assign a drill to selected reps. Hidden for non-manager roles.",
+      "key_components": "DataGrid with heat cells, Persona, Badge, OverlayDrawer, Dropdown, Checkbox selection, Textarea for notes, Toast.",
+      "change_vs_today": "Adds the team surface the data model already supports (orgs, supervisor notes), and makes readiness visible without a separate tool."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "Full-bleed single column at 390px with 16px gutters. Top: compact persona bar with presence dot and timer. The transcript fills the middle with the newest turn visible. The coach is a bottom sheet, collapsed to one whisper line and a score chip, and swipes up to the full rubric. Bottom row: text field, a 56px push-to-talk button, and End in an overflow menu so it cannot be hit by accident. Safe-area insets respected; no tab bar during a call.",
+      "key_components": "Persona, bottom-sheet Drawer, compact ProgressBar, Button, Input, Menu; 44px minimum touch targets.",
+      "change_vs_today": "Adds the coach to mobile, which has no coaching today, and moves End behind a menu to prevent accidental ends."
+    }
+  ],
+  "live_coaching_and_scoring": "The persona model stays in character and never coaches. A separate coach call runs after each rep turn with the rolling transcript, the scenario talk track and the rubric. It returns JSON: per-criterion score and delta, talk-track beat state, at most one whisper, and objection flags with a suggested reply. Target about 2 seconds p50 after the rep stops speaking, with a visible 'coach thinking' state instead of stale cues. Live scores are marked provisional. A score change above a set threshold must cite a quote, and the debrief makes the final score. If the coach call fails, the UI drops to scores only and says so. Show per-turn token cost in settings to help credit planning.",
+  "persona_library_and_wizard": "Library: a launch set covering every job in the brief (SDR cold call, AE discovery, SaaS, insurance, mortgage, real estate, solar, home services, auto, medical devices, B2B procurement, recruiting, retail, customer success, collections). Each persona is one JSON file with role, seniority, industry, difficulty, objection tags, voice ID, talk track, rubric and scripted replies, validated by zod in CI. Facets: job, industry, difficulty, objection type, channel. Wizard: four steps (source, persona, scenario and rubric, test drive). It drafts from the inputs in the brief (job description, product URL, CRM notes, ICP, pasted call), links each field to its source, and exports the file for a pull request. Library cards credit contributors.",
+  "signature_moments": [
+    "Live rubric bars that move on every turn, with the whisper that names the criterion it is moving.",
+    "Evidence timeline in the debrief: the score curve across the call, with markers that jump to the exact transcript line.",
+    "Wizard 'why' chips: every generated persona trait links to the sentence in the source that produced it.",
+    "Dark call stage beside the light app, so the call reads as a focused space.",
+    "README hero that replays a real coached call and names the model for each role."
+  ],
+  "openai_fund_angle": "Show OpenAI models where the product uses them. The model-role strip names each role and its model: coach, grader, persona wizard, and the voice backend. Every grade shows its grader model and quote count. A per-session token and cost estimate helps self-hosters plan on credits. Make OpenAI Realtime a first-class voice option beside ElevenLabs, so an OpenAI-only setup is a real path. For contributors: AGENTS.md and a Codex CLI section in the README; an 'Add a persona' flow that drafts the file with Codex and opens a PR; a zod schema check in CI; 'Good first persona' issues. The same loop covers Codex PR review and release notes for the Codex for Open Source program.",
+  "inspirations": [
+    {
+      "source": "Mobbin: Delphi live call screen",
+      "url": "https://mobbin.com/screens/ad619d08-310b-4c2e-896f-f760f651f70f",
+      "borrowed": "Single persona, large avatar, timer, mute and end, with no chrome during the call."
+    },
+    {
+      "source": "Mobbin: Quo call-flow builder",
+      "url": "https://mobbin.com/screens/d8823a00-c4da-4edf-8a2d-78907c0ce449",
+      "borrowed": "Step list that maps to a visual flow, used for the talk-track checklist."
+    },
+    {
+      "source": "Mobbin: Klaviyo agent training",
+      "url": "https://mobbin.com/screens/d4889940-2b2d-4612-8772-81029a80d811",
+      "borrowed": "Review panel with 'use this answer / edit answer' for generated responses, used in the wizard test step."
+    },
+    {
+      "source": "Mobbin: Mintlify onboarding docs wizard",
+      "url": "https://mobbin.com/screens/6ab39ba0-1f54-4419-878d-4ad4d4ae7681",
+      "borrowed": "Step counter and source attachments (repo, file upload) for the wizard source step."
+    },
+    {
+      "source": "Mobbin: Snowflake new evaluation run",
+      "url": "https://mobbin.com/screens/ddfc73d0-b9e1-4927-bdb1-12ae91a32acb",
+      "borrowed": "Named left-hand stepper for a multi-part setup flow."
+    },
+    {
+      "source": "Mobbin: SchoolAI session insights",
+      "url": "https://mobbin.com/screens/7e71261b-469e-4bb4-bf36-68ff9d4aa7a9",
+      "borrowed": "Grouping people into proficiency bands with per-criterion outcome dots, for the team view."
+    },
+    {
+      "source": "Mobbin: Xero business health scorecards",
+      "url": "https://mobbin.com/screens/eee2ad22-2a97-43d0-9c05-9fea622a0686",
+      "borrowed": "Scorecard table with target, comparison status and importance per metric, for the debrief."
+    },
+    {
+      "source": "Mobbin: Gumloop score dashboard",
+      "url": "https://mobbin.com/screens/60ec82f0-afbf-4a61-b57a-0c56f540f9b6",
+      "borrowed": "Score trend paired with a score distribution, for the progress view."
+    },
+    {
+      "source": "Mobbin: Microsoft Copilot web chat",
+      "url": "https://mobbin.com/screens/0fb9fc0d-38aa-4489-88f3-6e35396a361a",
+      "borrowed": "Quiet chrome around a conversation, with inline feedback actions, relevant to the Teams-native lens."
+    },
+    {
+      "source": "Second Nature",
+      "url": "https://secondnature.ai/",
+      "borrowed": "Multi-persona video practice and real-time feedback as a product feature. Deviation: we coach during the live call, not only in practice."
+    },
+    {
+      "source": "Second Nature vs Hyperbound comparison",
+      "url": "https://secondnature.ai/second-nature-vs-hyperbound-which-ai-sales-roleplay-platform-is-right-for-your-team/",
+      "borrowed": "Competitor framing: rehearse in the format reps actually sell in (video, screen share, deck)."
+    },
+    {
+      "source": "Yoodli vs Second Nature (Yoodli blog)",
+      "url": "https://yoodli.ai/blog/yoodli-vs-second-nature-which-ai-sales-roleplay-platform-is-better",
+      "borrowed": "Coach that plays back the exact moment that needs work and remembers past sessions."
+    },
+    {
+      "source": "Hyperbound: AI sales coaching platforms 2026",
+      "url": "https://www.hyperbound.ai/blog/ai-sales-coaching-platforms-2026",
+      "borrowed": "Persona library framed around real B2B conversations, and real-call scoring as a loop."
+    },
+    {
+      "source": "Fluent 2: Develop guide",
+      "url": "https://fluent2.microsoft.design/get-started/develop",
+      "borrowed": "FluentProvider with webLightTheme, @fluentui/react-components install and Griffel styling."
+    },
+    {
+      "source": "designsystems.one: Fluent UI reference (unofficial)",
+      "url": "https://www.designsystems.one/design-systems/fluent-design",
+      "borrowed": "Cross-check of token values; unofficial, so confirm against the official tokens package."
+    }
+  ],
+  "implementation": {
+    "effort": "L",
+    "migration_path": "Phase 1 (S): add FluentProvider with the custom brand theme, Griffel and Fluent icons; remove the Tailwind component classes; keep all routes. Phase 2 (M): rebuild the live call and the debrief first, since they carry the coaching and scoring baseline, and add the coach call and rubric updates. Phase 3 (M): the persona file format, zod schema, the launch set of personas and the library UI. Phase 4 (M): the wizard with source evidence and a test drive. Phase 5 (S): dashboard, team view, landing page and README hero. Prisma, auth and MFA stay unchanged; the team view reuses existing org data."
+  },
+  "risks": [
+    "Fluent can read as Microsoft or Teams. Use the custom brand ramp, no Microsoft marks, and a README line stating no affiliation.",
+    "Segoe UI Variable is Windows-only. The Inter fallback needs its own visual check on macOS, Linux and Android.",
+    "Two Fluent React lines exist (v8 and v9). Use v9 only, and verify its React 19 peer range before install; I did not verify this in research.",
+    "The Fluent token values cited come from an unofficial reference. Confirm them against the official tokens package before shipping.",
+    "Coach latency above 2 to 3 seconds makes whisper cues stale. The UI must fall back to scores only and say so.",
+    "Coach calls add token cost on every turn of a long call. Cap the context window and show the estimate.",
+    "The keyword fallback grader must stay visible in the debrief. Hiding it would break the evidence promise.",
+    "Launch persona quality depends on content review. A weak launch set would damage the open-source reputation.",
+    "Business viability: F1 scored 4 because the category is crowded (Second Nature, Hyperbound, Yoodli, Quantified). F2 scored 7 because enterprise procurement and Fluent fit well. F3 scored 3: worth building as an open-source core with licensed team features and content packs."
+  ],
+  "StructuredOutput": "null"
+}

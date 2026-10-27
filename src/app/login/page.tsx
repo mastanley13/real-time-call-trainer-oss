@@ -64,7 +64,7 @@ export default function LoginPage() {
             </div>
           </>
         )}
-        {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+        {error && <p role="alert" className="text-sm text-alert">{error}</p>}
         <button className="btn-primary w-full" disabled={busy}>{busy ? "Signing in…" : challenge ? "Verify" : "Sign in"}</button>
       </form>
       <p className="mt-5 text-center text-sm text-ink-muted">

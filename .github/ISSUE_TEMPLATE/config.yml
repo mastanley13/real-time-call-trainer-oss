@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/mastanley13/real-time-call-trainer-oss/security/advisories/new
+    about: Report privately through GitHub. Please don't open a public issue for security problems.
+  - name: Contributing guide
+    url: https://github.com/mastanley13/real-time-call-trainer-oss/blob/main/CONTRIBUTING.md
+    about: Setup, scripts, design tokens, persona packs and good first issues.

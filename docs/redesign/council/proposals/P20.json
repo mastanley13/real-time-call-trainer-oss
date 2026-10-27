@@ -1,0 +1,281 @@
+{
+  "id": "P20",
+  "lens": "Magic UI / Aceternity UI: motion-rich AI-native glow, animated beams, landing-page wow",
+  "name": "Signal Call Studio",
+  "one_liner": "A dark-first, motion-rich AI call studio: a glowing persona orb, a coach rail that whispers cues mid-call, a rubric ring that fills as points land, and a replay debrief where every score links to its exact moment. Built on shadcn/ui plus Magic UI, with selective Aceternity pieces, and it puts OpenAI models on screen. Self-scores: A 8.0, B 7.0, C 8.0, D 5.4, E 5.8, F1 6, F2 7, F3 3 (F3: 10 = not worth building).",
+  "lens_followed_or_changed": "Followed the Magic UI / Aceternity lens for the landing, live call and wizard. Mobbin confirms the pattern: voice screens (PlayAI, ElevenLabs, Hume) center one orb or waveform with call controls below, and Fireflies and Dialpad park a live assist panel beside the call. Changed it in three ways. Data screens (debrief body, dashboard, team view) stay calm, with glow limited to one accent per card, because dense rubric tables under heavy bloom fail contrast. Motion gets reduced-motion and low-power fallbacks. The wizard follows restrained patterns (Gorgias, HubSpot, Plain) rather than full-bleed effects.",
+  "ui_stack": [
+    {
+      "name": "Tailwind CSS 3 with CSS variables",
+      "role": "Styling and design tokens",
+      "why": "Keeps the current stack and config. Tokens move to :root variables so the dark and Paper themes share one set. Upgrade to v4 only if a chosen Magic UI component requires it."
+    },
+    {
+      "name": "shadcn/ui (Radix primitives)",
+      "role": "Base components: Dialog, Sheet, Tabs, Command (cmd-K palette), Slider, Select, ToggleGroup, Sonner toasts",
+      "why": "Copy-in code, accessible by default, and the convention most React contributors already know."
+    },
+    {
+      "name": "Magic UI",
+      "role": "Live-call and landing motion: Animated Beam, Border Beam, Animated Circular Progress Bar, Number Ticker, Animated List, Magic Card, Bento Grid, Shimmer Button, Orbiting Circles",
+      "why": "Built on Tailwind and Framer Motion and positioned as a shadcn companion. Verify each component's license before vendoring into the MIT repo."
+    },
+    {
+      "name": "Aceternity UI (selective)",
+      "role": "Tracing Beam for the transcript and talk-track rail, Aurora Background (hero only), Text Generate Effect (wizard preview), Moving Border (primary CTA)",
+      "why": "Strongest AI-native landing motifs. Copy only the pieces whose license fits the repo."
+    },
+    {
+      "name": "motion (Framer Motion)",
+      "role": "Layout transitions and cue enter/exit animation",
+      "why": "The engine Magic UI already uses, so one animation library instead of two."
+    },
+    {
+      "name": "react-three-fiber and three.js (kept)",
+      "role": "Call orb only",
+      "why": "Keeps the signature object. Falls back to a CSS radial gradient on low-power devices and under reduced motion."
+    },
+    {
+      "name": "Recharts",
+      "role": "Trend area, radar, practice heatmap",
+      "why": "React-native and light. Covers dashboard and team needs without a full charting suite."
+    },
+    {
+      "name": "Geist and Geist Mono",
+      "role": "Typography, replacing Inter and Sora. Mono for timers, scores, timestamps and model chips",
+      "why": "A clean, technical voice that suits an AI product. Loaded through next/font."
+    },
+    {
+      "name": "lucide-react (kept)",
+      "role": "Icons",
+      "why": "Already in use, with a consistent 1.5px stroke."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "--canvas",
+        "hex": "#05070B",
+        "use": "Dark background and the stage for calls and the landing page"
+      },
+      {
+        "token": "--surface",
+        "hex": "#0C1322",
+        "use": "Cards, rails and the bottom dock"
+      },
+      {
+        "token": "--surface-raised",
+        "hex": "#131D31",
+        "use": "Wizard steps, popovers and the active card"
+      },
+      {
+        "token": "--hairline",
+        "hex": "#1E2B44",
+        "use": "1px borders and dividers"
+      },
+      {
+        "token": "--ink",
+        "hex": "#EAF1FB",
+        "use": "Primary text on dark, far above AAA contrast"
+      },
+      {
+        "token": "--ink-muted",
+        "hex": "#93A3BD",
+        "use": "Secondary text and timestamps, about 8:1 on canvas"
+      },
+      {
+        "token": "--coach",
+        "hex": "#22D3EE",
+        "use": "Coach cues, live beams and the active criterion (dark theme)"
+      },
+      {
+        "token": "--voice",
+        "hex": "#8B5CF6",
+        "use": "Persona voice, orb core and AI-generated content"
+      },
+      {
+        "token": "--caution",
+        "hex": "#F59E0B",
+        "use": "Objection alerts and under-target criteria"
+      },
+      {
+        "token": "--strong",
+        "hex": "#34D399",
+        "use": "Criteria at target and rising scores"
+      },
+      {
+        "token": "--end-call",
+        "hex": "#F43F5E",
+        "use": "End and grade only, never decorative"
+      },
+      {
+        "token": "--model-chip",
+        "hex": "#10A37F",
+        "use": "Mono model-trace chips only, not a logo"
+      },
+      {
+        "token": "--coach-paper",
+        "hex": "#0891B2",
+        "use": "Coach accent on the light Paper theme, since cyan fails contrast on white"
+      }
+    ],
+    "typography": "Geist throughout: 600 weight display at 56-64px with -0.03em tracking on the hero, 20-24px section heads, 16px body minimum. Geist Mono for timers, scores, timestamps and model chips. Replaces Inter and Sora.",
+    "shape_and_depth": "16px card radius, 999px pills for chips and mode toggles, 24px radius on the bottom dock. Depth comes from 1px hairlines and a faint top inner highlight. Glow is reserved for active elements: a traveling Border Beam or a 20-30% opacity cyan or violet bloom. Data tables get no glow and no heavy shadow.",
+    "motion": "Signature motions: an Animated Beam runs from persona to coach to rubric while the rep speaks; rubric rings tween 300-500 ms when a criterion is hit; cue cards enter from the coach rail with a one-line type-on; the wizard preview streams text. All loops pause under prefers-reduced-motion and when the tab is hidden. During the rep's speech only the orb and the beam move.",
+    "iconography": "lucide-react at 20px with 1.5px stroke, plus one custom orb mark for the logo. Model and latency labels are mono text rather than icons, so the OpenAI footprint reads as data.",
+    "theme_modes": "Signal (dark) is the default and the live-call theme. Paper (light) is for reading, team reports and print. Both are CSS-variable themes on :root with a data-theme override that follows prefers-color-scheme. Every token pair targets WCAG AA. Cyan and violet accents swap to darker values on Paper."
+  },
+  "navigation_and_ia": "Top nav: Practice, Library, Progress, Team (role-gated), and a persistent Create persona button. A command palette (cmd-K) searches personas, scenarios and actions. Core path: Library (facets) to persona detail to Pre-call briefing to Live call to Debrief to Drill next. Live call is a focus mode that hides the nav to prevent accidental exits. Contributors reach Contribute a persona from the library footer and the README. Mobile uses a bottom dock with Practice, Library, Progress and Me. Team is a role-based section of the same app, not a separate product.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Full-bleed dark hero on an Aurora Background. Headline 'Practice the call before it counts', with an Animated Beam drawing a live path from Persona voice to Live coach to Rubric (gpt-4.1-mini grading). Below: a role marquee, a model-stack strip naming each model and its job, a three-step 'run it locally' block, and a contributor band showing open persona issues. Primary CTA is a Moving Border 'Try a demo call'; secondary is 'Star on GitHub' with a Number Ticker.",
+      "key_components": "Aurora hero, Animated Beam diagram, Text Generate headline, role marquee, model-stack chips, contributor band, README that mirrors the same sections.",
+      "change_vs_today": "A white SaaS hero with a blurry orb and four feature cards becomes a dark product diagram that shows the mechanism and the models behind it."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Left facet rail: Role, Industry, Difficulty as 1-5 pips, Objection type, Channel. It collapses to a sheet on mobile. Main area: a Bento Grid of persona cards with Magic Card spotlight hover. Each card shows an industry-tinted orb, name and role, three objection chips, minutes to finish, and the user's last score ring if run. Top bar: cmd-K search and a 'Describe a buyer' field that opens the wizard. Sort: Recommended, Most practised by team, New.",
+      "key_components": "Facet rail, Bento Grid, Magic Card, objection chips, score ring, cmd-K palette, 'Contribute a persona' footer action.",
+      "change_vs_today": "A three-item select becomes a browsable catalog covering every sales job, and the library becomes the front door."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Five numbered steps in a left stepper: Source, Persona, Objections, Rubric, Test call. The right side is a live preview of the persona card plus a streamed opening line from the buyer. Step 1 accepts a job description, product URL, CRM notes, ICP text or a pasted call; each extracted field carries a source chip with its snippet, and an Animated Beam runs from sources into the draft. Step 4 sets rubric weights with sliders that must total 100. Step 5 runs a two-minute test call.",
+      "key_components": "Stepper, source-evidence chips, Animated Beam, Text Generate preview, weight sliders, test-call CTA, 'Export as PR' toggle.",
+      "change_vs_today": "Personas are hand-typed into a long form saved to localStorage today. This makes creation guided and evidence-backed."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Left: a large orb with Orbiting Circles, persona name and role, and a dossier with tabs (Who they are, What they want, Objections they will raise, How you are graded). Right: your goal as a checklist mapped to rubric criteria, a playbook accordion of talk-track steps, a mic meter, and a Voice/Text segmented control. Coach intensity (Silent, Whisper, Heads-up) sits beside the Start button, a large Shimmer button. Text mode notes that no mic is needed.",
+      "key_components": "Dossier tabs, goal-to-rubric checklist, playbook accordion, mic meter, coach intensity toggle, Shimmer Start button.",
+      "change_vs_today": "The scenario select, blurred orb and collapsed talk track become a briefing that states what will be graded before the call starts."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Desktop, focus mode with three zones. Left (about 280px): a live rubric with an overall Animated Circular Progress ring and five criterion bars that tween on each hit; a Tracing Beam talk-track rail lights steps as they are covered. Centre: the persona orb reacts to speech, and the transcript highlights words that count toward a criterion. Right: a Coach rail (Animated List) of dismissible cue cards labelled Next question, Objection, Pricing, Talk track or Pace. Bottom dock: mute, timer, text input, and End and grade in rose.",
+      "key_components": "Live rubric ring and bars, Tracing Beam rail, persona orb, evidence-highlighted transcript, coach cue cards, bottom dock.",
+      "change_vs_today": "A chat app with a talk-track drawer and no feedback becomes a cockpit where the score moves and cues arrive, while the persona never hears the coach."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Top: a score ring with letter grade, goal-status chip and a one-sentence verdict. Below: a replay timeline across the whole call with markers for coach cues (cyan), objections (amber) and score jumps (emerald). Clicking a marker plays that moment in the transcript. Then Strengths and Improve cards, criterion accordions whose evidence quotes jump to the timeline, and a 'Drill this next' button that builds a persona drill for the weakest criterion. Print uses the Paper theme.",
+      "key_components": "Score ring, replay timeline with markers, criterion accordions, evidence jump links, drill CTA, Paper print theme.",
+      "change_vs_today": "One long vertical scroll becomes a navigable replay where every score links to the exact moment."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Bento of tiles. Top: sessions, average, best and time practised as Number Ticker stats. Middle: a score-trend area chart with a cyan glow line over a goal band, and a radar of rubric dimensions comparing this week with last month. Bottom: a GitHub-style practice heatmap, a 'Weakest objection' card with a one-click drill, and a 'Next three drills' list. Reports default to the Paper theme.",
+      "key_components": "Number Ticker tiles, Recharts area and radar, practice heatmap, weakest-objection card, drill list.",
+      "change_vs_today": "Four stat tiles and a plain list become a story of improvement with a practice plan attached."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Header with filters for team, persona pack and date range. Top row: team average, reps at risk, sessions this week. Main: a heat grid of reps by rubric criterion, cells coloured by score with the number printed inside, so colour is never the only signal. Side: a 'Needs coaching' queue and the selected rep's latest debrief and supervisor note. A bulk action assigns a drill to selected reps. A Recharts radar shows the team skill graph.",
+      "key_components": "Heat grid with numeric labels, needs-coaching queue, supervisor note panel, bulk assign-drill action, team radar.",
+      "change_vs_today": "No manager UI exists today, although orgs and supervisor notes already live in the data model."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "Single column at a 16px gutter. Compact orb (about 140px) at the top. The rubric shows as one pill ('Rubric 62, up 4') that opens a sheet. Coach cues float above the composer as cards with swipe-to-dismiss. The transcript is the scroll region. Bottom: text input and send, with End and grade in the thumb zone and a mic toggle in voice mode. Talk-track progress is a six-step horizontal strip. Motion falls back to static under reduced motion.",
+      "key_components": "Compact orb, rubric pill and sheet, floating coach cards, thumb-zone End and grade, horizontal talk-track strip.",
+      "change_vs_today": "The fixed composer squeezes the orb, transcript and End button together. Coaching gets its own surface on phones."
+    }
+  ],
+  "live_coaching_and_scoring": "Architecture: the persona voice stays forbidden to coach, so a separate text coach channel reads the transcript after each rep turn (gpt-4.1-mini with structured output: cue type, criterion ids, and a suggested line). Target: a cue about 1.5 seconds after the rep's turn, which must be measured. A streaming scorer moves criterion points with evidence spans, so every bar change links to exact words. Coach intensity: Silent (debrief only), Whisper (cue card), Heads-up (card plus a soft chime for objection alerts). Cues are ephemeral unless the rep pins one. Self-score D 5.4: the design makes coaching and scoring visible and clearly exceeds the bar on clarity, but the baseline is met only once the coach channel exists and its latency is proven.",
+  "persona_library_and_wizard": "Personas ship as versioned YAML or JSON packs (role, industry, seniority, temperament, objections, opening line, scripted replies, rubric), one pack per sales job, so contributors add personas by pull request. Launch target: 200+ personas across the listed jobs, with difficulty and objection facets set on every entry. Wizard: five steps from source to draft, with evidence chips, a weight check that must total 100, a test call, then Save locally or Export as PR. Self-score E 5.8: the flow fits the brief, but open-source-level breadth depends on curation the UI cannot supply. The wizard lowers the cost of each contributed persona.",
+  "signature_moments": [
+    "An Animated Beam carries source snippets into a persona draft while the wizard extracts.",
+    "The rubric ring tweens on each hit, and the matching word glows in the transcript.",
+    "A coach cue slides into the rail with a one-line type-on and a traveling Border Beam pulse.",
+    "The debrief replay timeline, where every marker is a moment you can play back.",
+    "The landing hero draws voice, live coach and rubric as one animated beam diagram."
+  ],
+  "openai_fund_angle": "Model use is visible in the product, not only in code. Mono chips read 'voice' on the orb, 'coach gpt-4.1-mini' on each cue and 'grade gpt-4.1-mini' on each criterion, with latency shown. Settings lets maintainers set the OpenAI-compatible base URL and key. Contributors get 'Contribute a persona': the wizard exports a pack and opens a draft PR, linked from the landing, the library footer and CONTRIBUTING, with good-first-persona labels by industry. Once Codex is wired into PR review, which the program asks for, CONTRIBUTING documents that path. Voice today runs on ElevenLabs Agents, so an OpenAI Realtime voice path must be built for the Realtime showcase to be real. Use 'Powered by OpenAI' text rather than the logo unless brand terms allow it.",
+  "inspirations": [
+    {
+      "source": "Mobbin: PlayAI voice agent in conversation",
+      "url": "https://mobbin.com/screens/3048235f-760d-4ec2-bf7e-b5c264715402",
+      "borrowed": "One centered waveform orb with call controls below on a dark voice canvas."
+    },
+    {
+      "source": "Mobbin: Fireflies live meeting assist",
+      "url": "https://mobbin.com/screens/0faa4442-59e5-4a73-85f5-50a54c634fb5",
+      "borrowed": "Live assist panel beside the call with General and Sales Assist modes and quick chips."
+    },
+    {
+      "source": "Mobbin: Dialpad in-call screen",
+      "url": "https://mobbin.com/screens/8ada6545-583d-436a-b58b-5714a49967b3",
+      "borrowed": "Notes and transcript tabs during a call, with an AI action in the dock."
+    },
+    {
+      "source": "Mobbin: Higgsfield character wizard",
+      "url": "https://mobbin.com/screens/baac4868-8b0e-4bbd-859e-4bbd82a9a8f6",
+      "borrowed": "Numbered creation steps and a character grid with a Create new tile for choosing a persona."
+    },
+    {
+      "source": "Mobbin: Gorgias sales-skills setup",
+      "url": "https://mobbin.com/screens/2f8f10a1-0886-4e2b-a978-65150b784bdb",
+      "borrowed": "Persuasion-style sliders with a live sample chat beside them, to show persona behavior."
+    },
+    {
+      "source": "Mobbin: Google Gemini Gem builder",
+      "url": "https://mobbin.com/screens/1ea7939e-c7b9-4279-bc99-406f30fd99fe",
+      "borrowed": "Visible AI build steps in a left list with a live preview on the right."
+    },
+    {
+      "source": "Mobbin: Plain create-agent screen",
+      "url": "https://mobbin.com/screens/f7a661cb-e5a7-43d9-ae6b-0cc79be7bb92",
+      "borrowed": "Simple form with a live preview card beside it, for restrained wizard chrome."
+    },
+    {
+      "source": "Mobbin: SchoolAI session insights",
+      "url": "https://mobbin.com/screens/1ba00325-1eb4-4bae-973c-249c2ff8ab8c",
+      "borrowed": "Mastery gauge, outcome grid and an insights side panel for debrief and team views."
+    },
+    {
+      "source": "Mobbin: Uxcel dashboard",
+      "url": "https://mobbin.com/screens/d273fc61-9308-48f1-939b-342ca762450d",
+      "borrowed": "Skill radar and assignment bars for the team view."
+    },
+    {
+      "source": "Magic UI: Animated Beam",
+      "url": "https://magicui.design/docs/components/animated-beam",
+      "borrowed": "Beam path between nodes for the persona, coach and rubric diagram."
+    },
+    {
+      "source": "Magic UI: Border Beam",
+      "url": "https://magicui.design/docs/components/border-beam",
+      "borrowed": "Traveling border light on the active coach card."
+    },
+    {
+      "source": "Second Nature homepage",
+      "url": "https://secondnature.ai/",
+      "borrowed": "Persona-library-first pitch. The redesign shows the feedback mechanism instead of only claiming real-time feedback."
+    },
+    {
+      "source": "Second Nature: 9 best AI role play platforms (vendor-authored)",
+      "url": "https://secondnature.ai/the-9-best-ai-role-play-platforms-for-enterprise-sales-training/",
+      "borrowed": "Its own comparison says scored feedback arrives after the session. That gap is the live-coaching opening this design targets. Claim unverified."
+    },
+    {
+      "source": "Yoodli vs Second Nature (competitor-authored)",
+      "url": "https://yoodli.ai/blog/yoodli-vs-second-nature-which-ai-sales-roleplay-platform-is-better",
+      "borrowed": "One rubric grading both practice and real calls, borrowed as an idea. Competitor claims unverified."
+    }
+  ],
+  "implementation": {
+    "effort": "L",
+    "migration_path": "Phase 1 (S-M): CSS-variable tokens, Geist, shadcn primitives, dark theme, landing and library grid behind a feature flag. Phase 2 (M): pre-call briefing and live-call three-zone and mobile layouts on the existing voice and text paths. Phase 3 (M-L): coach channel with a cue schema and latency budget, streaming rubric scorer with evidence spans, debrief replay timeline. Phase 4 (M): persona packs, wizard with source extraction, team view and dashboards. Next.js, Prisma and the grading API stay. The new UI reads the same session and rubric objects."
+  },
+  "risks": [
+    "Live coach latency: the 1.5-second cue target needs a second model call per rep turn. If latency is slow, the coach rail will feel late and reps will ignore it.",
+    "Glow and motion can fail accessibility and cost: keep AA contrast, honor reduced motion, cap WebGL on phones. Overuse of effects would make the app read as a template again.",
+    "Competitor claims conflict: Second Nature's homepage says feedback is real-time, while its own comparison page says scored feedback arrives after the session. Yoodli's pages are competitor-authored. Treat all such claims as unverified.",
+    "Magic UI and Aceternity are copy-in libraries. Verify each component's license before vendoring into the repo, and pin versions.",
+    "Trademark: the green model chip must not imitate OpenAI's logo. Check OpenAI brand guidelines and the Codex program terms before using any OpenAI mark.",
+    "Persona content quality, not UI, is the real bottleneck for the open-source E score. The design cannot substitute for curated, vetted packs.",
+    "Business: F1 as a SaaS app scores 6 (crowded field: Second Nature, Hyperbound, Yoodli). F2 selling to entities scores 7 (licensed persona packs for training firms and call centers, plus the team view). F3 not worth it scores 3 (worth building, though an open-source core caps direct revenue).",
+    "Mobbin notice from this run, reproduced in substance: 'Your Mobbin AI usage is high this month.' Usage is unlimited during beta, and credits may be required once limits take effect."
+  ]
+}

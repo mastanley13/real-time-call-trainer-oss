@@ -22,6 +22,7 @@ export async function GET() {
   checks.jwtSecret = process.env.JWT_SECRET && process.env.JWT_SECRET.length >= 32 ? "ok" : "missing_or_weak";
   if (checks.jwtSecret !== "ok" && !caps.demoMode) ok = false;
   checks.elevenlabs = caps.elevenlabs ? "configured" : "not_configured";
+  checks.realtime = caps.realtime ? "configured" : "not_configured";
   checks.llm = caps.llm ? "configured" : "not_configured";
   checks.demoMode = caps.demoMode ? "on" : "off";
 

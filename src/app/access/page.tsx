@@ -19,9 +19,17 @@ export default function AccessPage() {
         body: JSON.stringify({ code }),
       });
       if (res.ok) {
-        // Full reload so the app boots with the new cookie. Only same-site paths are honoured.
+        // Full reload so the app boots with the new cookie. Resolve ?next= and compare origins,
+        // because the URL parser reads "/\evil.com" and "/\t/evil.com" as protocol-relative.
         const next = new URLSearchParams(window.location.search).get("next");
-        window.location.assign(next && next.startsWith("/") && !next.startsWith("//") ? next : "/");
+        let target = "/";
+        try {
+          const u = next ? new URL(next, window.location.origin) : null;
+          if (u && u.origin === window.location.origin) target = u.pathname + u.search + u.hash;
+        } catch {
+          // Unparseable value: fall back to home.
+        }
+        window.location.assign(target);
         return;
       }
       const data = await res.json().catch(() => ({}));
@@ -39,7 +47,7 @@ export default function AccessPage() {
           <label htmlFor="access-code" className="label">Access code</label>
           <input id="access-code" type="password" className="input" autoComplete="off" value={code} onChange={(e) => setCode(e.target.value)} required autoFocus />
         </div>
-        {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+        {error && <p role="alert" className="text-sm text-alert">{error}</p>}
         <button type="submit" className="btn-primary w-full" disabled={busy}>{busy ? "Checking…" : "Continue"}</button>
       </form>
     </AuthShell>

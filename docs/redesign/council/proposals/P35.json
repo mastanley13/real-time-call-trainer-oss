@@ -1,0 +1,249 @@
+{
+  "id": "P35",
+  "lens": "Radix Themes: elegant defaults, accessible, low design debt",
+  "name": "Radix Coach Stage",
+  "one_liner": "One Radix Themes design system with a dark live-call stage, a faceted persona library, an AI persona wizard and an evidence-first debrief.",
+  "lens_followed_or_changed": "Followed Radix Themes as the single design system: one Theme (teal accent, slate gray, medium radius) with Radix primitives for focus, keyboard and ARIA, so custom work stays accessible and low-debt. Changed three things. Radix Themes has no coaching HUD, score ring or persona dossier, so those are built on Radix primitives as one documented pattern set. The live call uses a dark stage surface, because a default light Radix shell reads as a template. Tailwind is removed after migration. Mobbin matches were mixed; the useful ones were SchoolAI, Klaviyo, Delphi, Tana and Descript. Self-scores: A 7.5, B 7.5, C 7, D 5.4, E 5.2; business F1 SaaS 4, F2 selling to entities 6, F3 not worth building 3.",
+  "ui_stack": [
+    {
+      "name": "Radix Themes 3 (@radix-ui/themes)",
+      "role": "Design system: Theme tokens (accent, gray, radius, appearance), Card, Button, Badge, Callout, Tabs, SegmentedControl, Dialog, Slider, Progress, Table, DataList, Avatar.",
+      "why": "Accessible by default and needs little custom CSS, so design debt stays low."
+    },
+    {
+      "name": "Radix Primitives (radix-ui: Accordion, Toast, Popover, Form)",
+      "role": "Behaviour layer under the coach rail, whisper toasts, debrief accordion and wizard forms.",
+      "why": "Focus management and ARIA for the custom live HUD, where Radix Themes has no component."
+    },
+    {
+      "name": "Recharts",
+      "role": "The only chart library: score trends, donut, sparklines and the weekly heatmap.",
+      "why": "Single chart dependency; colors come from Radix tokens so light and dark match."
+    },
+    {
+      "name": "Motion (motion/react)",
+      "role": "Whisper entrance, rubric bar fill and score ring draw.",
+      "why": "Declarative, with a built-in reduced-motion path."
+    },
+    {
+      "name": "cmdk",
+      "role": "Command palette (⌘K) over personas, scenarios and past calls.",
+      "why": "Keyboard-first navigation without a custom search widget."
+    },
+    {
+      "name": "lucide-react, zod, Radix Form",
+      "role": "Icons; zod validates persona JSON in CI and the wizard forms at runtime.",
+      "why": "Keeps existing icons and zod; one validation schema for files and forms."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "--accent-9 (Radix teal 9)",
+        "hex": "#12A594",
+        "use": "Primary buttons, active tabs, the Start button on pre-call."
+      },
+      {
+        "token": "--accent-text (Radix teal 11)",
+        "hex": "#008573",
+        "use": "Accent text on light surfaces, with AA contrast on slate 1."
+      },
+      {
+        "token": "--app-bg (Radix slate 1)",
+        "hex": "#FCFCFD",
+        "use": "Light app background for Library, Debrief, Progress and Team."
+      },
+      {
+        "token": "--ink (Radix slate 12)",
+        "hex": "#1C2024",
+        "use": "Body and headings on light surfaces."
+      },
+      {
+        "token": "--stage (custom)",
+        "hex": "#0E1215",
+        "use": "Live call and landing hero surface with a faint teal tint; panels on it are #161B1F."
+      },
+      {
+        "token": "--coach (Radix amber 9; text uses amber 11 #AB6400)",
+        "hex": "#FFC53D",
+        "use": "Whisper cues and coach rail accents only."
+      },
+      {
+        "token": "--alert (Radix red 9)",
+        "hex": "#E5484D",
+        "use": "Objection alerts and the End call control only."
+      },
+      {
+        "token": "--ok (Radix green 9)",
+        "hex": "#30A46C",
+        "use": "Confirmed rubric criteria and strengths."
+      }
+    ],
+    "typography": "Sora 600 for display headings (keeps the current brand), Inter 400/500 for UI and transcript (15/24 on stage, 16/24 on light), Geist Mono for timers, scores and rubric weights with tabular numerals. Radix Themes size scale 1-9, headings at -0.02em tracking, loaded with next/font.",
+    "shape_and_depth": "Radix radius medium (6px controls), 12px cards, 20px for the live dock. Hairline borders from slate 6 replace soft shadows on light. On stage, panels are solid layers with 1px white-8% borders. Each screen has one elevated element: the dock or the active coach card.",
+    "motion": "Whisper cues rise 8px and fade in over 180ms, one at a time, auto-dismissing after 8s unless hovered. Rubric bars fill with a spring. The voice ring is a 30fps canvas driven by audio level, not a looping decoration. prefers-reduced-motion turns all movement into opacity changes.",
+    "iconography": "lucide-react at 1.5px stroke, 16px in controls and 20px in cards. Persona avatars are monograms on a hue from the Radix accent scale, chosen by name hash. No emoji in product UI.",
+    "theme_modes": "Light by default for Library, Debrief, Progress and Team. Dark stage for the live call and landing hero, using Theme appearance='dark' with the stage token. The shell follows prefers-color-scheme (appearance='inherit'), with a manual toggle in the avatar menu."
+  },
+  "navigation_and_ia": "Top bar: Practice, Library, Progress, Team (role-gated), a primary 'New persona' button and a ⌘K trigger. Routes: / (landing), /library (facet rail and grid), /library/new (wizard), /practice/[id] (pre-call), /call/[id] (live), /debrief/[id], /progress, /team. Mobile uses a bottom tab bar (Practice, Library, Progress, More). Sign-in, MFA and access code move under one avatar menu. Demo mode shows a small 'Demo' badge in the header instead of a full-width banner.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Full-width stage hero. Left: headline 'Practice the call before it counts', one subhead line, primary 'Start a practice call' and secondary 'Run it locally'. Right: an HTML/CSS cockpit mockup with a whisper cue quoting a transcript line and rubric bars filling. Below: a 'Built on OpenAI models' row of three cards (Realtime voice, GPT grading, persona wizard), an 8-card library preview across industries, and a contributor band.",
+      "key_components": "Radix Section and Container, Badge, Button, Card. README mirrors the hero with a short install snippet, as radix-ui.com does.",
+      "change_vs_today": "Replaces the blurry orb and four generic feature cards with a product-true hero that shows coaching and scoring."
+    },
+    {
+      "screen": "Persona and scenario library",
+      "layout": "Sticky left facet rail (240px) for sales job, industry, difficulty, objection type and channel, each a checkbox group with counts. Top: search and sales-job tabs. Main: responsive grid of persona dossier cards with monogram, role, difficulty signal bars, two objection chips, and Practice and Fork buttons. Empty state points to the wizard.",
+      "key_components": "Radix Checkbox, Tabs, TextField, Card, Badge, Tooltip; 'Contribute a persona' button in the header.",
+      "change_vs_today": "Replaces a three-item select with a faceted catalog of about 120 seeded personas."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Full-screen Dialog with four steps: Source, Extract, Shape, Dry run. Source: segmented tabs for job description, product URL, CRM notes, ICP or pasted call. Extract: streaming field cards with the evidence snippet and a confidence chip. Shape: editable persona and rubric sliders that normalise to 100. Dry run: 90-second text call, then Publish locally or Open prefilled PR.",
+      "key_components": "Dialog, Progress, SegmentedControl, TextArea, Slider, Callout for low-confidence fields, zod-validated form.",
+      "change_vs_today": "New capability. The current scenario editor is one long form with no guidance."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Two columns. Left: goal, persona dossier card, talk track as a numbered checklist, rubric weight donut, last three scores. Right, sticky start panel: Voice/Text SegmentedControl, mic check Select, Coach level (Off, Light, Full), large accent Start button, and one line on what the coach will and will not do.",
+      "key_components": "Card, DataList, Select, SegmentedControl, Button, Badge, Recharts donut.",
+      "change_vs_today": "Merges the dropdown, talk track, rubric and start card into one briefing and adds coach settings before the call."
+    },
+    {
+      "screen": "Live call (coaching and live scoring)",
+      "layout": "Three columns on the dark stage. Left: persona avatar, state chip ('Your turn'), voice ring, and an objection alert chip when triggered. Centre: transcript with speaker lanes and inline tags (objection, pricing, next step). Right coach rail: one whisper card with its cited line, talk-track stepper, live rubric meter with tentative and confirmed bars. Bottom dock: mode, mute, Geist Mono timer, End and grade in alert red.",
+      "key_components": "Card, Progress, Badge, Callout, Tooltip, Toast (Radix), SegmentedControl, IconButton, Motion.",
+      "change_vs_today": "Replaces a chat app with no feedback by a cockpit where feedback arrives during the call."
+    },
+    {
+      "screen": "Debrief and scorecard",
+      "layout": "Top: SVG score ring with letter grade and 0-100, goal Callout, and a model receipt line (grader model, latency, token cost). Middle: Strengths and Areas to improve cards. Criteria as Accordion rows with bar, weight, rationale and evidence quotes, each with 'jump to line' and 'play audio'. Right sticky transcript in ScrollArea. Bottom: 'Next drill' card for the weakest criterion.",
+      "key_components": "Accordion, Card, Callout (warning when the heuristic grader is used), ScrollArea, Button, DataList.",
+      "change_vs_today": "Same content, but evidence is navigable and the next drill is one click away."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Top row: four KPI tiles (sessions, average, best, time) with delta and sparkline. Main: score trend by criterion with a toggle, and a weekly heatmap of criteria by day. Right: skill ladder (Explorer, Closer, Strategist) with milestone checks. Bottom: persona coverage bar, for example 9 of 14 sales jobs practised.",
+      "key_components": "Recharts line, sparklines and heatmap; Card, Tabs, Progress, Badge.",
+      "change_vs_today": "Turns four numbers and a list into a story of growth and coverage."
+    },
+    {
+      "screen": "Manager and team view",
+      "layout": "Radix Tabs: Team, Scenarios, Rubrics, Organisation. Main: Table of members with session count, mastery dots per criterion and a trend arrow; filters for sales job and date. Right panel: weekly AI summary of team strengths and gaps, with 'Assign drill' and 'Add supervisor note' buttons that open a Dialog.",
+      "key_components": "Table, Tabs, Dialog, Badge, Avatar, DropdownMenu, Callout.",
+      "change_vs_today": "The data model already supports orgs; this adds the first team surface."
+    },
+    {
+      "screen": "Mobile live call (390px)",
+      "layout": "Compact header: 40px avatar, name, timer, and an End icon button top-right. Sticky coach strip shows the current whisper in one line; tapping opens a bottom sheet with the full cue and rubric. Talk-track progress as six dots. Single-lane transcript bubbles. Bottom dock with a large mic button; text input opens from a keyboard icon. Dev overlays stay clear of the timer.",
+      "key_components": "Dialog as bottom sheet, IconButton, progress dots, Badge; 16px side gutter; no horizontal scroll.",
+      "change_vs_today": "Fixes the current mobile call, where a floating badge covers the timer and the title truncates, and moves coaching into thumb reach."
+    }
+  ],
+  "live_coaching_and_scoring": "Coach loop: after each rep turn, a small OpenAI model reads the last few turns against the scenario's talk track and rubric and emits at most one whisper, which must cite the exact transcript line it reacted to. Target latency is under 2s; past 3s the rail shows 'Coach is thinking' and the call never blocks. Coach level (Off, Light, Full) sets whisper frequency and whether objection alerts show. Talk-track steps auto-check. Rubric criteria move from tentative (one weak span) to confirmed (two spans or one strong span), so the live score never overstates. The persona is not told about the coach, and grading stays a separate pass. Self-score D: 5.4. The design exceeds baseline only once the coach loop ships; today the app has none.",
+  "persona_library_and_wizard": "The library ships as versioned JSON files in the repo, one per persona (role, industry, difficulty, objection tags, talk track, rubric weights, voice id, provenance), validated by zod in CI. Seed target: about 120 personas across the 14 sales jobs in the brief, human-reviewed before merge. Facets: sales job, industry, difficulty, objection type, channel (voice or text). Wizard: Source (job description, product URL, CRM notes, ICP or pasted call), then Extract (streaming field cards with evidence and confidence), then Shape (editable persona, rubric weights summing to 100), then Dry run (90-second text call), then Publish locally or open a prefilled PR. Low-confidence fields get a Callout. Self-score E: 5.2. The design meets baseline, but the realised score stays below 5 until the seed library ships (three built-ins today).",
+  "signature_moments": [
+    "Cited whispers: every coach cue quotes the transcript line it reacted to, so the rep can check the coach.",
+    "Rubric fill: criteria bars fill as evidence lands, tentative first and confirmed later.",
+    "Model receipt: each debrief states which OpenAI model graded it, with latency and cost.",
+    "Edit on GitHub: every persona dossier opens a prefilled PR draft.",
+    "Dossier cards: persona cards styled like a briefing file, with difficulty shown as signal bars."
+  ],
+  "openai_fund_angle": "1) The OpenAI Realtime API becomes a first-class voice provider beside ElevenLabs; the pre-call panel offers it as a named option with the model visible. 2) Every model call is labelled in the UI (grader, coach, persona wizard), and a Settings > Models page shows per-call cost. 3) A Grader Lab page compares rubric agreement across models and invites contributors to submit eval cases. 4) A contribution path: good-first-issue labels on library personas, an AGENTS.md so Codex CLI contributors get repo rules, and a persona PR template validated by CI. 5) Credit the stack honestly: 'Built with OpenAI models' in the footer, and 'Reviewed with Codex' only once Codex PR review is actually running on this repo.",
+  "inspirations": [
+    {
+      "source": "Radix Themes (GitHub)",
+      "url": "https://github.com/radix-ui/themes",
+      "borrowed": "Theme tokens (accent, gray, radius, appearance) and pre-styled components with accessible defaults."
+    },
+    {
+      "source": "Radix UI homepage",
+      "url": "https://www.radix-ui.com/",
+      "borrowed": "Hero pattern: a short install and one wrapped component shows the library in seconds."
+    },
+    {
+      "source": "Base UI",
+      "url": "https://base-ui.com/",
+      "borrowed": "Considered and rejected as the main system (unstyled, more debt); kept as a fallback for custom HUD primitives."
+    },
+    {
+      "source": "Second Nature vs Hyperbound (vendor blog)",
+      "url": "https://secondnature.ai/second-nature-vs-hyperbound-which-ai-sales-roleplay-platform-is-right-for-your-team/",
+      "borrowed": "Competitive map of video personas and deal coaching. Vendor-authored, so claims are unverified."
+    },
+    {
+      "source": "Hyperbound blog: Gong vs Second Nature vs Hyperbound",
+      "url": "https://www.hyperbound.ai/blog/gong-vs-second-nature-vs-hyperbound",
+      "borrowed": "Scorecards aligned to MEDDPICC, BANT and Challenger; practice generated from real-call gaps. Vendor-authored."
+    },
+    {
+      "source": "Outdoo AI comparison (vendor blog)",
+      "url": "https://www.outdoo.ai/blog/hyperbound-vs-second-nature-vs-outdoo",
+      "borrowed": "Personas built from a company's own calls; one scorecard for practice and live calls. Vendor-authored; competitor pages disagree on who scores real calls."
+    },
+    {
+      "source": "Mindtickle: Second Nature vs Hyperbound",
+      "url": "https://www.mindtickle.com/article/second-nature-vs-hyperbound-ai-sales-role-play-platform/",
+      "borrowed": "Framing of practice, live deal support and proof of impact as three separate buyer questions."
+    },
+    {
+      "source": "Mobbin: Klaviyo campaigns library",
+      "url": "https://mobbin.com/screens/c3d9bb50-e157-4c6b-baf2-d258935c1f95",
+      "borrowed": "Library grouped into sections with View all counts and a card grid, for the persona library."
+    },
+    {
+      "source": "Mobbin: Snowflake templates",
+      "url": "https://mobbin.com/screens/907f72f5-645c-4281-b4fd-9c699917a961",
+      "borrowed": "Template search with a category sidebar and a featured row."
+    },
+    {
+      "source": "Mobbin: Delphi call transcript",
+      "url": "https://mobbin.com/screens/f66701fe-0f6b-4571-b448-e478720ea2bc",
+      "borrowed": "Transcript with the AI persona as a named speaker, for the live stage."
+    },
+    {
+      "source": "Mobbin: Tana meeting view",
+      "url": "https://mobbin.com/screens/3f941670-2958-455e-8afa-f1212baaefc7",
+      "borrowed": "Right-side cards with pending items and a Keep action, for coach cards."
+    },
+    {
+      "source": "Mobbin: Descript co-editor panel",
+      "url": "https://mobbin.com/screens/d74588a9-33d0-4865-9482-7c2d264dca55",
+      "borrowed": "Assistant side panel with suggestions, for the coach rail."
+    },
+    {
+      "source": "Mobbin: SchoolAI session",
+      "url": "https://mobbin.com/screens/8fde26c5-315e-47b3-bb91-7248b97fd5f7",
+      "borrowed": "Mastery gauge, outcome dots and an AI insights panel, for the team view."
+    },
+    {
+      "source": "Mobbin: Gumloop score dashboard",
+      "url": "https://mobbin.com/screens/2c219433-7330-4585-ab52-4fbac1c0d069",
+      "borrowed": "KPI tiles, trend chart and a static-snapshot banner, for the progress dashboard."
+    },
+    {
+      "source": "Mobbin: Base44 levels",
+      "url": "https://mobbin.com/screens/aa7aea9d-42a2-4900-91fd-9ba2e8e1be19",
+      "borrowed": "Level ladder with milestone checks, for the skill ladder."
+    },
+    {
+      "source": "Mobbin: Google Ads add-scorecard dialog",
+      "url": "https://mobbin.com/screens/5c83d3e9-1fb9-4f8f-9b5b-f0c8d61c3b32",
+      "borrowed": "Compact dialog for adding a measure and filter, for rubric editing."
+    }
+  ],
+  "implementation": {
+    "effort": "L",
+    "migration_path": "Phase 1 (about a week): add @radix-ui/themes, wrap the app in one Theme (accent teal, gray slate, radius medium), turn off Tailwind preflight, and map the five legacy classes to Radix components. Phase 2: rebuild Pre-call, Debrief and Dashboard. Phase 3: live cockpit and coach loop, with the mobile sheet. Phase 4: persona JSON library, zod validation in CI, and the wizard. Phase 5: Progress, Team and the dark stage theme. Remove Tailwind last, once no class references remain."
+  },
+  "risks": [
+    "Tailwind 3 and Radix Themes CSS can clash on preflight and tokens during migration; keep both until the last phase and diff screenshots per screen.",
+    "Default-Radix look: mitigate with the stage surface, the voice ring and the teal accent. Without a distinctive live cockpit, reviewers may still read it as a template.",
+    "Coach latency and cost: per-turn classification with an OpenAI model adds spend and lag. Cap whispers per minute and use the smallest model that passes eval.",
+    "Persona quality: about 120 seeded personas need human review. Generated personas can carry stereotypes, so mark provenance and review sensitive industries such as insurance and collections.",
+    "Live HUD accessibility: whispers need throttled aria-live announcements and a keyboard path to dismiss; reduced motion must disable the voice ring.",
+    "Business: the market is crowded (Second Nature, Hyperbound, Outdoo, Mindtickle, Yoodli). The open-source core earns value through hosted team features and call-center licensing, not seats alone."
+  ]
+}

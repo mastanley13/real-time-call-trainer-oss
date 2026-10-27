@@ -1,0 +1,27 @@
+# Dependabot version updates. Every key below is in the options reference:
+#   https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+#
+# github-actions: keeps the SHA-pinned actions in .github/workflows current. Dependabot bumps the
+#   commit SHA and the trailing version comment together. Directory "/" covers .github/workflows.
+# npm: minor and patch updates arrive together in one weekly pull request, so the queue stays
+#   short. Major updates still get a pull request each, because they usually need code changes.
+#   CI runs on every Dependabot pull request; read the lockfile diff before merging.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

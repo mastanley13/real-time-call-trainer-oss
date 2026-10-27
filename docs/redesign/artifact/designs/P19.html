@@ -1,0 +1,774 @@
+<style>
+.app{--canvas:#F5F6F8;--surface:#FFFFFF;--s2:#F2F4F7;--s3:#E7EAF0;--ink:#0B1220;--muted:#5B6578;--line:#E3E7EE;--line2:#CDD3DE;--rg:inset 0 0 0 1px var(--line);--primary:#2B50E0;--pri-soft:#EBEFFD;--coach:#F59E0B;--on-coach:#0B1220;--ai:#7C3AED;--ai-fill:#7C3AED;--ai-soft:#F2ECFE;--ok:#15803D;--ok-soft:#E6F4EA;--risk:#BE123C;--risk-soft:#FCE8EC;--c1:#2B50E0;--c2:#0D9488;--c3:#C026D3;--c4:#EA580C;--c5:#65A30D;--sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-family:var(--sans);font-size:15px;line-height:1.6;color:var(--ink);-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;align-items:flex-start;gap:48px}
+.app .dark{--canvas:#0A0F1C;--surface:#121A2B;--s2:#18223A;--s3:#222D46;--ink:#E7ECF5;--muted:#93A0B8;--line:#243049;--line2:#33405C;--rg:inset 0 0 0 1px var(--line);--primary:#6B8CFF;--pri-soft:#1A2754;--coach:#FBBF24;--ai:#A78BFA;--ai-soft:#231B42;--ok:#4ADE80;--ok-soft:#10301D;--risk:#FB7185;--risk-soft:#3A1622;--c1:#6B8CFF;--c2:#2DD4BF;--c3:#E879F9;--c4:#FB923C;--c5:#A3E635}
+.app *{box-sizing:border-box;margin:0;padding:0}
+.app .screen{position:relative;overflow:hidden;background:var(--canvas);color:var(--ink);flex:none;width:1280px;height:800px}
+.app .screen[data-screen=mobile]{width:390px;height:844px}
+.app .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.app .muted{color:var(--muted)}
+.app .row{display:flex;align-items:center;white-space:nowrap}
+.app .g8{gap:8px}.app .g10{gap:10px}.app .g12{gap:12px}.app .ml{margin-left:auto}
+.app .i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.app .s12{width:12px;height:12px}.app .s14{width:14px;height:14px}.app .s18{width:18px;height:18px}.app .s20{width:20px;height:20px}
+.app .fc{fill:currentColor;stroke:none}
+.app .ck{display:inline-block;width:10px;height:5.5px;border-left:1.75px solid;border-bottom:1.75px solid;transform:translateY(-2px) rotate(-45deg);flex:none}
+.app .ar{display:inline-block;width:6px;height:6px;border-top:1.5px solid;border-right:1.5px solid;transform:rotate(45deg);flex:none;margin-right:2px}
+.app .pl{display:inline-block;border-left:8px solid;border-top:5px solid transparent;border-bottom:5px solid transparent;flex:none}
+.app .oo{display:inline-block;width:11px;height:11px;border-radius:50%;box-shadow:inset 0 0 0 1.5px currentColor;flex:none}
+.app .logo{width:28px;height:28px;border-radius:8px;background:var(--primary);color:#fff;display:grid;place-items:center;flex:none}
+.app .ai{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:6px;background:var(--ai-fill);color:#fff;font:500 11px/1 var(--mono);white-space:nowrap;flex:none}
+.app .ai:before{content:"";width:5px;height:5px;background:currentColor;transform:rotate(45deg);border-radius:1px}
+.app kbd{font:500 11px/1 var(--mono);padding:3px 5px;border-radius:5px;border:1px solid var(--line);color:var(--muted);background:var(--s2)}
+.app .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:10px;font:500 13px/1 var(--sans);white-space:nowrap;flex:none}
+.app .pri{background:var(--primary);color:#fff}
+.app .sec{background:var(--surface);box-shadow:var(--rg);color:var(--ink)}
+.app .btn.sm{height:28px;padding:0 10px;font-size:12.5px;border-radius:8px}
+.app .tag{height:22px;padding:0 8px;border-radius:6px;box-shadow:var(--rg);font-size:12px;line-height:22px;color:var(--muted);white-space:nowrap}
+.app .bar{position:relative;height:8px;border-radius:4px;background:var(--s3);overflow:hidden}
+.app .bar .f{position:absolute;left:0;top:0;bottom:0;background:var(--c);border-radius:4px}
+.app .bar .p{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,var(--c) 0 2px,color-mix(in srgb,var(--c) 22%,transparent) 2px 5px);border-radius:0 4px 4px 0}
+.app .bar.rk{box-shadow:inset 0 0 0 1px var(--risk);background:var(--risk-soft)}
+.app .sw{display:inline-block;width:14px;height:8px;border-radius:2px;background:var(--muted)}
+.app .sw.h{background:repeating-linear-gradient(135deg,var(--muted) 0 2px,transparent 2px 5px);box-shadow:inset 0 0 0 1px var(--muted)}
+.app .cap{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.app .lvl{display:inline-flex;gap:2px;align-items:center;height:16px}
+.app .lvl i{width:3px;height:3px;border-radius:2px;background:var(--muted)}
+.app .w{font:500 11px/16px var(--mono);color:var(--muted);padding:0 5px;box-shadow:var(--rg);border-radius:5px}
+.app .tile{width:36px;height:36px;border-radius:10px;background:var(--tb);color:var(--tc);display:grid;place-items:center;font-size:13px;font-weight:600;flex:none}
+.app .av{width:32px;height:32px;border-radius:50%;background:#DCE3F5;color:#22346E;display:grid;place-items:center;font-size:12px;font-weight:600;flex:none}
+.app .card{background:var(--surface);border-radius:16px;box-shadow:var(--rg)}
+/* live */
+.app .lv,.app .mb{display:flex;flex-direction:column}
+.app .lvt{height:52px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 20px;border-bottom:1px solid var(--line)}
+.app .lvt b{font-size:14px;font-weight:600}
+.app .vsep{width:1px;height:16px;background:var(--line2)}
+.app .rec{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.app .rec i{width:8px;height:8px;border-radius:50%;background:var(--risk)}
+.app .focus{display:flex;align-items:center;gap:6px;height:28px;padding:0 6px 0 10px;border-radius:8px;box-shadow:var(--rg);font-size:12.5px}
+.app .lvb{flex:1;display:grid;grid-template-columns:384px 576px 320px;min-height:0}
+.app .lvl-l,.app .lvr{background:var(--surface);padding:20px;display:flex;flex-direction:column;min-height:0}
+.app .lvl-l{border-right:1px solid var(--line)}
+.app .lvr{border-left:1px solid var(--line);gap:12px}
+.app .lvm{padding:20px 28px;display:flex;flex-direction:column;min-height:0}
+.app .persona{display:flex;gap:20px;align-items:center}
+.app .orb{width:84px;height:84px;margin:8px;border-radius:50%;flex:none;position:relative;background:radial-gradient(circle at 34% 30%,#D3DCFF 0,#8098FF 16%,#4766E8 42%,#1E2C78 76%,#121A40 100%)}
+.app .orb:before,.app .orb:after{content:"";position:absolute;inset:-8px;border-radius:50%;border:1px solid var(--line2)}
+.app .orb:after{border-color:transparent;border-top-color:var(--primary);transform:rotate(-30deg)}
+.app .pname{font-size:16px;font-weight:600;line-height:22px}
+.app .prole{font-size:13px;color:var(--muted);line-height:18px}
+.app .pstate{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--muted)}
+.app .pfacts{display:flex;gap:6px;margin-top:14px}
+.app .pfacts span{font-size:12px;height:24px;line-height:24px;padding:0 8px;border-radius:6px;background:var(--s2);box-shadow:var(--rg);white-space:nowrap}
+.app .lh{display:flex;justify-content:space-between;align-items:center;margin:18px 0 10px}
+.app .lh .mono{font-size:11.5px;color:var(--muted)}
+.app .tx{flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:11px;min-height:0;overflow:hidden}
+.app .turn{padding-left:12px;border-left:2px solid var(--s3)}
+.app .turn.rep{border-left-color:var(--primary)}
+.app .turn.now{border-left-color:var(--coach)}
+.app .who{display:flex;align-items:center;gap:8px;font-size:12px;line-height:18px;white-space:nowrap}
+.app .who b{font-weight:600}
+.app .who .t{font:11.5px var(--mono);color:var(--muted)}
+.app .crit{display:inline-flex;align-items:center;gap:5px;color:var(--muted);font-size:11.5px}
+.app .crit i{width:7px;height:7px;border-radius:50%;background:var(--c)}
+.app .crit.hol i{background:none;box-shadow:inset 0 0 0 1.5px var(--c)}
+.app .cuef{font-size:11px;font-weight:600;color:var(--on-coach);background:var(--coach);border-radius:4px;padding:0 5px;line-height:16px}
+.app .turn p{font-size:14px;line-height:21px;margin-top:1px}
+.app .trig{background:rgba(251,191,36,.16);color:var(--ink);box-shadow:inset 0 -1.5px 0 var(--coach);padding:0 2px;border-radius:2px}
+.app .listen{display:flex;align-items:center;gap:10px;margin-top:14px;height:38px;flex:none;padding:0 12px;border-radius:10px;background:var(--s2);font-size:13px}
+.app .listen .lvl i{background:var(--primary)}
+.app .ch{display:flex;align-items:center;gap:12px;white-space:nowrap}
+.app .cmark{width:34px;height:34px;border-radius:10px;background:rgba(251,191,36,.14);color:var(--coach);display:grid;place-items:center;flex:none}
+.app .ch b{display:block;font-size:16px;font-weight:600;line-height:20px}
+.app .chs{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);line-height:16px}
+.app .tt{margin-top:16px}
+.app .tth{display:flex;justify-content:space-between;align-items:center}
+.app .tth .mono{font-size:12px;color:var(--muted)}
+.app .ttb{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:8px}
+.app .seg i{display:block;height:6px;border-radius:3px;background:var(--s3)}
+.app .seg.d i{background:var(--primary)}
+.app .seg.n i{background:var(--coach)}
+.app .seg span{display:block;margin-top:6px;font-size:12px;color:var(--muted);white-space:nowrap}
+.app .seg.d span{color:var(--ink)}
+.app .seg.n span{color:var(--coach);font-weight:600}
+.app .cue{position:relative;z-index:1;margin-top:18px;background:var(--coach);color:var(--on-coach);border-radius:16px;padding:16px 20px;box-shadow:0 0 0 1px rgba(251,191,36,.7),0 0 44px rgba(251,191,36,.3),0 14px 34px -14px rgba(251,191,36,.55)}
+.app .cuek{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
+.app .cuek .mono,.app .cuek .sx{margin-left:auto;font-weight:500;letter-spacing:0;text-transform:none;opacity:.72}
+.app .cueh{font-size:20px;line-height:27px;font-weight:600;letter-spacing:-.015em;margin-top:8px}
+.app .say{margin-top:12px;background:rgba(11,18,32,.09);border-radius:10px;padding:9px 14px 10px;font-size:15px;line-height:23px}
+.app .say em{display:block;font-style:normal;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;opacity:.66}
+.app .acts{display:flex;align-items:center;gap:6px;margin-top:12px;white-space:nowrap}
+.app .cb2{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 10px;border-radius:8px;box-shadow:inset 0 0 0 1px rgba(11,18,32,.28);font-size:12.5px;font-weight:500}
+.app .cb2.s{background:var(--on-coach);color:#FBBF24;box-shadow:none}
+.app .acts .why{margin-left:auto;font-size:12px;opacity:.75}
+.app .trigger{margin:0 16px;padding:10px 16px 12px;background:var(--surface);box-shadow:var(--rg);border-radius:0 0 12px 12px}
+.app .tk{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted);white-space:nowrap}
+.app .tk b{color:var(--coach);font-weight:600;letter-spacing:.05em;text-transform:uppercase;font-size:11px}
+.app .jl{margin-left:auto;color:var(--primary);display:flex;align-items:center;gap:4px;font-weight:500}
+.app .trigger p{margin-top:3px;font-size:15px;line-height:22px}
+.app .queued{margin-top:14px;border:1px dashed var(--line2);border-radius:12px;padding:9px 14px;display:flex;gap:12px;align-items:center}
+.app .queued p{font-size:13.5px;line-height:20px}
+.app .hist{margin-top:auto}
+.app .hist .cap{display:flex;justify-content:space-between;margin-bottom:4px}
+.app .hrow{display:grid;grid-template-columns:44px 132px 1fr auto;gap:10px;align-items:center;height:30px;border-top:1px solid var(--line);font-size:13px;white-space:nowrap}
+.app .hrow .mono{font-size:11.5px;color:var(--muted)}
+.app .hrow .k{color:var(--muted);font-size:12px}
+.app .hrow .u{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ok)}
+.app .timer{background:var(--s2);box-shadow:var(--rg);border-radius:16px;padding:12px 16px 14px}
+.app .tl{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
+.app .tv{font:500 40px/1 var(--mono);letter-spacing:-.02em;margin-top:6px}
+.app .tv span{font-size:16px;color:var(--muted);letter-spacing:0;margin-left:8px}
+.app .tbar{height:4px;border-radius:2px;background:var(--s3);margin-top:12px;overflow:hidden}
+.app .tbar i{display:block;height:100%;width:48%;background:var(--ink)}
+.app .rh{display:flex;align-items:baseline;justify-content:space-between}
+.app .rh b{font-size:15px;font-weight:600}
+.app .rh .mono{font-size:13px;color:var(--muted)}
+.app .rh strong{font-size:20px;color:var(--ink);font-weight:600}
+.app .legend{display:flex;gap:14px;margin-top:2px;font-size:11.5px;color:var(--muted)}
+.app .legend span{display:flex;align-items:center;gap:6px}
+.app .rr{padding:7px 0 6px;border-top:1px solid var(--line)}
+.app .rr:first-child{border-top:0;padding-top:0}
+.app .rt{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;line-height:18px}
+.app .rt .pts{margin-left:auto;font:600 13px var(--mono)}
+.app .rt em{font-style:normal;color:var(--muted);font-weight:400}
+.app .rr .bar{margin-top:6px}
+.app .rs{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:12px;line-height:16px;color:var(--muted);white-space:nowrap}
+.app .rs.ok{color:var(--ok)}.app .rs.rk{color:var(--risk)}
+.app .goal{margin-top:auto;border-radius:12px;background:var(--s2);box-shadow:var(--rg);padding:9px 14px 10px}
+.app .goal p{font-size:12.5px;line-height:18px;white-space:nowrap}
+.app .gl{display:grid;grid-template-columns:1fr 1fr;gap:2px 10px;margin-top:6px}
+.app .gl span{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);line-height:18px}
+.app .gl .y{color:var(--ink)}.app .gl .y .ck{color:var(--ok)}
+.app .lvf{height:76px;flex:none;border-top:1px solid var(--line);background:var(--surface);display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 20px}
+.app .ptt{display:flex;align-items:center;gap:10px;height:44px;padding:0 16px;border-radius:10px;background:var(--primary);color:#fff;font-size:14px;font-weight:600}
+.app .ptt kbd{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.3);color:#fff}
+.app .ib{display:flex;align-items:center;gap:6px;height:40px;padding:0 12px;border-radius:10px;box-shadow:var(--rg);font-size:13px}
+.app .tg{display:flex;padding:3px;border-radius:10px;background:var(--s2);box-shadow:var(--rg)}
+.app .tg span{display:flex;align-items:center;gap:6px;height:30px;padding:0 14px;border-radius:7px;font-size:13px;color:var(--muted)}
+.app .tg .on{background:var(--s3);color:var(--ink);box-shadow:0 0 0 1px var(--line2)}
+.app .tg .on i{width:7px;height:7px;border-radius:50%;background:var(--coach)}
+.app .end{display:flex;align-items:center;gap:8px;height:40px;padding:0 16px;border-radius:10px;box-shadow:inset 0 0 0 1.5px var(--risk);color:var(--risk);font-size:14px;font-weight:600}
+/* library */
+.app .lb,.app .db{display:flex}
+.app .rail{width:56px;flex:none;background:var(--surface);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:6px}
+.app .rail .logo{margin-bottom:10px}
+.app .ri{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;color:var(--muted);position:relative}
+.app .ri.on{background:var(--pri-soft);color:var(--primary)}
+.app .ri.nd:after{content:"";position:absolute;top:7px;right:7px;width:7px;height:7px;border-radius:50%;background:var(--ai);box-shadow:0 0 0 2px var(--surface)}
+.app .rail .sp{flex:1}
+.app .lbm{flex:1;display:flex;flex-direction:column;min-width:0}
+.app .lbh{height:64px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 24px 0 20px}
+.app .lbh h1{font-size:20px;font-weight:600;letter-spacing:-.02em;line-height:24px}
+.app .lbh p{font-size:12.5px;color:var(--muted);line-height:18px}
+.app .search{display:flex;align-items:center;gap:8px;width:250px;height:34px;padding:0 8px 0 10px;border-radius:10px;background:var(--surface);box-shadow:var(--rg);font-size:13px;color:var(--muted)}
+.app .search kbd{margin-left:auto}
+.app .jobs{height:42px;flex:none;display:flex;gap:2px;padding:0 20px;border-bottom:1px solid var(--line)}
+.app .jt{display:flex;align-items:center;gap:6px;padding:0 10px;font-size:13px;font-weight:500;color:var(--muted);white-space:nowrap}
+.app .jt .mono{font-size:11px;font-weight:400}
+.app .jt.on{color:var(--ink);box-shadow:inset 0 -2px 0 var(--ink)}
+.app .lbc{flex:1;display:flex;min-height:0}
+.app .facets{width:192px;flex:none;padding:14px 0 14px 20px;display:flex;flex-direction:column;gap:14px}
+.app .fh{display:flex;justify-content:space-between;font-size:13px;font-weight:600}
+.app .fh span{font-size:12px;font-weight:500;color:var(--primary)}
+.app .fg .cap{margin-bottom:5px}
+.app .fo{display:flex;align-items:center;gap:8px;height:24px;font-size:13px}
+.app .fo .mono{margin-left:auto;font-size:11px;color:var(--muted)}
+.app .cb{width:15px;height:15px;border-radius:4px;box-shadow:inset 0 0 0 1px var(--line2);background:var(--surface);flex:none;display:grid;place-items:center;color:#fff}
+.app .cb.on{background:var(--primary);box-shadow:none}
+.app .cb .ck{width:8px;height:4.5px;border-width:2px;transform:translateY(-1px) rotate(-45deg)}
+.app .ochips{display:flex;flex-wrap:wrap;gap:5px}
+.app .oc{height:24px;padding:0 8px;border-radius:6px;font-size:12px;line-height:24px;box-shadow:var(--rg);background:var(--surface)}
+.app .oc.on{background:var(--ink);color:#fff;box-shadow:none}
+.app .res{flex:1;padding:12px 20px 0 16px;display:flex;flex-direction:column;min-width:0}
+.app .rbar{display:flex;align-items:center;gap:10px;height:32px;white-space:nowrap}
+.app .rbar b{font-size:14px;font-weight:600}
+.app .rbar .muted{font-size:12.5px}
+.app .tgl{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)}
+.app .tgl i{width:26px;height:16px;border-radius:99px;background:var(--primary);position:relative}
+.app .tgl i:after{content:"";position:absolute;right:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff}
+.app .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px}
+.app .pc{padding:12px;height:150px;display:flex;flex-direction:column;white-space:nowrap}
+.app .pct{display:flex;gap:10px}
+.app .pcn{flex:1;min-width:0}
+.app .pcnr{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.app .pcnr b{font-size:14px;font-weight:600;line-height:18px}
+.app .pcr{display:block;font-size:12.5px;color:var(--muted);line-height:18px}
+.app .diff{display:inline-flex;align-items:flex-end;height:12px}
+.app .diff:before{content:"";width:28px;height:12px;background:linear-gradient(90deg,var(--ink) calc(var(--l)*6px),var(--s3) 0);mask:linear-gradient(#000 0 0) 0 100%/4px 5px,linear-gradient(#000 0 0) 6px 100%/4px 7px,linear-gradient(#000 0 0) 12px 100%/4px 9px,linear-gradient(#000 0 0) 18px 100%/4px 11px,linear-gradient(#000 0 0) 24px 100%/4px 12px;mask-repeat:no-repeat}
+.app .diff em{font-style:normal;font-size:11px;color:var(--muted);margin-left:4px;line-height:12px}
+.app .pcc{font-size:12.5px;margin-top:8px;line-height:16px}
+.app .pco{display:flex;gap:4px;margin-top:8px}
+.app .job,.app .ob{height:20px;padding:0 7px;border-radius:6px;font-size:11.5px;line-height:20px}
+.app .job{background:var(--s2);font-weight:500}
+.app .ob{box-shadow:var(--rg);color:var(--muted)}
+.app .ob.m{color:var(--ink);box-shadow:inset 0 0 0 1px var(--line2)}
+.app .pca{display:flex;align-items:center;gap:6px;margin-top:auto}
+.app .bdg{display:inline-flex;align-items:center;gap:7px;margin-left:auto;font-size:11.5px;font-weight:500;color:var(--ok)}
+.app .bdg.dr{color:var(--muted);height:20px;padding:0 7px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--line2)}
+.app .sheet{width:456px;flex:none;background:var(--surface);border-left:1px solid var(--line);display:flex;flex-direction:column;box-shadow:-24px 0 48px -32px rgba(11,18,32,.22)}
+.app .shh{display:flex;align-items:center;gap:12px;padding:14px 20px 0}
+.app .shh .ic{width:34px;height:34px;border-radius:10px;background:var(--ai-soft);color:var(--ai);display:grid;place-items:center}
+.app .shh b,.app .dh b{display:block;font-size:16px;font-weight:600;line-height:20px}
+.app .shh span{font-size:12px;color:var(--muted);line-height:16px}
+.app .shh .x{margin-left:auto;color:var(--muted)}
+.app .steps{display:flex;align-items:center;gap:8px;padding:14px 20px 12px;border-bottom:1px solid var(--line)}
+.app .st{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);white-space:nowrap}
+.app .st i{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font:600 11px/1 var(--mono);box-shadow:inset 0 0 0 1px var(--line2)}
+.app .st.d{color:var(--ink)}.app .st.d i{background:var(--ok);color:#fff;box-shadow:none}
+.app .st.d .ck{width:8px;height:4.5px;border-width:2px;transform:translateY(-1px) rotate(-45deg)}
+.app .st.n{color:var(--ink);font-weight:600}.app .st.n i{background:var(--primary);color:#fff;box-shadow:0 0 0 3px var(--pri-soft)}
+.app .steps b{flex:1;height:1px;background:var(--line2)}
+.app .steps b.d{background:var(--ok)}
+.app .shb{flex:1;padding:12px 20px 0;display:flex;flex-direction:column;min-height:0}
+.app .sech{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+.app .sech .jl{font-size:12px}
+.app .srcs{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.app .src{display:flex;align-items:center;gap:7px;height:30px;padding:0 8px;border-radius:8px;background:var(--s2);box-shadow:var(--rg);font-size:12px;white-space:nowrap;overflow:hidden}
+.app .src em{font:600 10px/16px var(--mono);padding:0 4px;border-radius:4px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--line2);color:var(--muted)}
+.app .draft{margin-top:12px;padding:12px 14px 4px}
+.app .dh{display:flex;align-items:center;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.app .dh b{font-size:14px;line-height:18px}
+.app .dh .r{font-size:12px;color:var(--muted);line-height:16px}
+.app .dh .ai{margin-left:auto}
+.app .fld{padding:7px 0;border-bottom:1px solid var(--line)}
+.app .fld:last-child{border-bottom:0}
+.app .fl{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);line-height:18px}
+.app .pv{margin-left:auto;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:5px;background:var(--ai-fill);color:#fff;font:500 10.5px/1 var(--mono);letter-spacing:0;text-transform:none;white-space:nowrap}
+.app .pv.on{box-shadow:0 0 0 2px var(--surface),0 0 0 3.5px var(--ai)}
+.app .pv.sg{background:none;color:var(--ai);box-shadow:inset 0 0 0 1px var(--ai)}
+.app .fld p{font-size:13.5px;line-height:19px;margin-top:1px}
+.app .fld.sel{margin:0 -14px;padding:7px 14px 9px;background:var(--ai-soft)}
+.app .srcx{margin-top:7px;border-radius:10px;background:var(--surface);box-shadow:inset 0 0 0 1px #DCCDFB;padding:7px 10px 8px}
+.app .sxh{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);line-height:16px}
+.app .srcx p{font-size:12.5px;line-height:18px;color:var(--muted);margin-top:3px}
+.app .srcx mark{background:#E9DDFE;color:var(--ink);box-shadow:inset 0 -1.5px 0 var(--ai);padding:0 1px}
+.app .objs{display:flex;flex-direction:column;gap:4px;margin-top:3px}
+.app .obj{display:flex;align-items:center;gap:6px;font-size:13px;line-height:18px;white-space:nowrap}
+.app .obj.str{color:var(--muted)}
+.app .caret{width:7px;height:14px;background:var(--ai);border-radius:1px}
+.app .shf{display:flex;align-items:center;gap:8px;padding:12px 20px;border-top:1px solid var(--line);white-space:nowrap}
+.app .shf .muted{font-size:12px;margin-right:auto}
+/* debrief */
+.app .sb{width:224px;flex:none;background:var(--surface);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:14px 12px}
+.app .sbb{display:flex;align-items:center;gap:10px;padding:0 4px}
+.app .sbb b,.app .sbu b{display:block;font-size:14px;font-weight:600;line-height:18px}
+.app .sbb span,.app .sbu span{font-size:11.5px;color:var(--muted);line-height:14px}
+.app .sbs{display:flex;align-items:center;gap:8px;height:32px;margin:14px 0 6px;padding:0 6px 0 10px;border-radius:10px;box-shadow:var(--rg);background:var(--canvas);font-size:13px;color:var(--muted)}
+.app .sbs kbd{margin-left:auto}
+.app .sbg{padding:10px 10px 4px}
+.app .sbi{display:flex;align-items:center;gap:10px;height:32px;padding:0 10px;border-radius:8px;font-size:13.5px}
+.app .sbi .i{color:var(--muted)}
+.app .sbi.on{background:var(--s2);font-weight:600}
+.app .sbi.on .i{color:var(--ink)}
+.app .sbi .n{margin-left:auto;font:11px var(--mono);color:var(--muted)}
+.app .sbi .bm{margin-left:auto;font-size:10.5px;padding:0 5px;border-radius:5px;box-shadow:inset 0 0 0 1px var(--line2);color:var(--muted);line-height:16px}
+.app .sbi.rc{height:28px;font-size:13px;color:var(--muted)}
+.app .sbi.rc .mono{margin-left:auto;font-size:12px;color:var(--ink)}
+.app .sbm{margin-top:auto;border-radius:12px;background:var(--s2);padding:10px 12px}
+.app .sbm div{display:flex;justify-content:space-between;font-size:12px;line-height:20px;color:var(--muted)}
+.app .sbm div span+span{font-family:var(--mono);color:var(--ink);font-size:11.5px}
+.app .sbu{display:flex;align-items:center;gap:10px;padding:12px 4px 0}
+.app .sbu b{font-size:13px}
+.app .dbm{flex:1;display:flex;flex-direction:column;padding:0 24px 12px;min-width:0}
+.app .dbt{height:56px;flex:none;display:flex;align-items:center;gap:8px}
+.app .crumb{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-right:auto;white-space:nowrap}
+.app .crumb b{color:var(--ink);font-weight:500}
+.app .hero{display:flex;height:166px;flex:none;padding:18px 22px}
+.app .hs{width:286px;flex:none;padding-right:22px;border-right:1px solid var(--line);display:flex;flex-direction:column;white-space:nowrap}
+.app .hv{display:flex;align-items:baseline;gap:6px;margin-top:2px}
+.app .hv .big{font:500 56px/1 var(--mono);letter-spacing:-.04em}
+.app .hv .of{font:500 16px var(--mono);color:var(--muted)}
+.app .grade{margin-left:6px;align-self:center;height:26px;padding:0 9px;border-radius:7px;background:var(--pri-soft);color:var(--primary);font-size:13px;font-weight:600;line-height:26px}
+.app .gp{align-self:flex-start;display:inline-flex;align-items:center;gap:7px;height:24px;margin-top:10px;padding:0 10px;border-radius:99px;background:var(--ok-soft);color:var(--ok);font-size:12px;font-weight:600}
+.app .hm{margin-top:auto;display:flex;align-items:center;gap:4px;font-size:12.5px;color:var(--muted)}
+.app .hm b{font-family:var(--mono);color:var(--ok);font-weight:600}
+.app .hm .mono{margin-left:auto;font-size:11.5px}
+.app .up{display:inline-block;border-bottom:6px solid var(--ok);border-left:4.5px solid transparent;border-right:4.5px solid transparent;margin-right:2px}
+.app .htl{flex:1;padding-left:22px;display:flex;flex-direction:column;min-width:0}
+.app .htlh{display:flex;align-items:center;gap:10px;white-space:nowrap}
+.app .htlh b{font-size:14px;font-weight:600}
+.app .lg{display:flex;gap:10px;margin-left:auto;font-size:11.5px;color:var(--muted)}
+.app .lg span{display:flex;align-items:center;gap:4px}
+.app .lg i{width:8px;height:8px;border-radius:2px;background:var(--c)}
+.app .tgrid{display:grid;grid-template-columns:repeat(20,1fr);gap:4px}
+.app .cuerow{margin-top:10px;height:12px}
+.app .cuerow i{justify-self:center;width:8px;height:8px;background:var(--coach);transform:rotate(45deg);margin-top:2px;border-radius:1px}
+.app .cuerow i.x{background:none;box-shadow:inset 0 0 0 1.5px var(--coach)}
+.app .trk{margin-top:4px}
+.app .trk i{height:30px;border-radius:4px;background:var(--c)}
+.app .trk .p{--c:var(--s3)}
+.app .trk .m{background:var(--risk-soft);box-shadow:inset 0 0 0 1.5px var(--risk),0 0 0 2px var(--surface),0 0 0 3.5px var(--ink)}
+.app .tax{margin-top:5px;font:11px/14px var(--mono);color:var(--muted);white-space:nowrap}
+.app .tsel{margin-top:auto;display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border-radius:8px;background:var(--s2);font-size:12.5px;white-space:nowrap;overflow:hidden}
+.app .tsel .mono{font-size:11.5px;color:var(--muted)}
+.app .tsel .mk{color:var(--risk);font-weight:600;font-size:12px}
+.app .dcols{flex:1;display:grid;grid-template-columns:392px 1fr;gap:16px;margin-top:16px;min-height:0}
+.app .scc{padding:14px 18px;display:flex;flex-direction:column}
+.app .cardh{display:flex;align-items:center;gap:8px}
+.app .cardh b{font-size:15px;font-weight:600}
+.app .cardh .muted{font-size:12px}
+.app .scr{padding:8px 0 7px;border-top:1px solid var(--line)}
+.app .cardh+.scr{margin-top:8px}
+.app .sct{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:500;line-height:18px;white-space:nowrap}
+.app .dot{width:8px;height:8px;border-radius:50%;background:var(--c);flex:none}
+.app .sct .v{margin-left:auto;font:600 15px var(--mono)}
+.app .wk{font-size:10.5px;font-weight:600;color:var(--risk);background:var(--risk-soft);padding:0 6px;border-radius:5px;line-height:17px}
+.app .scr .bar{margin-top:7px}
+.app .scs{display:flex;align-items:center;gap:6px;margin-top:5px;font-size:12px;color:var(--muted);line-height:16px;white-space:nowrap}
+.app .scs .ok{color:var(--ok);display:flex;align-items:center;gap:7px;font-weight:500}
+.app .scs .pr{color:var(--ink);display:flex;align-items:center;gap:6px;font-weight:500}
+.app .sctot{margin-top:auto;padding-top:9px;border-top:1px solid var(--line);display:flex;justify-content:space-between;font:11.5px/16px var(--mono);color:var(--muted)}
+.app .sctot b{color:var(--ink);font-weight:600}
+.app .evc{padding:0 18px 12px;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.app .tabs{display:flex;align-items:center;gap:4px;height:46px;border-bottom:1px solid var(--line);flex:none}
+.app .tab{display:flex;align-items:center;gap:6px;height:46px;padding:0 10px;font-size:13.5px;font-weight:500;color:var(--muted)}
+.app .tab.on{color:var(--ink);box-shadow:inset 0 -2px 0 var(--ink)}
+.app .tab .mono{font-size:11px}
+.app .tabs .sel{margin-left:auto;display:flex;align-items:center;gap:5px;height:28px;padding:0 8px 0 10px;border-radius:8px;box-shadow:var(--rg);font-size:12.5px}
+.app .ev{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.app .ev>i{width:3px;border-radius:2px;background:var(--c);flex:none}
+.app .evb{flex:1;min-width:0}
+.app .evh{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;line-height:18px}
+.app .evs{font-size:11px;font-weight:600;padding:0 6px;border-radius:5px;line-height:17px}
+.app .evs.ms{background:var(--risk-soft);color:var(--risk)}
+.app .evs.cf{background:var(--ok-soft);color:var(--ok)}
+.app .evs.pr{box-shadow:inset 0 0 0 1px var(--line2);color:var(--muted)}
+.app .evh .jl{font:500 11.5px var(--mono)}
+.app .evq{font-size:14.5px;line-height:21px;margin-top:3px}
+.app .evq span{color:var(--muted);font-size:12.5px;margin-right:6px}
+.app .evr{font-size:12.5px;line-height:18px;color:var(--muted);margin-top:2px}
+.app .evm{margin-top:auto;display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);padding-top:8px}
+.app .nx{display:flex;align-items:center;gap:16px;height:66px;flex:none;margin-top:16px;padding:0 14px 0 16px;white-space:nowrap}
+.app .nxi{width:36px;height:36px;border-radius:10px;background:var(--risk-soft);color:var(--risk);display:grid;place-items:center;flex:none}
+.app .nxt p{font-size:14px;font-weight:600;line-height:19px}
+.app .nxt p span{font-weight:400;color:var(--muted)}
+.app .nxp{margin-left:auto;display:flex;align-items:center;gap:10px;padding:7px 7px 7px 9px;border-radius:12px;background:var(--s2);box-shadow:var(--rg)}
+.app .nxp .tile{width:32px;height:32px;font-size:12px}
+.app .nxp b{display:block;font-size:13px;font-weight:600;line-height:17px}
+.app .nxp .r{font-size:11.5px;color:var(--muted);line-height:15px}
+.app .prov{display:flex;align-items:center;gap:8px;margin-top:10px;height:24px;flex:none;font-size:12px;color:var(--muted);white-space:nowrap}
+.app .prov .rv{display:flex;align-items:center;gap:6px;margin-right:auto}
+/* mobile */
+.app .mst{height:44px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 26px 0 30px;font-size:15px;font-weight:600}
+.app .sig{display:flex;align-items:flex-end;gap:2px;height:11px}
+.app .sig i{width:3px;background:var(--ink);border-radius:1px}
+.app .bat{width:24px;height:12px;border-radius:3px;box-shadow:inset 0 0 0 1px var(--muted);padding:2px}
+.app .bat i{display:block;height:100%;width:72%;background:var(--ink);border-radius:1px}
+.app .mh{height:52px;flex:none;display:flex;align-items:center;gap:8px;padding:0 16px 0 8px}
+.app .b44{width:44px;height:44px;display:grid;place-items:center;flex:none}
+.app .mht b{display:block;font-size:15px;font-weight:600;line-height:19px}
+.app .mht span{font-size:12px;color:var(--muted);line-height:16px}
+.app .mtm{margin-left:auto;display:flex;align-items:center;gap:7px;height:32px;padding:0 10px;border-radius:10px;background:var(--s2);font:500 16px var(--mono)}
+.app .mtm i{width:7px;height:7px;border-radius:50%;background:var(--risk)}
+.app .mtt{padding:4px 16px 0;flex:none}
+.app .mtt .ttb{gap:4px;margin-top:0}
+.app .mtt .seg i{height:5px}
+.app .mttl{display:flex;justify-content:space-between;margin-top:7px;font-size:12px;line-height:16px;color:var(--muted)}
+.app .mttl b{color:var(--coach);font-weight:600}
+.app .mp{margin:10px 16px 0;height:64px;flex:none;display:flex;align-items:center;gap:12px;padding:0 14px 0 12px;border-radius:14px;background:var(--surface);box-shadow:var(--rg)}
+.app .mp .orb{width:40px;height:40px;margin:0}
+.app .mp .orb:before,.app .mp .orb:after{inset:-4px}
+.app .mp b{display:block;font-size:15px;font-weight:600;line-height:19px}
+.app .mp .r{font-size:12.5px;color:var(--muted);line-height:17px}
+.app .mcue{margin:12px 16px 0;flex:none}
+.app .mcue .cue{margin-top:0;padding:14px 16px}
+.app .mcue .cueh{font-size:18px;line-height:24px;margin-top:6px}
+.app .mcue .say{font-size:15px;line-height:22px;margin-top:10px;padding:8px 12px 9px}
+.app .sx{display:flex;align-items:center;gap:5px;font-size:12px}
+.app .mcue .trigger{margin:0 14px;padding:8px 14px 10px}
+.app .mcue .trigger p{font-size:14.5px;line-height:21px}
+.app .mtx{padding:14px 16px 0;display:flex;flex-direction:column;gap:10px;flex:none}
+.app .mtx .turn p{font-size:16px;line-height:24px}
+.app .mtx .who{font-size:12.5px}
+.app .ftb{display:flex;align-items:center;justify-content:center;gap:6px;height:36px;border-radius:10px;box-shadow:var(--rg);font-size:13.5px;font-weight:500}
+.app .msh{margin-top:auto;background:var(--surface);border-radius:20px 20px 0 0;box-shadow:inset 0 1px 0 var(--line);padding:8px 16px 0;flex:none}
+.app .grab{width:36px;height:4px;border-radius:2px;background:var(--line2);margin:0 auto}
+.app .mrh{display:flex;align-items:center;justify-content:space-between;margin-top:8px;white-space:nowrap}
+.app .mrh b{font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:6px}
+.app .mrh .mono{font-size:12.5px;color:var(--muted)}
+.app .mrh strong{font-size:16px;color:var(--ink)}
+.app .mrb{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:8px}
+.app .mrb .bar{height:6px}
+.app .mrb span{display:block;margin-top:4px;font-size:11px;color:var(--muted);line-height:14px;white-space:nowrap}
+.app .mrb .rk{color:var(--risk)}
+.app .mctl{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;margin-top:12px;padding-bottom:6px}
+.app .mbtn{display:flex;flex-direction:column;align-items:center;gap:5px;font-size:11.5px;color:var(--muted)}
+.app .mbtn .c{width:52px;height:52px;border-radius:50%;background:var(--s2);box-shadow:var(--rg);display:grid;place-items:center;color:var(--ink)}
+.app .pttm{width:80px;height:80px;border-radius:50%;background:var(--primary);color:#fff;display:grid;place-items:center;box-shadow:0 0 0 6px var(--pri-soft)}
+.app .pttm .i{width:30px;height:30px}
+.app .mend{justify-self:end;display:flex;align-items:center;gap:6px;height:44px;padding:0 6px;font-size:14px;font-weight:600;color:var(--risk)}
+.app .home{height:22px;display:grid;place-items:center}
+.app .home i{width:134px;height:5px;border-radius:3px;background:var(--ink)}
+</style>
+<div class="app">
+
+<section class="screen dark lv" data-screen="live">
+<header class="lvt">
+<div class="row g10">
+<span class="logo"><svg class="i" viewBox="0 0 24 24"><path d="M20 11.5a8 8 0 0 1-11.6 7.1L4 20l1.4-4.4A8 8 0 1 1 20 11.5z"/><path class="fc" d="M12 7c.3 2.1 1.3 3.1 3.4 3.4-2.1.3-3.1 1.3-3.4 3.4-.3-2.1-1.3-3.1-3.4-3.4 2.1-.3 3.1-1.3 3.4-3.4z"/></svg></span>
+<b>Inbound lead: leaking water heater</b><span class="vsep"></span>
+<span class="tag">Home services</span><span class="tag">Medium</span><span class="tag">Attempt 4</span><span class="tag">Peak Plumbing script</span>
+</div>
+<div class="row g12">
+<span class="rec"><i></i>Recording · consent on file</span>
+<span class="ai">Voice · gpt-realtime · 310 ms</span>
+<span class="focus"><svg class="i s14" viewBox="0 0 24 24"><path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="m14 10 7-7"/><path d="m3 21 7-7"/></svg>Focus mode<kbd>Esc</kbd></span>
+</div>
+</header>
+<div class="lvb">
+<aside class="lvl-l">
+<div class="persona">
+<div class="orb"></div>
+<div>
+<div class="pname">Dana Whitfield</div>
+<div class="prole">Homeowner · inbound call</div>
+<div class="pstate"><span class="lvl"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>Silent · waiting on you</div>
+</div>
+</div>
+<div class="pfacts"><span>Unit about 11 yrs</span><span>Puddle at tank base</span><span>Wary of fees</span></div>
+<div class="lh"><span class="cap">Transcript</span><span class="mono">6 of 11 turns · live</span></div>
+<div class="tx">
+<div class="turn rep"><div class="who"><b>Sam (you)</b><span class="t">01:02</span><span class="crit" style="--c:var(--c2)"><i></i>Discovery</span></div><p>Yes, turn the cold supply valve on top clockwise until it stops. That slows the leak while we get someone out.</p></div>
+<div class="turn"><div class="who"><b>Dana</b><span class="t">01:21</span></div><p>Okay, it's off. It's still dripping a little.</p></div>
+<div class="turn rep"><div class="who"><b>Sam (you)</b><span class="t">01:33</span><span class="crit" style="--c:var(--c3)"><i></i>Info capture</span></div><p>That's normal for a bit. Can I get your name and the best number in case we get cut off?</p></div>
+<div class="turn"><div class="who"><b>Dana</b><span class="t">01:44</span></div><p>Dana Whitfield. It's 555-0142.</p></div>
+<div class="turn rep"><div class="who"><b>Sam (you)</b><span class="t">02:02</span><span class="crit hol" style="--c:var(--c3)"><i></i>Info capture · provisional</span></div><p>Thanks, Dana. And what's the service address?</p></div>
+<div class="turn now"><div class="who"><b>Dana</b><span class="t">02:14</span><span class="cuef">Cue fired</span></div><p>418 Alder Court. <mark class="trig">What does a visit cost? Nobody mentioned a fee.</mark></p></div>
+</div>
+<div class="listen"><svg class="i" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/></svg>Listening for you<span class="lvl"><i style="height:5px"></i><i style="height:9px"></i><i style="height:6px"></i><i style="height:12px"></i><i style="height:7px"></i><i style="height:4px"></i></span><span class="mono muted ml" style="font-size:11.5px">Hold Space</span></div>
+</aside>
+
+<main class="lvm">
+<div class="ch">
+<span class="cmark"><svg class="i s20" viewBox="0 0 24 24"><path d="M20 11.5a8 8 0 0 1-11.6 7.1L4 20l1.4-4.4A8 8 0 1 1 20 11.5z"/><path class="fc" d="M12 7c.3 2.1 1.3 3.1 3.4 3.4-2.1.3-3.1 1.3-3.4 3.4-.3-2.1-1.3-3.1-3.4-3.4 2.1-.3 3.1-1.3 3.4-3.4z"/></svg></span>
+<div><b>Coach</b><span class="chs"><svg class="i s12" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Visual only. Dana can't hear it.</span></div>
+<span class="ai ml">gpt-4.1-mini · 1.4 s · 1,284 tok</span>
+</div>
+<div class="tt">
+<div class="tth"><span class="cap">Talk track</span><span class="mono">Step 5 of 6</span></div>
+<div class="ttb">
+<div class="seg d"><i></i><span>Greet</span></div>
+<div class="seg d"><i></i><span>Urgency</span></div>
+<div class="seg d"><i></i><span>Diagnose</span></div>
+<div class="seg d"><i></i><span>Contact</span></div>
+<div class="seg n"><i></i><span>Window &amp; fee</span></div>
+<div class="seg"><i></i><span>Confirm</span></div>
+</div>
+</div>
+<div class="cue">
+<div class="cuek"><svg class="i" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>Objection alert · Price<span class="mono">02:16 · 1.4 s after her turn</span></div>
+<div class="cueh">She asked what the visit costs. Give the fee now, before you offer a time.</div>
+<div class="say"><em>Say something like</em>“Fair question. It's an $89 diagnostic visit, and it comes off the repair if you go ahead. I have a tech free 2 to 4 today.”</div>
+<div class="acts"><span class="cb2 s"><i class="ck"></i>Used it</span><span class="cb2">Shorter line</span><span class="cb2">Snooze 30 s</span><span class="why">Pricing · 15% · no evidence yet</span></div>
+</div>
+<div class="trigger">
+<div class="tk"><b>Trigger quote</b>Dana · T11 · 02:14<span class="jl">Jump to line<i class="ar"></i></span></div>
+<p>“What does a visit cost? Nobody mentioned a fee.”</p>
+</div>
+<div class="queued">
+<svg class="i" viewBox="0 0 24 24" style="color:var(--muted)"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+<div><div class="cap">Queued · Next best question</div><p>Then offer today's 2 to 4 pm window and read the address back.</p></div>
+</div>
+<div class="hist">
+<div class="cap"><span>Earlier cues</span><span class="mono" style="letter-spacing:0;text-transform:none">3 of 3 used</span></div>
+<div class="hrow"><span class="mono">01:22</span><span class="k">Next best question</span><span>Ask for her name and a callback number</span><span class="u"><i class="ck"></i>T8</span></div>
+<div class="hrow"><span class="mono">00:47</span><span class="k">Step change</span><span>Walk her through the cold-supply shut-off</span><span class="u"><i class="ck"></i>T6</span></div>
+<div class="hrow"><span class="mono">00:21</span><span class="k">Next best question</span><span>Ask the unit's age and where it leaks</span><span class="u"><i class="ck"></i>T4</span></div>
+</div>
+</main>
+
+<aside class="lvr">
+<div class="timer">
+<div class="tl"><span>Elapsed · target 5:00</span><span>On pace</span></div>
+<div class="tv">02:24<span>/ 5:00</span></div>
+<div class="tbar"><i></i></div>
+</div>
+<div>
+<div class="rh"><b>Live rubric</b><span class="mono"><strong>49</strong> / 100</span></div>
+<div class="legend"><span><i class="sw"></i>Confirmed by quote</span><span><i class="sw h"></i>Provisional</span></div>
+</div>
+<div>
+<div class="rr" style="--c:var(--c1)"><div class="rt">Greeting &amp; rapport<span class="w">15%</span><span class="pts">13.0<em>/15</em></span></div><div class="bar"><i class="f" style="width:87%"></i></div><div class="rs ok"><i class="ck"></i>Confirmed · T2</div></div>
+<div class="rr" style="--c:var(--c2)"><div class="rt">Discovery questions<span class="w">30%</span><span class="pts">24.0<em>/30</em></span></div><div class="bar"><i class="f" style="width:72%"></i><i class="p" style="left:72%;width:8%"></i></div><div class="rs ok"><i class="ck"></i>Confirmed · T4, T6</div></div>
+<div class="rr" style="--c:var(--c3)"><div class="rt">Information capture<span class="w">20%</span><span class="pts">12.0<em>/20</em></span></div><div class="bar"><i class="f" style="width:45%"></i><i class="p" style="left:45%;width:15%"></i></div><div class="rs">Name, phone confirmed · address provisional</div></div>
+<div class="rr" style="--c:var(--c4)"><div class="rt">Pricing transparency<span class="w">15%</span><span class="pts">0.0<em>/15</em></span></div><div class="bar rk"></div><div class="rs rk"><i class="oo"></i>At risk · fee asked at T11, not answered</div></div>
+<div class="rr" style="--c:var(--c5)"><div class="rt">Booking &amp; next steps<span class="w">20%</span><span class="pts">0.0<em>/20</em></span></div><div class="bar"></div><div class="rs">No evidence yet</div></div>
+</div>
+<div class="goal">
+<div class="cap">Goal</div>
+<p>Same or next-day visit, full contact details.</p>
+<div class="gl">
+<span class="y"><i class="ck"></i>Name</span><span class="y"><i class="ck"></i>Callback number</span>
+<span class="y"><i class="ck"></i>Service address</span><span><i class="oo"></i>Fee explained</span>
+<span><i class="oo"></i>Window booked</span>
+</div>
+</div>
+</aside>
+</div>
+<footer class="lvf">
+<div class="row g8">
+<span class="ptt"><svg class="i s18" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/></svg>Hold <kbd>Space</kbd> to talk</span>
+<span class="ib"><svg class="i" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4M3 3l18 18"/></svg>Mute</span>
+<span class="ib"><svg class="i" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M10 13h4"/></svg>Type instead</span>
+</div>
+<div class="row g10"><span class="muted" style="font-size:13px">Coach</span><div class="tg"><span>Silent</span><span>Light</span><span class="on"><i></i>Full</span></div></div>
+<div class="row g12" style="justify-content:flex-end">
+<span class="mono muted" style="font-size:12px">4 cues · 3 used</span>
+<span class="end"><svg class="i" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/></svg>End and grade</span>
+</div>
+</footer>
+</section>
+
+<section class="screen lb" data-screen="library">
+<nav class="rail">
+<span class="logo"><svg class="i" viewBox="0 0 24 24"><path d="M20 11.5a8 8 0 0 1-11.6 7.1L4 20l1.4-4.4A8 8 0 1 1 20 11.5z"/><path class="fc" d="M12 7c.3 2.1 1.3 3.1 3.4 3.4-2.1.3-3.1 1.3-3.4 3.4-.3-2.1-1.3-3.1-3.4-3.4 2.1-.3 3.1-1.3 3.4-3.4z"/></svg></span>
+<span class="ri"><svg class="i s18" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg></span>
+<span class="ri on"><svg class="i s18" viewBox="0 0 24 24"><path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/></svg></span>
+<span class="ri nd"><svg class="i s18" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg></span>
+<span class="ri"><svg class="i s18" viewBox="0 0 24 24"><path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/></svg></span>
+<span class="ri"><svg class="i s18" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></svg></span>
+<span class="sp"></span>
+<span class="ri"><svg class="i s18" viewBox="0 0 24 24"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg></span>
+<span class="av">SR</span>
+</nav>
+<div class="lbm">
+<header class="lbh">
+<div><h1>Library</h1><p>120 personas across 15 sales jobs · 40 reviewed, 80 drafts</p></div>
+<div class="row g8">
+<span class="search"><svg class="i s14" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Search personas and calls<kbd>⌘K</kbd></span>
+<span class="btn sec"><svg class="i s14" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>Import YAML</span>
+</div>
+</header>
+<div class="jobs">
+<span class="jt on">All jobs<span class="mono">120</span></span>
+<span class="jt">SDR cold call<span class="mono">9</span></span>
+<span class="jt">AE discovery<span class="mono">11</span></span>
+<span class="jt">SaaS<span class="mono">10</span></span>
+<span class="jt">Insurance<span class="mono">8</span></span>
+<span class="jt">Mortgage<span class="mono">7</span></span>
+<span class="jt">10 more jobs<svg class="i s14" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></span>
+</div>
+<div class="lbc">
+<aside class="facets">
+<div class="fh">Filters<span>Clear all</span></div>
+<div class="fg"><div class="cap">Industry</div>
+<div class="fo"><span class="cb"></span>Logistics<span class="mono">9</span></div>
+<div class="fo"><span class="cb"></span>Software &amp; SaaS<span class="mono">23</span></div>
+<div class="fo"><span class="cb"></span>Financial services<span class="mono">19</span></div>
+<div class="fo"><span class="cb"></span>Healthcare<span class="mono">11</span></div>
+<div class="fo"><span class="cb"></span>Home &amp; energy<span class="mono">18</span></div>
+<div class="fo"><span class="cb"></span>Automotive<span class="mono">8</span></div>
+<div class="fo"><span class="cb"></span>Real estate<span class="mono">9</span></div>
+</div>
+<div class="fg"><div class="cap">Difficulty</div>
+<div class="fo"><span class="cb"></span>Easy<span class="mono">31</span></div>
+<div class="fo"><span class="cb on"><i class="ck"></i></span>Medium<span class="mono">52</span></div>
+<div class="fo"><span class="cb on"><i class="ck"></i></span>Hard<span class="mono">37</span></div>
+</div>
+<div class="fg"><div class="cap">Call type</div>
+<div class="fo"><span class="cb"></span>Cold outbound<span class="mono">26</span></div>
+<div class="fo"><span class="cb"></span>Inbound lead<span class="mono">14</span></div>
+<div class="fo"><span class="cb"></span>Discovery<span class="mono">22</span></div>
+<div class="fo"><span class="cb"></span>Renewal<span class="mono">15</span></div>
+<div class="fo"><span class="cb"></span>Negotiation<span class="mono">12</span></div>
+</div>
+<div class="fg"><div class="cap">Objection type</div>
+<div class="ochips"><span class="oc on">Price</span><span class="oc on">Status quo</span><span class="oc">Timing</span><span class="oc">Authority</span><span class="oc">Competitor</span><span class="oc">Trust</span></div>
+</div>
+</aside>
+<div class="res">
+<div class="rbar"><b>24 of 120 personas</b><span class="muted">Medium, Hard · Price, Status quo</span><span class="tgl ml"><i></i>Drafts</span><span class="btn sec sm"><svg class="i s14" viewBox="0 0 24 24"><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></svg>Most practised</span></div>
+<div class="grid">
+<div class="card pc"><div class="pct"><span class="tile" style="--tb:#E4EAF6;--tc:#2C4A87">MB</span><div class="pcn"><div class="pcnr"><b>Marcus Bell</b><span class="diff" style="--l:4"><em>Hard</em></span></div><span class="pcr">VP of Operations</span></div></div><div class="pcc">Ridgeline Freight · freight broker, 140 staff</div><div class="pco"><span class="job">SDR cold call</span><span class="ob m">Status quo</span><span class="ob">Timing</span></div><div class="pca"><span class="btn pri sm"><i class="pl"></i>Try now</span><span class="btn sec sm">Duplicate</span><span class="bdg"><i class="ck"></i>Reviewed</span></div></div>
+<div class="card pc"><div class="pct"><span class="tile" style="--tb:#E8E9FB;--tc:#3F44A8">EP</span><div class="pcn"><div class="pcnr"><b>Elaine Porter</b><span class="diff" style="--l:5"><em>Hard</em></span></div><span class="pcr">CFO, skeptical of new spend</span></div></div><div class="pcc">Northwind Analytics · Series C SaaS</div><div class="pco"><span class="job">AE discovery</span><span class="ob m">Price</span><span class="ob">Authority</span></div><div class="pca"><span class="btn pri sm"><i class="pl"></i>Try now</span><span class="btn sec sm">Duplicate</span><span class="bdg"><i class="ck"></i>Reviewed</span></div></div>
+<div class="card pc"><div class="pct"><span class="tile" style="--tb:#E2F2EF;--tc:#1F6B5E">LO</span><div class="pcn"><div class="pcnr"><b>Linda Ochoa</b><span class="diff" style="--l:3"><em>Medium</em></span></div><span class="pcr">Policyholder, auto and home</span></div></div><div class="pcc">Coastline Mutual · premium up 18%</div><div class="pco"><span class="job">Insurance renewal</span><span class="ob m">Price</span><span class="ob">Competitor</span></div><div class="pca"><span class="btn pri sm"><i class="pl"></i>Try now</span><span class="btn sec sm">Duplicate</span><span class="bdg"><i class="ck"></i>Reviewed</span></div></div>
+<div class="card pc"><div class="pct"><span class="tile" style="--tb:#E2F2EF;--tc:#1F6B5E">TB</span><div class="pcn"><div class="pcnr"><b>Tom Brandt</b><span class="diff" style="--l:3"><em>Medium</em></span></div><span class="pcr">Homeowner, 2022 loan at 6.9%</span></div></div><div class="pcc">Refinance inquiry · $412k balance</div><div class="pco"><span class="job">Mortgage refi</span><span class="ob m">Price</span><span class="ob">Timing</span></div><div class="pca"><span class="btn pri sm"><i class="pl"></i>Try now</span><span class="btn sec sm">Duplicate</span><span class="bdg dr">Draft</span></div></div>
+<div class="card pc"><div class="pct"><span class="tile" style="--tb:#F3ECDF;--tc:#7A5523">KD</span><div class="pcn"><div class="pcnr"><b>Keisha Daniels</b><span class="diff" style="--l:3"><em>Medium</em></span></div><span class="pcr">Homeowner, south-facing roof</span></div></div><div class="pcc">Sunpath Solar lead · lease vs. buy</div><div class="pco"><span class="job">Residential solar</span><span class="ob m">Price</span><span class="ob">Trust</span></div><div class="pca"><span class="btn pri sm"><i class="pl"></i>Try now</span><span class="btn sec sm">Duplicate</span><span class="bdg"><i class="ck"></i>Reviewed</span></div></div>
+<div class="card pc"><div class="pct"><span class="tile" style="--tb:#E1F1F6;--tc:#145F75">AM</span><div class="pcn"><div class="pcnr"><b>Dr. Alan Mercer</b><span class="diff" style="--l:5"><em>Hard</em></span></div><span class="pcr">Orthopaedic surgeon</span></div></div><div class="pcc">St. Brennan Regional · 420 beds</div><div class="pco"><span class="job">Medical devices</span><span class="ob m">Status quo</span><span class="ob">Authority</span></div><div class="pca"><span class="btn pri sm"><i class="pl"></i>Try now</span><span class="btn sec sm">Duplicate</span><span class="bdg"><i class="ck"></i>Reviewed</span></div></div>
+<div class="card pc"><div class="pct"><span class="tile" style="--tb:#E9F3E3;--tc:#3E6B27">GN</span><div class="pcn"><div class="pcnr"><b>Gloria Nguyen</b><span class="diff" style="--l:3"><em>Medium</em></span></div><span class="pcr">Seller, interviewing 3 agents</span></div></div><div class="pcc">3-bed ranch · wants a quick sale</div><div class="pco"><span class="job">Listing appointment</span><span class="ob m">Price</span><span class="ob">Competitor</span></div><div class="pca"><span class="btn pri sm"><i class="pl"></i>Try now</span><span class="btn sec sm">Duplicate</span><span class="bdg dr">Draft</span></div></div>
+<div class="card pc"><div class="pct"><span class="tile" style="--tb:#ECEEF2;--tc:#3A4456">DS</span><div class="pcn"><div class="pcnr"><b>Derek Shaw</b><span class="diff" style="--l:3"><em>Medium</em></span></div><span class="pcr">Service customer, oil change</span></div></div><div class="pcc">2021 F-150 · 48k miles, brakes due</div><div class="pco"><span class="job">Auto service upsell</span><span class="ob m">Price</span><span class="ob">Timing</span></div><div class="pca"><span class="btn pri sm"><i class="pl"></i>Try now</span><span class="btn sec sm">Duplicate</span><span class="bdg"><i class="ck"></i>Reviewed</span></div></div>
+</div>
+</div>
+</div>
+</div>
+<aside class="sheet">
+<div class="shh">
+<span class="ic"><svg class="i s18" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg></span>
+<div><b>New persona</b><span>AI persona wizard · draft autosaved 12 s ago</span></div>
+<svg class="i s18 x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+</div>
+<div class="steps">
+<div class="st d"><i><i class="ck"></i></i>Source</div><b class="d"></b>
+<div class="st n"><i>2</i>Draft</div><b></b>
+<div class="st"><i>3</i>Shape</div><b></b>
+<div class="st"><i>4</i>Dry run</div>
+</div>
+<div class="shb">
+<div class="sech"><span class="cap">Sources</span><span class="muted" style="font-size:12px">4 attached</span><span class="jl">+ Add source</span></div>
+<div class="srcs">
+<span class="src"><svg class="i s14" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/></svg><em>JD</em>Practice Manager posting</span>
+<span class="src"><svg class="i s14" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><em>CRM</em>Account notes · 11 lines</span>
+<span class="src"><svg class="i s14" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg><em>URL</em>chairtime.app/multi-site</span>
+<span class="src"><svg class="i s14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg><em>ICP</em>Dental groups, 3–10 sites</span>
+</div>
+<div class="card draft">
+<div class="dh">
+<span class="tile" style="--tb:#E1F1F6;--tc:#145F75">RC</span>
+<div><b>Renee Castillo</b><span class="r">Brightside Family Dental</span></div>
+<span class="ai">gpt-4.1-mini · 2,184 tok</span>
+</div>
+<div class="fld"><div class="fl">Role<span class="pv">JD · line 3</span></div><p>Practice Manager. Runs scheduling and vendor buys for four offices.</p></div>
+<div class="fld"><div class="fl">Motive<span class="pv">CRM · line 4</span></div><p>Cut no-shows below 8% before Westgate opens in March.</p></div>
+<div class="fld sel"><div class="fl">Resistance<span class="pv on">CRM · line 7</span></div><p>A 2023 software switch cost her two front-desk hires.</p>
+<div class="srcx"><div class="sxh"><svg class="i s12" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/></svg>Account notes · line 7 of 11</div><p>…asked again about onboarding hours. <mark>Said the 2023 switch cost her two front-desk hires and she “won't put the team through that twice.”</mark> Prefers calls after 2 pm.</p></div>
+</div>
+<div class="fld"><div class="fl">Opening line<span class="pv sg">AI-suggested · no source</span></div><p>“I've got ten minutes before lunch. What's this about?”</p></div>
+<div class="fld"><div class="fl">Objections<span class="mono ml" style="letter-spacing:0;font-weight:500">2 of 3</span></div>
+<div class="objs">
+<div class="obj">“We just renewed with DentaFlow in June.”<span class="pv">CRM · line 9</span></div>
+<div class="obj">“My staff won't learn another system.”<span class="pv">JD · line 6</span></div>
+<div class="obj str"><span class="caret"></span>Writing objection 3 from the ICP…</div>
+</div>
+</div>
+</div>
+</div>
+<div class="shf">
+<span class="muted">5 of 6 fields traced to a source</span>
+<span class="btn sec">Back</span>
+<span class="btn pri">Continue to Shape<i class="ar"></i></span>
+</div>
+</aside>
+</section>
+
+<section class="screen db" data-screen="debrief">
+<nav class="sb">
+<div class="sbb"><span class="logo"><svg class="i" viewBox="0 0 24 24"><path d="M20 11.5a8 8 0 0 1-11.6 7.1L4 20l1.4-4.4A8 8 0 1 1 20 11.5z"/><path class="fc" d="M12 7c.3 2.1 1.3 3.1 3.4 3.4-2.1.3-3.1 1.3-3.4 3.4-.3-2.1-1.3-3.1-3.4-3.4 2.1-.3 3.1-1.3 3.4-3.4z"/></svg></span><div><b>Call Trainer</b><span>Open source · MIT</span></div></div>
+<div class="sbs"><svg class="i s14" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Search<kbd>⌘K</kbd></div>
+<div class="sbg cap">Train</div>
+<div class="sbi on"><svg class="i" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg>Practice</div>
+<div class="sbi"><svg class="i" viewBox="0 0 24 24"><path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/></svg>Library<span class="n">120</span></div>
+<div class="sbi"><svg class="i" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg>New persona</div>
+<div class="sbi"><svg class="i" viewBox="0 0 24 24"><path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/></svg>Progress</div>
+<div class="sbg cap">Manage</div>
+<div class="sbi"><svg class="i" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></svg>Team<span class="bm">Manager</span></div>
+<div class="sbi"><svg class="i" viewBox="0 0 24 24"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>Settings</div>
+<div class="sbg cap">Recent calls</div>
+<div class="sbi rc">Leaking water heater<span class="mono">78</span></div>
+<div class="sbi rc">“Price too high” SaaS<span class="mono">71</span></div>
+<div class="sbi rc">Roof quote follow-up<span class="mono">64</span></div>
+<div class="sbm">
+<div class="cap" style="display:block">OpenAI models</div>
+<div><span>Grading</span><span>gpt-4.1-mini</span></div>
+<div><span>Coach</span><span>gpt-4.1-mini</span></div>
+<div><span>Voice</span><span>gpt-realtime</span></div>
+</div>
+<div class="sbu"><span class="av">SR</span><div><b>Sam Rivera</b><span>Peak Plumbing · Team lead</span></div></div>
+</nav>
+<div class="dbm">
+<div class="dbt">
+<div class="crumb">Practice<svg class="i s14" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>Inbound lead: leaking water heater<svg class="i s14" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg><b>Debrief · attempt 4</b></div>
+<span class="btn sec"><svg class="i s14" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>Transcript</span>
+<span class="btn sec"><svg class="i s14" viewBox="0 0 24 24"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="m16 6-4-4-4 4"/><path d="M12 2v13"/></svg>Share with manager</span>
+<span class="btn pri"><svg class="i s14" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>Practice again</span>
+</div>
+<div class="card hero">
+<div class="hs">
+<div class="cap">Overall score · Dana Whitfield</div>
+<div class="hv"><span class="big">78</span><span class="of">/100</span><span class="grade">B · Strong</span></div>
+<span class="gp"><i class="ck"></i>Goal met · booked today 2–4 pm</span>
+<div class="hm"><i class="up"></i><b>+9</b>vs attempt 3<span class="mono">4:18 · 20 turns</span></div>
+</div>
+<div class="htl">
+<div class="htlh"><b>Call timeline</b><span class="muted" style="font-size:12px">one tick per turn</span>
+<div class="lg"><span style="--c:var(--c1)"><i></i>Greeting</span><span style="--c:var(--c2)"><i></i>Discovery</span><span style="--c:var(--c3)"><i></i>Capture</span><span style="--c:var(--c4)"><i></i>Pricing</span><span style="--c:var(--c5)"><i></i>Booking</span><span style="--c:var(--s3)"><i></i>Dana</span><span><i style="background:var(--coach);transform:rotate(45deg);width:7px;height:7px"></i>Cue</span></div>
+</div>
+<div class="tgrid cuerow"><span></span><span></span><i></i><span></span><i></i><span></span><i></i><span></span><span></span><span></span><i class="x"></i><span></span><i></i><span></span><i></i></div>
+<div class="tgrid trk"><i class="p"></i><i style="--c:var(--c1)"></i><i class="p"></i><i style="--c:var(--c2)"></i><i class="p"></i><i style="--c:var(--c2)"></i><i class="p"></i><i style="--c:var(--c3)"></i><i class="p"></i><i style="--c:var(--c3)"></i><i class="p"></i><i class="m"></i><i class="p"></i><i style="--c:var(--c4)"></i><i class="p"></i><i style="--c:var(--c5)"></i><i class="p"></i><i style="--c:var(--c3)"></i><i class="p"></i><i style="--c:var(--c5)"></i></div>
+<div class="tgrid tax"><span>0:04</span><span style="grid-column:5/7">0:44</span><span style="grid-column:10/12">2:02</span><span style="grid-column:12/14;color:var(--risk)">T12</span><span style="grid-column:15/17">3:09</span><span style="grid-column:19/21;text-align:right">4:05</span></div>
+<div class="tsel"><span class="mono">T12 · 02:33</span><b style="font-weight:600">Sam</b><span>“We'll go over all that when the tech gets out there.”</span><span class="mk">Pricing missed</span><span class="jl">Replay<i class="ar"></i></span></div>
+</div>
+</div>
+<div class="dcols">
+<div class="card scc">
+<div class="cardh"><b>Scorecard</b><span class="muted">5 criteria · weighted</span><span class="muted ml">Score</span></div>
+<div class="scr" style="--c:var(--c1)"><div class="sct"><span class="dot"></span>Greeting &amp; rapport<span class="w">15%</span><span class="v">92</span></div><div class="bar"><i class="f" style="width:92%"></i></div><div class="scs"><span class="ok"><i class="ck"></i>Confirmed</span>· 2 quotes · T2, T20</div></div>
+<div class="scr" style="--c:var(--c2)"><div class="sct"><span class="dot"></span>Discovery questions<span class="w">30%</span><span class="v">84</span></div><div class="bar"><i class="f" style="width:84%"></i></div><div class="scs"><span class="ok"><i class="ck"></i>Confirmed</span>· 3 quotes · T4, T6</div></div>
+<div class="scr" style="--c:var(--c3)"><div class="sct"><span class="dot"></span>Information capture<span class="w">20%</span><span class="v">80</span></div><div class="bar"><i class="f" style="width:80%"></i></div><div class="scs"><span class="ok"><i class="ck"></i>Confirmed</span>· number never read back</div></div>
+<div class="scr" style="--c:var(--c4)"><div class="sct"><span class="dot"></span>Pricing transparency<span class="w">15%</span><span class="wk">Weakest</span><span class="v" style="color:var(--risk)">52</span></div><div class="bar"><i class="f" style="width:52%"></i></div><div class="scs"><span class="ok"><i class="ck"></i>Confirmed</span>· fee given on the second ask</div></div>
+<div class="scr" style="--c:var(--c5)"><div class="sct"><span class="dot"></span>Booking &amp; next steps<span class="w">20%</span><span class="v">76</span></div><div class="bar"><i class="f" style="width:64%"></i><i class="p" style="left:64%;width:12%"></i></div><div class="scs"><span class="pr"><i class="sw h" style="width:12px"></i>Provisional</span>· address not read back</div></div>
+<div class="sctot"><span>13.8 + 25.2 + 16.0 + 7.8 + 15.2</span><b>= 78.0</b></div>
+</div>
+<div class="card evc">
+<div class="tabs"><span class="tab on">Evidence<span class="mono">9</span></span><span class="tab">Rationale</span><span class="tab">Transcript<span class="mono">20</span></span><span class="sel">Weakest first<svg class="i s14" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></span></div>
+<div class="ev" style="--c:var(--c4)"><i></i><div class="evb"><div class="evh">Pricing transparency<span class="evs ms">Missed</span><span class="jl">T12 · 02:33<i class="ar"></i></span></div><p class="evq"><span>Sam</span>“We'll go over all that when the tech gets out there.”</p><p class="evr">Deflected a direct fee question that the coach flagged at 02:16. Dana had to ask again at 02:41.</p></div></div>
+<div class="ev" style="--c:var(--c4)"><i></i><div class="evb"><div class="evh">Pricing transparency<span class="evs cf">Confirmed</span><span class="jl">T14 · 02:55<i class="ar"></i></span></div><p class="evq"><span>Sam</span>“Fair question. It's an $89 diagnostic, and it comes off the repair if you go ahead.”</p><p class="evr">Clear fee and credit policy, but 22 seconds after the first ask.</p></div></div>
+<div class="ev" style="--c:var(--c5)"><i></i><div class="evb"><div class="evh">Booking &amp; next steps<span class="evs pr">Provisional</span><span class="jl">T16 · 03:18<i class="ar"></i></span></div><p class="evq"><span>Sam</span>“I have a tech free between 2 and 4 today. Want me to lock that in?”</p><p class="evr">Same-day window offered and accepted. The address was never read back.</p></div></div>
+<div class="ev" style="--c:var(--c2)"><i></i><div class="evb"><div class="evh">Discovery questions<span class="evs cf">Confirmed</span><span class="jl">T4 · 00:31<i class="ar"></i></span></div><p class="evq"><span>Sam</span>“How old is the unit, and is the leak from the bottom of the tank or a pipe?”</p><p class="evr">Two diagnostic facts in one question: the unit's age and the leak source.</p></div></div>
+<div class="evm">5 more quotes · Information capture, Greeting<span class="jl">Show all<i class="ar"></i></span></div>
+</div>
+</div>
+<div class="card nx">
+<span class="nxi"><svg class="i s18" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg></span>
+<div class="nxt"><div class="cap">Practice this next</div><p>Pricing transparency <span>· state the fee before the caller has to ask twice.</span></p></div>
+<div class="nxp"><span class="tile" style="--tb:#F3ECDF;--tc:#7A5523">WK</span><div><b>Walt Kim · furnace out, asks the trip charge</b><span class="r">Home services · Medium · Price objection · 4 min</span></div><span class="btn pri sm"><i class="pl"></i>Start drill</span></div>
+</div>
+<div class="prov">
+<span class="rv"><svg class="i s14" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>AI-graded. Check quotes before sharing.</span>
+<span class="ai">Graded by gpt-4.1-mini · 20 turns · 6,412 tok · 3.1 s</span>
+<span class="ai">Coach · 6 cues · 11,830 tok</span>
+<span class="ai">Voice · gpt-realtime</span>
+</div>
+</div>
+</section>
+
+<section class="screen dark mb" data-screen="mobile">
+<div class="mst"><span>9:41</span><span class="row g8"><span class="sig"><i style="height:4px"></i><i style="height:6px"></i><i style="height:8px"></i><i style="height:11px"></i></span><svg class="i s14" viewBox="0 0 24 24" style="stroke-width:2.2"><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M12 19.5h.01"/></svg><span class="bat"><i></i></span></span></div>
+<div class="mh">
+<span class="b44"><svg class="i s20" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></span>
+<div class="mht"><b>Leaking water heater</b><span>Voice · Coach: Full</span></div>
+<span class="mtm"><i></i>02:24</span>
+</div>
+<div class="mtt">
+<div class="ttb"><div class="seg d"><i></i></div><div class="seg d"><i></i></div><div class="seg d"><i></i></div><div class="seg d"><i></i></div><div class="seg n"><i></i></div><div class="seg"><i></i></div></div>
+<div class="mttl"><span>Step 5 of 6 · <b>Window &amp; fee</b></span><span>Next: Confirm</span></div>
+</div>
+<div class="mp">
+<div class="orb"></div>
+<div><b>Dana Whitfield</b><span class="r">Homeowner · waiting on you</span></div>
+<span class="lvl ml"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+</div>
+<div class="mcue">
+<div class="cue">
+<div class="cuek"><svg class="i" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>Objection · Price<span class="sx">Swipe to dismiss<i class="ar"></i></span></div>
+<div class="cueh">State the fee now, then book.</div>
+<div class="say">“It's an $89 diagnostic, and it comes off the repair if you go ahead.”</div>
+</div>
+<div class="trigger">
+<div class="tk"><b>Trigger</b>Dana · 02:14 · cue in 1.4 s</div>
+<p>“What does a visit cost? Nobody mentioned a fee.”</p>
+</div>
+</div>
+<div class="mtx">
+<div class="turn rep"><div class="who"><b>Sam (you)</b><span class="t">02:02</span><span class="crit hol" style="--c:var(--c3)"><i></i>Info capture · provisional</span></div><p>Thanks, Dana. And what's the service address?</p></div>
+<div class="turn now"><div class="who"><b>Dana</b><span class="t">02:14</span></div><p>418 Alder Court. <mark class="trig">What does a visit cost? Nobody mentioned a fee.</mark></p></div>
+<span class="ftb"><svg class="i s14" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Full transcript · 11 turns</span>
+</div>
+<div class="msh">
+<div class="grab"></div>
+<div class="mrh"><b>Live rubric<svg class="i s14" viewBox="0 0 24 24" style="color:var(--muted)"><path d="m18 15-6-6-6 6"/></svg></b><span class="mono"><strong>49</strong> / 100 · provisional</span></div>
+<div class="mrb">
+<div style="--c:var(--c1)"><div class="bar"><i class="f" style="width:87%"></i></div><span>Greet 13</span></div>
+<div style="--c:var(--c2)"><div class="bar"><i class="f" style="width:72%"></i><i class="p" style="left:72%;width:8%"></i></div><span>Discover 24</span></div>
+<div style="--c:var(--c3)"><div class="bar"><i class="f" style="width:45%"></i><i class="p" style="left:45%;width:15%"></i></div><span>Capture 12</span></div>
+<div style="--c:var(--c4)"><div class="bar rk"></div><span class="rk">Price 0</span></div>
+<div style="--c:var(--c5)"><div class="bar"></div><span>Book 0</span></div>
+</div>
+<div class="mctl">
+<div class="mbtn" style="justify-self:start"><span class="c"><svg class="i s20" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4M3 3l18 18"/></svg></span>Mute</div>
+<div class="mbtn"><span class="pttm"><svg class="i" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/></svg></span>Hold to talk</div>
+<span class="mend"><svg class="i s18" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/></svg>End and grade</span>
+</div>
+<div class="home"><i></i></div>
+</div>
+</section>
+
+</div>
