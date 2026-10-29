@@ -1,0 +1,278 @@
+{
+  "id": "P45",
+  "lens": "Apple bento grid: modular tiles for dashboard and debrief, keynote polish",
+  "name": "Keynote Bento",
+  "one_liner": "A keynote-polished bento system: a dark stage for live calls, light bento tiles for everything reviewed, and shadcn/ui on Base UI so every component is owned, readable code that contributors can change.",
+  "lens_followed_or_changed": "Followed: bento tiles for landing, pre-call, debrief, progress and team, with keynote-scale display type and generous radii. Changed: the live call is a fixed dark stage with a bento rail, not a sprawling grid, because reps must keep their eyes on the caller. Council scores (1-10): A Look 8, B UX 8, C Unique 7, D live coaching 5.4, E library and wizard 5.2, F1 SaaS 6, F2 selling to entities 6, F3 not worth building 3 (10 = not worth building).",
+  "ui_stack": [
+    {
+      "name": "shadcn/ui on Base UI",
+      "role": "Component layer: Button, Card, Tabs, Dialog, Command, Drawer, Chart wrappers",
+      "why": "Base UI is shadcn's default since July 2026. Components are copied into the repo, so contributors read and PR them. Chosen over Mantine (163 KB gzip, own styling system) and React Aria (154 KB, most owned code) in the benchmark."
+    },
+    {
+      "name": "Tailwind CSS v4",
+      "role": "Styling with CSS-variable tokens replacing the custom tailwind.config colors",
+      "why": "Current shadcn output targets v4. The migration touches every class, so it is a planned first phase."
+    },
+    {
+      "name": "Motion (motion package)",
+      "role": "Spring layout for tiles, sheets and cue reveals",
+      "why": "Keynote-quality spring physics with reduced-motion support."
+    },
+    {
+      "name": "Geist and Geist Mono",
+      "role": "Display and UI type, tabular numerals for timers and scores",
+      "why": "Free Google Fonts with a neutral, Apple-like feel. Replaces Sora for display. Mono stops timers and scores from jittering."
+    },
+    {
+      "name": "lucide-react (kept)",
+      "role": "Icons",
+      "why": "Matches shadcn defaults with no migration cost."
+    },
+    {
+      "name": "Recharts via shadcn Chart",
+      "role": "Trend lines, sparklines, heatmap cells",
+      "why": "One chart system that reads theme tokens in both modes."
+    },
+    {
+      "name": "cmdk via shadcn Command",
+      "role": "Cmd+K jump to persona, scenario or past call",
+      "why": "Keyboard-first for power users and contributors."
+    },
+    {
+      "name": "Vaul via shadcn Drawer",
+      "role": "Mobile bottom sheets for rubric, talk track and wizard",
+      "why": "Native-feeling sheets with a standard focus model."
+    },
+    {
+      "name": "Sonner via shadcn",
+      "role": "Save, export and copy toasts",
+      "why": "Standard and accessible."
+    },
+    {
+      "name": "react-three-fiber (kept, reduced)",
+      "role": "Orb on the live stage and landing hero only",
+      "why": "Static SVG fallback for reduced motion and low-end devices."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "canvas",
+        "hex": "#F5F5F7",
+        "use": "Light page background"
+      },
+      {
+        "token": "tile",
+        "hex": "#FFFFFF",
+        "use": "Bento tile surface, with hairline border #E5E5EA"
+      },
+      {
+        "token": "hairline",
+        "hex": "#E5E5EA",
+        "use": "Tile borders and dividers"
+      },
+      {
+        "token": "ink",
+        "hex": "#1D1D1F",
+        "use": "Primary text"
+      },
+      {
+        "token": "ink-muted",
+        "hex": "#6E6E73",
+        "use": "Secondary text and captions"
+      },
+      {
+        "token": "signal-blue",
+        "hex": "#2F6BFF",
+        "use": "Primary actions, focus ring, talk-track progress"
+      },
+      {
+        "token": "coach-amber",
+        "hex": "#F59E0B",
+        "use": "Next-question and whisper accents; text uses #B45309"
+      },
+      {
+        "token": "objection-red",
+        "hex": "#E5484D",
+        "use": "Objection alerts only; End and grade is outlined, not filled"
+      },
+      {
+        "token": "good-green",
+        "hex": "#30A46C",
+        "use": "Improving score deltas"
+      },
+      {
+        "token": "accent-teal",
+        "hex": "#14B8A6",
+        "use": "Score ring and hero gradient wash only"
+      },
+      {
+        "token": "model-violet",
+        "hex": "#7C5CFF",
+        "use": "Model chips that name the model in use"
+      },
+      {
+        "token": "stage",
+        "hex": "#0B0B0F",
+        "use": "Dark stage canvas for live call and landing hero"
+      },
+      {
+        "token": "stage-tile",
+        "hex": "#16161D",
+        "use": "Dark stage tiles with a 1px white 8% border"
+      }
+    ],
+    "typography": "Geist for display (600, tracking -0.04em, 56 to 88px on heroes) and UI (500, 14 to 16px). Geist Mono tabular for timers and scores. Inter 16/26 for transcripts and long copy. One display line per screen, sentence case, with tracked 11px micro-labels as the only caps.",
+    "shape_and_depth": "Tiles use a 28px radius on desktop and 22px on mobile. Controls use 14px and pills use 999px. Depth comes from a 1px hairline plus a soft two-layer shadow, not gradient borders. Glass is used only on the top toolbar.",
+    "motion": "Motion springs (stiffness about 260, damping about 28) drive tile reflow and sheets. Dashboard tiles reveal with a 40ms stagger. Whisper cues slide 12px and fade over 180ms, then auto-dismiss at 6 seconds. The orb breathes over 4 seconds at idle and its ring pulses while listening. prefers-reduced-motion swaps to a static ring and crossfades.",
+    "iconography": "Lucide at 1.75px stroke: 20px in tiles, 16px inline. One icon per tile heading. No emoji in product UI. The persona orb glyph replaces generic avatars.",
+    "theme_modes": "Light is the default for library, pre-call, debrief, progress and team. The dark stage is used for the live call and landing hero. Both follow prefers-color-scheme with a user toggle. All colors are CSS variables, so one set of components serves both modes. Text meets WCAG AA in both."
+  },
+  "navigation_and_ia": "Desktop: a floating 56px toolbar pill with Practice, Library, Progress and Team (org accounts only), plus a Build persona button and an avatar menu. Mobile: a bottom tab bar with the same four items. Routes: practice (pre-call), live call, debrief, library, library/new (wizard), progress, team, settings. Cmd+K command palette jumps to any persona, scenario or past call. The demo-mode banner becomes a slim inline chip. Breadcrumbs on library and debrief. Arrow keys move between bento tiles, and Base UI supplies focus rings. Login and the access gate are single-card and minimal.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Light canvas on a 12-column bento. Left 7 columns: a large headline tile, Practice the call before it counts, at about 80px Geist, with a primary CTA (Start a 60-second call) and a secondary (Run it locally). Right 5 columns: a dark stage tile with a looping mini call, a whisper cue and a rubric bar climbing from 58 to 74. Bottom row of three tiles: persona chips with job-family counts, a model tile naming Realtime voice, gpt-4.1-mini grading and the persona wizard, and a contributor tile with stars, MIT and open good-first-persona issues. The README hero is a static image of the same composition.",
+      "key_components": "Headline tile, looping mini-call stage, persona chip strip, model tile, contributor tile, sticky mobile CTA.",
+      "change_vs_today": "Replaces the fake call card and four feature cards with a bento that shows the product working, plus a live proof point and a contributor entry."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "A sticky natural-language search (Describe a buyer) sits over a bento grid. The first cell is a Build with AI tile. A left rail, which collapses to a sheet on mobile, holds facet groups with counts: rep job, buyer role, industry, difficulty and objection type. The main grid is masonry, with standard 1x1 persona tiles and 2x1 featured tiles per job family, each with a section header and View all (N). A persona tile shows an orb tinted by difficulty, name, role, industry chip, three objection tags, rubric size and a Practice button. A preview drawer plays a voice sample. Launch set: 150 personas across 25 job families.",
+      "key_components": "Facet rail with counts, natural-language search, persona tiles with objection tags, preview drawer with voice sample, job-family section headers, Build with AI tile, contributor credit line.",
+      "change_vs_today": "Replaces a three-item dropdown with a browsable library of 150 personas, four filter facets and visible contributor credit."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "A full-screen sheet over a blurred library. A four-step vertical stepper on the left: Source, Persona, Rubric, Test call. Step 1 is a 2x2 grid of source tiles (job description, product or pricing URL, CRM notes, pasted call) plus an ICP field, and anything dropped in fills a tile. Step 2 is a persona card that builds field by field as the model streams: name, role, temperament, objections, opening line, voice. Step 3 has rubric rows with weight sliders that must total 100. Step 4 is a 60-second text dry run. Footer: Back, Save to library, and Export as contribution, which opens a PR template.",
+      "key_components": "Source tiles, streaming persona card, rubric weight sliders, dry-run tile, model chip (gpt-4.1-mini, configurable), Export as contribution action.",
+      "change_vs_today": "Today's scenario editor is one long form. The wizard turns it into four guided steps that generate, check and test a persona."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Three bento rows. Row 1: a wide hero tile with the persona orb at rest, name, role, difficulty chip and last score. Row 2: a Goal tile in large type, a Talk track tile as a numbered six-step list with a progress bar, and a Rubric tile with five weight bars. Row 3: a Mode tile with a Voice and Text segmented control and a live mic-level check, and a Coaching tile with Off, Whisper and Full, defaulting to Whisper. Start call is a full-width bar pinned to the bottom edge on mobile and bottom-right on desktop.",
+      "key_components": "Persona hero with orb, goal tile, talk-track stepper, rubric weights, mic check, coaching level control, Start call bar, last-score chip.",
+      "change_vs_today": "Talk track and rubric move from collapsible rows into tiles. Adds a coaching level control and last-score memory. Start stays the strongest action."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Dark stage. On desktop, the left 62 percent is the call stage: the orb shows state as a ring (listening, thinking, speaking, legible without color), the persona name, a talk-time meter for rep versus caller, and two caption lines at 22px. The right 38 percent is a bento rail: a Whisper tile showing one cue for six seconds, a Next question tile, an Objection alert tile that appears only when triggered, a Talk track progress tile with six steps, and a Live rubric tile with five criteria, delta chips such as +4, and a tap for the evidence line. A bottom bar across the stage holds mute, text input, timer, and End and grade in outlined red.",
+      "key_components": "Orb with state ring, talk-time meter, caption lines, whisper cue, next-question tile, objection alert, talk-track progress, live rubric with delta chips, coach toggle, End and grade.",
+      "change_vs_today": "Today this is a chat app with no coaching or scoring. The talk track leaves the side drawer and becomes a live rail tile. The filled red button becomes an outlined control."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "A keynote report. Top row: a grade hero tile with a 120px letter, a 0 to 100 number in Geist Mono, a goal status pill and one summary sentence. Beside it, a score timeline tile plots the live score across turns with cue markers. Middle row: Strengths and Areas to improve tiles, and a dark Practice next tile with one focus criterion and one button. Bottom: five criterion tiles in a bento, with Discovery wide. Each shows a bar, a one-line rationale and evidence chips that jump to the transcript line. A docked transcript panel closes the page.",
+      "key_components": "Grade hero, score timeline with cue markers, criterion tiles with evidence chips, Practice next tile, transcript dock, Print and Practice again, grader chip.",
+      "change_vs_today": "One long scroll becomes a bento with a timeline. The yellow fallback banner becomes a small grader chip, and quotes become clickable jumps to the transcript."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Twelve-column bento. Row 1: four stat tiles (sessions, average, best, time practised) plus a streak tile, each with a 14-day sparkline and a delta. Row 2: a wide trend tile with score over time and per-criterion toggles, beside a Weakest criterion tile with a one-tap Practise this. Row 3: a heatmap of criteria by week, and a job-family coverage ring showing families practised out of 25. Row 4: recent calls as compact rows with score rings and Replay. Tiles reflow to two columns on tablet and one on phone.",
+      "key_components": "Stat tiles with sparklines, trend chart, criteria heatmap, coverage ring, weakest-criterion CTA, recent calls list.",
+      "change_vs_today": "The four numbers and plain list become a bento with trends, a heatmap, coverage and a one-tap next practice."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "A header bar with cohort selector and date range. Row 1: a Team average tile with a ramp curve, a Reps ready tile with a count and ring, and a Coaching needed tile listing reps under threshold. Row 2: a wide readiness heatmap of reps by criteria. Row 3: an Assign practice tile where the manager picks a persona and multi-selects reps, a Live calls tile listing in-progress sessions as scores with opt-in audio, and a Notes tile of supervisor notes. Team appears in the nav only for org accounts.",
+      "key_components": "Cohort selector, team average and ramp, readiness heatmap, coaching-needed list, assignment tile, opt-in live calls list, supervisor notes feed.",
+      "change_vs_today": "The UI has no manager surface today, even though orgs exist in the data model. This adds a team view with assignment and opt-in live supervision."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "Single column at 390px with 16px gutters and safe-area insets. Top: a 72px orb strip with persona name, state label and a live score pill (for example 62, up 3) that opens the rubric as a sheet. Under it, a whisper pill shows one line and expands on tap to the full cue and next question. Captions scroll in the middle. The bottom thumb zone holds the text input, a 72px round mic, and End and grade in outlined red. The talk track is a swipe-up drawer with step progress, and objection alerts are a full-width banner. No horizontal scroll.",
+      "key_components": "Orb strip, score pill with rubric sheet, whisper pill, captions, thumb-zone controls, talk-track drawer, objection banner.",
+      "change_vs_today": "Today's mobile call is a chat with stacked controls. The new layout puts the live score and cue above the fold and moves every control into the thumb zone."
+    }
+  ],
+  "live_coaching_and_scoring": "Pipeline: the voice engine (OpenAI Realtime or ElevenLabs Agents) runs the conversation. After each caller turn, a text coach call returns structured output: one whisper cue, a next question, an objection flag, the talk-track step reached, and per-criterion score deltas, each tied to a transcript quote. UI budget: the cue is visible within about 2 seconds of the caller finishing. Coach levels are Off, Whisper and Full. Cues fade after 6 seconds, never cover captions, and never block mute or End. Live scores carry a live-estimate label until final grading. Self-score D: 5.4. This meets the baseline with cues, a live rubric, objection alerts and talk-track progress. It exceeds only if latency holds under 2 seconds.",
+  "persona_library_and_wizard": "Launch set: 150 personas across 25 job families, including SDR cold call, AE discovery, renewals, customer success, collections, recruiting, retail, insurance, mortgage, real estate, solar, home services, auto, medical devices, B2B procurement and SaaS objections. Each persona carries buyer role, industry, difficulty, objection types, opening line, voice id and rubric. Each is stored as one readable file, so a contributor adds a persona by pull request. Filters: rep job, buyer role, industry, difficulty, objection type. Wizard inputs: job description, product or pricing URL, CRM notes, pasted call and ICP. Outputs: persona, scenario, rubric draft, dry run and an export. Self-score E: 5.2. This meets the baseline only if the 150 seed personas ship. With only the three built-ins it drops to about 4.6.",
+  "signature_moments": [
+    "The orb's state ring is the call's heartbeat: listening, thinking and speaking, all legible without color.",
+    "Live rubric deltas such as +4 or -2 tick up under the rep's eyes, each tied to a transcript quote.",
+    "The debrief score timeline marks exactly where a coaching cue changed the call.",
+    "Build with AI is the first tile in the library, and the wizard streams its persona card field by field.",
+    "Each persona tile credits its contributor, and the footer carries a Built with Codex line.",
+    "A model chip appears on every surface that uses a model, so the OpenAI stack is visible in use."
+  ],
+  "openai_fund_angle": "Show the models, do not just credit them. A model strip on the landing page and footer names Realtime voice, gpt-4.1-mini grading and coaching, and the persona wizard. Each debrief shows which model graded it and a token and cost line for the call, which is the efficiency proof reviewers look for. The voice engine is a per-scenario choice between the OpenAI Realtime API and ElevenLabs Agents, so the Realtime path is first-class. Contributor invitation: a Built with Codex section in CONTRIBUTING with prompts for adding a persona, a good-first-persona issue label, a contributor credit on each library tile, and an export that opens a PR template. Model names appear as plain text, not OpenAI logos, unless brand terms allow.",
+  "inspirations": [
+    {
+      "source": "Hilos home, Mobbin",
+      "url": "https://mobbin.com/screens/1c593edf-86c0-4da3-9b6d-f5a50637e1ab",
+      "borrowed": "Pastel stat tiles over bento cards for the progress and landing layouts."
+    },
+    {
+      "source": "Tana meeting view, Mobbin",
+      "url": "https://mobbin.com/screens/553292e6-7d50-4869-8c57-3fbdd1f4abde",
+      "borrowed": "A talking-points tile beside a live stage, the rail model for live coaching."
+    },
+    {
+      "source": "Delphi live call, Mobbin",
+      "url": "https://mobbin.com/screens/d9eb6fae-7d9e-43cc-a217-f94e60d33003",
+      "borrowed": "A ring around the avatar as the call-state indicator."
+    },
+    {
+      "source": "Preply talk time, Mobbin",
+      "url": "https://mobbin.com/screens/82d67cb1-1a50-4442-a83a-afb56472ca75",
+      "borrowed": "A live talk-time meter for rep versus caller."
+    },
+    {
+      "source": "Klaviyo campaigns library, Mobbin",
+      "url": "https://mobbin.com/screens/c3d9bb50-e157-4c6b-baf2-d258935c1f95",
+      "borrowed": "Goal-grouped template cards with View all counts and a Build your own tile."
+    },
+    {
+      "source": "ClickUp Template Center, Mobbin",
+      "url": "https://mobbin.com/screens/04818cc9-7502-402a-a6f8-ec356682723b",
+      "borrowed": "A left category rail with checkbox facets over sectioned card grids."
+    },
+    {
+      "source": "Heidi community templates, Mobbin",
+      "url": "https://mobbin.com/screens/bfa0d997-f972-43fc-8adf-7503b23e6c38",
+      "borrowed": "Author and usage-count attribution on community templates, for contributor credit."
+    },
+    {
+      "source": "Jobber home, Mobbin",
+      "url": "https://mobbin.com/screens/56a6ce1c-8d71-4c1a-89cb-1d07f075424a",
+      "borrowed": "Workflow count tiles plus a slide-in activity feed for the progress view."
+    },
+    {
+      "source": "Riverside script panel, Mobbin",
+      "url": "https://mobbin.com/screens/0534caca-3af2-4137-9829-8b7f54379c48",
+      "borrowed": "A tabbed side panel for talk track and notes during a live session."
+    },
+    {
+      "source": "Second Nature, secondnature.ai",
+      "url": "https://secondnature.ai/",
+      "borrowed": "A buyer-persona library and proficiency heatmaps for the manager view."
+    },
+    {
+      "source": "Hyperbound vs Second Nature comparison, hyperbound.ai",
+      "url": "https://www.hyperbound.ai/blog/mindtickle-vs-hyperbound-vs-second-nature",
+      "borrowed": "Methodology scorecards with talk ratio, used as the benchmark for live rubric design."
+    },
+    {
+      "source": "shadcn/ui vs MUI vs Mantine benchmark, alekseialeinikov.com",
+      "url": "https://www.alekseialeinikov.com/en/blog/topics/programming/shadcn-ui-vs-mui-vs-mantine",
+      "borrowed": "Bundle sizes and the July 2026 shift to Base UI, used to choose the component layer."
+    }
+  ],
+  "implementation": {
+    "effort": "XL",
+    "migration_path": "Phase 0, about one week: move colors and radii into CSS variables, upgrade Tailwind 3 to 4, run shadcn init on Base UI, swap in Geist, and add dark tokens. Phase 1: shell, landing and pre-call on bento primitives, keeping existing component props. Phase 2: live cockpit behind a feature flag, with the coach pipeline added beside the current grader. Phase 3: persona library seeded with 150 files in batches by job family, plus the wizard. Phase 4: debrief timeline, progress and team views. Re-capture the docs/redesign screenshots after each phase so the council can compare."
+  },
+  "risks": [
+    "Tailwind 3 to 4 touches every class, so regressions are likely in phase 0.",
+    "Base UI is young (1.8.0), and sources disagree on Radix: one says it is still fully supported, another says it is not actively maintained. Verify before committing.",
+    "Coach latency above about 2 seconds makes cues feel late. Fall back to end-of-turn cues.",
+    "The dark stage and glow can read as a gimmick if accents are overused.",
+    "The 150-persona library is a content job, and quality varies unless each batch is reviewed.",
+    "Bento density at 390px can overflow. Test every tile at phone width.",
+    "Realtime voice adds per-minute cost, so keep text as the default for open-source demos.",
+    "Mobbin notice from the search results: AI usage is high this month (credits_used about 925). It is unlimited during beta, and purchases may apply later.",
+    "Model names are plain text. Avoid OpenAI logos unless brand terms allow."
+  ]
+}

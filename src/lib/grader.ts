@@ -1,7 +1,8 @@
 import "server-only";
 import { z } from "zod";
+import { APOLOGY_STEP_RE, isApology } from "./apology";
 import { chat, extractJson } from "./llm";
-import { llmKey } from "./serverConfig";
+import { llmKey, llmModel } from "./serverConfig";
 import { Scenario, normalizeWeights } from "./scenarios";
 
 export interface Turn {
@@ -84,6 +85,8 @@ async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluati
     `TRANSCRIPT:\n${formatTranscript(turns)}`,
   ].join("\n\n");
 
+  // Read the model before the call so the stored provenance names what actually graded this transcript.
+  const model = llmModel();
   const out = LlmOutput.parse(extractJson(await chat([{ role: "system", content: system }, { role: "user", content: user }], { json: true })));
   // Line numbers/speakers come from the transcript itself, not from the model.
   const haystack = turns.map((t) => norm(t.text));
@@ -109,6 +112,7 @@ async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluati
   return {
     method: "llm",
     graderVersion: GRADER_VERSIONS.llm,
+    model,
     overallScore,
     grade: gradeFor(overallScore),
     summary: out.summary,
@@ -135,7 +139,8 @@ const GREETING_RE = /\b(hello|hi|hey|good (?:morning|afternoon|evening)|thanks? 
 
 const BOOKING_CRITERION_RE = /book|clos|appoint|schedul|next.?step|commit|confirm|wrap/i;
 const SLOT_TIME_RE = /\b(\d{1,2}(:\d{2})?\s?(a\.?m\.?|p\.?m\.?)|noon|tomorrow|today|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week|this (morning|afternoon|evening|week)|(morning|afternoon|evening) (window|slot))\b/i;
-const SLOT_OFFER_RE = /\b(how about|would .* work|does .* work|can (do|offer|get|send|have)|i have|we have|available|opening|slot|window|come out|stop by|schedule|book|appointment|visit|see you)\b/i;
+// Only counts alongside SLOT_TIME_RE, so broad verbs ("Can I send...", "I can show it Saturday") stay safe.
+const SLOT_OFFER_RE = /\b(how about|would .* work|does .* work|can (do|offer|get|send|have)|(i|we) can (do|offer|get|send|show|meet|come|bring|have)|can (i|we) (do|offer|get|send|show|meet|come|book|set|pencil)|i have|we have|available|opening|slot|window|come out|stop by|schedule|book|appointment|visit|see you)\b/i;
 const SLOT_CONFIRM_RE = /\b(confirm(ed|ing)?|you're (booked|all set|scheduled)|i've (booked|scheduled|put you)|locked in|see you (then|at|on|tomorrow)|all set)\b/i;
 
 /** Trainee proposed a concrete day/time slot (offered) and/or confirmed one (confirmed). */
@@ -174,11 +179,11 @@ function repetitionPenalty(sentences: Sentence[]): number {
 /** Deterministic keyword-coverage grader used when no LLM key is configured. */
 export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: string): Evaluation {
   const rubric = normalizeWeights(scenario.rubric);
-  const spoken = turns.filter((t) => t.role !== "system" && t.text.trim());
   const sentences: Sentence[] = [];
   let turnNo = 0;
-  spoken.forEach((t, i) => {
-    if (t.role !== "user") return;
+  // Line numbers index the transcript as given (system and blank turns included) so the debrief's T-numbers match.
+  turns.forEach((t, i) => {
+    if (t.role !== "user" || !t.text.trim()) return;
     for (const text of splitSentences(t.text)) sentences.push({ line: i + 1, turn: turnNo, text });
     turnNo++;
   });
@@ -217,6 +222,18 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
     if (/discover|question|clarif|listen/i.test(`${c.id} ${c.name}`)) {
       bonus += Math.min(15, 5 * sentences.filter((s) => s.text.includes("?")).length);
     }
+    // Keyword overlap misses "I'm sorry", so a criterion that asks for an apology credits a real one
+    // (the same detector as the live coach), and less when the rep keeps apologizing.
+    let apologyNote = "";
+    if (APOLOGY_STEP_RE.test(`${c.name}. ${c.description}`)) {
+      const sorry = sentences.filter((s) => isApology(s.text));
+      if (sorry.length) {
+        bonus += sorry.length <= 2 ? 25 : 10;
+        evidenceSentences.unshift(sorry[0]);
+        const points = `addressed ${Math.min(credited, kws.length)} of ${kws.length} expected points for this area`;
+        apologyNote = sorry.length <= 2 ? `You apologized plainly and ${points}.` : `You apologized ${sorry.length} times; once, plainly, lands better. You ${points}.`;
+      }
+    }
     const raw = 20 + coverage * 80 + bonus;
     let score = sentences.length === 0 ? 0 : Math.max(0, Math.min(100, Math.round(raw * (1 - 0.4 * rep))));
     // Offering a concrete slot earns partial booking/closing credit; confirming it earns more.
@@ -238,9 +255,9 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
       name: c.name,
       weight: c.weight,
       score,
-      rationale: slotNote ? slotNote : evidence.length
+      rationale: slotNote || apologyNote || (evidence.length
         ? `You addressed ${Math.min(credited, kws.length)} of ${kws.length} expected points for this area${rep > 0.3 ? ", but repeated yourself a lot" : ""}.`
-        : "Nothing you said clearly addressed this area.",
+        : "Nothing you said clearly addressed this area."),
       evidence,
     };
   });
@@ -272,6 +289,6 @@ export async function evaluateCall(scenario: Scenario, turns: Turn[]): Promise<E
     return await gradeWithLlm(scenario, turns);
   } catch (e) {
     console.error("[grader] LLM grading failed, falling back to heuristic:", (e as Error).message);
-    return gradeHeuristically(scenario, turns, "The LLM grader failed, so a keyword heuristic was used instead.");
+    return gradeHeuristically(scenario, turns, "AI grading failed for this call, so this is a rules-based estimate. Re-grade with AI to try again.");
   }
 }

@@ -1,5 +1,5 @@
 import "server-only";
-import { llmKey } from "./serverConfig";
+import { llmBaseUrl, llmKey, llmModel } from "./serverConfig";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -9,8 +9,8 @@ export interface ChatMessage {
 /**
  * Minimal OpenAI-compatible chat completion call (works with OpenAI, Azure,
  * OpenRouter, Ollama, vLLM...). Configure with LLM_API_KEY (or OPENAI_API_KEY),
- * LLM_BASE_URL and LLM_MODEL. Used only for post-call grading and the text
- * simulation; voice is handled by ElevenLabs.
+ * LLM_BASE_URL and LLM_MODEL. Used for the coach, grading, the persona wizard
+ * and the text simulation; voice goes through OpenAI Realtime or ElevenLabs.
  */
 export async function chat(
   messages: ChatMessage[],
@@ -26,7 +26,7 @@ export async function chatFull(
 ): Promise<{ text: string; truncated: boolean }> {
   const key = llmKey();
   if (!key) throw new Error("LLM_NOT_CONFIGURED");
-  const base = (process.env.LLM_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
+  const base = llmBaseUrl();
   // Anthropic's OpenAI-compatible endpoint ignores response_format, so we
   // never send it there and rely on extractJson() + the prompt instead.
   const sendJsonFormat = opts.json && !/anthropic\.com/i.test(base);
@@ -35,7 +35,7 @@ export async function chatFull(
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify({
-        model: process.env.LLM_MODEL || "gpt-4.1-mini",
+        model: llmModel(),
         messages,
         ...(withTemperature ? { temperature: opts.temperature ?? 0.4 } : {}),
         max_tokens: opts.maxTokens ?? 1800,
@@ -44,18 +44,14 @@ export async function chatFull(
       signal: AbortSignal.timeout(60_000),
     });
   let res = await call(true);
-  let detail = "";
-  if (!res.ok) {
-    detail = (await res.text().catch(() => "")).slice(0, 300);
-    // Some newer models reject `temperature`; retry once without it.
-    if (res.status === 400 && /temperature/i.test(detail)) {
-      res = await call(false);
-      detail = res.ok ? "" : (await res.text().catch(() => "")).slice(0, 300);
-    }
+  if (!res.ok && res.status === 400) {
+    // Some newer models reject `temperature`; retry once without it. The body is only inspected, never logged.
+    const detail = (await res.text().catch(() => "")).slice(0, 300);
+    if (/temperature/i.test(detail)) res = await call(false);
   }
   if (!res.ok) {
-    // Include the provider's error text (never the key) so misconfiguration is diagnosable from logs.
-    throw new Error(`LLM_HTTP_${res.status} ${base}/chat/completions ${detail}`);
+    // Status only: provider error bodies can echo prompts or account details, and callers log this message.
+    throw new Error(`LLM_HTTP_${res.status}`);
   }
   const data = await res.json();
   const raw = data?.choices?.[0]?.message?.content;

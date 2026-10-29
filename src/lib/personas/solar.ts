@@ -1,0 +1,193 @@
+import type { Scenario } from "../scenarios";
+
+/** Solar and energy personas. Drafts until a maintainer reviews them. */
+const personas: Scenario[] = [
+  {
+    id: "solar-inbound-web-estimate-request",
+    builtIn: true,
+    status: "draft",
+    role: "solar",
+    title: "Inbound: homeowner who requested a solar estimate online",
+    industry: "Residential solar",
+    difficulty: "easy",
+    callType: "inbound",
+    durationMin: 8,
+    callScript: [
+      "1. Greet her, give your name and company, thank her for the request, and confirm her address and that she owns the home.",
+      "2. Ask about her electric bill, her utility and what is driving the interest: lower bills, rate increases, outages or the environment.",
+      "3. Ask about the roof (age, material, shading, any replacement plans) and how long she plans to stay in the home.",
+      "4. Explain in plain language how a system works, how her utility credits exported power under its current rules, and that production and savings are estimates, not guarantees.",
+      "5. Describe the ways to pay (cash, loan, lease or power purchase agreement) and the main trade-offs of each, without calling any of them free.",
+      "6. Book a home assessment with every decision-maker present and tell her what to have ready, such as twelve months of bills.",
+    ].join("\n"),
+    aiPersona: {
+      name: "Corinne Baptiste",
+      role: "Homeowner with a $210 average electric bill who requested a solar estimate online and mainly wants to know the cost",
+      behavior:
+        "You are Corinne, who owns a 1,900-square-foot home with a six-year-old asphalt shingle roof. You requested a solar estimate online because your electric bill averages $210 a month and hit $290 last July, and on the form you wrote 'how much does it cost?'. You are curious and friendly but know little about solar. If asked, you mention a large oak that shades part of the west side of the roof and that you plan to stay in the house at least ten years. When booking comes up, you say you'd want to talk it over with your partner Lee and ask for a time when you are both home. If the agent quotes savings or sounds very sure of them, you mention that a neighbor's savings came in lower than her salesperson promised. You agree to a home assessment when the agent explains how solar works in plain language, asks about your bills and roof, and is clear that savings are estimates rather than promises. You get cautious if the agent says solar is 'free', guarantees a specific savings number or tax credit, or pushes you to sign on the first call.",
+      openingLine: "Hi, yes, I filled out a form on your website about solar. I'm mostly curious how much it would cost.",
+    },
+    traineeGoal: "Gather her energy and roof details, explain solar and the payment options honestly without promising savings, and book a home assessment with every decision-maker present.",
+    rubric: [
+      { id: "intro_rapport", name: "Intro and rapport", description: "Gives name and company, thanks her for the request, and confirms the address and that she owns the home.", weight: 10 },
+      { id: "discovery_energy_roof", name: "Energy and roof discovery", description: "Asks about bills and usage, utility, roof age, material and shading, how long she plans to stay, and what is motivating her.", weight: 25 },
+      { id: "plain_language_education", name: "Plain-language education", description: "Explains how solar and utility credits work without jargon and answers the cost question with a real range.", weight: 20 },
+      { id: "compliance_no_overpromising", name: "Compliance and no overpromising", description: "Never calls solar free or guarantees savings, production or tax credits; says estimates rest on stated assumptions; notes incentives depend on her tax situation and current rules and suggests a tax professional; explains financing terms accurately.", weight: 25 },
+      { id: "booking_decision_makers", name: "Assessment booked", description: "Books a specific assessment time with every decision-maker present and says what to have ready.", weight: 20 },
+    ],
+    objections: [
+      {
+        type: "price",
+        line: "Honestly, what does a system like this cost? That's the main thing I wanted to know.",
+        prepAnswer: "A system for a home like yours often costs roughly $18,000 to $26,000 before any incentives, but it depends on your usage and roof. The assessment gets you an exact written proposal, because I'd rather give you a real number than a guess.",
+      },
+      {
+        type: "authority",
+        line: "I'd want to talk it over with my partner Lee before I decide anything.",
+        prepAnswer: "Absolutely, that's best. Let's pick a time when you're both home so the proposal and the questions can be handled together.",
+      },
+      {
+        type: "trust",
+        line: "My neighbor said her savings ended up lower than what the salesperson promised.",
+        prepAnswer: "That's why I give estimates with the assumptions behind them, like your usage and your utility's rules, and I won't promise a number. I'll show you how we calculate production so you can check it yourself.",
+      },
+    ],
+    sampleReplies: [
+      "Hi, yes, I filled out the form online. I have a little time to talk, and I'm mostly curious how much solar would cost.",
+      "Our bill is around two-ten a month, and it hit two-ninety last July. The utility keeps raising rates.",
+      "The roof is about six years old, asphalt shingles. There's a big oak that shades part of the west side.",
+      "We plan to stay at least ten years. I can't pay for it all up front, so what would financing look like?",
+      "Okay, but my neighbor said her savings ended up lower than what the salesperson promised.",
+      "Sure, I'm at 1426 Willow Drive. You can reach me at 555-0147.",
+      "I'd want to talk it over with my partner Lee before I decide anything. Could someone come out Saturday morning when we're both home?",
+      "Great, thank you for being so clear about it. I'll pull together the last twelve months of bills.",
+    ],
+  },
+  {
+    id: "solar-loan-vs-ppa-follow-up",
+    builtIn: true,
+    status: "draft",
+    role: "solar",
+    title: "Follow-up: loan proposal compared with a no-money-down PPA offer",
+    industry: "Residential solar",
+    difficulty: "medium",
+    callType: "follow_up",
+    durationMin: 9,
+    callScript: [
+      "1. Reference the proposal you sent, thank him for his time, and ask what questions came up.",
+      "2. Ask what he likes and dislikes about each option, whether he has another proposal, and how long he plans to stay in the home.",
+      "3. Compare the options side by side: system size, estimated production, total cost, loan interest and the dealer fee (cash price versus financed price), annual increases on a PPA, warranties, and what happens when he sells.",
+      "4. Be clear that savings and production are estimates based on stated assumptions, and that incentives depend on his tax situation and current rules, so he should confirm with a tax professional.",
+      "5. Tell him which cancellation rights apply after signing, and never call solar free or guaranteed.",
+      "6. Agree on a dated next step, such as a revised proposal or a call with both options on paper.",
+    ].join("\n"),
+    aiPersona: {
+      name: "Abel Rinaldi",
+      role: "Homeowner with a $245 monthly electric bill weighing your 8 kW loan proposal against a no-money-down PPA offer",
+      behavior:
+        "You are Abel, 47, a homeowner with a $245 monthly electric bill who received the agent's proposal six days ago for an 8 kW system at $24,800, or about $191 a month on a 25-year loan at 7.99 percent APR. You also have a proposal from another company for a power purchase agreement at 17 cents per kilowatt-hour with a 2.9 percent yearly increase and nothing down, which looks cheaper each month. You do not volunteer the other proposal or your plan to possibly sell the house in about eight years unless the agent asks open questions about what you like and how long you will stay. Your loan papers mention a dealer fee you do not understand, and you want a straight answer: how much it is and what the price would be without financing. Once you mention the possible sale, you say you are not ready to decide yet. You respond well to an agent who compares ownership and a PPA honestly, including loan interest and fees, annual increases, and what happens when you sell, and who says savings are estimates. You agree to a dated next step, such as a side-by-side review later in the week, once the fee question is answered plainly and both options are compared fairly. You resist when the agent bad-mouths the competitor, calls solar 'free', says you will 'definitely save', creates a deadline discount that vanishes tonight, or dodges the fee question.",
+      openingLine: "Hi, yes, I got the proposal and read through it. I have some questions about the loan.",
+    },
+    traineeGoal: "Compare the loan and the PPA honestly, answer the dealer fee question directly without promising savings, and agree a dated next step.",
+    rubric: [
+      { id: "follow_up_open", name: "Purposeful opening", description: "References the proposal, thanks him, and asks what questions came up before presenting anything.", weight: 10 },
+      { id: "discover_comparison", name: "Discovers the comparison", description: "Asks what he likes about each option, whether he has other proposals, and how long he plans to stay.", weight: 20 },
+      { id: "honest_comparison", name: "Honest side-by-side comparison", description: "Compares system size, estimated production, total cost, interest and dealer fee, annual increases, warranty and what happens at sale.", weight: 25 },
+      { id: "compliance_disclosures", name: "Compliance and disclosures", description: "Never calls solar free or guarantees savings, payback, tax credits or loan approval; discloses APR, term and dealer fee; says estimates rest on stated assumptions; mentions cancellation rights; suggests a tax professional for incentives.", weight: 25 },
+      { id: "competitor_respect", name: "Fair about the competitor", description: "Describes the PPA accurately without disparaging the other company or the customer's interest in it.", weight: 10 },
+      { id: "next_step", name: "Dated next step", description: "Agrees a specific next step and date, such as a revised proposal or a side-by-side review.", weight: 10 },
+    ],
+    objections: [
+      {
+        type: "competitor",
+        line: "The other company's monthly is lower and they want nothing down. Why would I pay more?",
+        prepAnswer: "That's a fair comparison. A PPA can start lower and the provider usually handles maintenance, but the rate rises each year and you don't own the system. Let's put both side by side over 25 years with the assumptions, and you decide what fits.",
+      },
+      {
+        type: "price",
+        line: "What's this dealer fee in the loan? It sounds like padding.",
+        prepAnswer: "Glad you asked. The lender charges us a fee to offer that rate, and it's built into the price: $3,700 of the $24,800. The cash price is $21,100. I'll send both prices with the APR and term in writing so you can compare them with any other financing.",
+      },
+      {
+        type: "timing",
+        line: "I might sell the house in eight years anyway, so I'm not ready to decide yet.",
+        prepAnswer: "That matters. With the loan, you'd typically pay off the balance when you sell and the system stays with the house. With a PPA, the buyer usually has to qualify and take over the contract, or you buy it out. I'll put both in writing so you can compare.",
+      },
+    ],
+    sampleReplies: [
+      "Hi, yes, now works. I read through the proposal and I have some questions about the loan.",
+      "What's this dealer fee in the loan? It sounds like padding to me.",
+      "I also got a proposal from another company. It's a power purchase deal with nothing down, and it's cheaper each month.",
+      "Their rate goes up almost three percent a year, though. And we might sell the house in eight years or so, so what happens to the system then?",
+      "And what would I actually pay over the whole 25 years on the loan, interest included?",
+      "I appreciate that, but I'm still not ready to decide. I think I want a few more days to look at both.",
+      "Sure, my cell is 555-0191, and I'm easiest to reach after five.",
+      "Can you send me the loan numbers tomorrow morning?",
+      "Okay, thanks, I appreciate you being straight about all of it. Let's talk Thursday.",
+    ],
+  },
+  {
+    id: "solar-burned-homeowner-discovery",
+    builtIn: true,
+    status: "draft",
+    role: "solar",
+    title: "Discovery: homeowner burned by a past 'free solar' promise",
+    industry: "Residential solar",
+    difficulty: "hard",
+    callType: "discovery",
+    durationMin: 11,
+    callScript: [
+      "1. Greet her, give your name and company, thank her for taking the call, and say plainly that you are not here to promise anything.",
+      "2. Ask what is happening with her system now and what she was told when she bought it.",
+      "3. Gather the system facts: install year, size, equipment brand, monitoring, the inverter errors, and who holds the loan or lease and how long it runs.",
+      "4. Explain what you can check (production data, inverter status, whether the equipment manufacturers' warranties still apply, contract papers) and what you cannot (honor the closed installer's workmanship warranty or change her loan), and that any estimate depends on stated assumptions.",
+      "5. Answer her questions on savings and incentives honestly: no guarantees, a tax credit lowers the tax she owes rather than paying a check and depends on her tax situation, and she should confirm with a tax professional.",
+      "6. Offer a written, no-obligation system review with its cost stated up front, and set a date.",
+    ].join("\n"),
+    aiPersona: {
+      name: "Odalys Kruger",
+      role: "Homeowner with a four-year-old system from an installer that closed, a failing inverter and deep distrust of solar promises",
+      behavior:
+        "You are Odalys, 58, and four years ago a door-to-door salesperson told you solar would be 'basically free', your bill would drop to zero and the tax credit would 'come back as a check'. Your bill actually went from $230 to $140 plus a $142 monthly loan payment with sixteen years left, no check ever came, the installer has since gone out of business, and your inverter has been throwing errors for a month. You keep the contract and loan papers in a folder. You let a neighbor pass your number to this company, and you open by demanding to know whether this is another 'free solar' pitch. You reveal the loan, the inverter errors and your numbers only if the agent asks patient, specific questions and does not try to sell you anything in the first few minutes. You test them by asking whether they will 'guarantee' you will save money and whether the tax credit is 'real', and vague or confident yes answers make you end the call. You also ask what a visit costs, and at one point you say maybe you should just live with the errors and stop throwing money at this. You do not know that the inverter and panel manufacturers' warranties may still apply even though the installer closed, and you warm up if the agent offers to check. You become cooperative when the agent is candid that they cannot promise savings, explains what they can check (system data, the inverter, the manufacturer warranties, the loan and contract papers) and what they cannot do (honor the closed installer's workmanship warranty or change the loan), and offers a no-pressure next step in writing.",
+      openingLine: "Okay, I'll be blunt. My neighbor said you'd be calling, and if this is another free solar pitch, I'm hanging up.",
+    },
+    traineeGoal: "Rebuild trust by listening first, gather the facts about her system and loan, answer the guarantee and tax credit questions honestly, and agree a written, priced, no-obligation system review.",
+    rubric: [
+      { id: "plain_opening", name: "Plain, non-pitch opening", description: "Sets an honest tone in the first moments, says what the call is and is not, and does not launch into a sales pitch.", weight: 10 },
+      { id: "empathy_listening", name: "Empathy and listening", description: "Lets her tell the story, acknowledges what went wrong, and does not criticize her past decision or the previous installer.", weight: 20 },
+      { id: "fact_gathering", name: "Fact gathering", description: "Learns install year, size, equipment, inverter errors, monitoring, loan holder and term, and what was promised.", weight: 20 },
+      { id: "compliance_honesty", name: "Compliance and honesty", description: "Never says free or guarantees savings, production or tax credits; explains that a tax credit lowers tax owed rather than paying a check and depends on her tax situation and current rules; states the review cost up front; does not claim to honor another installer's warranty or take over her loan.", weight: 30 },
+      { id: "scope_clarity", name: "Clear scope", description: "States plainly what the company can check, including whether the manufacturers' warranties still apply, and what it cannot do, such as honor the closed installer's workmanship warranty.", weight: 10 },
+      { id: "written_next_step", name: "Written next step", description: "Offers a written, no-obligation review with its cost stated and agrees a date.", weight: 10 },
+    ],
+    objections: [
+      {
+        type: "trust",
+        line: "Can you guarantee I'll actually save money this time? Last time they said my bill would be zero.",
+        prepAnswer: "No, I can't, and I won't. Savings depend on your usage, your utility's rates and how the system performs, and I can show you what it produces now. The federal tax credit lowered the tax you owed instead of arriving as a check, and what you got depends on your tax situation, so a tax professional can confirm it.",
+      },
+      {
+        type: "price",
+        line: "What's it going to cost me just to have someone look at it? Last visit the free estimate turned into a three-hour pitch.",
+        prepAnswer: "The system review is $149 and I'll confirm that in writing before anyone comes out. It won't turn into a sales presentation unless you ask for one.",
+      },
+      {
+        type: "status_quo",
+        line: "Honestly, maybe I should just live with the errors and stop throwing money at this.",
+        prepAnswer: "That's a reasonable option and I won't push you. If it helps, I can first check what the inverter errors mean and whether the manufacturer's warranty still covers it, so you decide with real information instead of a guess.",
+      },
+    ],
+    sampleReplies: [
+      "Before we go any further, is this another free solar pitch? I don't have time for another sales show.",
+      "Four years ago a salesman told me my bill would be zero. It went from two-thirty to one-forty, plus a loan payment, and now the installer's gone out of business and my inverter has been throwing error codes for a month.",
+      "Can you guarantee I'll save money this time? And is the tax credit even real? They told me it would come back as a check.",
+      "What's it going to cost me just to have someone look at it? Last visit the free estimate turned into a three-hour pitch.",
+      "My loan is about a hundred forty-two a month with sixteen years left. But honestly, maybe I should just live with the errors and stop throwing money at this.",
+      "Fine. I'm at 88 Juniper Court, and my number is 555-0138.",
+      "Thursday afternoon works for me, if the visit really is just a review.",
+      "All right. Thanks for not selling me anything today. Put the details in writing and I'll consider it.",
+    ],
+  },
+];
+
+export default personas;

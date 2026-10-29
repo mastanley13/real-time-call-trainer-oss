@@ -1,0 +1,275 @@
+{
+  "id": "P43",
+  "lens": "Hugging Face-style community hub: open-source persona marketplace, forks, stars, leaderboards",
+  "name": "Open Practice Hub",
+  "one_liner": "A community hub for call practice: forkable personas with model cards, a live coach inside every call, and evidence-backed scorecards.",
+  "lens_followed_or_changed": "Followed the Hugging Face hub pattern: task chips, trending-first sorting, stars and forks, author credit, and a model card on every persona. Changed two things. A hub cannot coach a live call, so the call screen borrows a control-room pattern from call-tool UIs. And I rejected individual rep leaderboards as a default, since ranking reps raises consent and HR risk for team buyers. Leaderboards rank personas, scenarios and teams, and rep rankings are opt-in and measure improvement rather than absolute score.",
+  "ui_stack": [
+    {
+      "name": "shadcn/ui (copy-in components on Radix primitives, Tailwind)",
+      "role": "Base design system",
+      "why": "Component source lives in the repo, so contributors read and fork components instead of fighting a package."
+    },
+    {
+      "name": "Tailwind CSS 3 with CSS-variable tokens",
+      "role": "Styling and theme",
+      "why": "Keeps current utilities for the first pass; tokens move to variables so light and dark share one set."
+    },
+    {
+      "name": "Radix UI primitives (via shadcn)",
+      "role": "Dialogs, tabs, popovers, focus management",
+      "why": "Accessible sheets for the persona model card and the wizard steps."
+    },
+    {
+      "name": "cmdk",
+      "role": "Command palette",
+      "why": "Cmd/Ctrl+K jumps to any persona, scenario or action from any screen."
+    },
+    {
+      "name": "TanStack Table",
+      "role": "Data grids",
+      "why": "Sortable, filterable persona list view, call history and the team board."
+    },
+    {
+      "name": "Recharts via shadcn chart wrappers",
+      "role": "Charts",
+      "why": "Rubric trend lines, score distribution and the objection heatmap."
+    },
+    {
+      "name": "Motion (motion.dev)",
+      "role": "Animation",
+      "why": "Card lift, cue slide-ins and tweened score meters, with a reduced-motion fallback."
+    },
+    {
+      "name": "Vaul",
+      "role": "Bottom sheet",
+      "why": "Mobile coach panel with peek and half-height snap points."
+    },
+    {
+      "name": "react-hook-form + zod",
+      "role": "Forms and validation",
+      "why": "One zod schema validates wizard steps and persona YAML on client and server."
+    },
+    {
+      "name": "lucide-react",
+      "role": "Icons",
+      "why": "Kept as the single icon set."
+    },
+    {
+      "name": "ElevenLabs React and react-three-fiber",
+      "role": "Voice and presence orb",
+      "why": "Voice stays; the orb shrinks to a live-state indicator on the call screen."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "canvas",
+        "hex": "#F6F7F9",
+        "use": "Page background. Dark mode #0A0D13."
+      },
+      {
+        "token": "surface",
+        "hex": "#FFFFFF",
+        "use": "Cards and sheets. Dark mode #121822."
+      },
+      {
+        "token": "ink",
+        "hex": "#0E1116",
+        "use": "Primary text. Dark mode #EEF2F7."
+      },
+      {
+        "token": "ink-muted",
+        "hex": "#4B5563",
+        "use": "Secondary text. Dark mode #9AA5B5."
+      },
+      {
+        "token": "line",
+        "hex": "#E3E7ED",
+        "use": "Hairline borders. Dark mode #232B38."
+      },
+      {
+        "token": "primary",
+        "hex": "#4338CA",
+        "use": "Actions, active nav, links. Dark mode #818CF8."
+      },
+      {
+        "token": "live",
+        "hex": "#16A34A",
+        "use": "Recording, persona speaking, rubric criterion met. Dark mode #4ADE80."
+      },
+      {
+        "token": "coach",
+        "hex": "#D97706",
+        "use": "Whisper cues. Use dark ink text on amber fills. Dark mode #FBBF24."
+      },
+      {
+        "token": "alert",
+        "hex": "#E11D48",
+        "use": "Objection alerts and End and grade. Dark mode #FB7185."
+      },
+      {
+        "token": "star",
+        "hex": "#EAB308",
+        "use": "Stars, forks badges, featured and trending markers. Dark mode #FACC15."
+      }
+    ],
+    "typography": "Sora 600 to 700 for display headlines and KPI numerals; Inter 400 to 600 for UI and transcript text; JetBrains Mono 500 for timers, score deltas and timestamps. All loaded from Google Fonts. Body 15px desktop, 16px on phones.",
+    "shape_and_depth": "Flat first: 1px hairline borders, 14px card radius, 10px control radius, pill chips. Shadows only on floating sheets and the call HUD. Persona avatars are monogram rings with a hue hashed from the name, so 120+ personas need no stock photos. The orb survives only as the live-call presence indicator.",
+    "motion": "Motion springs of 180 to 260ms for card lift and cue slide-ins. Score meters tween over 400ms and show a +delta chip. The orb pulses only while the persona speaks. Under prefers-reduced-motion, swap movement for opacity fades.",
+    "iconography": "lucide-react at 1.75 stroke: 20px in controls, 16px in chips. Roles and industries use text chips, not icons, so the library stays scannable.",
+    "theme_modes": "Light is the default. Dark applies on the call route and when the OS prefers dark, with a header toggle. Both modes come from the same CSS variables, with dark values listed beside each token."
+  },
+  "navigation_and_ia": "Top nav: Practice, Library, Create persona (primary button), Progress. Team appears for org roles. Right side: GitHub stars pill and Fork. Routes: /library, /library/[slug] (model card), /create (wizard), /practice/[persona] (briefing), /call/[id] (live), /debrief/[id], /progress, /team. Scenarios and personas merge into one library object, which removes the scenario dropdown. Cmd/Ctrl+K opens the palette everywhere. Phones get a bottom tab bar for Practice, Library, Create and Progress, with Team in the menu. The call route hides global nav to keep focus.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Top bar with wordmark, Practice, Library, Create persona, Progress, plus a GitHub stars pill and Fork. Hero splits in two. Left: headline 'Practice the call before it counts', two CTAs (Start a call, Browse personas) and one line naming the OpenAI stack. Right: a looping 12-second product clip showing a persona card, a rubric meter ticking and one whisper cue. Below: task chips (SDR cold call, AE discovery, insurance, mortgage, solar, home services, collections) and a Trending personas row. Footer: Built on OpenAI Realtime API and GPT-4.1 mini, plus contribute links.",
+      "key_components": "Stat strip (stars, forks, personas, practice calls), trending row, task chips. The README hero mirrors this view as a GIF.",
+      "change_vs_today": "Replaces the generic gradient hero and four feature cards with a product-first demo and community proof."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Left filter rail: role, industry, difficulty 1 to 5, objection type, channel (voice or text), license. Top: Cmd/Ctrl+K search and sort chips: Trending, Most forked, New, Highest pass rate. Main: three-column card grid, two on tablet, one on phone. Card: monogram ring, persona title, role and industry chips, difficulty bar, two objection tags, stars, forks and author handle. Clicking opens a right-side model card: what it tests, rubric weights, opening line, a 30-second sample, fork lineage, and Start practice, Fork and Star buttons.",
+      "key_components": "TanStack Table list toggle, cmdk palette, fork tree inside the model card, Vaul sheet on phones.",
+      "change_vs_today": "Replaces a three-item dropdown and a list-plus-form editor with a browsable, forkable catalog."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Left: vertical stepper (Source, Persona, Scenario, Rubric, Dry run, Publish). Source takes a job description, product URL, CRM notes, ICP text or a pasted call as tabs. Middle: an assistant asks up to three follow-ups and cites the source lines it used. Right: a live persona card and rubric preview that fills as answers arrive, plus a 20-second cold open generated in the persona's voice. Publish offers Save privately, Share to team, or Open PR with the persona file prefilled.",
+      "key_components": "react-hook-form and zod schemas shared by client and API, source-citation chips, dry-run player, PR export.",
+      "change_vs_today": "Adds a guided creation path. Today persona authoring is one long blank form."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Two columns. Left: persona header with presence ring and a one-line brief, then what they will push on as three objection cards, each with a prep tip. Below: the goal, the talk track as a numbered step rail that lights up during the call, and a what you will be scored on bar set with weights. Right sticky panel: Voice and Text segmented control, mic level meter, coach intensity (Quiet, Standard, Strict), a Start call primary button, and a Change persona link into the library.",
+      "key_components": "Persona header, objection cards, talk-track rail, weight bars, mic check, intensity radio group.",
+      "change_vs_today": "Replaces the scenario dropdown and collapsible sections with a briefing that explains the buyer and the grading before the call."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Desktop, three zones. Left narrow rail: talk-track steps that check off as the rep covers them. Center stage: persona name, presence orb with a speaking state, speaker-labelled transcript turns, and a text input in text mode. Right coach column: six live rubric meters that tick with deltas such as +6 Pricing, an amber whisper cue card, and a rose objection alert with a suggested bridge line. Bottom bar: timer, mute, intensity, End and grade.",
+      "key_components": "Coach pass on a rolling transcript, cue cards that dismiss on use, live-estimate labels on scores, step progress.",
+      "change_vs_today": "Turns the chat-app call into a coached cockpit with live scoring. Today nothing reacts until grading."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Top: score ring and a verdict sentence, such as Goal partially achieved: slot offered, contact capture came late. Under it, a replay timeline of the call with colored ticks per criterion; clicking a tick jumps the transcript. Main: criterion cards in two columns with score, weight and evidence quotes that link to timeline moments. A Practice this moment card starts a 90-second drill with the same persona. Desktop shows the transcript in a right pane; phones stack it below. Actions: share scorecard image, print, practice again.",
+      "key_components": "Replay scrubber, evidence chips, drill launcher, shareable PNG with the grader model version in its footer.",
+      "change_vs_today": "Replaces one long vertical scroll with a navigable replay and a next-rep action."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Top row: four KPI tiles with sparklines (sessions, average, best, minutes) and a streak tile. Middle: rubric trend lines per criterion, and an objection heatmap with objection types as rows and weeks as columns, like a contribution graph. Bottom left: recent calls table with filters and score badges. Bottom right: My personas, showing stars, forks and pass rate for personas the rep created or forked.",
+      "key_components": "shadcn chart wrappers, heatmap cells, filter chips, persona performance cards.",
+      "change_vs_today": "Goes past four stat tiles and a plain list to show skill trends and where the rep keeps stalling."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Team header with date range and a switch between team and org-private library. Main: TanStack table of reps with average score, 7-day trend arrow, weakest criterion, calls this week and a Needs coaching flag. Right panel: coaching queue with one-click assign-persona and a supervisor note thread. A Scenario leaderboard tab ranks personas by pass rate and difficulty-adjusted completion. Individual rep ranking is opt-in per team and defaults to improvement.",
+      "key_components": "Assign-persona action, supervisor notes on a call, org-private library, role-gated nav.",
+      "change_vs_today": "Adds the team surface the data model already supports but the UI never shows."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "390px, full-bleed stage. Slim header: back arrow, persona name and timer; the nav is hidden on the call. A segmented talk-track progress bar sits under the header. Transcript scrolls in the middle with the latest turn above a sticky bottom area. Coach is a bottom sheet with two snap points: peek shows the latest cue or objection alert, half height shows rubric meters. Bottom bar: mute, Type (opens text input), End and grade. Cues also flash as a 6-second toast over the stage.",
+      "key_components": "Vaul drawer with snap points, cue toast, collapsed text input, bottom bar with safe-area insets.",
+      "change_vs_today": "Fixes the truncated header and the bottom bar that collides with the floating dev badge over the timer, and gives coaching a home on phones."
+    }
+  ],
+  "live_coaching_and_scoring": "The persona stays a pure buyer, as the app already requires. A separate coach pass runs on a rolling transcript window (default GPT-4.1 mini through the OpenAI-compatible API) after each turn or on triggers: objection keywords, a 4-second silence, or a missed talk-track step. It returns typed JSON with rubric deltas, one whisper cue, an objection label with a bridge line, and the next-best question. Cues render only for the rep and never enter the persona's context. Live scores carry a live estimate label; the debrief re-grades with the full grader and quotes. Target latency is about 2 seconds behind speech. Intensity is Quiet, Standard or Strict, and a per-minute cost meter sits in the bar. No Mobbin screen I found showed live coaching, so this pattern builds on Quo's in-call bar and Delphi's transcript.",
+  "persona_library_and_wizard": "Each persona is one YAML file holding the persona, scenario, rubric weights, objection tags, voice id, license and author. The library launches with a target of 120+ seeded personas across 15+ industries and about 12 roles (SDR cold call, AE discovery, insurance, mortgage, solar, home services, auto, medical devices, B2B procurement, recruiting, retail, customer success, collections). Filters: role, industry, difficulty, objection type, channel. Cards show stars, forks and a pass rate from opt-in anonymised results. Forking copies the file and records lineage. The wizard reads a job description, product URL, CRM notes, ICP or pasted call, asks up to three follow-ups, cites source lines, runs a dry run, then saves privately, shares to a team, or opens a PR.",
+  "signature_moments": [
+    "Rubric meters tick with deltas such as +6 Pricing the moment a criterion is covered.",
+    "A fork tree on each persona model card showing who built on whom.",
+    "A debrief replay scrubber with colored ticks where the room was lost; click to jump to the quote.",
+    "A wizard dry run that plays a 20-second cold open in the persona's voice while the form fills.",
+    "A shareable scorecard PNG with the grader model version in its footer."
+  ],
+  "openai_fund_angle": "Every stage carries a model chip: Realtime voice for the persona, GPT-4.1 mini for coaching and grading, and the wizard model for persona creation. Cost per practice minute appears on the call screen. The landing page and README carry a Built on OpenAI band linking to the Realtime and API docs. The contributor path: the wizard's Open PR exports a persona file with a prefilled PR, a good first persona label marks easy entries, and a lint job validates persona files. That gives Codex a concrete role in PR review and persona maintenance, the workflow the Codex for Open Source program funds.",
+  "inspirations": [
+    {
+      "source": "Hugging Face Spaces",
+      "url": "https://huggingface.co/spaces",
+      "borrowed": "Task-category chips, trending-first sorting, one-line app cards with counts."
+    },
+    {
+      "source": "Mobbin: Base44 app templates",
+      "url": "https://mobbin.com/screens/4f353a07-5851-4ac7-9165-65ba1d10cf9c",
+      "borrowed": "Category chips, creator byline, use count and rating on each card."
+    },
+    {
+      "source": "Mobbin: Higgsfield skills marketplace",
+      "url": "https://mobbin.com/screens/8b7871c5-586f-4d9e-89a2-e609bc4b3943",
+      "borrowed": "Verified-creator check and add-to-library tick on cards."
+    },
+    {
+      "source": "Mobbin: Klaviyo campaigns library",
+      "url": "https://mobbin.com/screens/c3d9bb50-e157-4c6b-baf2-d258935c1f95",
+      "borrowed": "Grouped sections with View all counts and stat chips on cards."
+    },
+    {
+      "source": "Mobbin: Quo call screen",
+      "url": "https://mobbin.com/screens/e93c487e-6255-4b8a-b093-f19f779d6c7b",
+      "borrowed": "Dark in-call control bar."
+    },
+    {
+      "source": "Mobbin: Delphi call transcript",
+      "url": "https://mobbin.com/screens/f66701fe-0f6b-4571-b448-e478720ea2bc",
+      "borrowed": "Persona-labelled transcript bubbles."
+    },
+    {
+      "source": "Mobbin: Gumloop score dashboard",
+      "url": "https://mobbin.com/screens/60ec82f0-afbf-4a61-b57a-0c56f540f9b6",
+      "borrowed": "Score distribution histogram beside a sortable records table."
+    },
+    {
+      "source": "Mobbin: Shopify analytics",
+      "url": "https://mobbin.com/screens/44f0460b-4460-469c-80f6-62f00a7aed73",
+      "borrowed": "KPI tiles with sparklines above a trend chart."
+    },
+    {
+      "source": "Mobbin: ChatGPT GPT creation flow",
+      "url": "https://mobbin.com/flows/6e8f0823-7698-4850-bb22-9100eff40163",
+      "borrowed": "Chat-to-create on the left, live preview on the right."
+    },
+    {
+      "source": "Mobbin: PlayAI agent creation flow",
+      "url": "https://mobbin.com/flows/cdb50e4c-e541-494b-8e1c-0d4e5df71ccd",
+      "borrowed": "Step rail with completed checkmarks and preset use-case cards."
+    },
+    {
+      "source": "Mobbin: Langdock agent creation flow",
+      "url": "https://mobbin.com/flows/b02f0a98-e879-4661-ab63-4fae5b41625a",
+      "borrowed": "Form fields beside a live preview pane, with a prompt or form input-type switch."
+    },
+    {
+      "source": "Second Nature",
+      "url": "https://secondnature.ai/",
+      "borrowed": "Live-deal coaching framing (vendor claim, unverified)."
+    },
+    {
+      "source": "Hyperbound comparison blog",
+      "url": "https://www.hyperbound.ai/blog/mindtickle-vs-hyperbound-vs-second-nature",
+      "borrowed": "Scorecard metrics such as talk ratio and methodology adherence (vendor claim, unverified)."
+    },
+    {
+      "source": "Outdoo AI comparison blog",
+      "url": "https://www.outdoo.ai/blog/hyperbound-vs-second-nature-vs-outdoo",
+      "borrowed": "One scorecard applied to both practice and live calls (vendor claim, unverified)."
+    }
+  ],
+  "implementation": {
+    "effort": "L",
+    "migration_path": "Phase 1: design tokens, shadcn primitives, new shell, landing and library behind a flag, keeping current routes live. Phase 2: persona YAML data model and seeded library. Phase 3: wizard with dry run and PR export. Phase 4: coach channel on the desktop call screen, then the mobile sheet. Phase 5: debrief replay, progress and team views. Each old screen is replaced only after its successor ships."
+  },
+  "risks": [
+    "Rep leaderboards carry consent and HR risk; keep them off by default and opt-in per team.",
+    "Coach latency above about 2 seconds makes cues feel stale; spike the timing before committing to the design.",
+    "The coach must stay isolated from the persona's realtime context or the buyer may start coaching; red-team it.",
+    "Community personas can be off-brand, biased or abusive; add lint, a review queue and a license field before the library opens.",
+    "Scope is nine screens plus a wizard and a coach channel; ship the live cockpit and library first.",
+    "shadcn copy-in components add ongoing maintenance; pin the component set and document it.",
+    "Realtime minutes burn OpenAI credit quickly; the cost meter and a per-day cap are needed to plan for the fund."
+  ]
+}

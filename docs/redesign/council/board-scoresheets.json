@@ -1,0 +1,1637 @@
+[
+  {
+    "seat": "Product design lead",
+    "scores": [
+      {
+        "proposal_id": "P39",
+        "A": 8.9,
+        "B": 7.8,
+        "C": 8.8,
+        "D": 6.6,
+        "E": 6,
+        "F1": 4.5,
+        "F2": 6,
+        "F3": 3.5,
+        "reason": "The most coherent design system on the board (gauges, lamps and mono telemetry carry from pre-flight to HUD to black-box replay to logbook), though the dark/daylight theme seam and heavy metaphor are real costs."
+      },
+      {
+        "proposal_id": "P47",
+        "A": 7.6,
+        "B": 7.2,
+        "C": 8,
+        "D": 6.8,
+        "E": 6.4,
+        "F1": 5.6,
+        "F2": 5.6,
+        "F3": 3.5,
+        "reason": "The Blind/Guided/Coached dial and trigger-quote cues are real coaching craft and the OpenAI footer (model, rubric version, cost) is a clean fund story, but the look is generic dark navy plus teal and AI-composed layout is the riskiest, least valuable part."
+      },
+      {
+        "proposal_id": "P23",
+        "A": 8.2,
+        "B": 6.5,
+        "C": 9,
+        "D": 6.3,
+        "E": 6.5,
+        "F1": 4.5,
+        "F2": 5.5,
+        "F3": 3.6,
+        "reason": "Phosphor console plus paper debrief in IBM Plex is the most memorable visual identity with real discipline (glow only on live signal), and the shared evidence object plus model tray is strong for the fund, but the Board/Patch/Ticket vocabulary and 300-persona promise cost it."
+      },
+      {
+        "proposal_id": "P05",
+        "A": 7.7,
+        "B": 6.5,
+        "C": 8.2,
+        "D": 6.2,
+        "E": 6.3,
+        "F1": 5.5,
+        "F2": 5,
+        "F3": 4,
+        "reason": "Whoop-style Strain and Form rings are a fresh visual idea with solid mobile and Under-the-hood craft, but rings on every card add noise, Form is empty for 42 days, and the surveillance read hurts call-center buyers."
+      },
+      {
+        "proposal_id": "P09",
+        "A": 7.5,
+        "B": 7.6,
+        "C": 6.9,
+        "D": 6.3,
+        "E": 6.4,
+        "F1": 5.5,
+        "F2": 6.8,
+        "F3": 4,
+        "reason": "Warm paper canvas with Newsreader evidence quotes and an always-dark cockpit is tasteful and buyer-friendly (PII redaction, editable docs), but TipTap scope creep and unreadable block-JSON diffs undercut the PR-reviewable persona story."
+      },
+      {
+        "proposal_id": "P44",
+        "A": 7.4,
+        "B": 7,
+        "C": 7.8,
+        "D": 6,
+        "E": 5.4,
+        "F1": 5.8,
+        "F2": 6.2,
+        "F3": 3.2,
+        "reason": "Score-band contribution graph and personas-as-files is the cleanest OSS and Codex-review narrative, but GitHub cosplay looks like a dev tool to sales buyers and 60 launch personas is thin."
+      },
+      {
+        "proposal_id": "P12",
+        "A": 7.3,
+        "B": 7.7,
+        "C": 7.5,
+        "D": 6,
+        "E": 5.8,
+        "F1": 5.8,
+        "F2": 6.6,
+        "F3": 3.5,
+        "reason": "Timeline-as-spine with tagged moments and Replay-this-moment is the clearest learning loop and the most accessibility-aware HUD, but the visual language is the least new and the library is the least designed screen."
+      },
+      {
+        "proposal_id": "P50",
+        "A": 7.5,
+        "B": 6.8,
+        "C": 8.5,
+        "D": 5.6,
+        "E": 5.3,
+        "F1": 5.2,
+        "F2": 4.8,
+        "F3": 4.5,
+        "reason": "The soft-clay caller bust is distinctive and the Model Ledger plus golden-set eval is fund-smart, but 3D is the one thing a sales console does not need, it reads unserious to enterprise, and the library is unsized."
+      },
+      {
+        "proposal_id": "P33",
+        "A": 6.6,
+        "B": 7.5,
+        "C": 5.2,
+        "D": 6,
+        "E": 6,
+        "F1": 5.4,
+        "F2": 6.7,
+        "F3": 3.4,
+        "reason": "Sound, shippable Catalyst-pattern shell with honest Heuristic badges and Replay-this-moment, but sidebar plus white cards plus blue primary is the default SaaS template the brief is trying to escape."
+      },
+      {
+        "proposal_id": "P08",
+        "A": 8,
+        "B": 6.4,
+        "C": 8,
+        "D": 6.6,
+        "E": 6.2,
+        "F1": 4.8,
+        "F2": 5.5,
+        "F3": 4.5,
+        "reason": "Violet-for-coach-only discipline and per-field provenance are excellent system thinking, but the canvas metaphor retreats from the screens that matter, a node-graph wizard fails first-time builders, and it reads as n8n."
+      },
+      {
+        "proposal_id": "P19",
+        "A": 7,
+        "B": 8,
+        "C": 6,
+        "D": 6.7,
+        "E": 6.4,
+        "F1": 6,
+        "F2": 7,
+        "F3": 3,
+        "reason": "Hatched-to-solid rubric fills and the AI-vs-manager calibration chart are the best trust mechanics in the set and the plan is buildable, but shadcn plus Tremor with a blue primary is the default-template look."
+      },
+      {
+        "proposal_id": "P02",
+        "A": 7.3,
+        "B": 7.2,
+        "C": 5.8,
+        "D": 6.8,
+        "E": 6.8,
+        "F1": 5,
+        "F2": 6.4,
+        "F3": 3.6,
+        "reason": "Best measurable coaching loop and best-grounded wizard (found-then-generated with quote chips), and Geist is OFL-safe, but it is Vercel with a teal dot and cold for a sales audience."
+      },
+      {
+        "proposal_id": "P30",
+        "A": 6.8,
+        "B": 7,
+        "C": 6,
+        "D": 6,
+        "E": 5.9,
+        "F1": 5,
+        "F2": 6.9,
+        "F3": 3.5,
+        "reason": "Honest Estimate chip, drop-late-cues rule and CRM-sync story are mature, but record pages and related lists read as CRM admin software and the OpenAI showcase is buried in Settings."
+      },
+      {
+        "proposal_id": "P31",
+        "A": 5.5,
+        "B": 7,
+        "C": 6,
+        "D": 6.7,
+        "E": 6,
+        "F1": 4.6,
+        "F2": 5.4,
+        "F3": 4.5,
+        "reason": "Cue-with-receipts, cadence control and the coverage map are smart, but default antd reads enterprise-admin, React 19 needs a patch, and it is a locked package rather than owned source."
+      },
+      {
+        "proposal_id": "P36",
+        "A": 7,
+        "B": 6,
+        "C": 8.8,
+        "D": 5.4,
+        "E": 5,
+        "F1": 4.6,
+        "F2": 4.6,
+        "F3": 5.4,
+        "reason": "The coach knob is a real idea and the most original concept, but a hand-built skeuomorphic instrument kit is a permanent a11y and maintenance burden, cues ship off by default, and it falsely claims Codex already reviews PRs."
+      },
+      {
+        "proposal_id": "P17",
+        "A": 8,
+        "B": 7.4,
+        "C": 7,
+        "D": 6.1,
+        "E": 6.3,
+        "F1": 5.2,
+        "F2": 6.3,
+        "F3": 4.4,
+        "reason": "Editorial verdict line, hairlines and the human-labelled grader eval with Trust panel are the best answer to can-I-trust-this-score and a strong fund artifact, but Panda/Ark/Park is a contributor-hostile stack and the heaviest rewrite."
+      },
+      {
+        "proposal_id": "P37",
+        "A": 7.5,
+        "B": 6.3,
+        "C": 6.7,
+        "D": 6.1,
+        "E": 6.2,
+        "F1": 4.8,
+        "F2": 5.8,
+        "F3": 4.2,
+        "reason": "Client-side talk-ratio and pace gauges work without the LLM and the wizard stress-test is distinctive, but it is the densest live screen on the board and reads as a familiar telemetry dashboard."
+      },
+      {
+        "proposal_id": "P14",
+        "A": 6.7,
+        "B": 6.5,
+        "C": 7,
+        "D": 5.6,
+        "E": 5.7,
+        "F1": 4.6,
+        "F2": 5.4,
+        "F3": 4.8,
+        "reason": "Persona-tinted dynamic color is a nice idea and the demo team plus sample call helps reviewers, but MUI has no native Expressive and springs plus tint plus shader orb is too much motion for a rep who is listening."
+      },
+      {
+        "proposal_id": "P22",
+        "A": 7.8,
+        "B": 7.2,
+        "C": 7.5,
+        "D": 6.2,
+        "E": 6,
+        "F1": 4.6,
+        "F2": 6.1,
+        "F3": 4.2,
+        "reason": "Swiss paper-and-ink with margin cues pinned to the triggering line is the most premium and legible alternative to the sea of dark dashboards, with a report-style debrief, though austerity risks reading as a publication rather than cutting-edge tech."
+      },
+      {
+        "proposal_id": "P38",
+        "A": 7.3,
+        "B": 6.8,
+        "C": 7.6,
+        "D": 6,
+        "E": 6.2,
+        "F1": 5,
+        "F2": 5,
+        "F3": 4.5,
+        "reason": "Hear-them voice samples and shareable moment cards are memorable, but the stream metaphor reads gamey to buyers, the coach rail is still a chat-style feed, and it has two near-identical reds."
+      },
+      {
+        "proposal_id": "P01",
+        "A": 7.6,
+        "B": 7.7,
+        "C": 4.8,
+        "D": 5.9,
+        "E": 5.4,
+        "F1": 5.5,
+        "F2": 6.5,
+        "F3": 3.5,
+        "reason": "Clean, disciplined execution with the sparse-live/dense-elsewhere split and keycaps, but it is a competent Linear clone that nobody will remember."
+      },
+      {
+        "proposal_id": "P45",
+        "A": 7.9,
+        "B": 7.6,
+        "C": 6.4,
+        "D": 6.1,
+        "E": 6.4,
+        "F1": 5.8,
+        "F2": 6,
+        "F3": 3.9,
+        "reason": "The most polished and mobile-friendly bento system with rep-job versus buyer-role facets, but bento is now a common template and the live rail is busy."
+      },
+      {
+        "proposal_id": "P26",
+        "A": 7.1,
+        "B": 7.9,
+        "C": 5.6,
+        "D": 6.9,
+        "E": 6.4,
+        "F1": 5.4,
+        "F2": 6.6,
+        "F3": 2.9,
+        "reason": "The most executable and fundable plan (one Zod schema, SSRF-safe wizard, latency and precision gates, Codex CLI prompt, grader-source chip), best live coaching, but the visual idea is the standard Gong/Balto side rail."
+      },
+      {
+        "proposal_id": "P25",
+        "A": 7.8,
+        "B": 6,
+        "C": 7,
+        "D": 4.9,
+        "E": 5.4,
+        "F1": 5.4,
+        "F2": 4.6,
+        "F3": 4.5,
+        "reason": "Gorgeous minimal call room with a good mobile layout, but fading chrome, timed cues and an unlabelled colour-only halo undermine coaching and accessibility, and the orb is the very cliche the brief wants gone."
+      },
+      {
+        "proposal_id": "P40",
+        "A": 7.2,
+        "B": 7.8,
+        "C": 5.3,
+        "D": 5.8,
+        "E": 6,
+        "F1": 5,
+        "F2": 5.4,
+        "F3": 4,
+        "reason": "Pragmatic and well-specified with the best mobile coach sheet and a 150-persona JSON plan, but shadcn plus violet is the default modern SaaS skin and swipe reads as a dating app to enterprise buyers."
+      }
+    ],
+    "top5": [
+      {
+        "proposal_id": "P39",
+        "why": "The strongest, most ownable design system on the board: one instrument grammar from pre-flight to HUD to black-box replay, and the signature interaction (gauges rewind as you scrub) is cutting-edge without being gimmicky; this is the dark-cockpit choice, to ship with daylight mode as the browsing default."
+      },
+      {
+        "proposal_id": "P23",
+        "why": "The bold aesthetic option: phosphor-lit live console with a calm paper debrief in IBM Plex gives the most memorable README hero GIF, and the shared evidence object plus model-switchboard tray and Codex CI on persona-schema changes makes OpenAI usage and the contributor path visible to fund reviewers; label model names from config, not hard-coded."
+      },
+      {
+        "proposal_id": "P26",
+        "why": "The pragmatic, fundable choice: best live-coaching spec (typed cues citing turn and criterion, latency and precision gates), one Zod schema across wizard, coach and grader, SSRF-safe context fetching, honest grader-source chip and a Codex CLI persona prompt; visually conventional, so it needs a design pass on top, but it is the lowest-risk path to a working demo."
+      },
+      {
+        "proposal_id": "P22",
+        "why": "The light, premium counter-programming: Swiss editorial paper-and-ink with margin cues pinned to the exact triggering line stands apart from every dark dashboard here, offers the best-reading debrief and an honest est.-to-evidence handoff, and gives the owner a genuinely different brand direction."
+      },
+      {
+        "proposal_id": "P47",
+        "why": "The coaching-pedagogy choice: the Blind/Guided/Coached dial, a debrief that opens on the moment that cost the deal, and model/rubric-version/cost in every footer are real product ideas and a clean OpenAI story; take the typed-block debrief in fixed order first and treat AI composition as an experiment."
+      }
+    ]
+  },
+  {
+    "seat": "Founder and go-to-market operator",
+    "scores": [
+      {
+        "proposal_id": "P39",
+        "A": 8.4,
+        "B": 7.6,
+        "C": 9,
+        "D": 6.4,
+        "E": 5.6,
+        "F1": 4.5,
+        "F2": 5.5,
+        "F3": 3.6,
+        "reason": "The most ownable identity in the field and a real black-box replay, but the flight vocabulary is a learning tax for enterprise buyers, the library is never sized, and XL scope with a Tailwind 4 migration is heavy for a funded-by-credits OSS project."
+      },
+      {
+        "proposal_id": "P47",
+        "A": 7.6,
+        "B": 6.9,
+        "C": 8,
+        "D": 6.9,
+        "E": 6.5,
+        "F1": 5.6,
+        "F2": 5.2,
+        "F3": 3.6,
+        "reason": "Coach-mode dial, cue quoting and a per-debrief model and cost footer are strong, but AI-composed debrief layouts undercut the same-shape scorecard managers need to compare calls, and L effort really stacks to XL."
+      },
+      {
+        "proposal_id": "P23",
+        "A": 7.2,
+        "B": 6.4,
+        "C": 8.8,
+        "D": 6.3,
+        "E": 6.3,
+        "F1": 4.4,
+        "F2": 5.4,
+        "F3": 3.7,
+        "reason": "The shared evidence object and model switchboard tray are a standout fund story and README GIF, but renaming the product Board/Patch/Ticket/Log and promising 300 personas is a vocabulary and content liability."
+      },
+      {
+        "proposal_id": "P05",
+        "A": 7.8,
+        "B": 6.3,
+        "C": 8,
+        "D": 6.2,
+        "E": 6.3,
+        "F1": 5.3,
+        "F2": 4.8,
+        "F3": 4.2,
+        "reason": "Strain/Form and PRs give a real retention loop for self-serve SaaS, but undefined formulas, a 42-day cold start and call-center reps reading load flags as surveillance hurt the enterprise sale."
+      },
+      {
+        "proposal_id": "P09",
+        "A": 7.5,
+        "B": 7.6,
+        "C": 6.8,
+        "D": 6.3,
+        "E": 6.5,
+        "F1": 5.6,
+        "F2": 7.2,
+        "F3": 3.8,
+        "reason": "The best enterprise story in the set (default PII redaction, customer-owned editable docs, manager queue, Model passport), held back by TipTap scope creep and an unspecified repo file format that undermines the reviewable-PR pitch."
+      },
+      {
+        "proposal_id": "P44",
+        "A": 7.4,
+        "B": 6.9,
+        "C": 7.8,
+        "D": 6,
+        "E": 5.3,
+        "F1": 6,
+        "F2": 6.2,
+        "F3": 3.2,
+        "reason": "The clearest open-core-to-revenue path at L effort (free MIT core, paid hosted team analytics, call-center licensing) and the best contributor funnel, but it reads as a dev tool to sales buyers and launches with only 60 personas."
+      },
+      {
+        "proposal_id": "P12",
+        "A": 7.3,
+        "B": 7.7,
+        "C": 7.5,
+        "D": 6,
+        "E": 5.7,
+        "F1": 5.8,
+        "F2": 7,
+        "F3": 3.4,
+        "reason": "A timeline spine of tagged, annotatable moments is the best learning loop and the natural bridge to real-call coaching that enterprises pay for, with consent labels built in, though the HUD is dense and the library is thin at launch."
+      },
+      {
+        "proposal_id": "P50",
+        "A": 7.5,
+        "B": 6.8,
+        "C": 8.4,
+        "D": 5.6,
+        "E": 5.1,
+        "F1": 5.2,
+        "F2": 4.5,
+        "F3": 4.6,
+        "reason": "The Model Ledger and grader-vs-golden-set idea are fund gold, but a 3D clay caller spends scarce maintainer capacity on the one thing a sales console does not need and will read as unserious to call-center buyers."
+      },
+      {
+        "proposal_id": "P33",
+        "A": 6.7,
+        "B": 7.5,
+        "C": 5,
+        "D": 6,
+        "E": 5.9,
+        "F1": 5.4,
+        "F2": 6.8,
+        "F3": 3.5,
+        "reason": "The most incremental, shippable build with honest Heuristic badges, Replay this moment and enterprise-ready settings and roster IA, but it is close to the default SaaS template the brief is trying to escape."
+      },
+      {
+        "proposal_id": "P08",
+        "A": 8,
+        "B": 6.3,
+        "C": 8,
+        "D": 6.5,
+        "E": 6.2,
+        "F1": 4.7,
+        "F2": 5.3,
+        "F3": 4.6,
+        "reason": "Best-specified cue taxonomy and the cue-followed marker are smart, but the node-canvas metaphor sits on the screens that matter least, is a poor fit for a manager pasting a job description, and mimics n8n-style tooling."
+      },
+      {
+        "proposal_id": "P19",
+        "A": 7,
+        "B": 8,
+        "C": 6,
+        "D": 6.7,
+        "E": 6.4,
+        "F1": 6,
+        "F2": 7.4,
+        "F3": 3,
+        "reason": "Manager-first with an AI-versus-manager calibration chart that earns grader trust, hatched-to-solid provisional scoring, a keep-the-routes migration and a token-first phase 0 make this the most sellable and buildable plan, at the cost of a familiar shadcn look."
+      },
+      {
+        "proposal_id": "P02",
+        "A": 7.3,
+        "B": 7.2,
+        "C": 6,
+        "D": 6.8,
+        "E": 6.8,
+        "F1": 5,
+        "F2": 6.4,
+        "F3": 3.6,
+        "reason": "The most measurable coaching loop (latency budgets, Not helpful feedback becoming an eval set) and the most grounded wizard and 200-pair library, but the monochrome dev-console look is cold for a sales audience."
+      },
+      {
+        "proposal_id": "P30",
+        "A": 6.9,
+        "B": 7,
+        "C": 6.2,
+        "D": 6,
+        "E": 5.8,
+        "F1": 5,
+        "F2": 7,
+        "F3": 3.5,
+        "reason": "Record pages and the CRM-activity sync story fit how sales orgs already work and it fixes the F-from-keyword-fallback trust bug, but it borrows a recognizable CRM category look and the sync is only planned."
+      },
+      {
+        "proposal_id": "P31",
+        "A": 5.8,
+        "B": 7,
+        "C": 6.2,
+        "D": 6.7,
+        "E": 6,
+        "F1": 4.6,
+        "F2": 5.4,
+        "F3": 4.6,
+        "reason": "The visible cue ThoughtChain, user-set cadence and coverage map are good ideas, but default antd reads enterprise-admin, needs a React 19 patch, and a locked npm kit is a worse contributor and agent story than owned shadcn source."
+      },
+      {
+        "proposal_id": "P36",
+        "A": 7,
+        "B": 6,
+        "C": 9,
+        "D": 5.3,
+        "E": 5,
+        "F1": 4.5,
+        "F2": 4.5,
+        "F3": 5.4,
+        "reason": "The coach-intensity knob is a genuinely transferable idea and the demo is memorable, but custom skeuomorphic instruments are a permanent a11y and maintenance bill and enterprise buyers will read it as a toy."
+      },
+      {
+        "proposal_id": "P17",
+        "A": 8,
+        "B": 7.4,
+        "C": 7,
+        "D": 6.1,
+        "E": 6.3,
+        "F1": 5.2,
+        "F2": 6.4,
+        "F3": 4.2,
+        "reason": "A human-labelled grader eval with a visible Trust panel is exactly what buyers and OpenAI reviewers want, but Panda, Ark and Park shrink the contributor pool and force a full rewrite off Tailwind."
+      },
+      {
+        "proposal_id": "P37",
+        "A": 7.6,
+        "B": 6.3,
+        "C": 6.8,
+        "D": 6.1,
+        "E": 6.2,
+        "F1": 4.8,
+        "F2": 5.8,
+        "F3": 4.3,
+        "reason": "Deterministic client-side talk-ratio and pace gauges are a smart add that survives LLM lag, but this is the densest live screen of the set with an unreconciled 8-12 second versus 2 second coach cadence."
+      },
+      {
+        "proposal_id": "P14",
+        "A": 6.7,
+        "B": 6.4,
+        "C": 7,
+        "D": 5.6,
+        "E": 5.7,
+        "F1": 4.5,
+        "F2": 5.4,
+        "F3": 4.8,
+        "reason": "A seeded demo team and graceful coach-failure handling are good, but a total MUI rewrite with only approximated M3 Expressive and mood-driven tinting is the riskiest effort-to-differentiation ratio."
+      },
+      {
+        "proposal_id": "P22",
+        "A": 7.7,
+        "B": 7,
+        "C": 7.2,
+        "D": 6.2,
+        "E": 6.3,
+        "F1": 4.5,
+        "F2": 6,
+        "F3": 4.3,
+        "reason": "Margin cues pinned to the causing line and a printable report-style debrief are distinctive and manager-friendly, but the paper-and-serif skin risks reading as publication, not cutting-edge AI voice product."
+      },
+      {
+        "proposal_id": "P38",
+        "A": 7.3,
+        "B": 6.7,
+        "C": 7.6,
+        "D": 6,
+        "E": 6.2,
+        "F1": 5,
+        "F2": 5.2,
+        "F3": 4.5,
+        "reason": "Hear them voice previews and Import a real call are real product edges, but stream and clip language reads gamey to sales leaders, and shareable call clips raise a recording-consent problem the plan barely names."
+      },
+      {
+        "proposal_id": "P01",
+        "A": 7.6,
+        "B": 7.7,
+        "C": 4.5,
+        "D": 5.9,
+        "E": 5.4,
+        "F1": 5.5,
+        "F2": 6.5,
+        "F3": 3.5,
+        "reason": "A disciplined, buildable Linear-style command center with honest fallback labelling, but it is the most generic look in the set and keyboard-first density is wrong for mid-call reps and non-technical managers."
+      },
+      {
+        "proposal_id": "P45",
+        "A": 7.9,
+        "B": 7.6,
+        "C": 6.3,
+        "D": 6.1,
+        "E": 6.4,
+        "F1": 5.8,
+        "F2": 6,
+        "F3": 3.9,
+        "reason": "Best visual polish and mobile ergonomics with a broad 25-family library and voice previews, but bento is a common template and the wizard lacks per-field provenance."
+      },
+      {
+        "proposal_id": "P26",
+        "A": 7.1,
+        "B": 7.9,
+        "C": 5.6,
+        "D": 6.9,
+        "E": 6.4,
+        "F1": 5.6,
+        "F2": 6.6,
+        "F3": 2.9,
+        "reason": "The most executable and fundable plan: a Gong/Balto-familiar copilot rail with measurable acceptance gates, one shared Zod schema, SSRF-aware wizard fetching, a JSON pack library and honest scope cuts, even though the look is the least distinctive."
+      },
+      {
+        "proposal_id": "P25",
+        "A": 7.8,
+        "B": 6,
+        "C": 7,
+        "D": 4.9,
+        "E": 5.4,
+        "F1": 5.2,
+        "F2": 4.4,
+        "F3": 4.6,
+        "reason": "The call-room orb is lovely for ambient focus, but fading chrome, timed-out cues and an unlabelled halo undercut the coaching a buyer is paying for, and it is the cliche dark AI-voice orb the brief already diagnoses."
+      },
+      {
+        "proposal_id": "P40",
+        "A": 7.2,
+        "B": 7.8,
+        "C": 5.3,
+        "D": 5.8,
+        "E": 6,
+        "F1": 5.2,
+        "F2": 5.4,
+        "F3": 4,
+        "reason": "Plain-JSON personas with a CI validator, 90-second micro-drills and thoughtful mobile sheets make it shippable and a decent self-serve habit loop, but a swipe deck reads as a dating app to enterprise buyers and the look is the default violet-shadcn SaaS skin."
+      }
+    ],
+    "top5": [
+      {
+        "proposal_id": "P26",
+        "why": "The safe-and-fundable pick: the best live-coaching spec with measurable gates, a single Zod schema from wizard to CI, and a plan that cuts scope honestly. It lets the owner ship a credible OpenAI fund application fastest, with the model chips and Codex PR-review story reviewers look for."
+      },
+      {
+        "proposal_id": "P19",
+        "why": "The manager-first, enterprise-sellable pick: the AI-versus-manager calibration chart and hatched-to-solid scoring answer the trust question every training company and call center asks first, and its keep-the-routes, token-first migration keeps risk low."
+      },
+      {
+        "proposal_id": "P39",
+        "why": "The bold-brand pick: the most ownable identity in the field and a black-box replay that makes the debrief a signature interaction. It is the one choice that a reviewer or buyer will actually remember, if the owner accepts XL scope."
+      },
+      {
+        "proposal_id": "P44",
+        "why": "The open-source flywheel pick: personas as schema-checked files with a PR submit flow, a practice graph that rewards score quality, and the plainest free-core to paid-hosted-team-analytics business model, all at L effort."
+      },
+      {
+        "proposal_id": "P12",
+        "why": "The learning-loop and real-call pick: a scrubbable timeline of tagged moments with Replay this moment, annotations and consent labels is the natural bridge from practice to real-call coaching, which is where entity budgets live."
+      }
+    ]
+  },
+  {
+    "seat": "UX researcher and accessibility lead",
+    "scores": [
+      {
+        "proposal_id": "P39",
+        "A": 8.4,
+        "B": 7.5,
+        "C": 8.6,
+        "D": 6.5,
+        "E": 5.9,
+        "F1": 4.5,
+        "F2": 6,
+        "F3": 3.5,
+        "reason": "The pre-flight, HUD and black-box replay share one instrument grammar that is the most ownable identity in the set, but six gauges plus a cue stack plus a transcript is crowded mid-sentence, the dark and light theme seam is a jolt, and the library is never sized."
+      },
+      {
+        "proposal_id": "P47",
+        "A": 7.5,
+        "B": 7,
+        "C": 8,
+        "D": 6.8,
+        "E": 6.4,
+        "F1": 5.6,
+        "F2": 5.5,
+        "F3": 3.5,
+        "reason": "The visible Blind/Guided/Coached dial and a debrief that opens on the turn that cost the deal are strong learnability ideas, but AI-ordered debrief layouts hurt call-to-call comparability and add a failure mode that the coaching value does not need."
+      },
+      {
+        "proposal_id": "P23",
+        "A": 7.2,
+        "B": 6.4,
+        "C": 8.8,
+        "D": 6.3,
+        "E": 6.5,
+        "F1": 4.6,
+        "F2": 5.6,
+        "F3": 3.6,
+        "reason": "The shared evidence object linking cue, LED and quote is excellent, but renaming everything Board, Patch and Ticket taxes new reps, phosphor glow and hover-only evidence are weak for contrast and touch, and 300 personas is an unstaffed promise."
+      },
+      {
+        "proposal_id": "P05",
+        "A": 7.8,
+        "B": 6.5,
+        "C": 8,
+        "D": 6.2,
+        "E": 6.3,
+        "F1": 5.5,
+        "F2": 5,
+        "F3": 4,
+        "reason": "Strain forecast and private PRs are a fresh readiness idea and the mobile call is well considered, but Form shows empty rings for 42 days, the 6-second auto-fading cue and hold-to-talk fail accessibility basics, and call-centre buyers may read load flags as surveillance."
+      },
+      {
+        "proposal_id": "P09",
+        "A": 7.5,
+        "B": 7.5,
+        "C": 6.8,
+        "D": 6.3,
+        "E": 6.4,
+        "F1": 5.5,
+        "F2": 6.8,
+        "F3": 4,
+        "reason": "Default PII redaction, honest estimate labelling and editable persona and rubric documents make it the best enterprise story, but the TipTap block editor is a scope sink with unreadable PR diffs unless files are Markdown or YAML."
+      },
+      {
+        "proposal_id": "P44",
+        "A": 7.4,
+        "B": 7,
+        "C": 7.6,
+        "D": 6,
+        "E": 5.4,
+        "F1": 5.8,
+        "F2": 6.2,
+        "F3": 3.2,
+        "reason": "Personas as schema-checked files, a score-band practice graph and Silent/Cues/Full coaching levels give the clearest open-source-to-revenue path and a real Codex PR-review role, but the repo-cosplay look may chill sales buyers and 60 launch personas is thin."
+      },
+      {
+        "proposal_id": "P12",
+        "A": 7.3,
+        "B": 7.8,
+        "C": 7.5,
+        "D": 6,
+        "E": 5.8,
+        "F1": 5.8,
+        "F2": 6.6,
+        "F3": 3.5,
+        "reason": "A film-room timeline with Replay this moment is the best learning loop and the most accessibility-literate spec (persistent dismissable cue, 44px targets, AA ratios written down), though the 20-second cue gap and an unkeyboardable waveform are real gaps."
+      },
+      {
+        "proposal_id": "P50",
+        "A": 7.5,
+        "B": 7,
+        "C": 8.5,
+        "D": 5.6,
+        "E": 5.2,
+        "F1": 5.4,
+        "F2": 4.6,
+        "F3": 4.6,
+        "reason": "The clay caller is charming and the Model Ledger plus golden-set grader agreement is a smart fund artifact, but a 3D bust is the one thing a sales call console does not need, it costs scarce maintainer time, and it reads unserious to enterprise buyers."
+      },
+      {
+        "proposal_id": "P33",
+        "A": 6.6,
+        "B": 7.5,
+        "C": 5.2,
+        "D": 5.9,
+        "E": 5.9,
+        "F1": 5.4,
+        "F2": 6.7,
+        "F3": 3.4,
+        "reason": "Replay this moment and honest Heuristic badges are good and the migration is the safest, but it is the closest to the default SaaS template the brief criticises, three stacked cue cards risk overload, and End hidden in a mobile sheet is slow in an emergency."
+      },
+      {
+        "proposal_id": "P08",
+        "A": 8,
+        "B": 6.3,
+        "C": 8,
+        "D": 6.5,
+        "E": 6.1,
+        "F1": 4.8,
+        "F2": 5.5,
+        "F3": 4.5,
+        "reason": "Violet-only-for-coach colour discipline and cue-followed markers on the timeline are excellent, but the canvas metaphor retreats from the screens that matter and a node-graph wizard is harder than a stepper for novices and inaccessible on phones."
+      },
+      {
+        "proposal_id": "P19",
+        "A": 7,
+        "B": 8,
+        "C": 6,
+        "D": 6.7,
+        "E": 6.3,
+        "F1": 6,
+        "F2": 7,
+        "F3": 3,
+        "reason": "The hatched-to-solid provisional rubric works without colour, charts stay off the live call, and the AI-versus-manager calibration view earns manager trust, but the look is the stock shadcn-plus-Tremor template and 80 of 120 personas ship as drafts."
+      },
+      {
+        "proposal_id": "P02",
+        "A": 7.2,
+        "B": 7.2,
+        "C": 5.8,
+        "D": 6.8,
+        "E": 6.8,
+        "F1": 5,
+        "F2": 6.4,
+        "F3": 3.6,
+        "reason": "It has the most measurable coaching loop (latency budgets, Not helpful feedback as an eval set) and the best grounded library and wizard, but monochrome dev-tool styling feels cold to reps and Accept, Dismiss and Not helpful on every cue taxes attention mid-call."
+      },
+      {
+        "proposal_id": "P30",
+        "A": 6.8,
+        "B": 7,
+        "C": 6,
+        "D": 6,
+        "E": 5.9,
+        "F1": 5,
+        "F2": 6.9,
+        "F3": 3.5,
+        "reason": "The shared record header and Path bar are consistent and the Estimate chip fixes the fake-F debrief, but CRM record pages with five objects and six persona tabs feel like admin software and add a learning curve before the first call."
+      },
+      {
+        "proposal_id": "P31",
+        "A": 5.8,
+        "B": 7,
+        "C": 6,
+        "D": 6.7,
+        "E": 6,
+        "F1": 4.6,
+        "F2": 5.4,
+        "F3": 4.6,
+        "reason": "Cue cadence control and cue-with-receipts reasoning are strong learnability features and the coverage map is a clever contributor hook, but default antd looks like enterprise admin, React 19 needs a patch, and the open ThoughtChain beside cues is dense."
+      },
+      {
+        "proposal_id": "P36",
+        "A": 7,
+        "B": 6,
+        "C": 8.8,
+        "D": 5.3,
+        "E": 5,
+        "F1": 4.6,
+        "F2": 4.6,
+        "F3": 5.5,
+        "reason": "A coach-intensity knob is a real idea worth stealing in plain form, but a hand-built SVG instrument kit needs permanent keyboard and screen-reader maintenance, cues default off, and the hardware skeuomorphism reads as a novelty to enterprise buyers."
+      },
+      {
+        "proposal_id": "P17",
+        "A": 8,
+        "B": 7.4,
+        "C": 7,
+        "D": 6.1,
+        "E": 6.3,
+        "F1": 5.2,
+        "F2": 6.3,
+        "F3": 4.4,
+        "reason": "The human-labelled grader eval with a Trust panel, a cue that pauses on hover, and Ark's accessibility-first primitives are the strongest credibility and a11y story, but dropping Tailwind for Panda/Ark/Park shrinks the contributor pool and makes it the heaviest migration."
+      },
+      {
+        "proposal_id": "P37",
+        "A": 7.6,
+        "B": 6.2,
+        "C": 6.8,
+        "D": 6.1,
+        "E": 6.2,
+        "F1": 4.8,
+        "F2": 5.8,
+        "F3": 4.2,
+        "reason": "Client-side talk-ratio and pace gauges keep working when the LLM is late and the coral threshold is calm, but three gauges, a tone bar, five meters and per-turn waveforms beside a live conversation is the densest live screen of the set and the tone bar has no method."
+      },
+      {
+        "proposal_id": "P14",
+        "A": 6.7,
+        "B": 6.5,
+        "C": 7,
+        "D": 5.6,
+        "E": 5.7,
+        "F1": 4.6,
+        "F2": 5.4,
+        "F3": 4.8,
+        "reason": "A seeded demo team and graceful coach-failure fallback are practical, but a whole-screen mood tint plus springs, a shader orb and seven meters is too much motion for a rep who is listening, and the mood signal it needs does not exist."
+      },
+      {
+        "proposal_id": "P22",
+        "A": 7.4,
+        "B": 7.4,
+        "C": 7.2,
+        "D": 6.2,
+        "E": 5.8,
+        "F1": 4.6,
+        "F2": 6,
+        "F3": 4,
+        "reason": "Margin-pinned cues, est.-to-quoted handoff and a report-style debrief are the most legible and honest reading experience, but the paper-and-serif skin may not read as cutting-edge and a transcript-heavy live screen underserves a voice product."
+      },
+      {
+        "proposal_id": "P38",
+        "A": 7.3,
+        "B": 6.6,
+        "C": 7.6,
+        "D": 5.9,
+        "E": 6.2,
+        "F1": 5,
+        "F2": 5,
+        "F3": 4.5,
+        "reason": "Hear them voice previews and exportable moment cards are memorable, but a scrolling coach chat is the same chat pattern the brief criticises, two near-identical reds will be misread, and the stage and clips metaphor reads gamey to sales leaders."
+      },
+      {
+        "proposal_id": "P01",
+        "A": 7.6,
+        "B": 7.6,
+        "C": 4.6,
+        "D": 5.9,
+        "E": 5.3,
+        "F1": 5.5,
+        "F2": 6.5,
+        "F3": 3.5,
+        "reason": "Sparse live call, one cue at a time and sharp mobile fixes are disciplined, but dark, hairline, Cmd-K and Geist is the default 2026 dev-tool look, keyboard-first density suits power users more than reps, and the library has no headroom."
+      },
+      {
+        "proposal_id": "P45",
+        "A": 7.9,
+        "B": 7.5,
+        "C": 6.4,
+        "D": 6,
+        "E": 6.3,
+        "F1": 5.8,
+        "F2": 6,
+        "F3": 3.9,
+        "reason": "Best mobile polish and a complete live rail with a talk-time meter and evidence-linked deltas, but cues fade at six seconds, a five-tile rail plus captions risks overload, bento is now a common template, and the wizard lacks per-field provenance."
+      },
+      {
+        "proposal_id": "P26",
+        "A": 7.1,
+        "B": 7.9,
+        "C": 5.5,
+        "D": 6.9,
+        "E": 6.4,
+        "F1": 5.4,
+        "F2": 6.6,
+        "F3": 2.9,
+        "reason": "The most executable and fundable plan, with Use line that never auto-sends, cues that stay until dismissed, measurable latency and precision gates, one shared Zod schema and SSRF protection, though it is the least visually distinctive and Use line is unclear in voice mode."
+      },
+      {
+        "proposal_id": "P25",
+        "A": 7.8,
+        "B": 5.5,
+        "C": 7,
+        "D": 4.9,
+        "E": 5.3,
+        "F1": 5.4,
+        "F2": 4.6,
+        "F3": 4.8,
+        "reason": "Subtracting chrome is a bold response to call pressure, but controls fading after 3 seconds, a cue that vanishes after 6, and an unlabelled colour-only halo fail keyboard, motor and colour-blind users and leave the live score illegible, plus it keeps the generic orb."
+      },
+      {
+        "proposal_id": "P40",
+        "A": 7,
+        "B": 7.6,
+        "C": 5.3,
+        "D": 5.8,
+        "E": 6,
+        "F1": 5,
+        "F2": 5.4,
+        "F3": 4,
+        "reason": "Demoting swipe to a 90-second drill mode, the sheet-based mobile coach, wake lock and long-press End show real mobile craft and a habit loop, but the stack is the default shadcn template, cues do not cite their quote, and there is no argued business case."
+      }
+    ],
+    "top5": [
+      {
+        "proposal_id": "P26",
+        "why": "The pragmatic pick: best live-coaching spec (cues stay until dismissed, Use line never auto-sends, explicit latency and precision gates), a shared Zod schema across wizard, coach and grader, and the clearest OpenAI-fund story with named models, a Models page and a Codex persona-PR workflow, at the lowest visual risk."
+      },
+      {
+        "proposal_id": "P39",
+        "why": "The bold-identity pick: the pre-flight, HUD and black-box replay form the most ownable product in the set, with an honest Estimate lamp and long-press End on mobile; choose it if the owner wants a memorable look, and plan to trim the HUD to avoid overload."
+      },
+      {
+        "proposal_id": "P12",
+        "why": "The learning-first pick: scrub the timeline, click a tag, see the quote and Replay this moment, in a calm light-first film room with the most accessibility-literate spec (persistent dismissable cue, 44px targets, written AA ratios); it differs from P39 in tone and adds a recorded-call harness."
+      },
+      {
+        "proposal_id": "P44",
+        "why": "The open-source-native pick: personas as schema-checked files, a score-band practice graph, coaching levels and a visible free-core-plus-paid-team-analytics model make it the strongest contributor flywheel and the most natural place for Codex PR review, provided the dev-tool styling is warmed up for sales buyers."
+      },
+      {
+        "proposal_id": "P19",
+        "why": "The manager and trust pick: hatched-to-solid provisional rubric bars that work without colour, charts kept off the live call, and an AI-versus-manager calibration chart give sales orgs and call centres a reason to trust the grader; it is plainer visually but the best buyer story."
+      }
+    ]
+  },
+  {
+    "seat": "Open-source maintainer and Codex fund reviewer",
+    "scores": [
+      {
+        "proposal_id": "P39",
+        "A": 8.3,
+        "B": 7.5,
+        "C": 8.8,
+        "D": 6.4,
+        "E": 5.6,
+        "F1": 4.6,
+        "F2": 6,
+        "F3": 3.5,
+        "reason": "Most ownable identity in the set, and it gives fund reviewers a per-flight model and cost readout plus a zod-checked persona CI, but the XL Tailwind 3 to 4 migration, the unsized persona library and the unverified Base UI claim cost it credibility points."
+      },
+      {
+        "proposal_id": "P47",
+        "A": 7.7,
+        "B": 7.1,
+        "C": 8.3,
+        "D": 6.9,
+        "E": 6.4,
+        "F1": 5.6,
+        "F2": 5.4,
+        "F3": 3.5,
+        "reason": "The strongest OpenAI-model story (typed blocks from structured outputs, model, rubric version and cost in every debrief footer, validated transcript citations) with a fixed-order fallback, though the generative layout is the riskiest part and the true scope is XL, not L."
+      },
+      {
+        "proposal_id": "P23",
+        "A": 7.4,
+        "B": 6.4,
+        "C": 8.8,
+        "D": 6.4,
+        "E": 6.3,
+        "F1": 4.6,
+        "F2": 5.6,
+        "F3": 3.7,
+        "reason": "Memorable README hero and a model tray with per-call cost, plus an Export-as-PR path, but the Board/Patch/Ticket vocabulary, a hard-coded and already dated realtime model name, and an unreviewable 300-persona promise would make a maintainer wince."
+      },
+      {
+        "proposal_id": "P05",
+        "A": 8,
+        "B": 6.4,
+        "C": 8.2,
+        "D": 6.2,
+        "E": 6.3,
+        "F1": 5.6,
+        "F2": 4.8,
+        "F3": 4.2,
+        "reason": "Under-the-hood panel, model chips and a Codex task prompt in the persona export are good fund material, but Strain and Form have no formula, new users see empty rings, and the Codex story is admitted not to be wired into CI."
+      },
+      {
+        "proposal_id": "P09",
+        "A": 7.5,
+        "B": 7.2,
+        "C": 6.8,
+        "D": 6.2,
+        "E": 6.2,
+        "F1": 5.4,
+        "F2": 6.8,
+        "F3": 4.3,
+        "reason": "Best enterprise features (PII redaction, a model passport with cost), but TipTap block documents undermine the reviewable-persona-file and Codex-PR-review story unless they are stored as Markdown or YAML, and the editor is a multi-month sink for a volunteer repo."
+      },
+      {
+        "proposal_id": "P44",
+        "A": 7.4,
+        "B": 7,
+        "C": 7.8,
+        "D": 6,
+        "E": 5.4,
+        "F1": 5.9,
+        "F2": 6.2,
+        "F3": 3.2,
+        "reason": "The most OSS-native design: personas as schema-checked files with a Source tab, Edit-as-PR and a Codex review comment before Open PR, L-sized effort and a clear free-core versus paid-team story, held back by only 60 launch personas and a developer-tool look that reps may find cold."
+      },
+      {
+        "proposal_id": "P12",
+        "A": 7.2,
+        "B": 7.6,
+        "C": 7.5,
+        "D": 6.1,
+        "E": 5.8,
+        "F1": 5.8,
+        "F2": 6.6,
+        "F3": 3.4,
+        "reason": "A concrete Codex CLI job in CI reviewing persona-pack PRs, one zod schema shared by wizard, importer and CI, and a timeline spine that links every score to a moment make it the best-aimed fund pitch, though the look is the least new and the waveform scrubber needs accessibility work."
+      },
+      {
+        "proposal_id": "P50",
+        "A": 7.5,
+        "B": 7,
+        "C": 8.4,
+        "D": 5.6,
+        "E": 5.2,
+        "F1": 5.3,
+        "F2": 4.8,
+        "F3": 4.5,
+        "reason": "The Model Ledger and a grader-versus-human golden-set agreement are exactly what OpenAI-side reviewers trust, but the 3D clay caller is a second contributor surface nobody asked for, the library is unsized and clay reads as unserious to call-center buyers."
+      },
+      {
+        "proposal_id": "P33",
+        "A": 6.7,
+        "B": 7.5,
+        "C": 5.2,
+        "D": 6,
+        "E": 5.9,
+        "F1": 5.4,
+        "F2": 6.7,
+        "F3": 3.4,
+        "reason": "The licence-clean decision to rebuild Catalyst's pattern from MIT parts shows real OSS maturity, and the incremental migration plus a CI-checked persona badge are very shippable, but the look is the default SaaS template the brief is trying to escape."
+      },
+      {
+        "proposal_id": "P08",
+        "A": 8,
+        "B": 6.4,
+        "C": 8,
+        "D": 6.6,
+        "E": 6.1,
+        "F1": 4.8,
+        "F2": 5.5,
+        "F3": 4.6,
+        "reason": "The cue-followed marker on the debrief timeline and a bring-your-own-key self-host pitch are nice, but the canvas metaphor retreats from the screens that matter and a node-graph wizard raises the contribution barrier."
+      },
+      {
+        "proposal_id": "P19",
+        "A": 7,
+        "B": 8,
+        "C": 6,
+        "D": 6.7,
+        "E": 6.4,
+        "F1": 6,
+        "F2": 7,
+        "F3": 3,
+        "reason": "Honest and buildable: hatched-to-solid provisional rubric bars, an AI-versus-manager calibration chart, AGENTS.md, a Codex PR-review action and 15 job tabs that match the brief, though 80 of its 120 personas ship as drafts and the shadcn-plus-Tremor look risks reading as default."
+      },
+      {
+        "proposal_id": "P02",
+        "A": 7.3,
+        "B": 7.2,
+        "C": 6,
+        "D": 6.8,
+        "E": 6.8,
+        "F1": 5,
+        "F2": 6.4,
+        "F3": 3.6,
+        "reason": "Best library and wizard grounding (what-I-found quote chips, inferred fields marked amber, one zod schema doubling as the OpenAI Structured Outputs schema), cue feedback that seeds a public eval set, and candor about unshipped Realtime voice, though visually it is Vercel with a teal dot."
+      },
+      {
+        "proposal_id": "P30",
+        "A": 6.8,
+        "B": 7.1,
+        "C": 6.1,
+        "D": 6,
+        "E": 5.9,
+        "F1": 5,
+        "F2": 6.9,
+        "F3": 3.6,
+        "reason": "Honest Estimate chip instead of a fake F, a persona schema with CI and a Codex CLI task is a believable contributor loop, and CRM-sync gives the best sales-org story, but record pages feel like CRM admin software and the OpenAI cost panel is buried in Settings."
+      },
+      {
+        "proposal_id": "P31",
+        "A": 5.9,
+        "B": 7,
+        "C": 6.2,
+        "D": 6.7,
+        "E": 6,
+        "F1": 4.6,
+        "F2": 5.4,
+        "F3": 4.6,
+        "reason": "Cue-with-receipts and the coverage map as a contributor hook are clever, but antd plus Ant Design X is a locked npm package that needs a React 19 patch and fights Tailwind, which is the opposite of owned, contributor-readable source."
+      },
+      {
+        "proposal_id": "P36",
+        "A": 7,
+        "B": 5.9,
+        "C": 8.6,
+        "D": 5.3,
+        "E": 5,
+        "F1": 4.5,
+        "F2": 4.5,
+        "F3": 5.5,
+        "reason": "The coach-intensity knob is a real idea, but a hand-built accessible SVG instrument kit is permanent maintenance, cues stay off by default, and it claims Codex already does PR review in the repo when there is no AGENTS.md or .github folder, which a fund reviewer would catch first."
+      },
+      {
+        "proposal_id": "P17",
+        "A": 7.9,
+        "B": 7.4,
+        "C": 7,
+        "D": 6.1,
+        "E": 6.3,
+        "F1": 5.2,
+        "F2": 6.3,
+        "F3": 4.3,
+        "reason": "A human-labelled gold-debrief eval and Trust panel in the repo is the single best fund-credibility artifact, but Ark, Panda and Park have a small contributor and coding-agent ecosystem and dropping Tailwind entirely is the heaviest migration of the lot."
+      },
+      {
+        "proposal_id": "P37",
+        "A": 7.6,
+        "B": 6.3,
+        "C": 6.8,
+        "D": 6.2,
+        "E": 6.2,
+        "F1": 4.8,
+        "F2": 5.8,
+        "F3": 4.3,
+        "reason": "Client-side talk-ratio and pace gauges that survive a late LLM coach, a wizard stress-test with simulated calls and a latency-and-cost model strip are good, but the live screen is the densest in the set and the 8 to 12 second coach cadence contradicts the 2 second target."
+      },
+      {
+        "proposal_id": "P14",
+        "A": 6.7,
+        "B": 6.4,
+        "C": 7,
+        "D": 5.6,
+        "E": 5.7,
+        "F1": 4.6,
+        "F2": 5.4,
+        "F3": 4.9,
+        "reason": "A seeded demo team and recorded sample call so reviewers can see coaching without API keys is a genuinely fund-savvy touch, but the MUI/MUI X/three.js rewrite drops Tailwind and lucide, Material reads as a template, and it promises a Codex-reviewed badge for a workflow that does not exist."
+      },
+      {
+        "proposal_id": "P22",
+        "A": 7.7,
+        "B": 7.1,
+        "C": 7,
+        "D": 6.2,
+        "E": 6.3,
+        "F1": 4.6,
+        "F2": 6.1,
+        "F3": 4.3,
+        "reason": "The colophon naming OpenAI models on every screen, margin-pinned cues and a report-style debrief are distinctive and honest, with an Export-as-PR wizard and AGENTS.md, but the austere paper-and-serif skin can read as a docs site and the 200-persona claim rests on 60 polished ones."
+      },
+      {
+        "proposal_id": "P38",
+        "A": 7.3,
+        "B": 6.7,
+        "C": 7.6,
+        "D": 6,
+        "E": 6.2,
+        "F1": 5,
+        "F2": 5,
+        "F3": 4.6,
+        "reason": "Shareable moment cards and Import-a-real-call are good launch artifacts and Codex CLI linting persona PRs is concrete, but the stream metaphor reads gamey to buyers, the coach rail is still a chat-style feed, and clips raise unaddressed recording-consent issues."
+      },
+      {
+        "proposal_id": "P01",
+        "A": 7.6,
+        "B": 7.7,
+        "C": 4.8,
+        "D": 5.9,
+        "E": 5.4,
+        "F1": 5.5,
+        "F2": 6.5,
+        "F3": 3.6,
+        "reason": "Honest, contributor-readable and keyboard-first with Edit-on-GitHub and Propose-persona-PR on every card, and it notes Codex use should only be claimed once real, but it is a Linear-style dark clone with no signature and its library only just meets the bar."
+      },
+      {
+        "proposal_id": "P45",
+        "A": 7.9,
+        "B": 7.6,
+        "C": 6.3,
+        "D": 6.1,
+        "E": 6.4,
+        "F1": 5.8,
+        "F2": 6,
+        "F3": 3.9,
+        "reason": "Best mobile polish and an easy-to-read model strip with token and cost line, contributor credit on library tiles and a Built-with-Codex guide, but bento is now a common template and stacking Tailwind 4 and a Base UI switch on a 150-persona content job is a lot."
+      },
+      {
+        "proposal_id": "P26",
+        "A": 7.1,
+        "B": 7.9,
+        "C": 5.5,
+        "D": 6.9,
+        "E": 6.5,
+        "F1": 5.4,
+        "F2": 6.6,
+        "F3": 2.9,
+        "reason": "The most fundable and maintainer-credible plan: one zod schema across wizard, coach and grader, SSRF-safe URL fetching, measurable acceptance gates (p50 latency, 30 scripted calls), a Models page accepting any OpenAI-compatible base URL and a copyable Codex CLI persona prompt, at the cost of being visually the least distinctive."
+      },
+      {
+        "proposal_id": "P25",
+        "A": 7.8,
+        "B": 5.9,
+        "C": 7,
+        "D": 4.8,
+        "E": 5.3,
+        "F1": 5.2,
+        "F2": 4.5,
+        "F3": 4.6,
+        "reason": "Honest wording about fund selection and a provenance line are good, but fading controls, a cue that disappears on a timer and an unlabelled rubric halo undercut the coaching that is the whole point, and the dark orb is the exact generic element the brief diagnoses."
+      },
+      {
+        "proposal_id": "P40",
+        "A": 7,
+        "B": 7.6,
+        "C": 5.2,
+        "D": 5.8,
+        "E": 6,
+        "F1": 5,
+        "F2": 5.4,
+        "F3": 4,
+        "reason": "Plain JSON persona files with a CI validator, a Playwright screenshot baseline and a Biggest-miss card that plays the better line in an OpenAI voice are practical and contributor-friendly, but the swipe deck reads as a dating app, cues do not cite quotes, and Codex use is intent only."
+      }
+    ],
+    "top5": [
+      {
+        "proposal_id": "P26",
+        "why": "The safest and most fundable pick: it has the strongest maintainer discipline (one zod schema across wizard, coach and grader, SSRF protection, measurable latency and precision gates, any OpenAI-compatible base URL, a copyable Codex CLI persona prompt) and the best live-coaching score, so a fund reviewer can verify it works, though the look needs a real design pass."
+      },
+      {
+        "proposal_id": "P44",
+        "why": "The most OSS-native identity: personas as schema-checked files with Source view, Edit-as-PR and a Codex review comment before the PR opens, at L effort with the clearest free-core versus paid-team business model; it is the pick that most looks like a repo a maintainer would be proud of, provided the launch library grows past 60."
+      },
+      {
+        "proposal_id": "P47",
+        "why": "The best OpenAI-model showcase: structured outputs drive typed, transcript-validated debrief blocks, with grader model, rubric version and token cost in every footer and Realtime offered beside ElevenLabs; it gives the owner a genuinely different, AI-native identity, and I would ship its fixed-order moment-first debrief first and keep composition experimental."
+      },
+      {
+        "proposal_id": "P12",
+        "why": "The learning-loop choice with the most concrete Codex story (Codex CLI in CI reviewing persona-pack PRs, release-note automation), a timeline spine linking every score to a replayable moment, and L effort; it trades visual novelty for the best UX and a believable path to the fund's PR-review criteria."
+      },
+      {
+        "proposal_id": "P39",
+        "why": "The bold-identity option: the most ownable cockpit, the most memorable README and demo hero, and a shared instrument vocabulary from pre-flight to black-box replay, with per-flight model and cost readouts; choose it if the owner values a standout first impression over migration safety, accepting the XL scope and the theme seam between daylight and dark."
+      }
+    ]
+  },
+  {
+    "seat": "Sales enablement director",
+    "scores": [
+      {
+        "proposal_id": "P39",
+        "A": 8.4,
+        "B": 7.3,
+        "C": 8.7,
+        "D": 6.4,
+        "E": 5.8,
+        "F1": 4.6,
+        "F2": 6,
+        "F3": 3.5,
+        "reason": "Most ownable cockpit identity, and the black-box replay suits deliberate practice, but six gauges plus a cue stack is too much to read mid-sentence, the library is never sized, and the flight vocabulary is a learning tax for managers."
+      },
+      {
+        "proposal_id": "P47",
+        "A": 7.6,
+        "B": 7.5,
+        "C": 8.2,
+        "D": 7,
+        "E": 6.3,
+        "F1": 5.6,
+        "F2": 5.5,
+        "F3": 3.4,
+        "reason": "The Blind/Guided/Coached dial is real scaffolding-fade pedagogy and opening the debrief on the turn that cost the deal is how great coaches debrief, but AI-chosen layouts hurt call-to-call comparability, so ship the fixed-order version first."
+      },
+      {
+        "proposal_id": "P23",
+        "A": 7.3,
+        "B": 6.3,
+        "C": 8.6,
+        "D": 6.3,
+        "E": 6.2,
+        "F1": 4.5,
+        "F2": 5.6,
+        "F3": 3.8,
+        "reason": "One shared evidence object tying live cue, LED and final quote together is smart, but the Board/Patch/Ticket/Log vocabulary, a 20-second cue cooldown and an unreviewable 300-persona promise cost it with real reps."
+      },
+      {
+        "proposal_id": "P05",
+        "A": 7.9,
+        "B": 6.3,
+        "C": 8,
+        "D": 6.2,
+        "E": 6.3,
+        "F1": 5.5,
+        "F2": 4.8,
+        "F3": 4,
+        "reason": "Strain forecast and a PR-to-beat are creative readiness ideas, but the metrics have no stated formula, the cue auto-fades in 6 seconds, and load flags will read as surveillance to call-center buyers."
+      },
+      {
+        "proposal_id": "P09",
+        "A": 7.5,
+        "B": 7.2,
+        "C": 6.8,
+        "D": 6.3,
+        "E": 6.4,
+        "F1": 5.5,
+        "F2": 7.2,
+        "F3": 3.8,
+        "reason": "Best enterprise licensing story (editable persona and rubric documents, default PII redaction, rep drawer with supervisor notes, replay showing the cue that should have fired), held back by the TipTap scope sink and no stated repo file format."
+      },
+      {
+        "proposal_id": "P44",
+        "A": 7.2,
+        "B": 6.9,
+        "C": 7.6,
+        "D": 6,
+        "E": 5.4,
+        "F1": 5.8,
+        "F2": 5.8,
+        "F3": 3.4,
+        "reason": "Personas-as-files with a PR flow and a score-banded practice graph make the best contributor funnel and habit loop, but 60 launch personas is thin for every sales job and the GitHub look will feel like a dev tool to reps."
+      },
+      {
+        "proposal_id": "P12",
+        "A": 7.2,
+        "B": 7.5,
+        "C": 7.4,
+        "D": 6,
+        "E": 5.7,
+        "F1": 5.8,
+        "F2": 6.8,
+        "F3": 3.5,
+        "reason": "Timeline as spine, tagged moments, Replay-this-moment retakes and consent labels form the strongest after-call practice loop, but live coaching is only at standard and launch is about 40 hand-checked personas."
+      },
+      {
+        "proposal_id": "P50",
+        "A": 7.3,
+        "B": 6.8,
+        "C": 8,
+        "D": 5.5,
+        "E": 4.8,
+        "F1": 5.2,
+        "F2": 4.7,
+        "F3": 4.6,
+        "reason": "A clay 3D caller is charming but spends scarce maintainer effort on the one thing a coaching tool does not need, states no persona count, and adds an avatar-recipe step to every contribution."
+      },
+      {
+        "proposal_id": "P33",
+        "A": 6.5,
+        "B": 7.4,
+        "C": 4.8,
+        "D": 5.9,
+        "E": 5.9,
+        "F1": 5.2,
+        "F2": 6.7,
+        "F3": 3.5,
+        "reason": "Replay-this-moment, a criterion counts as covered only with a quote, and a wizard that asks clarifying questions are sound enablement design, but sidebar plus white cards is the generic template the brief wants to leave."
+      },
+      {
+        "proposal_id": "P08",
+        "A": 7.9,
+        "B": 6.2,
+        "C": 7.8,
+        "D": 6.5,
+        "E": 6.2,
+        "F1": 4.7,
+        "F2": 5.4,
+        "F3": 4.5,
+        "reason": "Best-specified cue taxonomy (Why and useful buttons, 2s text and 3s voice latency targets) and an honest 40-reviewed-then-140 plan, but a node-graph wizard is harder than a stepper for a manager pasting a job description and does not work on a phone."
+      },
+      {
+        "proposal_id": "P19",
+        "A": 6.9,
+        "B": 8,
+        "C": 5.8,
+        "D": 6.8,
+        "E": 6.5,
+        "F1": 6,
+        "F2": 7.3,
+        "F3": 3,
+        "reason": "Hatched-to-solid rubric fills and the AI-versus-manager calibration chart are what make a sales leader trust the score, charts stay off the live call, and the 15 job tabs match the brief, though the look is stock shadcn."
+      },
+      {
+        "proposal_id": "P02",
+        "A": 7,
+        "B": 7.2,
+        "C": 5.4,
+        "D": 6.9,
+        "E": 7,
+        "F1": 5,
+        "F2": 6.3,
+        "F3": 3.5,
+        "reason": "The most measurable coaching loop (one cue per turn, latency budgets, Not helpful feedback becoming an eval set) and the most grounded wizard (found-first quote chips, amber inferred fields) over 200 persona pairs in 20 packs, at the cost of a Vercel-clone look."
+      },
+      {
+        "proposal_id": "P30",
+        "A": 6.6,
+        "B": 6.8,
+        "C": 6,
+        "D": 5.9,
+        "E": 5.9,
+        "F1": 5,
+        "F2": 7,
+        "F3": 3.6,
+        "reason": "CRM-style record pages and planned Salesforce/HubSpot sync are a strong sales-org story and the Estimate chip fixes the fake F, but five objects and six persona tabs make a rep learn a sales-ops model before practising."
+      },
+      {
+        "proposal_id": "P31",
+        "A": 5.5,
+        "B": 6.9,
+        "C": 6,
+        "D": 6.7,
+        "E": 6,
+        "F1": 4.5,
+        "F2": 5.3,
+        "F3": 4.5,
+        "reason": "Quiet/Balanced/Intense cue cadence plus cue-with-receipts ThoughtChain gives reps real control over coaching pressure, but default antd reads as enterprise admin, needs a React 19 patch, and the 12x10x10 library math does not add up."
+      },
+      {
+        "proposal_id": "P36",
+        "A": 6.8,
+        "B": 5.8,
+        "C": 8.4,
+        "D": 5.2,
+        "E": 5,
+        "F1": 4.5,
+        "F2": 4.6,
+        "F3": 5.5,
+        "reason": "Knobs and LEDs make a memorable demo and the intensity knob is a good idea in plain form, but cues stay off until an eval set exists, launch is 60 personas, and a custom accessible control kit is a permanent maintenance burden."
+      },
+      {
+        "proposal_id": "P17",
+        "A": 7.9,
+        "B": 7.3,
+        "C": 6.9,
+        "D": 6.1,
+        "E": 6.3,
+        "F1": 5.1,
+        "F2": 6.6,
+        "F3": 4,
+        "reason": "A human-labelled gold-debrief eval and Trust panel answer the question every buyer asks first (can I trust the AI score), but replacing Tailwind with Panda, Ark and Park shrinks the contributor pool and is the heaviest migration."
+      },
+      {
+        "proposal_id": "P37",
+        "A": 7.5,
+        "B": 6,
+        "C": 6.6,
+        "D": 5.9,
+        "E": 6.2,
+        "F1": 4.7,
+        "F2": 5.8,
+        "F3": 4.3,
+        "reason": "Client-side talk-ratio and pace gauges are real coaching metrics that survive a slow LLM and the three-call stress test is a good wizard gate, but the live screen is the densest in the set and the 8-12s versus 2s cue timing is never reconciled."
+      },
+      {
+        "proposal_id": "P14",
+        "A": 6.5,
+        "B": 6.3,
+        "C": 6.8,
+        "D": 5.4,
+        "E": 5.6,
+        "F1": 4.5,
+        "F2": 5.3,
+        "F3": 4.9,
+        "reason": "Persona-tinted screens and seven mood meters need a mood signal the voice path does not produce, springs pile onto a rep who is trying to listen, and MUI does not deliver M3 Expressive without custom work."
+      },
+      {
+        "proposal_id": "P22",
+        "A": 7.8,
+        "B": 7,
+        "C": 7,
+        "D": 6.2,
+        "E": 6,
+        "F1": 4.5,
+        "F2": 6,
+        "F3": 4.2,
+        "reason": "Margin cues pinned to the triggering transcript line plus a report-style evidence debrief best explain why coaching fired, but a text-heavy paper-and-serif live call underuses voice and only 60 polished personas ship first."
+      },
+      {
+        "proposal_id": "P38",
+        "A": 7,
+        "B": 6.6,
+        "C": 7.5,
+        "D": 5.7,
+        "E": 6.2,
+        "F1": 5,
+        "F2": 4.9,
+        "F3": 4.5,
+        "reason": "Hear-them voice samples, Import-a-real-call and auto-marked highlight clips are fresh ideas, but a chat-style coach feed is still more reading mid-call, one cue per two turns is sparse, and shareable clips raise recording-consent problems."
+      },
+      {
+        "proposal_id": "P01",
+        "A": 7.5,
+        "B": 7.2,
+        "C": 4.5,
+        "D": 5.8,
+        "E": 5.3,
+        "F1": 5.3,
+        "F2": 6.3,
+        "F3": 3.7,
+        "reason": "Competent Linear-style execution with a sparse live call and an honest provenance chip, but Cmd-K-first density suits developers more than a rep mid-call and the look is the most interchangeable in the set."
+      },
+      {
+        "proposal_id": "P45",
+        "A": 8,
+        "B": 7.7,
+        "C": 6,
+        "D": 6.1,
+        "E": 6.4,
+        "F1": 5.8,
+        "F2": 6,
+        "F3": 3.8,
+        "reason": "Most polished and best on mobile, with a rep-job versus buyer-role split in the library (a real enablement distinction) and a talk-time meter, but bento is a common template and the wizard has no per-field provenance."
+      },
+      {
+        "proposal_id": "P26",
+        "A": 6.8,
+        "B": 7.9,
+        "C": 5.4,
+        "D": 7.1,
+        "E": 6.6,
+        "F1": 5.5,
+        "F2": 6.6,
+        "F3": 3,
+        "reason": "Best live coaching on the page: schema-checked cues citing turn and criterion, a Use-line action, cooldowns and acceptance gates on 30 scripted calls, plus Retry-from-turn-8 and an SSRF-aware wizard, though it is the least distinctive look."
+      },
+      {
+        "proposal_id": "P25",
+        "A": 7.9,
+        "B": 5.6,
+        "C": 6.6,
+        "D": 4.3,
+        "E": 5.2,
+        "F1": 5.2,
+        "F2": 4.4,
+        "F3": 5,
+        "reason": "The orb call room is lovely to look at, but fading controls, a 6-second cue, an unlabelled numberless halo and no named next-best-question surface mean a rep who glances away loses the coaching, so it falls short of the standard."
+      },
+      {
+        "proposal_id": "P40",
+        "A": 6.9,
+        "B": 7.6,
+        "C": 5,
+        "D": 5.7,
+        "E": 6.1,
+        "F1": 5.5,
+        "F2": 5.3,
+        "F3": 4,
+        "reason": "Best mobile live-call ergonomics and a 90-second objection drill with a Biggest-miss replay in the AI voice are real habit loops, but swipe reads as a dating app, cues do not cite their source quote, and the look is default SaaS."
+      }
+    ],
+    "top5": [
+      {
+        "proposal_id": "P26",
+        "why": "The ship-it choice: the strongest live coaching of the 25 (schema-checked cues that cite a turn and criterion, a one-tap Use line, cooldowns, measurable acceptance gates), Retry-from-turn-8 turns the debrief into deliberate practice, and the 200-persona JSON packs with an SSRF-aware wizard are the most buildable library plan. For the OpenAI fund it names the model on every stage, has a Models page, and gives contributors a Codex CLI persona prompt. Pick it if you want the lowest-risk path to a demo reviewers can actually run; the look is plain but can be elevated with tokens."
+      },
+      {
+        "proposal_id": "P47",
+        "why": "The pedagogy-first choice: a visible Blind/Guided/Coached dial lets coaching fade as a rep improves, and the debrief opens on the one moment that cost the deal with a drill on the weakest skill, which is how real sales coaches work. It is also the most cutting-edge story for a fund panel (typed AI-composed blocks, model, rubric version and token cost in every debrief footer, Realtime beside ElevenLabs). Ship MomentReplay and DrillCTA in fixed order first and keep AI composition as a flagged experiment."
+      },
+      {
+        "proposal_id": "P19",
+        "why": "The sales-org choice: the AI-versus-manager calibration chart, hatched-to-solid rubric fills and a rep-by-criterion matrix are what make a sales leader trust the grader and buy it for a team. It keeps charts off the live call, its 15 job tabs match the brief word for word, and its Draft badges honestly mark unreviewed personas. Fund fit is good (grader, tokens and latency in every debrief, AGENTS.md, Codex persona-PR review), and it is the best pick if F2 revenue from training firms and call centres matters most."
+      },
+      {
+        "proposal_id": "P39",
+        "why": "The bold-identity choice: a pre-flight, HUD and black-box replay vocabulary that nobody else owns, with gauges that rewind as you scrub and an amber Estimate lamp that makes fallback grades honest. It gives the README and demo GIF the most memorable look and still covers every basic need. Trim the HUD to fewer gauges and let managers see plain labels; the fund story (per-job model attribution, cost per flight, wizard that opens a prefilled PR) is strong."
+      },
+      {
+        "proposal_id": "P02",
+        "why": "The library-and-evidence choice: the highest persona/wizard score (200 pairs in 20 industry packs, a found-first wizard with quote chips and amber inferred fields) plus the most measurable coaching loop (one cue per turn, latency budgets, Not helpful feedback that becomes a contributor eval set). It is the most contributor-friendly and honest for the OpenAI fund (provenance chip with model and latency, cost per session, no Realtime claim until built, Geist confirmed OFL). Choose it if you want depth over spectacle and are willing to add visual personality yourself."
+      }
+    ]
+  }
+]

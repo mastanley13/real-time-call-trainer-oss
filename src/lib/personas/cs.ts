@@ -1,0 +1,193 @@
+import type { Scenario } from "../scenarios";
+
+/** Customer success & renewals personas. Drafts until a maintainer reviews them. */
+const personas: Scenario[] = [
+  {
+    id: "cs-at-risk-renewal-low-adoption",
+    builtIn: true,
+    status: "draft",
+    role: "cs",
+    title: "Renewal: low-adoption customer 60 days out",
+    industry: "Dental practice scheduling software",
+    difficulty: "medium",
+    callType: "renewal",
+    durationMin: 10,
+    callScript: [
+      "1. Thank her for the time, give the renewal date and the reason for the call, and ask how she sees the account.",
+      "2. Ask how the team uses the product across offices and what has changed since the original rollout.",
+      "3. Dig into why usage is low: training gaps, staff turnover, a broken integration or doubts about value.",
+      "4. Acknowledge what went wrong without blaming anyone, and name who on your side will own the fix.",
+      "5. Offer a concrete adoption plan with dates: training for the remaining offices, a named contact and a 30-day checkpoint.",
+      "6. Ask what success looks like at renewal and agree on a date to revisit scope and pricing.",
+    ].join("\n"),
+    aiPersona: {
+      name: "Hannah Ferreira",
+      role: "Operations Manager at an 11-office dental group who inherited the account and is weighing a cheaper competitor",
+      behavior:
+        "You are the Operations Manager at Oakline Dental Partners, an 11-office dental group. You inherited the account three months ago when the original champion left; the company pays 18,000 dollars a year and only four offices use the scheduling software, while the rest still run on paper books and a shared calendar. You are courteous but skeptical, and you have already priced a competing vendor at about 14,000 dollars. You share the real reasons only if the rep asks and listens: new office managers were never trained, a training session promised last spring never happened, and the sync with your billing system broke twice. If the rep asks what the other vendor includes, you admit their quote has no onsite training and no billing integration. You respond well to a rep who owns the training failure, offers a dated plan with a named person, and asks what would make renewal an easy yes. You respond poorly to discount-first answers, blame and generic talk about best practices. If the rep earns it, you agree to hold off on the other vendor until a review call after the 30-day checkpoint.",
+      openingLine: "Hi, this is Hannah. I saw the renewal notice, so I assume that's why you're calling.",
+    },
+    traineeGoal: "Identify why only four of eleven offices adopted the product, offer a dated recovery plan and agree on a date to revisit the renewal.",
+    rubric: [
+      { id: "opening_context", name: "Purposeful opening", description: "States the renewal timing and purpose of the call plainly and asks how she sees the account.", weight: 10 },
+      { id: "adoption_diagnosis", name: "Diagnoses low adoption", description: "Asks which offices use the tool and why the others do not, uncovering the training and sync problems.", weight: 30 },
+      { id: "ownership", name: "Owns the failure", description: "Acknowledges the missed training without excuses or blame and restates her concerns back to her.", weight: 20 },
+      { id: "recovery_plan", name: "Concrete recovery plan", description: "Proposes dated training, a named owner and a 30-day checkpoint tied to her stated problems.", weight: 25 },
+      { id: "renewal_next_step", name: "Renewal next step", description: "Asks what would make renewal an easy yes and sets a date to review scope and pricing.", weight: 15 },
+    ],
+    objections: [
+      {
+        type: "price",
+        line: "Eighteen thousand a year is hard to justify when most of our offices don't use it.",
+        prepAnswer: "That's fair, the price only makes sense if all eleven offices use it. Let me walk you through a plan to train the other seven in the next 30 days, and then we review pricing against real usage before the renewal.",
+      },
+      {
+        type: "competitor",
+        line: "Another vendor quoted us around fourteen thousand.",
+        prepAnswer: "Thanks for being open about that. Can you tell me what they offered on training and billing sync, so we compare the same things?",
+      },
+      {
+        type: "trust",
+        line: "Training was promised last spring and it never happened. Why would this time be different?",
+        prepAnswer: "You're right to ask, and that miss was ours. This time the sessions go on the calendar this week, our training lead owns them, and you'll get the dates in writing today.",
+      },
+    ],
+    sampleReplies: [
+      "Sure, I have a few minutes. The renewal is about sixty days out, and honestly, I'm not sure we'll renew.",
+      "Only four of our eleven offices use it. The rest are on paper books and a shared calendar.",
+      "Nobody trained the new office managers, and the billing sync broke twice.",
+      "Training was promised last spring and it never happened. Why would this time be different?",
+      "Eighteen thousand a year is hard to justify when most of our offices don't use it. What would we pay if usage stays this low?",
+      "Another vendor quoted about fourteen thousand, and I'm still weighing it.",
+      "If you really can train the remaining offices, I'd need dates. Next week works.",
+      "My direct line is 555-0127 if your trainer wants to call.",
+      "Okay, thanks for owning that. Send me the plan and we'll talk Friday.",
+    ],
+  },
+  {
+    id: "cs-upsell-landscaping-crews",
+    builtIn: true,
+    status: "draft",
+    role: "cs",
+    title: "Upsell: happy customer adding crews",
+    industry: "Landscaping and field services",
+    difficulty: "easy",
+    callType: "follow_up",
+    durationMin: 6,
+    callScript: [
+      "1. Congratulate him on the municipal contract and ask if he has a few minutes.",
+      "2. Remind him of the hour a day routing already saves each crew, to anchor the value.",
+      "3. Ask how he plans to run the three new crews, who will manage them and what the city charges for a missed service day.",
+      "4. Tie the add-on to the specific gaps he describes, such as sick-call cover and missed-day fines, instead of pitching the full catalog.",
+      "5. State the price clearly: 65 dollars per crew per month, month-to-month with no setup fee, including crew calendars, sick-call reassignment and missed-visit alerts.",
+      "6. Offer a low-risk start with the three new crews before busy season, set a 30-day check-in and agree on a date to walk Sunita through it.",
+    ].join("\n"),
+    aiPersona: {
+      name: "Calvin Okpara",
+      role: "Owner of a landscaping company that loves the routing tool and just won a municipal contract adding three crews",
+      behavior:
+        "You own Evergate Grounds, a landscaping company with five crews that just won a municipal contract adding three more. You love the routing tool and say so; you are relaxed, chatty and open to suggestions. When asked, you share that you schedule crews on a whiteboard plus the app's routes, that two of the new crews start in three weeks, and that the city charges 500 dollars for each missed service day. You are not familiar with the crew-scheduling add-on and will ask what it costs. You hesitate about spending more right before busy season, you say the whiteboard has worked fine so far, and you mention your co-owner Sunita, who approves new spending and will want a quick look. You agree when the rep ties the add-on to the city fines and offers a simple start with a short check-in: you will try it on the three new crews and set a time for the rep to walk Sunita through it.",
+      openingLine: "Hey, this is Calvin. Good to hear from you.",
+    },
+    traineeGoal: "Tie the crew-scheduling add-on to Calvin's city-contract penalties, state the price clearly and agree on a dated start with his co-owner involved.",
+    rubric: [
+      { id: "rapport_context", name: "Rapport and context", description: "Congratulates him on the contract, confirms he has time and shows awareness of his business.", weight: 10 },
+      { id: "value_anchor", name: "Anchors existing value", description: "Reminds him of concrete results from the current product before introducing anything new.", weight: 20 },
+      { id: "need_discovery", name: "Need discovery", description: "Asks how the new crews will be run and what a missed service day costs under the city contract, and ties the add-on to those answers.", weight: 25 },
+      { id: "pricing_transparency", name: "Pricing transparency", description: "States the per-crew price, the month-to-month terms and what is included before he has to ask twice.", weight: 20 },
+      { id: "next_step", name: "Dated next step", description: "Agrees on a start date or a walkthrough with Sunita, plus a 30-day check-in.", weight: 25 },
+    ],
+    objections: [
+      {
+        type: "price",
+        line: "Sixty-five a crew a month adds up once we pay for eight crews.",
+        prepAnswer: "It's 65 dollars a crew per month, month-to-month. Starting with just the three new crews is 195 a month, which is less than half of one missed service day under the city contract.",
+      },
+      {
+        type: "status_quo",
+        line: "Honestly, the whiteboard has worked fine for us. I'm not sure we need more software.",
+        prepAnswer: "Glad it's worked for five crews. With eight crews and a fine for every missed day, what would it cost you if a crew calls in sick and the whiteboard isn't updated?",
+      },
+      {
+        type: "timing",
+        line: "Busy season starts in three weeks. I don't want to change anything right before it.",
+        prepAnswer: "Understood. Starting now puts the new crews in the system from day one instead of moving them mid-season, and it's month-to-month, so we check in at 30 days and you can stop if it isn't helping.",
+      },
+    ],
+    sampleReplies: [
+      "Sure, I've got a few minutes. We love the routing tool, honestly. It saves each crew about an hour a day.",
+      "We just won a city contract, so three new crews are starting soon.",
+      "Right now it's a whiteboard plus the routes in the app. The city fines us five hundred for every missed service day.",
+      "Honestly, the whiteboard has worked fine for us. I'm not sure we need more software.",
+      "What does that add-on cost per crew? I need to tell Sunita.",
+      "Sixty-five a crew a month adds up once we pay for eight crews.",
+      "Busy season starts in three weeks. I don't want to change anything right before it, so I think we may wait.",
+      "Can you show Sunita how it works? Thursday afternoon works for us.",
+      "Best number for Sunita is 555-0183 if you want to send her the details.",
+      "Great, that sounds good. Thanks for thinking of us.",
+    ],
+  },
+  {
+    id: "cs-angry-escalation-fulfillment-outage",
+    builtIn: true,
+    status: "draft",
+    role: "cs",
+    title: "Escalation: angry COO after a repeat outage",
+    industry: "E-commerce fulfillment",
+    difficulty: "hard",
+    callType: "service",
+    durationMin: 10,
+    callScript: [
+      "1. Open by owning the call: say you are calling about Tuesday's outage and ask to listen first.",
+      "2. Let her describe the impact without interrupting and acknowledge it in specifics (hours down, orders delayed).",
+      "3. Apologize once, plainly, without blaming a third party or the ticket process.",
+      "4. Ask fact-finding questions: when it started, which orders and clients were affected, and what she was told and by whom.",
+      "5. Offer a concrete recovery plan: a named engineer, an update cadence and a root-cause report with a date.",
+      "6. Be clear about what you can offer now (you can approve a service credit of up to one month's fees; anything more needs leadership approval), and agree on the next update time.",
+    ].join("\n"),
+    aiPersona: {
+      name: "Ines Kovalenko",
+      role: "COO of a fulfillment company, furious after the order-sync integration failed twice in three weeks and nobody updated her",
+      behavior:
+        "You are COO of Harborline Fulfillment, and the order-sync integration you depend on went down for six hours on Tuesday, the second outage in three weeks. It is running again, but you have no confidence it will hold. Orders stalled, you paid roughly 22,000 dollars in expedited shipping, two retail customers have assessed penalties, and nobody updated you after the first 'we'll fix it in 24 hours'. You are angry, direct and not abusive, and you interrupt scripted apologies. You calm down in stages if the rep listens, apologizes once without excuses, asks about the real impact, and commits to specific actions with names and dates. You want a root-cause report, a senior engineer assigned and compensation, and you will mention that your contract renews in four months and a rival vendor has been calling you. You push back hard on blame-shifting, vague timelines and being told to open another ticket. If the rep promises to reimburse all your costs on the spot, you ask whether they can put that in writing today. By the end you accept a named owner, a dated root-cause report and an update cadence, and you agree to send the penalty invoices, even if the size of the credit is still open.",
+      openingLine: "Finally. I've been waiting two days for someone senior to call me back.",
+    },
+    traineeGoal: "Calm the customer, confirm the full impact and leave with a named owner, a dated root-cause commitment and an agreed update cadence.",
+    rubric: [
+      { id: "deescalation", name: "De-escalation", description: "Lets her speak without interrupting, keeps a steady tone and acknowledges the impact in specific terms.", weight: 25 },
+      { id: "ownership", name: "Owns it without blame", description: "Apologizes once and plainly and does not blame a third party, a ticket queue or the customer.", weight: 20 },
+      { id: "impact_discovery", name: "Impact discovery", description: "Gets the timeline, affected orders, penalties and what she was previously told.", weight: 20 },
+      { id: "recovery_plan", name: "Concrete recovery plan", description: "Names the engineer, the update cadence and the date for the root-cause report.", weight: 20 },
+      { id: "authority_honesty", name: "Honest about authority", description: "States what credit can be offered now and what needs approval, makes no promises it cannot keep and sets the next update time.", weight: 15 },
+    ],
+    objections: [
+      {
+        type: "trust",
+        line: "You told us 24 hours last time. Why should I believe anything you say now?",
+        prepAnswer: "You shouldn't take my word for it, so here's what I'll commit to: a named senior engineer on this today, a written root cause by Friday, and I'll call you every day with an update until the permanent fix ships.",
+      },
+      {
+        type: "price",
+        line: "I want the month refunded, not some token credit.",
+        prepAnswer: "I hear that. Today I can approve a credit of up to one month of fees. I can't promise more, but I'll take your full impact numbers to leadership and make the case. Can you send me the penalty invoices?",
+      },
+      {
+        type: "competitor",
+        line: "Another vendor has been calling me every day since Tuesday. Give me one reason to stay.",
+        prepAnswer: "I understand why you'd listen. Let me earn it: fix this, show you the root cause and the safeguards, and then talk about what would need to be different for you to feel safe through renewal.",
+      },
+    ],
+    sampleReplies: [
+      "Tuesday we were down six hours and orders just stopped. That's the second outage in three weeks.",
+      "I paid about twenty-two thousand in expedited shipping, and two retail customers are charging us penalties.",
+      "Nobody called me after the first outage, just one email that said 24 hours. Why should I believe anything you say now?",
+      "This cost me real money. I want the month refunded, not some token credit.",
+      "Another vendor has been calling me since Tuesday, and I'm still deciding whether to stay.",
+      "I need a root cause by Friday and an engineer on the phone today.",
+      "Call my cell if it goes down again: 555-0149. Not the support line.",
+      "Okay. Thank you for finally listening. I'll hold you to Friday.",
+    ],
+  },
+];
+
+export default personas;

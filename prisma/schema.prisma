@@ -37,8 +37,9 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users           User[]
-  trainerSessions TrainerSession[]
+  users               User[]
+  trainerSessions     TrainerSession[]
+  trainingAssignments TrainingAssignment[]
 }
 
 enum UserRole {
@@ -73,8 +74,10 @@ model User {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  trainerSessions TrainerSession[]
-  auditEvents     AuditEvent[]
+  trainerSessions     TrainerSession[]
+  auditEvents         AuditEvent[]
+  assignmentsCreated  TrainingAssignment[] @relation("AssignmentAssigner")
+  assignmentsReceived TrainingAssignment[] @relation("AssignmentAssignee")
 
   @@index([organizationId])
 }
@@ -117,6 +120,36 @@ model TrainerSession {
   @@index([organizationId])
   @@index([scenarioId])
   @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Training assignments
+// ─────────────────────────────────────────────────────────────────────────
+
+/// A persona a manager asks one rep (or the whole team) to practise.
+/// Completion is derived, never stored: a TrainerSession by the assignee with
+/// the same scenarioId created after the assignment counts as done.
+model TrainingAssignment {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignedById   String
+  assignedBy     User         @relation("AssignmentAssigner", fields: [assignedById], references: [id], onDelete: Cascade)
+  /// Null means the whole team.
+  assigneeId     String?
+  assignee       User?        @relation("AssignmentAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
+  scenarioId     String
+  /// Denormalized so the list still reads well if the persona is renamed or removed.
+  scenarioTitle  String
+  note           String?
+  dueAt          DateTime?
+  createdAt      DateTime     @default(now())
+  /// Archived assignments drop off every list; the row is kept for history.
+  archivedAt     DateTime?
+
+  @@index([organizationId, archivedAt])
+  @@index([assigneeId])
+  @@index([assignedById])
 }
 
 // ─────────────────────────────────────────────────────────────────────────

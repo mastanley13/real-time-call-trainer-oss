@@ -1,25 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { cronAuthorized } from "@/lib/serverConfig";
 
 /**
  * Nightly purge of TrainerSession rows older than each organization's
  * configured retention window.
  *
- * Auth: either (a) the Vercel Cron "x-vercel-cron" header is present, or
- * (b) an Authorization: Bearer ${CRON_SECRET} header matches the env.
+ * Auth: Authorization: Bearer ${CRON_SECRET} only (constant-time compare). Vercel
+ * Cron sends that header itself when CRON_SECRET is set. The x-vercel-cron header
+ * is not trusted: any client can set it. Without CRON_SECRET the route always 401s.
+ *
+ * Assignment completion is derived from sessions, so a purged session can no longer
+ * prove an assignment was done. loadAssignmentViews stops calling those assignments
+ * overdue (see historyPurged in src/lib/team.ts) instead of flipping them back.
  *
  * Wire this up in vercel.json under "crons".
  */
 
-function authorize(req: NextRequest): boolean {
-  if (req.headers.get("x-vercel-cron") === "1") return true;
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  const auth = req.headers.get("authorization") ?? "";
-  if (!auth.toLowerCase().startsWith("bearer ")) return false;
-  return auth.slice(7).trim() === secret;
-}
+const authorize = (req: NextRequest) => cronAuthorized(req.headers.get("authorization"), process.env.CRON_SECRET);
 
 async function runPurge() {
   const orgs = await prisma.organization.findMany({

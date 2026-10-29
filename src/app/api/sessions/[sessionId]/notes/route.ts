@@ -15,7 +15,20 @@ import { prisma } from "@/lib/db";
 
 const BodySchema = z.object({
   note: z.string().max(4000),
+  /**
+   * supervisorNotesAt as the editor loaded it (null for an empty note). When
+   * sent, the save only lands if nobody changed the note since; clients that
+   * omit it overwrite as before.
+   */
+  expectedNotesAt: z.string().datetime().nullable().optional(),
 });
+
+const NOTE_SELECT = {
+  id: true,
+  supervisorNotes: true,
+  supervisorNotesBy: true,
+  supervisorNotesAt: true,
+} as const;
 
 export async function GET(
   request: NextRequest,
@@ -117,21 +130,49 @@ export async function PUT(
     actor.email;
 
   const trimmed = body.note.trim();
+  const data = {
+    supervisorNotes: trimmed.length ? trimmed : null,
+    supervisorNotesBy: trimmed.length ? authorLabel : null,
+    supervisorNotesAt: trimmed.length ? new Date() : null,
+  };
 
-  const updated = await prisma.trainerSession.update({
-    where: { id: sessionId },
-    data: {
-      supervisorNotes: trimmed.length ? trimmed : null,
-      supervisorNotesBy: trimmed.length ? authorLabel : null,
-      supervisorNotesAt: trimmed.length ? new Date() : null,
-    },
-    select: {
-      id: true,
-      supervisorNotes: true,
-      supervisorNotesBy: true,
-      supervisorNotesAt: true,
-    },
-  });
+  let updated;
+  if (body.expectedNotesAt === undefined) {
+    updated = await prisma.trainerSession.update({
+      where: { id: sessionId },
+      data,
+      select: NOTE_SELECT,
+    });
+  } else {
+    // The timestamp check and the write are one UPDATE, so two managers saving
+    // at once can't both win. The column is TIMESTAMP(3) and only ever set from
+    // new Date() above, so the millisecond ISO string GET returned matches it
+    // exactly. The re-select runs in the same transaction, behind the row lock
+    // the update took, so it returns this save and not a later one.
+    const expected =
+      body.expectedNotesAt === null ? null : new Date(body.expectedNotesAt);
+    const [{ count }, row] = await prisma.$transaction([
+      prisma.trainerSession.updateMany({
+        where: { id: sessionId, supervisorNotesAt: expected },
+        data,
+      }),
+      prisma.trainerSession.findUnique({
+        where: { id: sessionId },
+        select: NOTE_SELECT,
+      }),
+    ]);
+    if (count === 0 || !row) {
+      return NextResponse.json(
+        {
+          error: "conflict",
+          message:
+            "Someone changed this note after you opened it. Open it again to see the latest version.",
+        },
+        { status: 409 },
+      );
+    }
+    updated = row;
+  }
 
   await prisma.auditEvent.create({
     data: {

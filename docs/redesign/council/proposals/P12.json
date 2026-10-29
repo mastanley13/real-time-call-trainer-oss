@@ -1,0 +1,282 @@
+{
+  "id": "P12",
+  "lens": "Sports game-film (Hudl): call replay timeline with scrubbing, tagged moments, coach annotations",
+  "name": "Film Room Sideline",
+  "one_liner": "Turn every practice call into game film: a scrubbable timeline with tagged moments, a live sideline HUD for coaching and scoring, and a launch library of 150+ forkable personas that a five-step AI wizard can extend, built on OpenAI models.",
+  "lens_followed_or_changed": "Followed the Hudl lens closely: every call is stored as film with a timeline spine, auto-tagged moments (discovery, objection, pricing, close, filler) and coach and manager annotations pinned to timestamps. Changed two things after research. First, competitors split practice (Second Nature, Hyperbound), live assist (Cirrus Insight, Aircall) and post-call analysis (Gong) into separate products, so the timeline becomes one spine across all three phases. Second, Hudl's dense sports chrome would read as a sports app to insurance and mortgage reps, so the film room uses a calm neutral palette with teal and amber signal colours. Self-scores: A 8, B 8, C 8, F1 6, F2 6, F3 3 (3 = worth building).",
+  "ui_stack": [
+    {
+      "name": "shadcn/ui",
+      "role": "Component base: Dialog, Sheet, Tabs, Slider, Command, Toast, Tooltip, Stepper patterns",
+      "why": "Copy-in, owned source code with no runtime lock-in, which suits an MIT open-source project that contributors must read and change. Works with Next.js 15 and Tailwind. https://ui.shadcn.com/docs"
+    },
+    {
+      "name": "Radix Primitives",
+      "role": "Accessibility layer under shadcn (focus traps, ARIA for sheets, sliders, tabs, menus)",
+      "why": "Keyboard and screen-reader behaviour for the live HUD and bottom sheets comes free and is battle-tested. https://www.radix-ui.com/"
+    },
+    {
+      "name": "Tailwind CSS v4 (upgrade from v3)",
+      "role": "Styling with the design tokens exposed as CSS variables in the theme",
+      "why": "Replaces the hand-rolled .card and .btn-primary classes with tokens that drive light, dark and film surfaces from one source."
+    },
+    {
+      "name": "cmdk (via shadcn Command)",
+      "role": "Cmd-K palette for persona, scenario and action search across 150+ entries",
+      "why": "Contributors and reps find a persona by objection or industry in one keystroke."
+    },
+    {
+      "name": "Motion (motion.dev, formerly Framer Motion)",
+      "role": "Layout transitions, cue-card entrance, meter tweens, playhead movement",
+      "why": "Declarative motion that is easy for contributors to change and honours prefers-reduced-motion."
+    },
+    {
+      "name": "wavesurfer.js (regions plugin)",
+      "role": "Waveform and scrubbable timeline for call audio, with coloured regions for tagged moments",
+      "why": "Gives the film strip real audio in voice mode and text-timed markers in text mode, the core of the Hudl lens."
+    },
+    {
+      "name": "TanStack Table and Recharts",
+      "role": "Film library table, team heatmap and criterion trend charts",
+      "why": "Sortable and filterable tables plus simple, accessible charts without a heavy dashboard framework. Use the dataviz skill palette rules for chart colours."
+    },
+    {
+      "name": "Sora, Inter, JetBrains Mono",
+      "role": "Display, UI and timestamp or score typography",
+      "why": "Sora and Inter are already in the app, so the change stays recognisable. Mono gives timestamps and token costs tabular alignment."
+    },
+    {
+      "name": "zod (existing)",
+      "role": "One persona and rubric schema shared by the wizard, the JSON pack importer and CI validation",
+      "why": "Keeps community-contributed personas valid without a second schema to maintain."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "--canvas",
+        "hex": "#F6F7F9",
+        "use": "Light page background for landing, library, progress and team views (dark mode uses --film)."
+      },
+      {
+        "token": "--film",
+        "hex": "#0B0F14",
+        "use": "Dark film surface for the live call stage, timeline strip and debrief film room."
+      },
+      {
+        "token": "--ink",
+        "hex": "#0B1220",
+        "use": "Primary text on light surfaces (about 17:1 on --canvas)."
+      },
+      {
+        "token": "--paper",
+        "hex": "#E6EDF3",
+        "use": "Primary text on --film."
+      },
+      {
+        "token": "--primary",
+        "hex": "#0F766E",
+        "use": "Primary actions such as Start call and Create with AI (white text about 5.5:1)."
+      },
+      {
+        "token": "--signal",
+        "hex": "#5EEAD4",
+        "use": "Live playhead, good live scores and focus rings on dark surfaces (about 12:1 on --film)."
+      },
+      {
+        "token": "--cue",
+        "hex": "#FBBF24",
+        "use": "Whisper cues and missed-moment tags; ink text sits on it at about 11:1."
+      },
+      {
+        "token": "--alert",
+        "hex": "#FB7185",
+        "use": "Objection alerts and risk tags on dark; light mode swaps to #BE123C."
+      }
+    ],
+    "typography": "Sora 600-700 for screen titles and grade numerals; Inter 400-600 for UI and transcripts (16px transcript, 14px UI); JetBrains Mono 500 with tabular-nums for timestamps, scores and token costs. Titles 28-40px.",
+    "shape_and_depth": "14px cards, 10px controls, pill chips. 1px hairlines instead of soft shadows. Film surfaces get a faint top-light gradient and an inner border. The blurry orb becomes a live voice waveform, so the persona visibly speaks.",
+    "motion": "Panels 180-240ms ease-out; playhead follows audio time via requestAnimationFrame; score bars tween over 400ms; the cue card enters at most once every 20 seconds; all motion is disabled under prefers-reduced-motion.",
+    "iconography": "Lucide at 1.75 stroke (already used). Six custom moment-tag glyphs (discovery, objection, pricing, close, filler, rapport) drawn on the same 24px grid. No emoji.",
+    "theme_modes": "Light is the default for landing, library, progress and team. Film-dark is the default for live call and debrief timeline. Both are CSS-variable themes that follow the system setting with a manual toggle. All text pairs meet WCAG AA."
+  },
+  "navigation_and_ia": "Top bar with five items: Practice (home), Library, Calls, Progress, and Team (shown only when an org exists). A Cmd-K palette and one New call button sit on the right. Mobile uses a bottom tab bar with the same five items. Library holds the filterable catalogue and the Create with AI button. Calls lists every film, searchable by persona, objection and tag. Login, access code and MFA move behind one account menu. Scenario editing becomes the wizard's Review step and a per-persona Edit drawer.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Split hero. Left: headline 'Practice the call. Then watch the film.' with two buttons (Try in browser, Run locally) and a 'Built on OpenAI' rail showing Realtime voice, GPT grading and the live persona count from the repo pack. Right: an animated film frame with a call timeline, three tagged moments and a live rubric meter. Below: three proof tiles (live cues, evidence-backed debrief, 150+ personas) and a contributor band with good-first-issue count and an Add a persona button. The README mirrors the hero with a static image and a 20-second loop.",
+      "key_components": "Film frame (SVG plus short looping video), model provenance chips, persona count read from the JSON pack, contributor band, footer with MIT licence and Codex attribution.",
+      "change_vs_today": "Replaces the blurry orb and generic feature cards with the product itself in the hero. The README and live demo show the same screen."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Left filter rail (260px): Job (SDR cold call, AE discovery, CSM, collections, recruiting, procurement), Industry (insurance, mortgage, solar, home services, auto, medical devices, SaaS, retail), Difficulty and Objection type, each with counts. Top: Cmd-K search and Create with AI. Main: card grid, three columns on desktop, one on mobile. Each card shows initials avatar, role, industry, objection chips, difficulty dots and your best score. Click opens a right sheet with opening line, behaviour, rubric preview and Practice. Fork to my library on every card.",
+      "key_components": "Filter chips with counts, cmdk palette, persona card, detail Sheet, fork action, built-in and community provenance badges.",
+      "change_vs_today": "Replaces the three-item select and single-scenario editor with a browsable catalogue of 150+ launch personas (target) and forkable community packs."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Left stepper rail: Source, Extract, Persona, Rubric, Review. Source offers option cards (company or product URL, job description, ICP notes, CRM notes, pasted real call) plus a free-text box and suggested-start chips. Extract streams a panel of what the model found (buyer role, pains, objections, pricing questions), each editable. Persona holds title, behaviour, opening line, voice and a 30-second test call. Rubric auto-weights criteria to 100 with sliders. Review shows schema badges and Save locally or Export as PR file. PII is stripped from pasted calls before any model call.",
+      "key_components": "Stepper, option cards, streaming extraction log, persona form with live preview, weight sliders, zod validation status, privacy note that sources stay in the browser unless the user sets a key.",
+      "change_vs_today": "No wizard exists. The scenario editor is one long blank form. The wizard turns context into a validated persona in five guided steps."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Game-day layout. Top: persona card with a waveform placeholder, name, role and a one-line situation. Left column: Your goal card, What they will likely say (three predicted objections, each with a prep note), and a talk-track playbook of six checkpoints that light up live. Right column: rubric weight bar, last three attempts with score sparklines, mic-check meter. Bottom: Voice and Text segmented control and a full-width Start call button with a one-line note on what is recorded.",
+      "key_components": "Persona header, objection preview chips, checkpoint playbook, stacked rubric bar, mic meter, mode control, history sparklines.",
+      "change_vs_today": "Replaces the native select and blurry orb with a briefing that says what to prepare and how the rep has done before."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Three columns on a film-dark surface. Centre: a timeline strip across the top, with persona and rep turns as coloured blocks, a playhead at now and tagged moments appearing as they happen. Below it the transcript as turns with inline tag pills. Right: a 320px sideline HUD with a live rubric meter (six criteria, tweening), a talk-track checklist with progress, one whisper cue card (amber, one at a time, 20-second minimum gap, Esc to dismiss) and an objection alert chip. Bottom: composer with two suggested replies from the cue, timer, mute and End and grade.",
+      "key_components": "Turn timeline strip, moment tag pills, rubric meter, checkpoint checklist, cue card, objection alert, suggested replies, model provenance footer.",
+      "change_vs_today": "Today's live screen is a chat app with no coaching and no live score. The HUD adds both, and cues go to the rep's screen only."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Timeline-first film room. Top band: grade ring, one-sentence verdict, goal status and a Scored by badge naming the model, with the existing heuristic-fallback warning kept. Main: full-width film strip with coloured moment tags (green good, amber missed, rose risk). Clicking a tag opens the matching transcript line, the quote and the coach note in a side panel. Below: criterion rows with weight, score, missed-moment list and Jump to 2:14 links. Footer: one focus drill and Replay this moment, which starts a retake with the same persona.",
+      "key_components": "Grade ring, timeline with tags, moment inspector, criterion accordion, evidence quotes with timestamp jumps, focus-drill card, export.",
+      "change_vs_today": "Replaces a long vertical scroll with the transcript at the bottom. Every score now links to a moment on the timeline."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Top: four stat tiles with 30-day sparklines (sessions, average, best, minutes practised) plus a streak counter. Middle: a line chart per criterion over time with toggles, beside a Recurring misses list ranked by frequency (for example, Pricing transparency missed in 4 of 6 calls) that links to those moments. Bottom: film library table with date, persona, objection, score change, tags and Replay. Filters: persona, industry, date range.",
+      "key_components": "Stat tiles with sparklines, criterion trend chart (Recharts), recurring-miss cards, TanStack film table, date-range control.",
+      "change_vs_today": "Replaces four numbers and a plain list with trends per criterion and a ranked list of what the rep keeps missing."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Team header with this week's coverage (sessions, average, time practised). Main: heatmap with reps as rows and rubric criteria as columns, cell colour set by average score with the count shown. Clicking a cell opens that rep's recent films. Right: an assign panel (pick a persona, choose reps, set a due date) and a supervisor-notes feed where notes pin to moments. Each rep-level view shows a visibility and consent label.",
+      "key_components": "Heatmap, per-rep ramp curve, assignment form, pinned supervisor notes, org switcher, visibility labels.",
+      "change_vs_today": "No manager surface exists in the UI today. The data model already supports orgs, so this is the first one and the main F2 surface."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "Single column at 390px. Top bar: persona name, timer, Your turn chip and a collapsed score pill (for example 72, up 3) that opens the full rubric sheet. Beneath it, a 48px scrubbable timeline strip with tag dots. Transcript as compact bubbles, newest at the bottom. The cue card rises as a bottom sheet above the composer and swipes away. Reply chips sit in a horizontal scroller. Bottom bar: mute, a large End and grade button and the talk-track sheet. 16px gutters, 44px targets, no horizontal page scroll.",
+      "key_components": "Score pill, timeline strip, bottom-sheet cue card, reply chip row, thumb-zone action bar, talk-track sheet.",
+      "change_vs_today": "Replaces the stacked chat with a thumb-first layout where coaching and score stay visible without covering the transcript."
+    }
+  ],
+  "live_coaching_and_scoring": "Self-score D: 6. Coaching runs as a separate coach call that reads each finished rep turn plus a short interim transcript, and returns at most one cue: a next-best question, an objection alert or a checkpoint nudge. Cues are throttled (one at a time, 20-second minimum gap) and shown only to the rep. The persona never receives them, so it stays in character. Scoring is incremental: each turn moves the six rubric meters, and every number carries the transcript line that the debrief reuses, so live and final scores cannot disagree. In voice mode, cues can be spoken through a second audio channel, which needs headphones. The open risk is latency and cue accuracy. The first milestone is a measured harness over recorded calls, not UI polish.",
+  "persona_library_and_wizard": "Self-score E: 6. Ship a launch pack of 150+ persona-scenario pairs (target) as one versioned JSON pack in the repo, organised by job, industry, difficulty and objection type. Each entry has a rubric and two scripted replies for offline tests. One zod schema validates every entry in the wizard, the importer and CI. The wizard turns a URL, job description, ICP, CRM note or pasted call into a draft persona, shows the extracted facts for review, and exports a PR-ready file. Sources stay in the browser unless the user sets a key; a URL is fetched only when the user asks. Built-ins remain read-only and forkable, as they are today.",
+  "signature_moments": [
+    "The timeline is the spine: scrub any call, and every tag, score and coach note is pinned to a timestamp on the same strip.",
+    "A cue card that appears only when it matters, one at a time, and the persona never hears it.",
+    "Rubric meters that move during the call, so the rep watches each criterion change line by line.",
+    "Replay this moment: a debrief tag starts a retake from that timestamp with the same persona.",
+    "Persona cards carry their objections as chips, so the library reads like a playbook.",
+    "Every AI output shows the model that produced it and what it cost in tokens and dollars."
+  ],
+  "openai_fund_angle": "Make OpenAI visible where it does real work. The live HUD and debrief show a model strip (Realtime voice, coach model, grader model) and a cost line per call. The README explains each OpenAI piece and how API credits would be used. Codex is used concretely: the repo's CI runs Codex CLI to review persona-pack PRs for schema, bias and rubric weights, and maintainer automation drafts release notes. A Contribute page shows those checks as badges on merged personas. Contributors are invited through the wizard's Export as PR file, good-first-issue labels and a credit line on each community persona card. This matches the Codex open source fund (grants up to $25K in API credits for projects using Codex CLI and OpenAI models) and the Codex for Open Source uses: PR review, maintainer automation and release workflows.",
+  "inspirations": [
+    {
+      "source": "Mobbin: Browserbase session replay viewer",
+      "url": "https://mobbin.com/screens/0569b477-8073-491e-bdeb-372dcf2ace34",
+      "borrowed": "Timeline scrubber under a replay, with a synchronised, timestamped action log beside it. This is the model for the film strip."
+    },
+    {
+      "source": "Mobbin: Descript editor with transcript",
+      "url": "https://mobbin.com/screens/cce1ce4f-5909-4066-b2b9-231c6759267b",
+      "borrowed": "Transcript with filler words flagged inline, used for filler-word moment tags."
+    },
+    {
+      "source": "Mobbin: Descript timeline editor",
+      "url": "https://mobbin.com/screens/6de64982-0039-4273-912a-3be08ffee934",
+      "borrowed": "Multi-track timeline with clips and markers, the reference for the timeline strip's coloured blocks."
+    },
+    {
+      "source": "Mobbin: Magnific canvas comments",
+      "url": "https://mobbin.com/screens/7d3f3bee-49a8-42a2-9448-0b3598775e48",
+      "borrowed": "Comment threads with All, Open and Resolved tabs, used for coach and manager annotations."
+    },
+    {
+      "source": "Mobbin: Quo in-call panel",
+      "url": "https://mobbin.com/screens/30646d08-19e5-4819-a286-a7f53f785b4b",
+      "borrowed": "Compact dark in-call panel with mute and end controls, floating over the workspace, the model for the live HUD."
+    },
+    {
+      "source": "Mobbin: Unify home prompt chips",
+      "url": "https://mobbin.com/screens/939e34fb-106d-42d2-982c-81afb681610a",
+      "borrowed": "Suggested-prompt chips under the composer, used for wizard starters and reply chips."
+    },
+    {
+      "source": "Mobbin: Base44 Start from URL",
+      "url": "https://mobbin.com/screens/5c469d92-a04c-478e-8a71-9408fe84d08a",
+      "borrowed": "Source option cards that differ by scope, used for the wizard's source choice."
+    },
+    {
+      "source": "Mobbin: Snowflake import model stepper",
+      "url": "https://mobbin.com/screens/01aa36fa-e6e0-410f-933c-dc88bd95dacb",
+      "borrowed": "Left-rail stepper with completed checkmarks, used for the five-step wizard."
+    },
+    {
+      "source": "Mobbin: Meetup AI description field",
+      "url": "https://mobbin.com/screens/6b488d48-bc04-44b2-b8f0-d8849f90188a",
+      "borrowed": "Generate with AI beside an editable field, with a guidance card of prompts, used for extraction prompts."
+    },
+    {
+      "source": "Mobbin: AirOps Add Persona dialog",
+      "url": "https://mobbin.com/screens/94c65352-3c9e-4a6c-8494-fabd91b2f34c",
+      "borrowed": "Persona as a small form with title, description and a warning about brand-name leakage."
+    },
+    {
+      "source": "Mobbin: Higgsfield clip trim",
+      "url": "https://mobbin.com/screens/53a62107-8de0-42da-8248-3ed00b820235",
+      "borrowed": "Range handles for selecting a window, used to mark a moment for replay."
+    },
+    {
+      "source": "Mobbin: Devin session list",
+      "url": "https://mobbin.com/screens/b46a92a3-e1c2-4a26-bc04-6ca9785cc925",
+      "borrowed": "Session list with status chips such as PR is ready, used in the film library."
+    },
+    {
+      "source": "Disprz: best AI sales coaching software",
+      "url": "https://disprz.ai/blog/best-ai-sales-coaching-software",
+      "borrowed": "Market split between conversation intelligence and AI role-play, which the timeline spans."
+    },
+    {
+      "source": "Cirrus Insight: AI sales coaching tools",
+      "url": "https://www.cirrusinsight.com/blog/ai-sales-coaching",
+      "borrowed": "Live coach that whispers next-best questions mid-call, and one scorecard for practice and real calls."
+    },
+    {
+      "source": "PitchMonster: AI sales software reviewed",
+      "url": "https://www.pitchmonster.io/blog/top-ai-sales-software-reviewed",
+      "borrowed": "Before, during and after the call framing, which the one-timeline loop covers."
+    },
+    {
+      "source": "Aircall: sales coaching AI tools",
+      "url": "https://aircall.io/blog/sales-coaching-ai-tools/",
+      "borrowed": "Three categories (simulation, real-time assist, post-call intelligence) as the basis of the IA."
+    },
+    {
+      "source": "OpenAI: Codex for Open Source",
+      "url": "https://developers.openai.com/community/codex-for-oss",
+      "borrowed": "Qualifying uses (PR review, maintainer automation, release workflows) for the Codex CI angle."
+    },
+    {
+      "source": "OpenAI: Codex open source fund",
+      "url": "https://openai.com/form/codex-open-source-fund/",
+      "borrowed": "Grants up to $25,000 in API credits for projects using Codex CLI and OpenAI models."
+    },
+    {
+      "source": "shadcn/ui documentation",
+      "url": "https://ui.shadcn.com/docs",
+      "borrowed": "Copy-in, owned components on Radix, as the component base."
+    }
+  ],
+  "implementation": {
+    "effort": "L",
+    "migration_path": "Phase 0 (week 1): upgrade Tailwind 3 to 4, add shadcn/ui and Radix, move tokens to CSS variables, keep routes and take visual baseline screenshots. Phase 1: shared shell, persona JSON pack and zod schema, Pre-call and live HUD behind a feature flag. Phase 2: debrief film room with the timeline, then the wizard. Phase 3: progress, team view, mobile polish, README and GIF refresh, and the CI Codex check. Existing localStorage scenarios and the grading API stay unchanged, with an importer that maps old scenarios into the new schema."
+  },
+  "risks": [
+    "Live coaching latency and cue accuracy are unproven. Without a measured harness over recorded calls, D stays at baseline and the HUD is decoration.",
+    "Hudl-style density can read as sports-coded. Test the palette with real insurance and mortgage reps before locking it.",
+    "A 150-persona pack is a content job. Ship about 40 hand-checked personas first and generate the rest through the wizard with human review.",
+    "Pasted real calls contain customer PII. Strip it before any model call and before export, or the wizard becomes a compliance problem.",
+    "Voice-mode cues need headphones; without them the cue can bleed into the mic and the persona may hear coaching.",
+    "Defaulting to OpenAI ties the fund story to vendor pricing. Keep OpenAI-compatible endpoints and a local-only mode so the core works without credits.",
+    "The Tailwind 4 migration touches every screen. Freeze visual regression baselines before starting.",
+    "Manager visibility and recording need consent labels and retention rules before any team pilot (F2)."
+  ]
+}

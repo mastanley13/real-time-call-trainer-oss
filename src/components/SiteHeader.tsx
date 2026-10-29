@@ -3,37 +3,39 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Menu, X } from "lucide-react";
+import { LogOut, Search, Settings } from "lucide-react";
 import LogoMark from "@/components/LogoMark";
-import { useAuth } from "@/contexts/AuthContext";
+import ThemeToggle from "@/components/ThemeToggle";
+import { useAuth, type User } from "@/contexts/AuthContext";
+import { canManageTeam } from "@/lib/team";
 
-const links = [
-  { href: "/trainer", label: "Trainer" },
-  { href: "/trainer/scenarios", label: "Scenarios" },
-  { href: "/dashboard", label: "Dashboard" },
+export const NAV = [
+  { href: "/trainer", label: "Practice", match: (p: string) => p === "/trainer" || p.startsWith("/trainer/debrief") },
+  { href: "/library", label: "Library", match: (p: string) => p.startsWith("/library") || p.startsWith("/trainer/scenarios") },
+  { href: "/dashboard", label: "Progress", match: (p: string) => p.startsWith("/dashboard") },
 ];
+export const TEAM_NAV = { href: "/team", label: "Team", match: (p: string) => p.startsWith("/team") };
+
+/** Main links for this user. Team shows for managers, owners and platform admins; the server enforces access either way. */
+export function navFor(user: User | null) {
+  return canManageTeam(user?.role, !!user?.isPlatformAdmin) ? [...NAV, TEAM_NAV] : NAV;
+}
+
+/** Opens the command palette, which listens for this event. */
+export const openPalette = () => window.dispatchEvent(new CustomEvent("rtct:palette"));
 
 export default function SiteHeader() {
   const { isAuthenticated, user, logout, capabilities } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
-  const [open, setOpen] = useState(false);
   const demo = capabilities?.demoMode;
-
-  const NavLinks = () => (
-    <>
-      {links.map((l) => (
-        <Link
-          key={l.href}
-          href={l.href}
-          onClick={() => setOpen(false)}
-          className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${pathname === l.href ? "bg-primary-soft text-primary" : "text-ink-soft hover:bg-slate-100 hover:text-ink"}`}
-        >
-          {l.label}
-        </Link>
-      ))}
-    </>
-  );
+  const links = navFor(user);
+  // Read the platform after mount so the server render and first client render match.
+  const [mac, setMac] = useState(false);
+  useEffect(() => {
+    const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+    setMac(/mac|iphone|ipad|ipod/i.test(nav.userAgentData?.platform || nav.platform || nav.userAgent));
+  }, []);
 
   const headerRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -47,65 +49,75 @@ export default function SiteHeader() {
   }, []);
 
   return (
-    <header ref={headerRef} className="glass sticky top-0 z-40 border-x-0 border-t-0">
+    <header ref={headerRef} data-site-chrome className={`glass sticky top-0 z-40 border-x-0 border-t-0 pt-[env(safe-area-inset-top)] print:hidden ${pathname.startsWith("/trainer/debrief") ? "deck !bg-surface/90" : ""}`}>
       {demo && (
-        <div className="bg-accent-soft px-4 py-1 text-center text-xs font-medium text-ink">
-          Demo mode: login is skipped and sessions stay in this browser.
+        <div className="border-b border-line bg-primary-soft/60 px-4 py-1 text-center font-mono text-[11px] text-ink-soft">
+          Demo mode · login skipped · sessions stay in this browser
         </div>
       )}
-      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
-        <Link href="/" className="flex items-center gap-2.5 rounded-lg font-heading text-base font-bold text-ink">
-          <LogoMark size={32} />
-          <span className="hidden min-[400px]:inline">Real-Time Call Trainer</span>
-          <span className="min-[400px]:hidden">Call Trainer</span>
+      <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-4 sm:px-6">
+        <Link href="/" className="flex shrink-0 items-center gap-2.5 rounded-lg font-heading text-[15px] font-bold text-ink">
+          <LogoMark size={30} />
+          {/* Visually hidden on narrow phones, not display:none, so the home link keeps an accessible name. */}
+          <span className="sr-only min-[400px]:not-sr-only">Call Trainer</span>
+          <span className="hidden rounded border border-line px-1.5 py-px font-mono text-[10px] font-medium text-ink-muted sm:inline">OSS</span>
         </Link>
 
-        <nav className="hidden items-center gap-1 md:flex" aria-label="Main">
-          {isAuthenticated && <NavLinks />}
-        </nav>
+        {isAuthenticated && (
+          <nav className="hidden items-center gap-1 md:flex" aria-label="Main">
+            {links.map((l) => {
+              const on = l.match(pathname);
+              return (
+                <Link key={l.href} href={l.href} aria-current={on ? "page" : undefined}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${on ? "bg-sunken text-ink" : "text-ink-muted hover:bg-sunken hover:text-ink"}`}>
+                  {l.label}
+                </Link>
+              );
+            })}
+          </nav>
+        )}
 
-        <div className="hidden items-center gap-2 md:flex">
+        <div className="ml-auto flex items-center gap-1.5">
+          {capabilities?.model && capabilities.llm && (
+            <Link href="/settings/models" className="chip-model hidden transition-colors hover:border-ink-muted/50 hover:text-ink lg:inline-flex"
+              title="Model used for the coach, grading and persona wizard. Open model settings.">
+              <span className="lamp lamp-ok !h-1.5 !w-1.5" aria-hidden /> {capabilities.model}
+              <span className="sr-only">, open model settings</span>
+            </Link>
+          )}
+          {isAuthenticated && (
+            <button type="button" onClick={openPalette} aria-keyshortcuts={mac ? "Meta+K" : "Control+K"} aria-label="Open command palette"
+              title={`Search and jump to anything (${mac ? "⌘K" : "Ctrl K"})`}
+              className="btn-quiet !min-h-[36px] !gap-2 !px-2.5 sm:border sm:border-line">
+              <Search size={16} strokeWidth={1.75} aria-hidden />
+              <span className="kbd hidden sm:inline-flex">{mac ? "⌘K" : "Ctrl K"}</span>
+            </button>
+          )}
+          {isAuthenticated && (
+            <Link href="/settings/models" aria-label="Settings" title="Settings: models and security"
+              aria-current={pathname.startsWith("/settings") ? "page" : undefined}
+              className={`btn-quiet !min-h-[36px] !px-2.5 ${pathname.startsWith("/settings") ? "bg-sunken text-ink" : ""}`}>
+              <Settings size={17} strokeWidth={1.75} aria-hidden />
+            </Link>
+          )}
+          <ThemeToggle />
           {isAuthenticated ? (
             <>
-              <span className="max-w-[160px] truncate text-sm text-ink-muted">{user?.firstName || user?.email}</span>
+              <span className="hidden max-w-[160px] truncate px-1 text-sm text-ink-muted sm:inline">{user?.firstName || user?.email}</span>
               {!demo && (
-                <button className="btn-ghost !min-h-[36px]" onClick={() => { logout(); router.push("/"); }}>
-                  Sign out
+                <button className="btn-quiet !min-h-[36px] !px-2.5" onClick={() => { logout(); router.push("/"); }} aria-label="Sign out" title="Sign out">
+                  <LogOut size={17} strokeWidth={1.75} aria-hidden />
                 </button>
               )}
             </>
           ) : (
             <>
-              <Link href="/login" className="btn-ghost !min-h-[36px]">Sign in</Link>
+              <Link href="/login" className="btn-quiet !min-h-[36px]">Sign in</Link>
               <Link href="/register" className="btn-primary !min-h-[36px]">Get started</Link>
             </>
           )}
         </div>
-
-        <button className="rounded-lg p-2 hover:bg-slate-100 md:hidden" aria-label="Toggle menu" aria-expanded={open} onClick={() => setOpen(!open)}>
-          {open ? <X size={22} /> : <Menu size={22} />}
-        </button>
       </div>
-
-      {open && (
-        <div className="border-t border-line bg-white px-4 pb-4 pt-2 md:hidden">
-          <nav className="flex flex-col gap-1" aria-label="Mobile">
-            {isAuthenticated ? (
-              <>
-                <NavLinks />
-                {!demo && (
-                  <button className="btn-ghost mt-2" onClick={() => { setOpen(false); logout(); router.push("/"); }}>Sign out</button>
-                )}
-              </>
-            ) : (
-              <>
-                <Link href="/login" onClick={() => setOpen(false)} className="btn-ghost">Sign in</Link>
-                <Link href="/register" onClick={() => setOpen(false)} className="btn-primary">Get started</Link>
-              </>
-            )}
-          </nav>
-        </div>
-      )}
     </header>
   );
 }

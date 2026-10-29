@@ -1,0 +1,287 @@
+{
+  "id": "P34",
+  "lens": "DaisyUI theme engine: persona-themed skins, user-switchable themes, community themes",
+  "name": "Signal Skins Console",
+  "one_liner": "A dark-first coaching console built on daisyUI themes: each sales job gets its own skin, the coaching and scoring colors never change, and skins ship as community-contributable theme files.",
+  "lens_followed_or_changed": "Followed the DaisyUI theme-engine lens: the theme is the spine. Each sales job (SDR cold call, AE discovery, insurance, solar and so on) is a data-theme skin scoped to its own subtree. Users switch Signal (dark), Ledger (light) or Contrast (AAA). Community skins are PR-able theme files checked in CI. Changed one thing: Second Nature, Hyperbound, Yoodli and Grain compete on live coaching and evidence, not skins. So reserved semantic tokens (amber coach cue, rose objection, teal live, violet AI) are fixed across every skin, and skins only recolor chrome, surfaces and the orb. Self-scores: A look 8, B UX 7, C unique 8, D live coaching 5.3 (conditional on a coach lane shipping), E library and wizard 5.5 (conditional on seeded content), F1 SaaS 6, F2 selling to entities 6 (white-label skin and persona packs for training companies and call centers), F3 not worth it 3.",
+  "ui_stack": [
+    {
+      "name": "daisyUI 4.x (Tailwind 3 plugin)",
+      "role": "Component and theme engine: buttons, cards, steps, stats, radial-progress, chat, drawer, modal, toast",
+      "why": "Stays on the current Tailwind 3 setup; 35 built-in themes; data-theme scoping lets each persona skin a subtree."
+    },
+    {
+      "name": "Tailwind CSS 3.4",
+      "role": "Utility layer and config that defines Signal, Ledger and skin tokens",
+      "why": "Keeps the existing config; Tailwind 4 is deferred to a later phase."
+    },
+    {
+      "name": "cmdk",
+      "role": "Command palette (Cmd+K) to jump to any persona, scenario, rep or setting",
+      "why": "Power-user speed for supervisors and contributors."
+    },
+    {
+      "name": "Motion (motion/react)",
+      "role": "Cue slide-in, rubric ring animation, count-up scores",
+      "why": "Respects prefers-reduced-motion and stays light."
+    },
+    {
+      "name": "three.js / react-three-fiber (existing)",
+      "role": "Call orb that reads --p and --ai CSS variables",
+      "why": "The orb re-tints with every skin; a CSS gradient fallback covers low-power devices."
+    },
+    {
+      "name": "TanStack Table",
+      "role": "Manager team heatmap with grouping, sorting and CSV export",
+      "why": "Handles grouped proficiency bands without custom table code."
+    },
+    {
+      "name": "Recharts",
+      "role": "Progress trend lines per criterion",
+      "why": "Simple, accessible, works with theme tokens."
+    },
+    {
+      "name": "react-hook-form + zod (existing zod)",
+      "role": "Wizard steps and persona schema shared with CI validation",
+      "why": "One schema for the app, the wizard and community PRs."
+    },
+    {
+      "name": "Lucide React (existing) with Sora, Inter, JetBrains Mono",
+      "role": "Job glyphs and type system",
+      "why": "No emoji; mono for timers and scores keeps numbers steady during live calls."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "signal.base-100",
+        "hex": "#0B1220",
+        "use": "Canvas (dark default); body text on it is about 15:1"
+      },
+      {
+        "token": "signal.base-200",
+        "hex": "#111A2B",
+        "use": "Cards and panels"
+      },
+      {
+        "token": "signal.base-300",
+        "hex": "#1E2B42",
+        "use": "Hairlines, inputs, dividers"
+      },
+      {
+        "token": "signal.base-content",
+        "hex": "#E6ECF5",
+        "use": "Primary text"
+      },
+      {
+        "token": "signal.ai (fixed)",
+        "hex": "#A78BFA",
+        "use": "Any AI-generated text, model strip and wizard provenance; about 6.8:1 on canvas"
+      },
+      {
+        "token": "signal.live (fixed)",
+        "hex": "#2DD4BF",
+        "use": "Recording, live and listening states; about 9.9:1"
+      },
+      {
+        "token": "signal.cue (fixed)",
+        "hex": "#FBBF24",
+        "use": "Whisper cues and talk-track progress only; about 10.5:1"
+      },
+      {
+        "token": "signal.objection (fixed)",
+        "hex": "#FB7185",
+        "use": "Objection alerts and the End and grade button; about 6.9:1"
+      },
+      {
+        "token": "signal.primary (default skin Keystone)",
+        "hex": "#3B82F6",
+        "use": "Persona skin slot; primary-content is #0B1220 for about 5:1 contrast"
+      },
+      {
+        "token": "skin.spark (SDR cold calls)",
+        "hex": "#F97316",
+        "use": "Skin primary; dark text about 6.6:1"
+      },
+      {
+        "token": "skin.harbor (insurance, mortgage)",
+        "hex": "#818CF8",
+        "use": "Skin primary; dark text about 6.2:1"
+      },
+      {
+        "token": "skin.verdant (home services, solar)",
+        "hex": "#84CC16",
+        "use": "Skin primary; dark text about 8.3:1"
+      },
+      {
+        "token": "ledger.base-100",
+        "hex": "#F8FAFC",
+        "use": "Light canvas (keeps the current page background)"
+      },
+      {
+        "token": "ledger.primary",
+        "hex": "#1D4ED8",
+        "use": "Default primary in Ledger; white text about 6.7:1"
+      },
+      {
+        "token": "ledger.cue-text",
+        "hex": "#92400E",
+        "use": "Cue text on a #FEF3C7 card; about 6.3:1"
+      }
+    ],
+    "typography": "Sora 600 and 700 for display (keeps brand continuity). Inter 400, 500 and 600 for UI and body at a 16px base, line-height 1.5. JetBrains Mono 500 for timers, scores and transcript timestamps so numbers do not jitter. Scale 12, 14, 16, 20, 28, 40, 56.",
+    "shape_and_depth": "Controls 12px radius, cards 16px, chips fully round. 1px hairlines, almost no drop shadows in dark mode. The active live panel gets a 1px skin-colored ring and an 8% tinted gradient. Header is glass at 80% alpha with 12px blur. The page backdrop is a mesh gradient tinted by the active skin at about 12% opacity.",
+    "motion": "Skin change cross-fades colors over 300ms. The whisper cue slides in over 240ms (from the right on desktop, from the bottom on mobile) and collapses to a chip after 12s. Rubric rings ease out over 600ms with a delta badge. Under prefers-reduced-motion the orb becomes a static gradient and all slides become fades.",
+    "iconography": "Lucide at 1.75px stroke, 20px in controls. Sales jobs get Lucide glyphs (Phone, ShieldCheck, House, Stethoscope, Car, Briefcase). No emoji anywhere in the product.",
+    "theme_modes": "Signal is the default dark mode. Ledger is light and is pinned on the manager view because dense data reads better there. Contrast is an AAA variant of Signal with white base-content and #64748B borders. Persona skins scope through data-theme on the persona's subtree and can be turned off with 'Match persona skin'. Theme choice is saved to the account when signed in and to localStorage otherwise. Every skin is validated for AA text contrast in CI."
+  },
+  "navigation_and_ia": "Top bar: Practice (home), Library, Create persona, Progress and Team (role-gated). Scenarios and Dashboard are renamed Library and Progress. The theme switcher (three swatches) and the Cmd+K palette sit in the bar. The live call is a focus mode: the header collapses to a skin dot, mono timer and End button, with no nav. Library deep-links per job (/library/sdr, /library/insurance), and facets live in the URL query so a filtered view can be shared. Mobile uses a bottom tab bar (Practice, Library, Create, Progress, More) with a center Start button on Practice; Team sits under More. The demo banner becomes a dismissible strip shown only in demo builds. Every destination is two taps away from anywhere.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Two columns at 1440px. Left: Sora 56px headline 'Practice the call before it counts.' with a one-line subhead naming voice, text and live coaching. Buttons: 'Start a live call' (primary) and 'Browse personas' (ghost). A row of three proof chips: MIT, OpenAI-powered grading, 60+ personas. Right: a live-call card in Signal with a skin-tinted orb, an amber whisper cue ('Ask who signs off on the budget') and a five-criterion ring rail. Below the fold: a four-swatch row of skins that re-tint the card on hover, then a three-step strip (Coach, Score, Debrief). Footer band: Fork, Contribute a persona, Contribute a skin and a text attribution to OpenAI.",
+      "key_components": "daisyUI hero, card, badge, stats, btn; theme swatch radio group; cmdk hint; GitHub stars button; attribution footer.",
+      "change_vs_today": "The generic feature cards and blurred orb become a live product preview plus a skin gallery. The README hero reuses the same frame, rendered once per skin for the screenshot set."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Left facet rail (260px): Job (SDR cold call, AE discovery, CS renewal, collections, recruiting and more), Industry (14), Difficulty (easy, medium, hard), Objection type (price, timing, competitor, authority, no need, trust). Each is a daisyUI checkbox with live counts. Top bar: search, sort (Popular, New, Hardest) and a primary 'Create persona' button. Main: section headers per job ('SDR cold calls, 12') over a three-column card grid. Each card is skinned to its job: orb, name, role and company, difficulty badge, two objection chips and a last-score radial. Click opens a right drawer with behavior, opening line, rubric weights, 'Practice' and 'Duplicate to edit'. Mobile: facets in a bottom sheet.",
+      "key_components": "daisyUI drawer, checkbox, badge, card, join, radial-progress, tabs; Lucide job glyphs; URL-synced facets.",
+      "change_vs_today": "A three-item select becomes a faceted library of 60+ seeded personas grouped by sales job, each card in its job's skin."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Split view. Left 45%: a five-step daisyUI steps rail (Source, Persona, Scenario, Rubric, Test call) above a chat thread. The first input accepts pasted text, a URL, a job description, CRM notes or a call transcript, plus a file drop zone. Right 55%: a preview card that fills as the model drafts: name, role, opening line, behavior bullets, objections and rubric sliders that total 100. Each drafted field carries an ai-colored provenance badge; hover shows the source sentence. Step 5 opens a 60-second text test call inside the preview. Footer: 'Save to my library' and 'Propose to community', which opens a pre-filled pull request template.",
+      "key_components": "steps, card, range, badge, textarea, file drop, toast; streamed JSON into the preview; zod validation.",
+      "change_vs_today": "There is no creation path today. This adds a guided wizard with inline provenance and a test call before anything is saved."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "The dropdown is replaced by a briefing card in the persona's skin. Left: the orb at 160px, name, role, a one-sentence situation, then 'Your goal' as one bold line with three success checks. Rubric shows as weighted chips (Discovery 30%, Info capture 20%, and so on). The talk track is a six-step vertical stepper, collapsed behind 'Show talk track'. Right column (sticky): a Voice and Text segmented control, a mic level meter with a device picker, coach intensity (Quiet, Balanced, Heavy), a one-line note on what coaching shows, and a full-width 'Start simulation' button in the skin color. Breadcrumb above: Library / SDR / Dana Whitfield.",
+      "key_components": "steps, join segmented toggle, meter, select, range, btn-primary in skin color.",
+      "change_vs_today": "The scenario picker moves to the library. The briefing adds goal checks, a weighted rubric and a coach intensity control that did not exist before."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Desktop, three zones. Center (about 58%): persona orb with a speaking state, a 'Your turn' pill, and a chat transcript with JetBrains Mono timestamps. Above the transcript sits one amber whisper card holding the active coach cue; key 1 accepts, key 2 dismisses, and it collapses to a chip after 12s. Right rail (about 320px): five rubric rings (0-100) with delta arrows that tick after each turn, a six-segment talk-track progress bar, and an objection alert in rose with a one-line suggested reply when price or timing objections appear. Bottom bar: composer, mic toggle, timer and a rose 'End and grade' button.",
+      "key_components": "daisyUI chat, radial-progress, progress, toast, alert, badge, kbd, btn; Motion for the cue; three.js orb tinted by --p.",
+      "change_vs_today": "A chat app with a hidden talk track becomes a call cockpit: coaching cues, live rubric rings and objection alerts sit beside the conversation."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Top band in the skin color: a 120px radial score with letter grade, an outcome chip ('Goal partly met'), and a state chip that reads 'Estimated: keyword fallback' when the grader fails, replacing the yellow banner. Three-sentence summary and a 'Replay this call' button. Below: a horizontal moments timeline across the call; strong and weak turns are markers, and clicking one scrolls the transcript and highlights the line. Criteria accordion: each row shows a score bar, weight and two evidence quotes that link to timeline markers. Strengths and Improve sit as two compact cards. Transcript is sticky on the right at desktop. Bottom card: 'Practice weakest criterion'.",
+      "key_components": "radial-progress, stats, collapse, timeline (custom SVG), badge, card, kbd.",
+      "change_vs_today": "One long scroll with separate quotes becomes an evidence-linked two-pane debrief with a clickable moments timeline and a clear estimated-versus-graded state."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Top row of five daisyUI stats: sessions, average, best, time practised, streak. Main left (two thirds): score trend lines per criterion, with an overall toggle and a date range segmented control. Right third: a 'Next focus' card naming the weakest criterion with a one-click practice button, plus a goal list with targets. Bottom: a skill heatmap (criteria rows by last 12 calls, cells colored by score band), then a recent-calls list where each row has a mini sparkline and a skin-tinted job badge.",
+      "key_components": "stats, card, badge, join, tabs; Recharts trend; heatmap from grid cells; Lucide Flame for streak.",
+      "change_vs_today": "Four number tiles and a flat list become a skill-growth story with per-criterion trends and a next-focus recommendation."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Pinned to Ledger, so no persona skins sit on dense data. Header: team switcher, date range, persona filter, 'Export CSV'. Main: a table where rows are reps and columns are rubric criteria; cells are colored score chips. Rows group under proficiency bands (Beginning, Developing, Proficient, Excelling, Not started), shown as collapsible headers with counts. Row click opens a right drawer: the rep's calls, trend, coach notes and 'Assign practice' with a persona picker. Right rail: a model-written insights summary with 'View 2 reps' links, labeled with the generating model. A Calibrate rubric tab is visible to supervisors only.",
+      "key_components": "TanStack Table, table, collapse, drawer, badge, select, tabs, stats.",
+      "change_vs_today": "There is no manager surface today. This adds a team heatmap grouped by proficiency band, with assignment and insights."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "390px wide, 16px gutters, no horizontal scroll. Top slim bar: a 48px orb in the skin color, a 'Your turn' pill, the mono timer and an overflow menu. The transcript fills the middle, newest turn just above the composer. The amber whisper card floats above the composer as a swipe-dismissable sheet. A score strip under the header shows the overall ring; tapping it opens a bottom sheet with five criteria. Bottom bar: composer, a large mic button in voice mode, a rose 'End and grade' button sized for the thumb, and a book icon for the talk track sheet.",
+      "key_components": "daisyUI modal-bottom or drawer, chat, radial-progress, btn, join; reduced-motion orb fallback.",
+      "change_vs_today": "Mobile shows only chat and End. Coaching and live scores become reachable in one tap without leaving the call."
+    }
+  ],
+  "live_coaching_and_scoring": "Coach lane: a second model call runs beside the persona. It never speaks to the persona and never enters the transcript; cues render as text in the amber card. Output is structured JSON with at most one cue per rep turn, typed as Next question, Objection alert, Talk-track step or Pace warning, each citing the transcript line IDs it used. Scoring: all five criteria re-score after each rep turn (debounced). Each score carries evidence IDs that the debrief reuses, so live and final scores match. Budget: cues under 2s, score deltas under 1s; past budget the UI shows 'thinking' rather than a stale cue. Intensity (Quiet, Balanced, Heavy) caps cue frequency. Self-score D: 5.3, and only conditional on the coach lane and per-turn scoring shipping. The layout alone is about 4.5, because today the screen has no coaching at all.",
+  "persona_library_and_wizard": "Library: 60+ seeded personas at launch across 12 sales jobs and 14 industries (SDR cold call, AE discovery, B2B procurement, insurance, mortgage, real estate, solar, home services, auto, medical devices, recruiting, retail, customer success, collections). Each persona is a JSON file tagged with job, industry, difficulty, objection types, voice and skin, validated by schema in CI, so a community persona is one pull request. Wizard (open-source core): accepts a job description, product URL, CRM notes, ICP or pasted call; uses OpenAI structured outputs to draft persona, scenario, rubric and talk track in a single schema; every drafted field shows provenance; a 60-second test call gates saving. Self-score E: 5.5 with seeded content. As the app stands today (three built-ins, no wizard) it is about 3.0.",
+  "signature_moments": [
+    "The whole call re-tints to the persona's job skin, while cue and score colors stay fixed, so amber always means coach and rose always means objection.",
+    "An amber whisper card with keys 1 and 2 to accept or dismiss, collapsing to a chip after 12 seconds.",
+    "Rubric rings on the live rail tick with a delta arrow and an underlined quote when evidence lands.",
+    "A debrief moments timeline: click a marker and the exact transcript line is highlighted.",
+    "The persona wizard fills its preview card as the model streams the draft, with provenance on hover.",
+    "Make a skin: a live contrast checker plus a 'Propose to community' button that opens a pre-filled pull request."
+  ],
+  "openai_fund_angle": "Make the models visible. A model strip on the live call and the debrief names which OpenAI model does each job (coach, grader, wizard) and links to the prompt and token cost. A developer drawer shows the realtime-style event log, borrowed from OpenAI's own playground pattern, so contributors can watch the stream. 'Powered by OpenAI' appears as plain text attribution, not the logo, so the project does not look endorsed. Contributor invitation: personas and skins are small, schema-checked files, so a first pull request is roughly a 10-minute job. 'Add a persona' and 'Make a skin' open pre-filled templates with a live contrast checker. That gives the Codex for Open Source program a real public repo with PR review, maintainer automation and release workflows to show.",
+  "inspirations": [
+    {
+      "source": "daisyUI themes documentation (35 built-in themes)",
+      "url": "https://daisyui.com/docs/themes/?lang=en",
+      "borrowed": "Theme tokens and data-theme scoping, so each persona job can carry its own skin."
+    },
+    {
+      "source": "daisyUI theme generator",
+      "url": "https://daisyui.com/theme-generator/?lang=en",
+      "borrowed": "Light and dark theme pairs generated from a few colors, the model for community skin submissions."
+    },
+    {
+      "source": "Grain scorecard (Mobbin)",
+      "url": "https://mobbin.com/screens/935c8872-3616-4fff-aec9-89d327f23b7c",
+      "borrowed": "Per-criterion 1-5 pips with a timestamped evidence sentence for each score."
+    },
+    {
+      "source": "Fireflies Sales Assist (Mobbin)",
+      "url": "https://mobbin.com/screens/a238e95c-72b6-47d9-8602-74caa1c36d07",
+      "borrowed": "Visible listening state and a live assist panel with suggestion chips."
+    },
+    {
+      "source": "Codecademy recruiter phone screen (Mobbin)",
+      "url": "https://mobbin.com/screens/cc19b91b-8c45-470e-aeb5-53264e14c815",
+      "borrowed": "Voice conversation transcript with a 'Powered by OpenAI' attribution in the header."
+    },
+    {
+      "source": "OpenAI Platform audio session (Mobbin)",
+      "url": "https://mobbin.com/screens/ebfa4bd0-ffbf-4eaa-96cc-ce702e236d87",
+      "borrowed": "Event-log side panel for developer-visible realtime events."
+    },
+    {
+      "source": "ChatGPT GPT Builder flow (Mobbin)",
+      "url": "https://mobbin.com/flows/6e8f0823-7698-4850-bb22-9100eff40163",
+      "borrowed": "Chat on the left, live preview on the right, for building a persona."
+    },
+    {
+      "source": "PlayAI agent creation flow (Mobbin)",
+      "url": "https://mobbin.com/flows/cdb50e4c-e541-494b-8e1c-0d4e5df71ccd",
+      "borrowed": "Step rail (Identity, Behavior, Knowledge, Actions, Deploy) with a live preview, plus a category-card voice library."
+    },
+    {
+      "source": "ClickUp Template Center (Mobbin)",
+      "url": "https://mobbin.com/screens/04818cc9-7502-402a-a6f8-ec356682723b",
+      "borrowed": "Left facet checkboxes and a sectioned card grid (Sales and CRM)."
+    },
+    {
+      "source": "15Five competency results (Mobbin)",
+      "url": "https://mobbin.com/screens/a7974bb3-0065-46f5-9828-9ed817e2bff6",
+      "borrowed": "Competency-by-person grid as the base for the manager heatmap."
+    },
+    {
+      "source": "SchoolAI session view (Mobbin)",
+      "url": "https://mobbin.com/screens/7e71261b-469e-4bb4-bf36-68ff9d4aa7a9",
+      "borrowed": "Learners grouped by proficiency band with outcome dots."
+    },
+    {
+      "source": "Hyperbound (web)",
+      "url": "https://www.hyperbound.ai/",
+      "borrowed": "Live call coaching framed as in-call guidance, with coaching surfaced in Zoom, Teams and Slack. A competitor to watch."
+    },
+    {
+      "source": "Yoodli vs Second Nature (web, vendor comparison)",
+      "url": "https://yoodli.ai/blog/yoodli-vs-second-nature-which-ai-sales-roleplay-platform-is-better",
+      "borrowed": "The real-customer-call coaching loop as a gap to design for. This is a vendor claim to verify, not a fact."
+    }
+  ],
+  "implementation": {
+    "effort": "L",
+    "migration_path": "Phase 0 (about 1 week): add daisyUI 4.x on the current Tailwind 3 setup, define Signal and Ledger in the Tailwind config, and map existing tokens to daisyUI names so current pages still render. Phase 1: rebuild the live call and the debrief first, since they carry the basic-needs scores. Phase 2: library, wizard and skins, with the theme CI contrast check and persona schema validation. Phase 3: pre-call briefing, progress dashboard and manager view. Phase 4 (optional, after Phase 3): migrate to Tailwind 4 and daisyUI 5, which defines themes in CSS; daisyUI 5 requires Tailwind 4, so the two move together. Keep the old card and btn classes until each screen has moved."
+  },
+  "risks": [
+    "Skin sprawl: each new persona skin adds QA surface. Cap launch at eight skins and gate community skins through a CI contrast check.",
+    "A careless community skin could reuse amber, rose, teal or violet as its primary. The validator must reject any skin that does.",
+    "daisyUI 5 requires Tailwind 4. Pin daisyUI 4.x until Phase 4 to avoid a mixed-version build.",
+    "Without the coach lane the live screen is a skin, not coaching, and the D score falls below 5.0.",
+    "Content is the real gate for E: 60 personas take weeks of curation, and wizard drafts need human review before they join the seeded library.",
+    "Community personas or skin names could imitate real companies or people. The schema should ban real brand names in persona and skin names.",
+    "Dark-first Signal will not suit everyone. Ledger and Contrast must be first-class, and the three.js orb needs a CSS fallback on low-power devices.",
+    "Attribution to OpenAI must stay textual and modest so the project does not look endorsed by OpenAI."
+  ]
+}

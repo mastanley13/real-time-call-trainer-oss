@@ -1,0 +1,287 @@
+{
+  "id": "P08",
+  "lens": "Figma/whiteboard canvas: scenarios and personas built visually as nodes on an infinite canvas",
+  "name": "Call Canvas",
+  "one_liner": "A dark, spatial studio where personas, talk tracks and rubrics are nodes you wire into a call, with a live coach rail while you talk and an evidence-linked replay afterward.",
+  "lens_followed_or_changed": "Followed: personas and scenarios live as nodes on an infinite canvas, and the AI wizard is a wired graph (sources feed a Persona Synth node that emits Persona, Scenario and Rubric nodes). Changed: the canvas is the build and browse surface only. Live call and debrief use fixed, glanceable layouts, because the Mobbin live-call references (Dialpad, Fireflies, Grain) and phone use need stable panels, not free-form space. Self-scores (1-10): A 8, B 7, C 8, D 6.5, E 6.5, F1 6, F2 6, F3 3 (F3 at 3 means leaning toward worth building).",
+  "ui_stack": [
+    {
+      "name": "shadcn/ui on Radix primitives",
+      "role": "Base components: Dialog, Sheet, Tabs, Select, Slider, Toggle Group, Command",
+      "why": "MIT, copied into the repo so contributors edit components directly; accessible by default."
+    },
+    {
+      "name": "Tailwind CSS v4 with CSS-variable tokens",
+      "role": "Replaces the Tailwind 3 config and the custom .card and .btn classes",
+      "why": "One token source switches light and dark; no component-library lock-in."
+    },
+    {
+      "name": "@xyflow/react (React Flow)",
+      "role": "Infinite canvas for the library board and the persona wizard graph",
+      "why": "MIT, mature node and edge model; lazy-loaded so the rest of the app stays light."
+    },
+    {
+      "name": "motion (formerly Framer Motion)",
+      "role": "Cue slide-ins, score dial sweep, layout transitions",
+      "why": "Clean reduced-motion fallbacks."
+    },
+    {
+      "name": "cmdk",
+      "role": "Cmd-K palette across scenarios, personas and debriefs",
+      "why": "Keyboard-first navigation for power users and contributors."
+    },
+    {
+      "name": "vaul",
+      "role": "Bottom sheets on mobile for talk track and rubric",
+      "why": "Native-feeling drag-to-dismiss on phones."
+    },
+    {
+      "name": "Recharts plus custom SVG",
+      "role": "Trend lines, radar, heatmap; custom SVG for the score dial",
+      "why": "Charts take the same theme tokens."
+    },
+    {
+      "name": "Geist and Geist Mono (Google Fonts)",
+      "role": "Replaces Inter and Sora",
+      "why": "Tabular numerals for scores and timers; open licence."
+    },
+    {
+      "name": "OpenAI Realtime API plus gpt-4.1-mini",
+      "role": "Default voice persona, live coach evaluator, grading, wizard synthesis",
+      "why": "Makes OpenAI the visible engine; ElevenLabs stays as a selectable voice provider."
+    },
+    {
+      "name": "lucide-react and zod (kept)",
+      "role": "Icons; schemas for structured outputs and pack files",
+      "why": "Already in the repo; no churn."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "--canvas",
+        "hex": "#0B0D10",
+        "use": "App background under a 24px dot grid (light: #F6F7F9)"
+      },
+      {
+        "token": "--surface",
+        "hex": "#13161B",
+        "use": "Cards, rails, sheets (light: #FFFFFF)"
+      },
+      {
+        "token": "--raised",
+        "hex": "#1B1F27",
+        "use": "Node bodies, popovers, menus (light: #EEF1F5)"
+      },
+      {
+        "token": "--line",
+        "hex": "#272C36",
+        "use": "Hairlines and node borders (light: #E1E5EC)"
+      },
+      {
+        "token": "--ink",
+        "hex": "#EEF1F6",
+        "use": "Primary text (light: #0E1116)"
+      },
+      {
+        "token": "--ink-muted",
+        "hex": "#9AA4B5",
+        "use": "Secondary text, timecodes, rubric weights (light: #5B6474)"
+      },
+      {
+        "token": "--signal",
+        "hex": "#2DD4BF",
+        "use": "Primary action, live recording, on-track state (light: #0F766E)"
+      },
+      {
+        "token": "--cue",
+        "hex": "#A78BFA",
+        "use": "Coach whisper cards only (light: #6D28D9)"
+      },
+      {
+        "token": "--alert",
+        "hex": "#FBBF24",
+        "use": "Objection alerts and at-risk criteria (light: #B45309)"
+      },
+      {
+        "token": "--miss",
+        "hex": "#FB7185",
+        "use": "Missed criteria and End call (light: #BE123C)"
+      },
+      {
+        "token": "--ok",
+        "hex": "#4ADE80",
+        "use": "Improvement deltas and goal achieved (light: #15803D)"
+      }
+    ],
+    "typography": "Geist for UI (500 body and controls, 600 headings, -0.02em tracking on display). Geist Mono for timers, scores, timecodes and rubric weights, with tabular numerals wherever a number moves. Landing display 56/60, page titles 28/34, body 15/22, meta 12/16. No serif accents, no gradient text.",
+    "shape_and_depth": "Radii 14px cards, 10px controls, pill chips. Depth comes from surface steps (canvas, surface, raised) and 1px hairlines with a faint inner top highlight, not drop shadows. Live states get a 1px signal ring and a 24px glow at 16% opacity. The coach cue uses a violet ring, never the signal colour, so the rep can tell advice from status.",
+    "motion": "Panels and sheets 200ms ease-out. Cue cards spring in from the right (stiffness 320, damping 30) and hold a 2-second violet ring pulse. Score dial sweeps 900ms on debrief. Wizard wires draw in 400ms as a source connects. Only the voice orb loops; every motion falls back to an opacity fade under prefers-reduced-motion.",
+    "iconography": "lucide-react at 1.5px stroke: 16px in chips, 20px in navigation. Custom 20px duotone glyphs for the four node types (source, persona, scenario, rubric). The OpenAI engine appears as a plain text chip (Realtime, gpt-4.1-mini), never a logo, so it does not imply endorsement.",
+    "theme_modes": "Dark is the default on :root; light tokens apply under prefers-color-scheme: light and a data-theme attribute override from the header toggle. Light is a full mode, not an afterthought. Body text pairs meet WCAG AA in both modes; the dot grid drops to 4% opacity in light mode."
+  },
+  "navigation_and_ia": "A 64px left icon rail (Practice, Library, Create, Progress, Team, Settings) that expands on hover. Cmd-K runs any action. Practice is the home canvas with recent calls and nodes. Library and Create share one canvas in two modes. Team appears only inside an org. Mobile uses a bottom bar (Practice, Library, Create, Progress, More). Call and debrief routes are full-bleed with no rail, so the call owns the screen.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Full-bleed dark canvas with a dot grid. Left: 56px headline 'Rehearse the call before it counts', one line of sub-copy, and two buttons: 'Try a 60-second demo call' (text mode, no login) and 'Star on GitHub'. Right: a looping node graph of persona, talk-track step, violet coach cue and a score dial filling to 74. Below the fold: model chips, three contributor cards (add a persona pack, self-host with your key, fix a rubric), and the README install steps.",
+      "key_components": "Hero node graph (static fallback under reduced motion), demo CTA, GitHub star badge, model chips, contributor cards, copyable install block.",
+      "change_vs_today": "Replaces the blurry orb and fake call card with a live preview of the real product and a working demo path. Adds the contributor entry points the page lacks."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Left filter rail (240px): role (SDR cold call, AE discovery, CSM renewal, collections, recruiter), industry (solar, insurance, mortgage, medical devices, B2B procurement, auto, home services), difficulty pips 1-5, objection type. Top: search, live count ('142 scenarios'), grid and board toggle. Grid: 3-column persona cards with monogram, role, industry, objection chips and minutes. Board: picked cards become React Flow nodes you wire into a sequence, from warm-up to hard close.",
+      "key_components": "Filter chips with counts, persona card with difficulty pips and objection tags, board toggle, Add to canvas, Start call, Duplicate and edit.",
+      "change_vs_today": "Replaces a three-item dropdown and a read-only list with a browsable pack library of about 140 pre-built scenarios across 20 industries, plus a board for sequencing."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Node-graph builder. Left: source nodes you drop in (job description, product URL, CRM note, pasted call transcript, ICP form). Centre: wires into a Persona Synth node that emits three output nodes: Persona, Scenario, Rubric. Right: inspector for the selected node with fields, an 'Auto-generate | Edit manually' toggle, and a provenance list showing which source sentence produced each field. Footer: Run a test call, Save to library.",
+      "key_components": "Source node cards, animated wires, Synth node with progress, output cards, inspector with regenerate-per-field, provenance chips, test-call button.",
+      "change_vs_today": "Adds a creation path that does not exist today. Output is schema-validated structured JSON, so each field is editable and traceable instead of a black-box paragraph."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "One framed canvas. Left: scenario node with goal, a stacked rubric-weight bar in Geist Mono, and the talk track as a six-step vertical stepper. Centre: persona card with an attitude meter (skeptical to warm), three amber 'likely objections' cards, and a note that the rest stays hidden until asked. Right: Voice or Text switch, coaching level (Silent, Whisper, Active), mic meter with device picker, last score for this scenario, and a large Start call button.",
+      "key_components": "Talk-track stepper, rubric weight bar, attitude meter, objection preview cards, coaching segmented control, mic meter, Start call.",
+      "change_vs_today": "Makes the talk track and rubric visible before the call instead of collapsed. Adds the coaching-intensity control and a mic check, which the app lacks."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Desktop, three columns. Left: talk-track progress as six step nodes; the current step pulses and shows the next question. Centre: persona header with voice orb and timer, the transcript as speaker-labelled script lines with timecodes, and a composer with hold-to-talk. Right rail: six live rubric bars with delta chips and evidence pins, plus cue cards (violet whisper for the next question, amber objection alert with an acknowledge-then-anchor line). Top bar: pace gauge, coach level, End and grade.",
+      "key_components": "Step-node rail, transcript with timecodes, voice orb, live rubric meter with evidence pins, whisper and objection cue cards with Why and feedback buttons, pace gauge, coach-level toggle, End and grade.",
+      "change_vs_today": "Replaces the chat app with a coaching cockpit; today nothing reacts until grading. Cues come from a separate evaluator, so the persona prompt stays coach-free, as the current design requires."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Top band: 0-100 score dial with Geist Mono value and grade, a goal-achieved chip, and percentile against your last five calls. Below: a replay timeline with a score sparkline and markers where cues fired and whether the rep followed them. Main column: one evidence card per criterion (bar, rationale, quotes). Clicking a quote scrubs the replay. Right rail: a 'Next drill' card that launches a two-minute repeat of the weakest objection. Transcript sits in a collapsible drawer.",
+      "key_components": "Score dial, goal chip, percentile line, replay timeline with cue markers, criterion evidence cards, quote-to-timestamp links, next-drill card, transcript drawer.",
+      "change_vs_today": "Replaces one long scroll with a navigable replay. Every score links to the moment behind it, and cue markers show whether live coaching changed behaviour."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Top row: four stat tiles (calls, average, best, time practised) in Geist Mono with 14-day sparklines. Left (60%): criterion trend lines across calls, filterable by scenario. Right (40%): six-spoke skill radar with a team-median ring, and a 'Weakest link' card. Bottom: objection heatmap (objection types by session, signal scale) and a recent-calls table showing score and cue-followed rate.",
+      "key_components": "Stat tiles with sparklines, trend chart, radar with median ring, weakest-link card, objection heatmap, recent-calls table.",
+      "change_vs_today": "Turns four numbers into a progress story: which criterion is rising, which objection still breaks you, and whether live cues are being followed."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Left rail: team and cohort switcher, filters for scenario, role and date. Main: rep-by-criterion heatmap, reps as rows, six criteria as columns, cells from coral to signal, rows grouped Excelling, Developing, Not started (SchoolAI pattern). Right: coaching queue of reps whose scores dropped, each with one-click Assign drill from the library. Bottom: supervisor notes per call and a cohort objection heatmap.",
+      "key_components": "Team switcher, rep-by-criterion heatmap, grouped rows, coaching queue, Assign drill action, supervisor notes, CSV export.",
+      "change_vs_today": "Surfaces the org, assignment and supervisor-note data the model already holds but the UI never shows. Nothing manager-facing exists today."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "390px, full height. Top bar: persona name, timer, coach-level chip. Under it an 88px orb with a 'Your turn' status, a rail of six talk-track step chips, and a strip of six rubric chips with delta arrows. The transcript fills the middle. The newest cue docks above the composer as a violet pill; tapping it opens a bottom sheet with Why and evidence. Bottom: 56px hold-to-talk mic, text field, and a long-press End.",
+      "key_components": "Compact orb, step-chip rail, rubric chip strip, docked cue pill, vaul bottom sheet, 56px hold-to-talk mic, long-press End.",
+      "change_vs_today": "Replaces the chat screen and the separate talk-track drawer with glanceable coaching. 44px minimum targets, a 16px gutter and no horizontal page scroll."
+    }
+  ],
+  "live_coaching_and_scoring": "Architecture: the persona model never sees coaching. A separate OpenAI evaluator (gpt-4.1-mini, structured output) reads each turn against the active rubric and emits cue deltas. Cue types: whisper (next best question), objection alert (type plus an acknowledge-then-anchor line), talk-track progress, pace (talk ratio), and rubric delta with an evidence pin. Live numbers are labelled 'live estimate' and settle into the graded score at the end. Target: a cue within 2 seconds of the rep's turn in text mode and 3 seconds in voice. Each cue has Why and helpful or not buttons that feed prompt tuning. Self-rating D: 6.5, above the 5.0 baseline only if the evaluator meets latency; if coaching is post-call only, D falls below baseline.",
+  "persona_library_and_wizard": "Library: about 140 packs at launch, roughly seven per industry across 20 industries, covering SDR, AE, CSM, collections, recruiting and the rest. Each pack has three difficulty levels and tagged objection types, stored as versioned JSON validated by zod and CI. Contributors add a pack as a file and see it on the board before merging. Wizard: sources in, one Persona Synth call returns Persona, Scenario and Rubric as structured outputs; each field cites its source sentence, and manual edits survive regenerate. Self-rating E: 6.5. Pack count and objection quality, not UI, are the constraint, so ship 40 reviewed packs before claiming 140.",
+  "signature_moments": [
+    "A violet whisper card lands in the rail the moment a prospect says 'send me an email', with one line of what to say.",
+    "Clicking any quote in the debrief scrubs the replay to that second.",
+    "Wizard wires draw in as sources connect, and each generated field shows the sentence it came from.",
+    "The score dial sweeps while the live rubric numbers settle into the final grade.",
+    "The landing hero replays real product output rather than a stock illustration.",
+    "On mobile, the cue pill docks above the composer and expands into evidence on tap."
+  ],
+  "openai_fund_angle": "Make OpenAI the visible engine, not a logo. A model rail under the top bar names the model for each job: Realtime for voice, gpt-4.1-mini for live cues and grading, structured-output synthesis for the wizard. A per-call cost chip shows cents from real token usage. Self-hosters paste their own key and see spend in Settings. Contributors get 'Add a persona pack' and 'Fix a rubric' buttons that open prefilled issues, plus a CONTRIBUTING guide and AGENTS.md so maintainers can use Codex CLI for pack generation and PR review, the maintenance workflow the Codex for Open Source program targets (https://openai.com/form/codex-for-oss/). The brief's $25K credit figure was not verified in this run.",
+  "inspirations": [
+    {
+      "source": "Grain (Mobbin) coaching scorecard",
+      "url": "https://mobbin.com/screens/935c8872-3616-4fff-aec9-89d327f23b7c",
+      "borrowed": "Per-criterion 1-5 pips with timestamped evidence bullets."
+    },
+    {
+      "source": "Fireflies (Mobbin) live assist",
+      "url": "https://mobbin.com/screens/77de8f45-5a6b-4116-aeb5-f73de2c26d4b",
+      "borrowed": "Quick-action chips (Suggest follow-up questions, Catch me up) beside a live assistant panel."
+    },
+    {
+      "source": "Dialpad (Mobbin) live call",
+      "url": "https://mobbin.com/screens/b9242e5f-643e-4b87-b753-a874882220d3",
+      "borrowed": "Live transcript and notes panel docked beside the call, with action-item capture."
+    },
+    {
+      "source": "Vapi (Mobbin) assistant config",
+      "url": "https://mobbin.com/screens/bfc6a998-acd2-4826-8bd8-310c4377c844",
+      "borrowed": "Persona config with a Generate control beside the system prompt, and a call transcript pane."
+    },
+    {
+      "source": "Surfshark Alt Persona (Mobbin)",
+      "url": "https://mobbin.com/screens/40aaaef6-6109-4dd7-91f1-bddb6103d012",
+      "borrowed": "Auto-generate vs Edit manually toggle with a live preview card for generated personas."
+    },
+    {
+      "source": "Chatbase first agent (Mobbin)",
+      "url": "https://mobbin.com/screens/e6b6c766-ad61-48b3-aedd-f9a6b40bcb40",
+      "borrowed": "Website URL plus a describe-what-you-want field as the first wizard step."
+    },
+    {
+      "source": "HubSpot agent setup (Mobbin)",
+      "url": "https://mobbin.com/screens/a36c7c90-8c91-4000-aa13-65b0995c72f0",
+      "borrowed": "Source step that accepts files, a public URL and related URLs, with a clear stepper."
+    },
+    {
+      "source": "PlayAI voice library (Mobbin)",
+      "url": "https://mobbin.com/screens/afeb4284-ec4b-4d62-bd1c-7106f8f152cf",
+      "borrowed": "Category tiles with selected state and removable filter chips above a dense list."
+    },
+    {
+      "source": "Braintrust talent search (Mobbin)",
+      "url": "https://mobbin.com/screens/06171036-f20f-4d66-81bf-09629e325865",
+      "borrowed": "Filter chip row with counts and a saved-search control over a result list."
+    },
+    {
+      "source": "TheyDo personas (Mobbin)",
+      "url": "https://mobbin.com/screens/7411e3f4-400c-4489-825d-aead42921998",
+      "borrowed": "Persona cards in a grid with a side-drawer editor."
+    },
+    {
+      "source": "Uxcel competency radar (Mobbin)",
+      "url": "https://mobbin.com/screens/ff95415f-da51-4f87-b130-79425b438f94",
+      "borrowed": "Six-spoke skill radar with score and reliability beside it."
+    },
+    {
+      "source": "Midjourney trait gauges (Mobbin)",
+      "url": "https://mobbin.com/screens/d67edcbf-f204-46e9-816b-3cf245781313",
+      "borrowed": "Dial gauges with a percentile sentence under each score, for the debrief dial."
+    },
+    {
+      "source": "SchoolAI session view (Mobbin)",
+      "url": "https://mobbin.com/screens/7e71261b-469e-4bb4-bf36-68ff9d4aa7a9",
+      "borrowed": "Learners grouped into Beginning, Developing, Proficient, Excelling, with an insights side panel."
+    },
+    {
+      "source": "Hyperbound (competitor)",
+      "url": "https://www.hyperbound.ai/",
+      "borrowed": "Positioning benchmark: AI sales coach that builds roleplays from real call data. Not a UI model."
+    },
+    {
+      "source": "Second Nature vs Hyperbound comparison",
+      "url": "https://secondnature.ai/second-nature-vs-hyperbound-which-ai-sales-roleplay-platform-is-right-for-your-team/",
+      "borrowed": "Competitor framing for roleplay platforms."
+    },
+    {
+      "source": "OpenAI Codex for Open Source",
+      "url": "https://openai.com/form/codex-for-oss/",
+      "borrowed": "Program the contributor and model-showcase angle targets (program terms not fully read)."
+    }
+  ],
+  "implementation": {
+    "effort": "XL",
+    "migration_path": "Phase 1 (about 2 weeks, estimate): add Tailwind v4 and token CSS behind a theme flag, install shadcn primitives, rebuild landing, pre-call and debrief on the new tokens, keep old routes live. Phase 2 (about 2 weeks): live coach rail with a separate evaluator endpoint behind a flag, with the current chat view as fallback. Phase 3: library grid and board, a JSON pack format that migrates the three built-ins and the localStorage scenarios, 40 reviewed packs, then the wizard. Phase 4: progress and manager views, growing to about 140 packs. Lazy-load React Flow and the wizard routes."
+  },
+  "risks": [
+    "The canvas metaphor can read as a diagram tool; keep the grid as the default library view and make the canvas opt-in.",
+    "Latency: a second evaluator call per turn adds cost and delay. If p95 cue latency exceeds 3 seconds, coaching becomes post-call and D drops below baseline.",
+    "Pack quality is the bottleneck: generated objections need human review, so claim the pack count only after review.",
+    "A dark-first canvas can hurt print and low-contrast displays; light mode must be tested as a first-class theme.",
+    "React Flow and motion add bundle weight; lazy-load both and measure the landing bundle.",
+    "Hyperbound and Second Nature are funded and more polished; the pitch is open source, self-hostable and bring-your-own OpenAI key, not feature parity.",
+    "Research caveat: Firecrawl hit rate limits on most attempts, so competitor and OpenAI-program claims rest on search excerpts, not full page scrapes. Verify before citing.",
+    "Mobbin AI usage notice (shown verbatim): **Your Mobbin AI usage is high this month** Usage is unlimited during beta. If your usage stays at this level, you may need to purchase more credits once limits take effect. View usage and plan options: https://mobbin.com/settings/billing-and-usage"
+  ]
+}

@@ -1,0 +1,261 @@
+{
+  "id": "P16",
+  "lens": "HeroUI (formerly NextUI): soft, rounded, friendly consumer-grade polish with Framer Motion",
+  "name": "Friendly Coach Studio",
+  "one_liner": "A warm, rounded, motion-led training studio: a live coach rail beside every call, and a browsable persona library with an AI wizard, all shipped in the open-source core.",
+  "lens_followed_or_changed": "Followed the HeroUI lens: soft rounded surfaces, friendly consumer polish, Tailwind-native components. Changed two points. First, HeroUI v3 (formerly NextUI) dropped its framer-motion dependency (GitHub discussion #6335), so Motion is added as a separate package for choreography instead of assuming the library provides it. Second, the palette uses a warm canvas and a violet coach accent instead of a default library blue, so the app does not read as another template. Self-score (1-10): A 8, B 8, C 7, D 6.5, E 6, F1 5, F2 6.5, F3 3 (on F3, 3 means worth building).",
+  "ui_stack": [
+    {
+      "name": "HeroUI v3 (Tailwind-based, React Aria primitives)",
+      "role": "Core components: Button, Card, Tabs, Drawer, Modal, Select, Slider, Chip, Progress, Switch, Toast, Skeleton",
+      "why": "Soft, rounded defaults and accessible primitives replace the hand-rolled .card and .btn classes while staying Tailwind-native."
+    },
+    {
+      "name": "Motion (the former framer-motion package)",
+      "role": "Choreography: layoutId morphs, spring whisper cards, score-ring tweens, streamed field stagger",
+      "why": "HeroUI v3 no longer ships this motion layer, and the signature moments depend on it."
+    },
+    {
+      "name": "Tailwind CSS v4 (migrated from v3)",
+      "role": "Design tokens as CSS variables on :root with a data-theme switch",
+      "why": "HeroUI v3 is built for Tailwind v4; verify in its install docs before Phase 0 is scheduled."
+    },
+    {
+      "name": "Bricolage Grotesque, Inter, Geist Mono",
+      "role": "Display headings, UI and transcript body, timers and score numerals",
+      "why": "Bricolage gives a friendly, slightly editorial voice; Inter keeps continuity; mono keeps live numbers steady."
+    },
+    {
+      "name": "lucide-react",
+      "role": "Icons, kept from the current stack",
+      "why": "Rounded 1.75 stroke matches HeroUI's soft shapes."
+    },
+    {
+      "name": "Recharts",
+      "role": "Progress trend lines and sparklines on the dashboard",
+      "why": "Simple React charts that take the same palette tokens."
+    },
+    {
+      "name": "cmdk",
+      "role": "Cmd+K persona search and command palette",
+      "why": "Keyboard-first search across 150+ personas for power users and contributors."
+    },
+    {
+      "name": "@elevenlabs/react plus an OpenAI Realtime voice adapter",
+      "role": "Voice providers, selectable per scenario",
+      "why": "Makes OpenAI Realtime a first-class voice option, not only a grading model."
+    },
+    {
+      "name": "Existing react-three-fiber orb",
+      "role": "Landing hero and live-call orb only, with a 2D CSS fallback on phones and under reduced motion",
+      "why": "Keeps the signature presence without draining mobile batteries."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "canvas",
+        "hex": "#F6F4F0",
+        "use": "Page background (warm paper), replaces the cool #F8FAFC"
+      },
+      {
+        "token": "surface",
+        "hex": "#FFFFFF",
+        "use": "Cards, drawers and the transcript panel"
+      },
+      {
+        "token": "ink",
+        "hex": "#171A24",
+        "use": "Headings, body text, top bars and the dark debrief band"
+      },
+      {
+        "token": "ink-muted",
+        "hex": "#5C6374",
+        "use": "Secondary text and metadata"
+      },
+      {
+        "token": "line",
+        "hex": "#E6E1D8",
+        "use": "Hairlines and input borders"
+      },
+      {
+        "token": "primary",
+        "hex": "#5B4BFF",
+        "use": "Coach Violet: primary CTAs and AI-sourced elements (5.4:1 on white)"
+      },
+      {
+        "token": "whisper",
+        "hex": "#EEEBFF",
+        "use": "Tint for coach whisper cards"
+      },
+      {
+        "token": "live",
+        "hex": "#D63A2C",
+        "use": "Live coral-red: recording dot and End and grade button (4.7:1 with white text)"
+      },
+      {
+        "token": "positive",
+        "hex": "#1FA971",
+        "use": "Mint fills and rings for on-track scores; use positive-text #137A50 for mint text (5.3:1)"
+      },
+      {
+        "token": "caution",
+        "hex": "#F2A007",
+        "use": "Amber fills for nudges and objection alerts; always paired with ink text"
+      }
+    ],
+    "typography": "Bricolage Grotesque 600-700 for display and screen titles (replaces Sora); Inter 400-600 for UI and transcript; Geist Mono for timers, scores and timestamps. Base 16px with a scale of 14, 16, 20, 28, 40, 56.",
+    "shape_and_depth": "Radius 20px for cards, 14px for inputs, full pills for chips and the Voice/Text toggle. Two warm-tinted shadow levels only. 1px inner hairline borders. A 12px backdrop blur is used only on the live coach rail to separate it from the transcript.",
+    "motion": "Springs (stiffness 300, damping 30) for whisper cards and drawers; layoutId shared-element morph from a library card into the persona header; score rings tween 600ms ease-out; the orb scale follows mic level. prefers-reduced-motion swaps all movement for opacity fades.",
+    "iconography": "lucide-react at 1.75 stroke with rounded caps. Persona avatars are generated industry glyph tiles (gradient plus icon), never photos, which avoids real-person likeness issues.",
+    "theme_modes": "Light is the default and dark ships in v1 via the same tokens, switched by data-theme and following prefers-color-scheme. Dark values: canvas #0F1117, surface #171A24, ink #F4F5F8, primary lifted to #8B7CFF, positive text #35C489."
+  },
+  "navigation_and_ia": "Desktop: a slim left rail with five items (Practice, Library, Progress, Team, Settings), a Cmd+K palette, and a persistent Create persona button in the top bar. Mobile: a bottom tab bar with the same items, hidden during a live call. Practice is the signed-in home screen; the marketing landing stays public at the root. Library is the entry point for every sales job, which retires today's three-item scenario dropdown. Settings holds model choice, voice provider, the org rubric and accessibility options.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Two columns on desktop. Left: headline 'Practice the call before it counts' in Bricolage 56px, one subhead line, a primary 'Start a live call' and a secondary 'Browse 150 personas'. Right: an animated call mock with a persona bubble, a violet coach whisper, and a rubric ring ticking from 58 to 64. Below: a model strip naming gpt-realtime, gpt-4.1-mini and ElevenLabs, then a contributor band.",
+      "key_components": "HeroUI Button, Card and Chip; Motion-driven call mock; model logo strip; three contributor cards (Add a persona, Build a pack with Codex, Self-host with Docker); footer with license and star count. The GitHub README mirrors the hero as a looping animated SVG or GIF, so the product shows without a demo login.",
+      "change_vs_today": "Replaces the generic text hero and four feature cards with the product itself moving on the page, and makes the open-source story a visible section."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Left filter rail (240px): Sales job, Industry, Difficulty slider, Objection type, Source (built-in, community, yours). Top bar: search with Cmd+K, a count of '150 personas, 340 scenarios', sort, and a Create with AI button. Main area: a 3-up grid of persona cards, each with an industry glyph tile, name, role, difficulty chip, two objection chips and a Practice button. Clicking a card opens a Drawer with a transcript preview and its rubric.",
+      "key_components": "HeroUI Checkbox groups, Slider, Tabs (Personas, Scenarios, Rubrics, Community), Drawer, Chip and Card; cmdk palette; an empty state that opens the wizard; the Rubrics tab keeps today's editable weighted rows.",
+      "change_vs_today": "A three-item dropdown becomes a browsable library covering every sales job and industry, with filters and previews the app lacks today."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Full-screen four-step flow with a left stepper and a live preview pane on the right. Step 1: one large prompt plus source tiles (job description, product URL, CRM notes, ICP, pasted call) and a 'Skip, write it myself' link. Step 2: GPT streams a draft persona into editable field cards with per-field regenerate. Step 3: a proposed rubric with weight sliders that must total 100. Step 4: a 60-second text dry run, then Save locally or Export as a PR-ready pack.",
+      "key_components": "HeroUI Tabs as stepper, Textarea, source Chips, Progress, Slider and Toast; Motion stagger for streamed fields; footer cost meter (for example 'Drafted with gpt-4.1-mini, about 2 cents'); a 'Generated with GPT' badge stored on the persona.",
+      "change_vs_today": "Nothing equivalent exists today. A blank form becomes a context-driven draft that the rep reviews and dry-runs before anything is saved."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Two columns. Left: a brief card with the persona's glyph tile, role, three things they care about, the likely objection, and the goal as a success checklist. Below it, the talk track as a vertical six-stage timeline whose dots will tick during the call. Right, sticky: a Voice or Text pill toggle, a mic level meter, coach intensity (Quiet, Balanced, Chatty), a coach on/off switch, and a large violet Start button.",
+      "key_components": "HeroUI Card, Tabs in pill style, Slider, Switch and Progress; the rubric shown as a weighted segment bar; a provider chip reading OpenAI Realtime or ElevenLabs; a device check before start.",
+      "change_vs_today": "A collapsed talk track and a placeholder orb become a readable brief and a deliberate start panel, so the rep knows what will be scored before the call begins."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Three columns on desktop. Left (280px): a live rubric with five criteria, each a mint, amber or coral ring with its estimate, plus talk-track ticks. Center: the persona orb with a state label (Listening, Thinking, Speaking), a transcript with evidence highlights, and a dismissible 'next line' suggestion above the composer. Right: a glass coach rail stacking violet whisper cards, each with a one-tap 'Use this line' and a 'why' link to the transcript turn.",
+      "key_components": "Top bar: timer, coach toggle (key C), intensity control, and a coral End and grade button. Persona lane (voice or text) and coach lane kept separate. At most one whisper every 20 seconds, each 12 words or fewer. Live scores are labeled 'live estimate' and link to the turn that produced them. HeroUI Card, Chip, Tooltip, Progress and Button.",
+      "change_vs_today": "A chat app with no feedback becomes a coaching cockpit with live rubric, whispers, objection alerts and talk-track progress, while the persona never sees the coaching."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Top band: a large score ring with letter grade, a goal-status chip, and Replay and Practice again buttons. Beneath it, a replay timeline bar with a colored marker for each scoring event; dragging it jumps the transcript. Then three 'Moments that mattered' cards, each showing the quote, what it earned, and a suggested better line tagged as a suggestion. Criteria accordion below with weights and evidence quotes; the full transcript collapses at the bottom.",
+      "key_components": "HeroUI Progress (circle), Accordion, evidence Chips, a timeline scrubber, a 'Drill this moment' button that replays 60 seconds from that turn, and the existing print and PDF export.",
+      "change_vs_today": "One long vertical scroll becomes a scannable summary with a replay scrubber and a drill loop that turns each weakness into an immediate retry."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "A top row of four stat cards (sessions, average, best, time practised), each with a sparkline. Middle: a multi-line trend chart of rubric criteria over time, with toggle chips per criterion. Bottom left: a practice calendar heatmap with streak. Bottom right: a 'Next drill' card aimed at the weakest criterion, then the call list with score chips and Replay.",
+      "key_components": "Recharts, HeroUI Card, toggle Chips, a SegmentedControl for date range, Skeleton loaders, a Tailwind-built calendar grid; Next drill opens a pre-filled pre-call brief.",
+      "change_vs_today": "Four numbers and a plain list become a progress story that shows which skill is improving and tells the rep what to practise next."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Left org rail: teams, cohorts and saved views. Top: a KPI strip (active reps, sessions this week, coverage of the certification scenario, average score). Main: a rep table with avatar, sessions, average, weakest-criterion chip, trend arrow and an Assign drill action. Clicking a row opens a right drawer with the rep profile, supervisor notes, recent calls, and a calibration view comparing rubric scores across reps.",
+      "key_components": "HeroUI-styled table with Checkbox bulk select, Drawer, an Assign modal with due date that reuses the library, Avatar and Chip; the org-level rubric editor sits under Settings.",
+      "change_vs_today": "The data model already supports orgs, but the UI has no team surface. This adds one with assignment, coverage and calibration."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "Single column at 390px. Sticky top: persona glyph, state label, timer, and a coral End button. The transcript centers on the latest bubble. Above a bottom dock: one whisper card (swipe up for the full coach sheet, swipe down to dismiss) and a row of five rubric mini-rings. Bottom bar: a large hold-to-talk mic, text field and keyboard toggle. Safe-area insets respected, 16px gutters, 44px minimum tap targets, no horizontal scroll.",
+      "key_components": "HeroUI icon Buttons, a Drawer used as a bottom sheet, Chip, Progress rings, Motion drag gestures; the bottom tab bar is hidden during the call.",
+      "change_vs_today": "The current chat screen with a header hamburger becomes a thumb-first call surface where coaching is one swipe away."
+    }
+  ],
+  "live_coaching_and_scoring": "Three lanes run in parallel and the UI shows each one. Persona lane: the voice or text caller, who never sees coaching. Coach lane: a small text model reads recent turns and the rubric and emits at most one whisper every 20 seconds (types: objection alert, next question, don't-say, talk-track step), each 12 words or fewer, with a 'why' link to the transcript line. Grader lane: streams rubric deltas after each rep turn, target under 1.5 seconds; live numbers are labeled 'live estimate' and update at turn end to avoid jitter. The debrief uses the same rubric and evidence rules, so live and final scores agree. Rep controls: intensity, mute coach, hotkeys, and a model swap for the coach and grader.",
+  "persona_library_and_wizard": "Ship about 150 personas across 16+ sales jobs (SDR cold call, AE discovery, CS renewal, collections, recruiting, retail, solar, insurance, mortgage, real estate, home services, auto, medical devices, B2B procurement), each with two or three scenarios. Every persona is a plain JSON or YAML file with job, industry, difficulty, objection tags, rubric template and voice, so community PRs can add whole packs. Filters are first-class in the UI. The AI wizard takes context from five source types, streams a draft into editable fields, proposes a rubric, runs a dry run, then saves locally or exports a PR-ready pack. Built-in personas ship only after review by a domain practitioner; unreviewed ones are labeled 'community draft'.",
+  "signature_moments": [
+    "A violet whisper card slides in from the coach rail on a spring, and one tap uses its line.",
+    "Rubric rings tick and pulse mint only when the rep earns evidence, so progress is felt during the call.",
+    "A library card morphs into the persona header of the live call through a shared-element transition.",
+    "The debrief replay bar lets the rep scrub the call, with each scored moment lighting up in the transcript.",
+    "'Drill this moment' replays only the turn that cost points, for 60 seconds, from the same persona state.",
+    "The persona orb breathes with mic level in voice mode and falls back to a CSS gradient on phones and under reduced motion."
+  ],
+  "openai_fund_angle": "Make OpenAI usage visible and useful. The landing page and README name the real models (gpt-realtime as a voice option, gpt-4.1-mini for coaching and grading). Each session footer shows models used with a token and cost meter, and Settings offers a model swap with a note on what changes. Wizard drafts carry a 'Generated with GPT' badge. For contributors: a 'Good first persona' board, a 'Build a pack with Codex' button that opens a pre-filled Codex task, and a contributor wall with merged pack counts. Pack PRs run a Codex review checklist, which gives a concrete Codex-for-Open-Source PR-review story.",
+  "inspirations": [
+    {
+      "source": "HeroUI v3 (formerly NextUI)",
+      "url": "https://heroui.com/",
+      "borrowed": "Soft, accessible component set as the base layer; Tailwind-native styling."
+    },
+    {
+      "source": "HeroUI GitHub discussion #6335",
+      "url": "https://github.com/heroui-inc/heroui/discussions/6335",
+      "borrowed": "Caveat that v3 dropped framer-motion, so Motion is a separate dependency."
+    },
+    {
+      "source": "Mobbin: Fireflies live assist",
+      "url": "https://mobbin.com/screens/0faa4442-59e5-4a73-85f5-50a54c634fb5",
+      "borrowed": "Mode chips and quick-action chips layered over a live transcript for the coach rail."
+    },
+    {
+      "source": "Mobbin: Delphi live call",
+      "url": "https://mobbin.com/screens/d9eb6fae-7d9e-43cc-a217-f94e60d33003",
+      "borrowed": "Avatar with an animated state ring (Thinking, Speaking) for the persona orb."
+    },
+    {
+      "source": "Mobbin: ElevenLabs conversation",
+      "url": "https://mobbin.com/screens/cf492872-e47b-453b-b476-0b5495411a83",
+      "borrowed": "Central orb with a side transcript pane, kept as the call layout base."
+    },
+    {
+      "source": "Mobbin: Lindy template library",
+      "url": "https://mobbin.com/screens/373a29bb-08be-40cc-a102-2390d7c10ef6",
+      "borrowed": "Role and use-case checkbox rail over a card grid for the persona filters."
+    },
+    {
+      "source": "Mobbin: Lyssna template library",
+      "url": "https://mobbin.com/screens/e288dd65-25b4-434f-afe1-b14ba87d2eeb",
+      "borrowed": "Illustrated tile cards with category counts for persona cards."
+    },
+    {
+      "source": "Mobbin: The Leap challenge creation flow",
+      "url": "https://mobbin.com/flows/7af3d8ce-d417-4412-b095-960a72432039",
+      "borrowed": "One prompt with a Skip link, then a generated draft the user edits before saving."
+    },
+    {
+      "source": "Mobbin: HubSpot generate-website flow",
+      "url": "https://mobbin.com/flows/1a932f05-d002-46ec-b9a9-22cf5c33f57b",
+      "borrowed": "Three-step AI wizard with a step indicator, an AI badge and a generating state."
+    },
+    {
+      "source": "Mobbin: PlayAI creating an agent flow",
+      "url": "https://mobbin.com/flows/cdb50e4c-e541-494b-8e1c-0d4e5df71ccd",
+      "borrowed": "Left step rail with a live preview pane for the persona wizard."
+    },
+    {
+      "source": "Yoodli vs Second Nature (Yoodli blog)",
+      "url": "https://yoodli.ai/blog/yoodli-vs-second-nature-which-ai-sales-roleplay-platform-is-better",
+      "borrowed": "Gap to close: coaching on real calls and memory of past sessions; the Live and Progress screens are built to answer it."
+    },
+    {
+      "source": "Outdoo AI: Hyperbound vs Second Nature vs Outdoo",
+      "url": "https://www.outdoo.ai/blog/hyperbound-vs-second-nature-vs-outdoo",
+      "borrowed": "One scorecard across practice and live calls is now the expected standard, which the rubric lanes follow."
+    },
+    {
+      "source": "Second Nature vs Hyperbound comparison",
+      "url": "https://secondnature.ai/second-nature-vs-hyperbound-which-ai-sales-roleplay-platform-is-right-for-your-team/",
+      "borrowed": "Benchmark for live-deal coaching (Deal Coach) and turning real calls into assigned practice, which the manager view mirrors."
+    }
+  ],
+  "implementation": {
+    "effort": "L",
+    "migration_path": "Phase 0 (about 1 week): upgrade to Tailwind v4 and add HeroUI v3 beside existing components, mapping tokens to :root. Phase 1: shell, navigation, landing and README hero. Phase 2: library data model (JSON packs) and filters, then the wizard. Phase 3: pre-call brief and live call with the three lanes, whispers and live rubric. Phase 4: debrief replay, progress and manager views. Phase 5: mobile call and dark-mode polish. Each phase ships behind a flag, and current pages stay live until parity."
+  },
+  "risks": [
+    "HeroUI v3 is new and has dropped Framer Motion; API churn or the Tailwind v4 migration could stall Phase 0.",
+    "Coach and grader latency must stay under about 1.5 seconds or whispers feel late; needs a fallback to turn-end scoring.",
+    "Content load: 150 quality personas is a large writing task. Ship about 60 reviewed and label the rest 'community draft'.",
+    "Crowded market: Second Nature, Hyperbound, Yoodli, Outdoo AI and Mindtickle already ship live or real-call coaching. The open-source core must lead on transparency and evidence.",
+    "Voice cloning and real-person likeness must stay opt-in with consent, and avatars stay illustrated.",
+    "Soft HeroUI defaults can look like every AI SaaS; the custom palette and coach rail are what keep it distinct.",
+    "Cost: coach lane, grader and Realtime voice multiply per-call spend. The cost meter must be honest and the default models the cheapest that pass evaluation."
+  ]
+}

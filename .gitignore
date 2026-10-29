@@ -49,3 +49,6 @@ test-*.json
 next-env.d.ts
 todo.md
 !.env.example
+
+# Git Bash crash dumps on Windows
+*.stackdump

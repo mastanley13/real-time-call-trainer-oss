@@ -1,0 +1,54 @@
+# CI: the same five checks AGENTS.md and CONTRIBUTING.md ask contributors to run locally.
+# Runs on every pull request and on pushes to main. Read-only token; no secrets needed.
+#
+# PINNED ACTIONS
+#   Every action is pinned to a full commit SHA, with the tag it matched in a trailing comment.
+#   A tag can be moved; a SHA cannot. Dependabot (.github/dependabot.yml, github-actions) bumps
+#   the SHA and the comment together. To upgrade by hand, run
+#   `git ls-remote --tags https://github.com/<owner>/<repo>` and use the peeled `^{}` commit for
+#   an annotated tag.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, typecheck, test, personas, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      # postinstall runs `prisma generate`, which does not need a database.
+      - run: npm ci
+
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run validate:personas
+
+      - name: Build
+        run: npm run build
+        env:
+          # Placeholders for `prisma generate` and `next build` only. Nothing connects to them,
+          # and they are not real credentials. Do not move them to the job level.
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          JWT_SECRET: ci-placeholder-not-a-real-secret-0123456789abcdef
+          NEXT_TELEMETRY_DISABLED: "1"

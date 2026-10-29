@@ -1,0 +1,424 @@
+<title>Call Trainer UI Council</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Geist:wght@300..800&family=Geist+Mono:wght@400..700&family=Inter:wght@400..700&family=JetBrains+Mono:wght@400..700&family=Sora:wght@400..800&display=swap">
+<style>
+/* Layout: a single reading column for the story, widening to a full-bleed review bench where the five mockups are compared. */
+:root {
+  --bg: #F3F4F6;
+  --surface: #FFFFFF;
+  --ink: #16181D;
+  --muted: #5B616D;
+  --line: #DADDE3;
+  --accent: #9A2D6C;
+  --accent-soft: #F5E5EE;
+  --stage: #E3E5EA;
+  --above: #1E7552;
+  --below: #B04A22;
+  --track: #E9EBEF;
+  --fill: #2B2F38;
+  --display: "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101216; --surface: #181B21; --ink: #ECEEF2; --muted: #9CA3AF; --line: #2B2F38;
+    --accent: #E37DB6; --accent-soft: #3A2131; --stage: #0A0B0E; --above: #5CC497; --below: #EC9669;
+    --track: #262A32; --fill: #CDD2DB; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101216; --surface: #181B21; --ink: #ECEEF2; --muted: #9CA3AF; --line: #2B2F38;
+  --accent: #E37DB6; --accent-soft: #3A2131; --stage: #0A0B0E; --above: #5CC497; --below: #EC9669;
+  --track: #262A32; --fill: #CDD2DB; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+p { margin: 0; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+.col { max-width: 1240px; margin: 0 auto; }
+.read { max-width: 70ch; }
+
+/* Intro */
+.intro { padding-block: 40px 28px; display: grid; gap: 16px; }
+.intro h1 { font-size: clamp(30px, 5vw, 48px); line-height: 1.05; font-weight: 800; max-width: 18ch; }
+.intro .lede { font-size: 17px; color: var(--muted); }
+.funnel { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+.funnel li { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; display: grid; gap: 2px; min-width: 128px; }
+.funnel li b { font-family: var(--mono); font-size: 22px; font-weight: 500; }
+.funnel li span { font-size: 13px; color: var(--muted); }
+.funnel li.you { background: var(--accent-soft); border-color: transparent; }
+.funnel li.you b { color: var(--accent); }
+
+/* Verdict */
+.verdict { display: grid; gap: 12px; padding-block: 8px 32px; }
+.verdict h2 { font-size: 20px; }
+.verdict p { color: var(--ink); }
+.verdict .callout { border-left: 3px solid var(--accent); padding: 4px 0 4px 16px; font-size: 16px; }
+
+/* Design picker */
+.bench { padding-block: 8px 40px; display: grid; gap: 16px; }
+.designs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.designs button {
+  text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  cursor: pointer; display: grid; gap: 4px; min-width: 0; transition: border-color .15s, background .15s;
+}
+.designs button:hover { border-color: var(--muted); }
+.designs button[aria-selected="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.designs .rk { font-family: var(--mono); font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+.designs .nm { font-family: var(--display); font-weight: 700; font-size: 16px; line-height: 1.2; }
+.designs .cm { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+@media (max-width: 900px) { .designs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .designs { grid-template-columns: minmax(0, 1fr); } }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+.d-head { padding: 22px 24px 18px; display: grid; gap: 10px; border-bottom: 1px solid var(--line); }
+.d-head h2 { font-size: clamp(24px, 3.2vw, 32px); font-weight: 800; }
+.d-head .one { font-size: 16px; color: var(--muted); max-width: 80ch; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; color: var(--muted); }
+.chip.effort { border-color: var(--accent); color: var(--accent); font-family: var(--mono); }
+
+.screens { display: flex; flex-wrap: wrap; gap: 4px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.screens button { border: 0; background: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; color: var(--muted); font-weight: 500; }
+.screens button:hover { color: var(--ink); background: var(--track); }
+.screens button[aria-selected="true"] { color: var(--ink); background: var(--track); }
+
+.stage { background: var(--stage); padding: 20px; display: flex; justify-content: center; min-height: 240px; }
+.frame { position: relative; overflow: hidden; border-radius: 10px; box-shadow: 0 1px 2px rgba(0,0,0,.12), 0 18px 48px -20px rgba(0,0,0,.45); flex: none; }
+.frame.mobile { border-radius: 28px; }
+.host { position: absolute; left: 0; top: 0; transform-origin: 0 0; width: max-content; }
+.stage .msg { align-self: center; color: var(--muted); font-size: 14px; }
+
+.d-body { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 0; }
+.d-body > div { padding: 22px 24px; min-width: 0; }
+.d-body > div + div { border-left: 1px solid var(--line); }
+@media (max-width: 900px) { .d-body { grid-template-columns: minmax(0, 1fr); } .d-body > div + div { border-left: 0; border-top: 1px solid var(--line); } }
+
+.composite { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+.composite b { font-family: var(--mono); font-size: 40px; font-weight: 500; line-height: 1; }
+.composite span { color: var(--muted); font-size: 13px; }
+.bars { display: grid; gap: 10px; }
+.bar { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 4px 10px; align-items: center; }
+.bar .lb { font-size: 13px; }
+.bar .lb small { color: var(--muted); }
+.bar .v { font-family: var(--mono); font-size: 13px; text-align: right; }
+.bar .tr { grid-column: 1 / -1; position: relative; height: 8px; background: var(--track); border-radius: 4px; }
+.bar .fl { position: absolute; top: 0; bottom: 0; border-radius: 4px; background: var(--fill); }
+.bar .fl.above { background: var(--above); }
+.bar .fl.below { background: var(--below); }
+.bar .fl.warn { background: var(--below); }
+.bar .base { position: absolute; top: -3px; bottom: -3px; left: 50%; width: 2px; background: var(--muted); }
+.group-label { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-top: 6px; }
+
+.seatrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 18px; }
+.seat { font-size: 12px; border-radius: 999px; padding: 4px 10px; border: 1px solid var(--line); color: var(--muted); }
+.seat.on { background: var(--accent-soft); border-color: transparent; color: var(--ink); }
+.seat.on b { font-family: var(--mono); color: var(--accent); font-weight: 500; }
+
+.notes { display: grid; gap: 18px; }
+.note h3 { font-size: 14px; font-family: var(--mono); font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.note p { font-size: 14.5px; }
+.sig { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14.5px; }
+
+/* Overlap */
+.overlap { padding-block: 0 40px; display: grid; gap: 12px; }
+.overlap h2 { font-size: 20px; }
+
+/* Scoreboard */
+.board { padding-block: 0 24px; display: grid; gap: 12px; }
+.board h2 { font-size: 20px; }
+.scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; min-width: 860px; }
+th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); position: sticky; top: 0; background: var(--surface); }
+td { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+th.l, td.l { text-align: left; }
+td.l { font-family: var(--body); }
+tr:last-child td { border-bottom: 0; }
+tr.top td { background: var(--accent-soft); }
+tr.top td.l button { border: 0; background: none; padding: 0; cursor: pointer; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--accent); }
+td .lo { color: var(--below); }
+td .hi { color: var(--above); }
+details.cutlist { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
+details.cutlist summary { cursor: pointer; font-weight: 600; }
+details.cutlist ul { list-style: none; padding: 0; margin: 12px 0 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 18px; font-size: 13.5px; }
+details.cutlist li { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px dashed var(--line); padding-block: 4px; min-width: 0; }
+details.cutlist li span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+details.cutlist li span:last-child { font-family: var(--mono); color: var(--muted); flex: none; }
+
+/* Fund */
+.fund { padding-block: 32px 24px; display: grid; gap: 12px; }
+.fund h2 { font-size: 20px; }
+.fund ol { margin: 0; padding-left: 22px; display: grid; gap: 10px; max-width: 80ch; }
+.fund li::marker { font-family: var(--mono); color: var(--accent); }
+
+footer { padding-block: 16px 48px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); margin-top: 16px; }
+footer code { font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="col">
+  <section class="intro">
+    <p class="eyebrow">Real-Time Call Trainer · redesign for the Codex open source fund</p>
+    <h1>Five directions survived the council. Pick one.</h1>
+    <p class="lede read">Fifty Haiku 5.5 designers each studied today's app, researched Mobbin and the web, and proposed a full-app redesign from a different starting angle. They peer-reviewed each other down to 25. A five-seat Sonnet 5.5 board presented those 25 and scored every one on your rubric. These are the top five by board score, each mocked up on four real screens.</p>
+    <ol class="funnel" aria-label="How the council narrowed the field">
+      <li><b id="c-prop">50</b><span>proposals by Haiku designers</span></li>
+      <li><b id="c-fin">25</b><span>kept by peer vote</span></li>
+      <li><b>5</b><span>top board scores</span></li>
+      <li class="you"><b>1</b><span>your pick</span></li>
+    </ol>
+  </section>
+
+  <section class="verdict read" aria-labelledby="v-h">
+    <h2 id="v-h">What the board chair concluded</h2>
+    <div id="summary" style="display:grid;gap:12px"></div>
+  </section>
+</div>
+
+<section class="bench col" aria-label="Compare the five designs">
+  <div class="designs" role="tablist" aria-label="Designs" id="designs"></div>
+  <article class="panel" id="panel" role="tabpanel">
+    <div class="d-head">
+      <p class="eyebrow" id="d-eyebrow"></p>
+      <h2 id="d-name"></h2>
+      <p class="one" id="d-one"></p>
+      <div class="chips" id="d-chips"></div>
+    </div>
+    <div class="screens" role="tablist" aria-label="Screens" id="screens"></div>
+    <div class="stage" id="stage">
+      <div class="frame" id="frame"><div class="host" id="host"></div></div>
+    </div>
+    <div class="d-body">
+      <div>
+        <div class="composite"><b class="num" id="d-comp"></b><span>board composite, average of five seats<br>(mean of A to F2 and 11 minus F3)</span></div>
+        <div class="bars" id="bars"></div>
+        <div class="seatrow" id="seats" aria-label="Board seats that put this design in their personal top 5"></div>
+      </div>
+      <div class="notes">
+        <div class="note"><h3>Why it made the top five</h3><p id="n-why"></p></div>
+        <div class="note"><h3>Biggest risk</h3><p id="n-risk"></p></div>
+        <div class="note"><h3>Borrow from the others</h3><p id="n-borrow"></p></div>
+        <div class="note"><h3>Best for</h3><p id="n-best"></p></div>
+        <div class="note"><h3>Signature moments</h3><ul class="sig" id="n-sig"></ul></div>
+      </div>
+    </div>
+  </article>
+</section>
+
+<div class="col">
+  <section class="overlap read" aria-labelledby="o-h">
+    <h2 id="o-h">How different are they really?</h2>
+    <div id="overlap" style="display:grid;gap:12px"></div>
+  </section>
+
+  <section class="board" aria-labelledby="b-h">
+    <h2 id="b-h">All 25 finalists, as the board scored them</h2>
+    <p class="read" style="color:var(--muted)">Averages across the five board seats. D and E use your baseline scale, where 5.0 means the design exactly meets the standard. F3 is "not worth it at all", so lower is better. Picks counts how many seats put the design in their personal top five.</p>
+    <div class="scroll"><table id="table"></table></div>
+    <details class="cutlist">
+      <summary id="cut-sum">25 proposals cut at the peer stage</summary>
+      <ul id="cut"></ul>
+    </details>
+  </section>
+
+  <section class="fund" aria-labelledby="f-h">
+    <h2 id="f-h">Before you apply, whichever design you pick</h2>
+    <p class="read" id="fund-intro"></p>
+    <ol id="fund"></ol>
+  </section>
+
+  <footer>
+    Everything the council produced is in the repo on branch <code>design/ui-council</code>: the brief at <code>docs/redesign/BRIEF.md</code>, all 50 proposals in <code>docs/redesign/council/proposals/</code>, peer reviews, board presentations and scoresheets beside them, and these mockups in <code>docs/redesign/artifact/designs/</code>.
+  </footer>
+</div>
+
+<script>
+const DATA = {"counts":{"proposals":50,"jurors":50,"finalists":25,"board_sheets":5},"seats":[{"seat":"Design","picks":["P39","P23","P26","P22","P47"]},{"seat":"Go-to-market","picks":["P26","P19","P39","P44","P12"]},{"seat":"UX & access","picks":["P26","P39","P12","P44","P19"]},{"seat":"OSS & fund","picks":["P26","P44","P47","P12","P39"]},{"seat":"Sales enablement","picks":["P26","P47","P19","P39","P02"]}],"top5":[{"rank":1,"id":"P19","name":"Live Coach Studio","oneLiner":"A call cockpit, not a chat app: the persona talks, an amber coach rail whispers the next move, a live rubric fills in as the call runs, and every score links back to a transcript line. One shadcn/ui system, with Tremor-style analytics confined to the screens where analytics belong.","effort":"XL","stack":["shadcn/ui (Radix primitives, copy-in source)","Tremor patterns on shadcn tokens (tremor.so)","Recharts through shadcn charts","react-hook-form and zod","motion (motion.dev)","lucide-react (kept)","Geist and Geist Mono via next/font/google","OpenAI models and Realtime API, with ElevenLabs kept"],"signature":["A cue lane that shows one amber cue at a time, with the trigger quote it came from printed beneath it.","Rubric fills that start hatched as provisional and turn solid only when a transcript quote confirms them.","A call timeline strip in the debrief: one tick per turn, coloured by criterion, clickable to replay that moment.","A violet provenance chip on every AI output showing the model, latency and token count.","A calibration chart that sets AI score against manager score for each call.","A wizard draft that highlights the exact job-description or CRM sentence behind each persona field."],"scores":{"A":6.98,"B":8,"C":5.96,"D":6.72,"E":6.4,"F1":6,"F2":7.14,"F3":3,"composite":6.9},"seatPicks":[{"seat":"Design","rank":0},{"seat":"Go-to-market","rank":2},{"seat":"UX & access","rank":5},{"seat":"OSS & fund","rank":0},{"seat":"Sales enablement","rank":3}],"presented":{"presenter":"Design","recommendation":"support"},"why":"Live Coach Studio. Top composite (6.90) on the best UX and business scores of the five (B 8.0, F1 6.0, F2 7.14), on three lists. The only proposal with an AI-versus-manager calibration chart, which is what makes a sales leader trust the grader. Hatched-to-solid rubric fills mark provisional versus quote-confirmed scores without relying on colour, charts stay off the live call, and the 15 job tabs match the brief nearly word for word. The most buildable migration: routes kept, Tailwind 3.4 stays in phase 1, and a token-first first week. Fund detail includes AGENTS.md, a Codex PR-review action, model, token and latency in each debrief footer, and Built with OpenAI models as text with no logo pending brand approval.","risk":"It looks like a default template, which it admits. Lowest Look of the five (A 6.98), Unique 5.96, blue #2B50E0 on cool grey, shadcn plus Tremor, and an analytics-first stance that can make a practice room feel like a BI tool. 80 of the 120 launch personas ship as drafts, and the stereotype review checklist for insurance, mortgage and auto is promised, not resourced. Live scoring is not validated against human raters.","borrow":"From P39 or P47: a dark identity and a non-blue primary, so the app stops reading as stock shadcn. From P26: the coach acceptance gates, SSRF-safe URL fetching and cue schema. From P12: the click-to-seek timeline and Replay this moment on the debrief ticks.","bestFor":"An owner aiming at training firms and call centres who wants managers to trust the grader and the lowest-risk migration, and accepts a plainer look that needs its own design pass."},{"rank":2,"id":"P39","name":"Flight Deck Cockpit","oneLiner":"A dark instrument-panel cockpit: every call gets a pre-flight briefing, a live HUD that coaches and scores each turn, and a black-box debrief you can replay.","effort":"XL","stack":["shadcn/ui on Base UI (MIT, copy-owned source)","Tailwind CSS v4 (migrate from v3)","Motion (motion/react)","TanStack Table","cmdk","Recharts","react-hook-form + zod","wavesurfer.js","Type stack: Sora, Inter, JetBrains Mono"],"signature":["Pre-flight checklist: mic level, goal read and persona loaded each show a status lamp before Start flight enables.","Coach cue sheet: at most two cues on screen; Use line drops the suggested phrase into the input in one tap.","Black-box replay: scrub the call timeline and the rubric gauges rewind with it.","Evidence chips seek the replay to the exact second a quote was said.","Amber Estimate lamp when the grader falls back to heuristics, so a fallback score is never mistaken for a graded one.","Mobile long-press End and grade with a progress ring, so the call cannot end by accident."],"scores":{"A":8.48,"B":7.54,"C":8.78,"D":6.46,"E":5.78,"F1":4.54,"F2":5.9,"F3":3.52,"composite":6.87},"seatPicks":[{"seat":"Design","rank":1},{"seat":"Go-to-market","rank":3},{"seat":"UX & access","rank":2},{"seat":"OSS & fund","rank":5},{"seat":"Sales enablement","rank":4}],"presented":{"presenter":"Design","recommendation":"champion"},"why":"Flight Deck Cockpit. On all five lists, first on my list and second on the UX lead's. Highest Look of all 25 (A 8.48) and second-highest Unique (C 8.78), and the only top-five proposal that answers the brief's generic diagnosis head-on. Pre-flight, HUD, black-box replay and logbook share one instrument grammar. Gauges rewind as you scrub, evidence chips seek to the exact second, an amber Estimate lamp labels fallback grades, and the mobile long-press End and grade fixes the thumb-zone problem in today's mobile capture. Per-flight model and cost readouts suit the fund story.","risk":"Cost and cohesion. XL scope with a Tailwind 3 to 4 migration that touches every screen, the weakest business case of the five (F1 4.54), and a library that is never sized and omits auto, real estate, retail and recruiting from its facets (E 5.78). Six gauges plus two cues plus a flight-log transcript is dense for someone mid-sentence. The dark flight and daylight browse themes meet at a seam, and the flight vocabulary is a learning tax for managers and enterprise buyers. Its claim that shadcn now defaults to Base UI was not verified by its own presenter.","borrow":"From P26: the coach engine spec, acceptance gates, SSRF-safe wizard and Models page; P39 states no cue-latency target at all. From P19: the AI-versus-manager calibration chart, and plain-word labels on manager screens while keeping the flight vocabulary on the rep side. From P12: the accessibility rules (cues that persist until dismissed, 44px targets, a keyboard-operable scrubber with a text alternative).","bestFor":"An owner who values a memorable first impression and an ownable README GIF over time-to-demo, accepts XL effort, and will cut the HUD to about three gauges."},{"rank":3,"id":"P47","name":"Composed Coaching Console","oneLiner":"A fixed design system in which the AI composes each call's live coaching and debrief from a closed set of typed blocks, so every layout is personal to the call yet unmistakably on-brand.","effort":"L","stack":["shadcn/ui on Radix primitives","Tailwind CSS v4","AI SDK UI (ai, @ai-sdk/react, @ai-sdk/openai)","Vercel AI Elements","Motion (motion.dev)","Recharts via shadcn Chart","Geist Sans and Geist Mono","zod and lucide-react"],"signature":["The debrief opens on the one moment that cost the deal, not on a letter grade.","A whisper cue appears in amber, quotes the exact line that triggered it, then fades.","The live rubric strip ticks up in real time as the rep covers each criterion.","Every AI-composed block carries a why chip that links to validated transcript turns.","A three-position Coach mode dial (Blind, Guided, Coached) that makes scaffolding visible.","The persona wizard streams a persona card field by field, each field with a source chip."],"scores":{"A":7.6,"B":7.14,"C":8.1,"D":6.88,"E":6.4,"F1":5.6,"F2":5.44,"F3":3.5,"composite":6.83},"seatPicks":[{"seat":"Design","rank":5},{"seat":"Go-to-market","rank":0},{"seat":"UX & access","rank":0},{"seat":"OSS & fund","rank":3},{"seat":"Sales enablement","rank":2}],"presented":{"presenter":"Sales enablement","recommendation":"champion"},"why":"Composed Coaching Console. The strongest coaching pedagogy and best OpenAI showcase, on three lists. A visible Blind/Guided/Coached dial lets scaffolding fade as the rep improves. The debrief opens on the turn that cost the deal and ends in a drill on the weakest criterion, and cues quote the line that triggered them. Typed blocks come from structured outputs, every block must cite validated transcript turn IDs, and each debrief footer shows grader model, rubric version and token cost. Second-best live-coaching score of all 25 (D 6.88) with strong Look and Unique (A 7.6, C 8.1). It also avoided the experimental streamUI route in favour of AI SDK UI.","risk":"The AI-composed layout is the riskiest and least valuable part. It breaks the same-shape scorecard managers use to compare calls and adds a failure mode (hence its own fixed-order fallback), and the coaching value does not need it. Labelled L but it stacks a Tailwind v4 migration, AI SDK UI, AI Elements and a block registry, so it is really XL. Lowest UX score of the five (B 7.14), weak sell-to-entities score (F2 5.44), only six job families, a sub-1.5 second coach stream that does not exist yet, and a generic dark-navy-plus-teal look.","borrow":"From P26: the cue schema, cooldown and acceptance gates. From P12: the timeline strip as the MomentReplay block. From P19: the AI-versus-manager calibration chart so AI claims get human checks. Ship the typed blocks in a fixed order first and keep composition as a flagged experiment.","bestFor":"An owner who wants an AI-native story for fund reviewers and cares most about whether reps actually improve, and who will ship the fixed-order version first."},{"rank":4,"id":"P12","name":"Film Room Sideline","oneLiner":"Turn every practice call into game film: a scrubbable timeline with tagged moments, a live sideline HUD for coaching and scoring, and a launch library of 150+ forkable personas that a five-step AI wizard can extend, built on OpenAI models.","effort":"L","stack":["shadcn/ui","Radix Primitives","Tailwind CSS v4 (upgrade from v3)","cmdk (via shadcn Command)","Motion (motion.dev, formerly Framer Motion)","wavesurfer.js (regions plugin)","TanStack Table and Recharts","Sora, Inter, JetBrains Mono","zod (existing)"],"signature":["The timeline is the spine: scrub any call, and every tag, score and coach note is pinned to a timestamp on the same strip.","A cue card that appears only when it matters, one at a time, and the persona never hears it.","Rubric meters that move during the call, so the rep watches each criterion change line by line.","Replay this moment: a debrief tag starts a retake from that timestamp with the same persona.","Persona cards carry their objections as chips, so the library reads like a playbook.","Every AI output shows the model that produced it and what it cost in tokens and dollars."],"scores":{"A":7.26,"B":7.66,"C":7.48,"D":6.02,"E":5.76,"F1":5.8,"F2":6.72,"F3":3.46,"composite":6.78},"seatPicks":[{"seat":"Design","rank":0},{"seat":"Go-to-market","rank":5},{"seat":"UX & access","rank":3},{"seat":"OSS & fund","rank":4},{"seat":"Sales enablement","rank":0}],"presented":{"presenter":"UX & access","recommendation":"champion"},"why":"Film Room Sideline. On three lists. The best learning loop: one timeline spine across live call, debrief and progress, with tagged moments, coach and manager annotations, and Replay this moment, which starts a retake from that timestamp. The most accessibility-literate spec (cues persist until dismissed, Esc to dismiss, 44px targets, AA contrast ratios written into the palette). It also has consent and visibility labels on manager views, PII stripped before any model call, and the right engineering order: a measured harness over recorded calls before UI polish. It has the most concrete Codex story, with Codex CLI in CI reviewing persona-pack PRs for schema, bias and rubric weights, plus release-note automation. L effort.","risk":"Lowest live-coaching score of the five (D 6.02) and E 5.76. The 20-second minimum cue gap can hold back help just as an objection lands. The HUD packs a timeline, tag pills, six meters, a checklist and a cue onto one screen. A waveform scrubber is not keyboard or screen-reader accessible by default and implies retained audio, which needs consent and storage rules. It has the least new look (Sora and Inter kept, and Hudl density can read sports-coded), the library is its least designed screen, and only about 40 of the 150+ personas are hand-checked at launch.","borrow":"From P26: the cue schema and a shorter cooldown (8 seconds), with objection alerts exempt from any gap. From P39 or P47: a stronger visual identity, since this look is the least new. From P47: the Blind/Guided/Coached dial. From P19: the calibration chart.","bestFor":"An owner who wants a calm, light-first, accessibility-literate product built around deliberate practice, with a natural path from practice calls to real-call coaching."},{"rank":5,"id":"P26","name":"Copilot Rail Studio","oneLiner":"A dark live-call cockpit with a real-time copilot rail beside the transcript, a faceted library of 200+ personas, and a guided AI persona wizard, built on shadcn/ui, Geist and OpenAI models.","effort":"XL","stack":["shadcn/ui on Radix primitives","Tailwind CSS v4 with theme tokens","Geist Sans and Geist Mono (SIL OFL)","Lucide React (kept)","Motion (formerly Framer Motion)","Recharts","cmdk via shadcn Command","React Three Fiber (kept, reduced)","Zod with OpenAI structured outputs"],"signature":["A cue appears in the rail as the objection lands, and 'Use line' drops the exact phrase into the composer for the rep to send. Nothing is auto-sent.","The talk-track stepper ticks live, so the rep sees progress without reading a checklist.","The debrief's 'Retry from turn 8' branches the call from the missed objection, turning the grade into practice.","Clicking any evidence chip highlights the exact transcript line that earned or lost points.","The wizard shows the JSON pack beside the form, so a generated persona is one PR away from the community library.","The landing hero plays a short split-screen loop of the rail reacting, with a static poster for reduced motion."],"scores":{"A":7.04,"B":7.9,"C":5.52,"D":6.94,"E":6.46,"F1":5.46,"F2":6.6,"F3":2.92,"composite":6.75},"seatPicks":[{"seat":"Design","rank":3},{"seat":"Go-to-market","rank":1},{"seat":"UX & access","rank":1},{"seat":"OSS & fund","rank":1},{"seat":"Sales enablement","rank":1}],"presented":{"presenter":"OSS & fund","recommendation":"champion"},"why":"Copilot Rail Studio. On all five personal lists and first on four. Highest live-coaching score of all 25 (D 6.94) and the lowest not-worth-it score (F3 2.92). The coach is a separate per-turn channel returning schema-checked cues, each citing a transcript turn and a rubric criterion, with an 8-second cooldown and a Use line action that never auto-sends. The persona never sees a cue. It sets measurable gates: p50 cue latency near 2 seconds and cue precision on 30 scripted calls. One zod schema covers wizard, coach and grader. URL import has SSRF protection. A heuristic grade is labelled with a re-grade action. The Models page accepts any OpenAI-compatible base URL. Its own plan says to ship phases 1 to 3 for the fund application and let the team view slip.","risk":"The look. Lowest Unique score of the five (C 5.52), light by default with today's #1D4ED8 blue and #071827 ink, and a side rail beside a transcript is the Gong/Balto pattern. It can read as the generic Tailwind SaaS the brief diagnoses, and its visuals were designed from competitor write-ups rather than live-coaching screenshots, so they are untested. Also: Phase 1 is labelled S but covers the Tailwind v4 move, shadcn and a mobile fix; a 360px rail squeezes the transcript at 1280px; Use line is unclear in voice mode; 200+ personas need a review process.","borrow":"From P39: the daylight surfaces, teal primary and instrument glyphs (the dark stage is already nearly identical), trimmed to three gauges. From P47: the Blind/Guided/Coached dial in place of Whisper/Text only/Off. From P19: hatched-to-solid rubric fills for the Live estimate strip and the AI-versus-manager calibration chart for the team view. From P12: click-to-seek evidence on the debrief moment strip.","bestFor":"An owner whose deadline is the fund application and who wants the most credible runnable demo, a contributor-ready repo and measurable quality gates, and who will commit to a design pass on the look."}],"board":[{"rank":1,"id":"P19","name":"Live Coach Studio","composite":6.9,"picks":3,"A":6.98,"B":8,"C":5.96,"D":6.72,"E":6.4,"F1":6,"F2":7.14,"F3":3},{"rank":2,"id":"P39","name":"Flight Deck Cockpit","composite":6.87,"picks":5,"A":8.48,"B":7.54,"C":8.78,"D":6.46,"E":5.78,"F1":4.54,"F2":5.9,"F3":3.52},{"rank":3,"id":"P47","name":"Composed Coaching Console","composite":6.83,"picks":3,"A":7.6,"B":7.14,"C":8.1,"D":6.88,"E":6.4,"F1":5.6,"F2":5.44,"F3":3.5},{"rank":4,"id":"P12","name":"Film Room Sideline","composite":6.78,"picks":3,"A":7.26,"B":7.66,"C":7.48,"D":6.02,"E":5.76,"F1":5.8,"F2":6.72,"F3":3.46},{"rank":5,"id":"P26","name":"Copilot Rail Studio","composite":6.75,"picks":5,"A":7.04,"B":7.9,"C":5.52,"D":6.94,"E":6.46,"F1":5.46,"F2":6.6,"F3":2.92},{"rank":6,"id":"P09","name":"Live Ledger","composite":6.74,"picks":0,"A":7.5,"B":7.42,"C":6.82,"D":6.28,"E":6.38,"F1":5.5,"F2":6.96,"F3":3.98},{"rank":7,"id":"P45","name":"Keynote Bento","composite":6.65,"picks":0,"A":7.92,"B":7.6,"C":6.28,"D":6.08,"E":6.38,"F1":5.8,"F2":6,"F3":3.88},{"rank":8,"id":"P44","name":"Practice Graph Studio","composite":6.64,"picks":3,"A":7.36,"B":6.96,"C":7.72,"D":6,"E":5.38,"F1":5.86,"F2":6.12,"F3":3.24},{"rank":9,"id":"P17","name":"Signal Desk","composite":6.63,"picks":0,"A":7.96,"B":7.38,"C":6.98,"D":6.1,"E":6.3,"F1":5.18,"F2":6.38,"F3":4.26},{"rank":10,"id":"P23","name":"Switchboard Console","composite":6.59,"picks":1,"A":7.46,"B":6.4,"C":8.8,"D":6.32,"E":6.36,"F1":4.52,"F2":5.54,"F3":3.68},{"rank":11,"id":"P02","name":"Geist Signal Console","composite":6.58,"picks":1,"A":7.22,"B":7.2,"C":5.8,"D":6.82,"E":6.84,"F1":5,"F2":6.38,"F3":3.58},{"rank":12,"id":"P05","name":"Strain & Form Console","composite":6.51,"picks":0,"A":7.84,"B":6.4,"C":8.08,"D":6.2,"E":6.3,"F1":5.48,"F2":4.88,"F3":4.08},{"rank":13,"id":"P22","name":"Editorial Ledger","composite":6.46,"picks":1,"A":7.68,"B":7.14,"C":7.18,"D":6.2,"E":6.08,"F1":4.56,"F2":6.04,"F3":4.2},{"rank":14,"id":"P08","name":"Call Canvas","composite":6.45,"picks":0,"A":7.98,"B":6.32,"C":7.96,"D":6.54,"E":6.16,"F1":4.76,"F2":5.44,"F3":4.54},{"rank":15,"id":"P30","name":"Call Record Console","composite":6.38,"picks":0,"A":6.78,"B":6.98,"C":6.06,"D":5.98,"E":5.88,"F1":5,"F2":6.94,"F3":3.54},{"rank":16,"id":"P33","name":"Live Desk Cockpit","composite":6.34,"picks":0,"A":6.62,"B":7.48,"C":5.08,"D":5.96,"E":5.92,"F1":5.36,"F2":6.72,"F3":3.44},{"rank":17,"id":"P01","name":"Cockpit Dark Command Center","composite":6.3,"picks":0,"A":7.58,"B":7.58,"C":4.64,"D":5.88,"E":5.36,"F1":5.46,"F2":6.46,"F3":3.56},{"rank":18,"id":"P37","name":"Signal Room Mission Control","composite":6.27,"picks":0,"A":7.56,"B":6.22,"C":6.74,"D":6.08,"E":6.2,"F1":4.78,"F2":5.8,"F3":4.26},{"rank":19,"id":"P38","name":"Broadcast Desk","composite":6.27,"picks":0,"A":7.24,"B":6.68,"C":7.58,"D":5.92,"E":6.2,"F1":5,"F2":5.02,"F3":4.52},{"rank":20,"id":"P50","name":"Clay Coach","composite":6.22,"picks":0,"A":7.46,"B":6.88,"C":8.36,"D":5.58,"E":5.12,"F1":5.26,"F2":4.68,"F3":4.56},{"rank":21,"id":"P40","name":"Swipe-to-Rehearse Coach Studio","composite":6.16,"picks":0,"A":7.06,"B":7.68,"C":5.22,"D":5.78,"E":6.02,"F1":5.14,"F2":5.38,"F3":4},{"rank":22,"id":"P31","name":"Signal Coach (Ant Design X cockpit)","composite":5.98,"picks":0,"A":5.7,"B":6.98,"C":6.08,"D":6.7,"E":6,"F1":4.58,"F2":5.38,"F3":4.56},{"rank":23,"id":"P14","name":"Expressive Coaching Studio","composite":5.92,"picks":0,"A":6.66,"B":6.42,"C":6.96,"D":5.56,"E":5.68,"F1":4.56,"F2":5.38,"F3":4.84},{"rank":24,"id":"P25","name":"Ambient Orb Call Room","composite":5.84,"picks":0,"A":7.82,"B":5.8,"C":6.92,"D":4.76,"E":5.32,"F1":5.28,"F2":4.5,"F3":4.7},{"rank":25,"id":"P36","name":"Patch Bay Console","composite":5.82,"picks":0,"A":6.96,"B":5.94,"C":8.72,"D":5.3,"E":5,"F1":4.54,"F2":4.56,"F3":5.46}],"cut":[{"id":"P20","name":"Signal Call Studio","peer":8.76,"votes":"3/5","lens":"Magic UI / Aceternity UI"},{"id":"P07","name":"Shelf & Coach Studio","peer":8.64,"votes":"3/5","lens":"Spotify-style persona library"},{"id":"P21","name":"Loud Dial Neo-Brutal","peer":8.5,"votes":"2/5","lens":"Neo-brutalism (Gumroad style)"},{"id":"P13","name":"Roster Arena","peer":8.44,"votes":"2/5","lens":"Video-game character select"},{"id":"P27","name":"Call Cockpit Curriculum","peer":8.31,"votes":"3/5","lens":"Enterprise LMS (Lessonly/Seismic)"},{"id":"P03","name":"Spatial Glass Call Window","peer":8.24,"votes":"2/5","lens":"visionOS / spatial glass"},{"id":"P41","name":"Cockpit and Drill Feed","peer":8.18,"votes":"2/5","lens":"Short-form vertical micro-drills (TikTok-style)"},{"id":"P42","name":"Pipeline Rehearsal Console","peer":8.14,"votes":"2/5","lens":"Pipeline-native"},{"id":"P11","name":"Orb-First Coach Console","peer":8.02,"votes":"2/5","lens":"ChatGPT / OpenAI-native"},{"id":"P16","name":"Friendly Coach Studio","peer":7.94,"votes":"2/5","lens":"HeroUI (formerly NextUI)"},{"id":"P15","name":"Mantine Coaching Console","peer":7.72,"votes":"2/5","lens":"Mantine v8 full component kit"},{"id":"P24","name":"Pocket Coach Studio","peer":7.72,"votes":"2/5","lens":"Mobile-first thumb-zone PWA"},{"id":"P10","name":"Signal Console","peer":7.7,"votes":"2/5","lens":"Raycast/Arc keyboard-first launcher"},{"id":"P48","name":"Coach's Field Notebook","peer":7.68,"votes":"1/5","lens":"Analog notebook warmth"},{"id":"P46","name":"Cadence Conversational Studio","peer":7.6,"votes":"1/5","lens":"Typeform-style conversational wizard-first"},{"id":"P06","name":"Night Desk Cockpit","peer":7.54,"votes":"1/5","lens":"Bloomberg-terminal density"},{"id":"P49","name":"Clearcall Coach Console","peer":7.49,"votes":"1/5","lens":"WCAG AAA universal design"},{"id":"P28","name":"Warm Rehearsal","peer":7.39,"votes":"1/5","lens":"Calm/Headspace confidence"},{"id":"P43","name":"Open Practice Hub","peer":7.32,"votes":"1/5","lens":"Hugging Face-style community hub"},{"id":"P35","name":"Radix Coach Stage","peer":7.3,"votes":"1/5","lens":"Radix Themes"},{"id":"P04","name":"Game Tape Skill Path","peer":7.26,"votes":"1/5","lens":"Duolingo-style gamification"},{"id":"P34","name":"Signal Skins Console","peer":6.9,"votes":"0/5","lens":"DaisyUI theme engine"},{"id":"P32","name":"Quiet Coach Console","peer":6.78,"votes":"1/5","lens":"Untitled UI / Base UI polished SaaS"},{"id":"P18","name":"Cadence Accessible Call Cockpit","peer":6.66,"votes":"0/5","lens":"React Aria Components + Adobe Spectrum 2 ideas"},{"id":"P29","name":"Fluent Live Coach","peer":5.91,"votes":"0/5","lens":"Microsoft Fluent 2"}],"summary":["The composite is a statistical tie: P19 6.90, P39 6.87, P47 6.83, P12 6.78, P26 6.75, a 0.15 spread, and P09 sits 0.01 behind P26 with no seat picks. So I ranked by what the five seats did. P26 is on all five personal lists and first on four. P39 is on all five lists. P19, P47 and P12 are on three each. Borda points (5 for first down to 1 for fifth) are P26 23, P39 15, P19 8, P47 8, P12 6.","The real choice is one axis. P26 is the most executable and fundable plan: the best live-coaching score of all 25 (D 6.94), the best worth-building score (F3 2.92) and measurable cue gates. It also has the weakest look of the five (C 5.52), and it keeps today's blue and ink, which is the brief's own \"generic\" diagnosis. P39 is the opposite: the highest Look (A 8.48) and second-highest Unique (C 8.78) of all 25, but XL scope, the weakest business case (F1 4.54) and an unsized library. On the A to E mean alone, P39 leads at 7.41 and P26 is last at 6.77, so P26's lead is about delivery risk, not design merit.","My verdict is to build P26's spine in P39's skin. The two dark live-call palettes already have near-identical backgrounds, and the gap is the light-mode primary and the instrument vocabulary, which is a token-level change. P26's discipline (one zod schema, SSRF-safe wizard, latency and precision gates) is hard to retrofit onto P39. If you want one pure proposal, will accept XL scope and want to be remembered, pick P39. Nothing in these five is measured: every latency, precision and persona-count figure is a target."],"overlap":["There are two near-duplicate pairs and one shared skin. P39 and P12 have essentially the same debrief: a scrubbable timeline with tagged moments and click-to-seek evidence chips. They sit on near-identical stacks (shadcn, Tailwind v4, Motion, wavesurfer.js, TanStack Table, Recharts, cmdk, and the same Sora, Inter and JetBrains Mono type). They differ in metaphor and tone, cockpit versus film room, not in mechanics, so do not count them as two options. P19 and P26 share the same live-call model: a coach rail with cue cards, a live rubric meter and a talk-track stepper, on shadcn and Geist, light by default with a dark call stage. P47 is close to P26 in its coach channel and differs mainly in the AI-composed debrief. Underneath, all five use dark navy with teal or amber on the call screen, so the real choice is the interaction model, not the look.","The most distinct runner-up is P44 Practice Graph Studio (composite 6.64, three seat picks, Borda tied with P19 and P47). It offers personas as schema-checked files with Edit-as-PR and a Codex review step, a GitHub-style practice graph, and the clearest free-core versus paid-team model. It trades away live coaching and library depth (D 6.0, E 5.38). For a purely visual break, P22 Editorial Ledger (light Swiss editorial) and P23 Switchboard Console (phosphor terminal) are the alternatives, but only my seat picked them."],"fundIntro":"No UI choice earns the grant. Reviewers read the repo, the README, the demo and how OpenAI models and Codex are used. Do these whichever proposal you pick, roughly in this order.","fund":["Make Codex use real before you apply. Add AGENTS.md at the repo root, keep Codex CLI visible in the commit and PR history, and add a CI check that validates persona and scenario files against the zod schema with a Codex review comment. Have Codex draft the release notes. Claim only what is true.","Make OpenAI use real. Keep the OpenAI-compatible default (gpt-4.1-mini today) for grading, coaching and the persona wizard, using structured outputs. Ship OpenAI Realtime as a working voice engine beside ElevenLabs, and do not mention it in the README until it runs. Show model, latency, tokens and cost in each debrief footer and on a Models page, read from config rather than hard-coded. Use Built with OpenAI models as plain text, with no logo unless brand approval exists.","Measure the coach before polishing screens. Run a harness over recorded or scripted calls, target p50 cue latency under about 2 seconds, report cue precision, and publish the numbers in the README.","Write a short credit-spend plan: expected tokens per session across grading, per-turn coaching, wizard runs and Realtime voice, with a per-call budget cap.","Ship an honest library. Aim for about 40 reviewed personas across the brief's sales jobs, label the rest Draft, and add a stereotyping review checklist for insurance, mortgage, auto and collections. Do not advertise 150 or 200 until they are reviewed.","Cover what a reviewer checks in five minutes: a README hero clip of a coached call, one-command self-host, a demo that works in text mode without sign-in, CONTRIBUTING, SECURITY.md, issue templates, good-first-issue labels by job family, and persona-file CI.","Close the safety questions: recording-consent gating before voice goes live, PII stripping on pasted calls, an SSRF allowlist on URL import, and visual-only cues so the persona never hears the coach.","Do the Tailwind 3 to 4 migration as its own PR so the redesign diff stays reviewable.","Verify current terms on the official pages before applying; one board note says the program page mentions an extra six-month benefit without detail. Apply to both the Codex open source fund and Codex for Open Source. Apply once the Codex workflow, the Realtime path and the coached live call are demoable. The board's cited sources say the fund is reviewed on an ongoing basis, so the full redesign does not need to be shipped first.\nNothing here guarantees acceptance."]};
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const SCREENS = [["live", "Live call"], ["library", "Library & wizard"], ["debrief", "Debrief"], ["mobile", "Mobile"]];
+const CATS = [
+  ["Design", [["A", "Look", "modern, sleek, cutting edge"], ["B", "User experience", "as a whole"], ["C", "Unique", "and still meets the basics"]]],
+  ["Basic needs · 5.0 = meets the standard", [["D", "Live coaching and scoring", ""], ["E", "Persona library and AI wizard", ""]]],
+  ["Business", [["F1", "As a SaaS app", ""], ["F2", "Selling to entities", ""], ["F3", "Not worth it", "lower is better"]]],
+];
+
+$("c-prop").textContent = DATA.counts.proposals;
+$("c-fin").textContent = DATA.counts.finalists;
+DATA.summary.forEach((p, i) => $("summary").append(el("p", i === DATA.summary.length - 1 ? "callout" : "", p)));
+DATA.overlap.forEach((p) => $("overlap").append(el("p", "", p)));
+if (DATA.fundIntro) $("fund-intro").textContent = DATA.fundIntro; else $("fund-intro").remove();
+DATA.fund.forEach((f) => $("fund").append(el("li", "", f)));
+
+// Design tabs
+let current = DATA.top5[0].id, screen = "live";
+DATA.top5.forEach((d) => {
+  const b = el("button");
+  b.setAttribute("role", "tab"); b.id = "tab-" + d.id; b.dataset.id = d.id;
+  const rk = el("span", "rk"); rk.append(el("span", "", "#" + d.rank + " · " + d.id), el("span", "", d.seatPicks.filter((s) => s.rank).length + "/5 seats"));
+  b.append(rk, el("span", "nm", d.name), el("span", "cm", d.scores.composite.toFixed(2) + " composite"));
+  b.addEventListener("click", () => select(d.id));
+  $("designs").append(b);
+});
+SCREENS.forEach(([key, label]) => {
+  const b = el("button", "", label);
+  b.setAttribute("role", "tab"); b.dataset.screen = key;
+  b.addEventListener("click", () => { screen = key; markScreens(); showScreen(); });
+  $("screens").append(b);
+});
+function arrowKeys(listId, attr, onPick) {
+  $(listId).addEventListener("keydown", (e) => {
+    if (!["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    const btns = [...$(listId).querySelectorAll("button")];
+    const i = btns.indexOf(document.activeElement);
+    if (i < 0) return;
+    const n = btns[(i + (e.key === "ArrowRight" ? 1 : btns.length - 1)) % btns.length];
+    n.focus(); onPick(n.dataset[attr]);
+  });
+}
+arrowKeys("designs", "id", (id) => select(id));
+arrowKeys("screens", "screen", (s) => { screen = s; markScreens(); showScreen(); });
+function markScreens() { $("screens").querySelectorAll("button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.screen === screen))); }
+
+function renderScores(d) {
+  const bars = $("bars"); bars.replaceChildren();
+  $("d-comp").textContent = d.scores.composite.toFixed(2);
+  CATS.forEach(([group, items]) => {
+    bars.append(el("div", "group-label", group));
+    items.forEach(([k, label, sub]) => {
+      const v = d.scores[k];
+      const row = el("div", "bar");
+      const lb = el("span", "lb", k + " · " + label + " ");
+      if (sub) lb.append(el("small", "", sub));
+      const tr = el("div", "tr");
+      const fl = el("div", "fl");
+      if (k === "D" || k === "E") {
+        const lo = Math.min(v, 5), hi = Math.max(v, 5);
+        fl.style.left = (lo / 10 * 100) + "%"; fl.style.width = ((hi - lo) / 10 * 100) + "%";
+        fl.classList.add(v >= 5 ? "above" : "below");
+        tr.append(fl, el("div", "base"));
+      } else {
+        fl.style.left = "0"; fl.style.width = (v / 10 * 100) + "%";
+        if (k === "F3") fl.classList.add("warn");
+        tr.append(fl);
+      }
+      row.setAttribute("aria-label", label + ": " + v.toFixed(1) + " out of 10");
+      row.append(lb, el("span", "v", v.toFixed(1)), tr);
+      bars.append(row);
+    });
+  });
+  const seats = $("seats"); seats.replaceChildren();
+  d.seatPicks.forEach((s) => {
+    const c = el("span", "seat" + (s.rank ? " on" : ""));
+    c.append(document.createTextNode(s.seat + (s.rank ? " " : "")));
+    if (s.rank) c.append(el("b", "", "#" + s.rank));
+    seats.append(c);
+  });
+}
+
+function select(id, push = true) {
+  current = id;
+  const d = DATA.top5.find((x) => x.id === id);
+  $("designs").querySelectorAll("button").forEach((b) => { const on = b.dataset.id === id; b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1; });
+  $("panel").setAttribute("aria-labelledby", "tab-" + id);
+  $("d-eyebrow").textContent = "#" + d.rank + " by board score · " + d.id + (d.presented ? " · presented by " + d.presented.presenter + " (" + d.presented.recommendation + ")" : "");
+  $("d-name").textContent = d.name;
+  $("d-one").textContent = d.oneLiner;
+  const chips = $("d-chips"); chips.replaceChildren(el("span", "chip effort", "Effort " + d.effort));
+  d.stack.forEach((s) => chips.append(el("span", "chip", s)));
+  renderScores(d);
+  $("n-why").textContent = d.why; $("n-risk").textContent = d.risk; $("n-borrow").textContent = d.borrow; $("n-best").textContent = d.bestFor;
+  const sig = $("n-sig"); sig.replaceChildren(); d.signature.forEach((s) => sig.append(el("li", "", s)));
+  if (push) { try { history.replaceState(null, "", "#" + id); } catch (e) {} }
+  document.querySelectorAll("#table tr[data-id]").forEach((tr) => tr.toggleAttribute("aria-current", tr.dataset.id === id));
+  loadMock(id);
+}
+
+// Mockups live in their own files and render inside a shadow root so each design's CSS stays isolated.
+const shadow = $("host").attachShadow({ mode: "open" });
+const cache = {};
+let loadToken = 0;
+async function loadMock(id) {
+  const token = ++loadToken;
+  cache[id] = cache[id] || fetch("designs/" + id + ".html").then((r) => (r.ok ? r.text() : Promise.reject(new Error(r.status))));
+  try {
+    const html = await cache[id];
+    if (token !== loadToken) return;
+    shadow.innerHTML = '<style>section.screen:not([data-on]){display:none !important}</style>' + html;
+    showScreen();
+  } catch (e) {
+    if (token !== loadToken) return;
+    shadow.innerHTML = "";
+    sizeFrame(320, 120, 1, false);
+    shadow.innerHTML = '<p style="font:14px system-ui;padding:24px;color:#888">This mockup did not load. Reload the page to try again.</p>';
+  }
+}
+function sizeFrame(w, h, s, mobile) {
+  const f = $("frame");
+  f.style.width = Math.round(w * s) + "px"; f.style.height = Math.round(h * s) + "px";
+  f.classList.toggle("mobile", mobile);
+}
+function showScreen() {
+  const sections = [...shadow.querySelectorAll("section.screen")];
+  if (!sections.length) return;
+  sections.forEach((s) => s.toggleAttribute("data-on", s.dataset.screen === screen));
+  const sec = sections.find((s) => s.dataset.screen === screen) || sections[0];
+  sec.setAttribute("data-on", "");
+  const host = $("host");
+  host.style.transform = "none";
+  const hr = host.getBoundingClientRect(), sr = sec.getBoundingClientRect();
+  const ox = sr.left - hr.left, oy = sr.top - hr.top, w = sr.width, h = sr.height;
+  const mobile = screen === "mobile";
+  const avail = $("stage").clientWidth - 40;
+  const s = Math.min(1, avail / w, mobile ? 720 / h : 1);
+  host.style.transform = "scale(" + s + ") translate(" + -ox + "px," + -oy + "px)";
+  sizeFrame(w, h, s, mobile);
+}
+new ResizeObserver(() => showScreen()).observe($("stage"));
+
+// Scoreboard
+(function table() {
+  const t = $("table");
+  const head = el("tr");
+  ["#", "Design", "Composite", "A", "B", "C", "D", "E", "F1", "F2", "F3", "Picks"].forEach((h, i) => { const th = el("th", i === 1 ? "l" : "", h); th.scope = "col"; head.append(th); });
+  const thead = el("thead"); thead.append(head);
+  const tbody = el("tbody");
+  const topIds = new Set(DATA.top5.map((d) => d.id));
+  DATA.board.forEach((b) => {
+    const tr = el("tr", topIds.has(b.id) ? "top" : ""); tr.dataset.id = b.id;
+    tr.append(el("td", "", b.rank));
+    const name = el("td", "l");
+    if (topIds.has(b.id)) { const btn = el("button", "", b.name); btn.addEventListener("click", () => { select(b.id); document.querySelector(".bench").scrollIntoView({ behavior: "smooth", block: "start" }); }); name.append(btn, document.createTextNode(" " + b.id)); }
+    else name.textContent = b.name + " " + b.id;
+    tr.append(name, el("td", "", b.composite.toFixed(2)));
+    ["A", "B", "C", "D", "E", "F1", "F2", "F3"].forEach((k) => {
+      const td = el("td"); const v = b[k];
+      const span = el("span", (k === "D" || k === "E") ? (v < 5 ? "lo" : v >= 6.5 ? "hi" : "") : "", v.toFixed(1));
+      td.append(span); tr.append(td);
+    });
+    tr.append(el("td", "", b.picks));
+    tbody.append(tr);
+  });
+  t.append(thead, tbody);
+  $("cut-sum").textContent = DATA.cut.length + " proposals cut at the peer stage (peer score, advance votes)";
+  DATA.cut.forEach((c) => { const li = el("li"); li.append(el("span", "", c.name + " · " + c.id), el("span", "", c.peer.toFixed(2) + " · " + c.votes)); li.title = c.lens; $("cut").append(li); });
+})();
+
+markScreens();
+const fromHash = (location.hash || "").slice(1);
+select(DATA.top5.some((d) => d.id === fromHash) ? fromHash : current, false);
+</script>

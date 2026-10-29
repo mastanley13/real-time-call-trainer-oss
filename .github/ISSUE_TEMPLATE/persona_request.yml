@@ -1,0 +1,132 @@
+name: Persona request
+description: Ask for a practice persona for a sales job, industry or call that the library doesn't cover yet.
+title: "Persona: "
+labels: ["persona"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Personas are plain data in `src/lib/personas/<family>.ts`. Before you ask, check `/library` and its filters.
+        Want to write it yourself? The wizard at `/library/new` drafts a complete pack, and docs/PERSONA_PACKS.md explains how to submit it.
+        Use fictional details only. Don't paste real customer names, numbers or call recordings.
+
+  - type: dropdown
+    id: sales-job
+    attributes:
+      label: Sales job
+      description: The job family the rep works in.
+      options:
+        - SDR cold calls
+        - AE discovery
+        - Customer success & renewals
+        - Home services
+        - Insurance
+        - Mortgage & lending
+        - Real estate
+        - Solar & energy
+        - Auto sales
+        - Medical devices
+        - B2B procurement
+        - Recruiting
+        - Retail & consumer
+        - Collections
+        - Financial advising
+        - Logistics & freight
+        - Telecom & utilities
+        - General sales
+        - A job family that isn't listed (describe it below)
+    validations:
+      required: true
+
+  - type: input
+    id: industry
+    attributes:
+      label: Industry
+      description: What the rep sells, as specifically as you can.
+      placeholder: Commercial liability insurance for small contractors
+    validations:
+      required: true
+
+  - type: dropdown
+    id: call-type
+    attributes:
+      label: Call type
+      options:
+        - Inbound
+        - Cold call
+        - Discovery
+        - Follow-up
+        - Renewal
+        - Negotiation
+        - Collections
+        - Service
+    validations:
+      required: true
+
+  - type: dropdown
+    id: difficulty
+    attributes:
+      label: Difficulty
+      description: Difficulty should come from the situation (stakes, objections, how much the persona hides), not from who the persona is.
+      options:
+        - Easy
+        - Medium
+        - Hard
+    validations:
+      required: true
+
+  - type: textarea
+    id: persona
+    attributes:
+      label: Who is on the other end of the call?
+      description: Their role, their situation, what they want, and what they would only reveal if asked.
+      placeholder: Owner of a four-person landscaping company who needs liability coverage to bid on an HOA contract by Friday.
+    validations:
+      required: true
+
+  - type: textarea
+    id: objections
+    attributes:
+      label: Objections
+      description: One per line. Start each with its type (price, timing, competitor, authority, trust, status quo, no need), then the words the persona would say.
+      placeholder: |
+        price: "Another agent quoted me half that."
+        timing: "I'll look at it after the season."
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: What does a win look like for the rep?
+      placeholder: Collect what underwriting needs, explain what the policy does not cover, and agree a dated next step.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why this persona?
+      description: Who would practise it, and what skill it trains that the library doesn't cover today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: compliance
+    attributes:
+      label: Compliance notes (regulated industries)
+      description: For insurance, lending, financial advising, collections, medical devices or anything with financing claims, list the disclosures a compliant rep has to make and the promises they must not make.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: The persona doesn't rely on stereotypes about age, gender, ethnicity, nationality, religion, disability, accent or class.
+          required: true
+        - label: Everything above is fictional or made generic. No real customers, companies or call recordings.
+          required: true
+        - label: I'd like to write the pack myself (see docs/PERSONA_PACKS.md).
+          required: false

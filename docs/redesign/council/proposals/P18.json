@@ -1,0 +1,270 @@
+{
+  "id": "P18",
+  "lens": "React Aria Components + Adobe Spectrum 2 ideas: enterprise-grade accessibility and internationalization",
+  "name": "Cadence Accessible Call Cockpit",
+  "one_liner": "Cadence is a calm, keyboard-first, fully localized call cockpit built on React Aria Components. Coaching arrives quietly, every score reads without color, and persona packs carry their own speaking language so contributors can add one.",
+  "lens_followed_or_changed": "Followed: React Aria Components (RAC) is the behavior layer for every control (Dialog, Tabs, Table, Meter, TagGroup, NumberField, Tree, Toast), styled with Tailwind 3 through its data-attribute states such as data-focus-visible and data-selected. Borrowed Spectrum 2 ideas: semantic color tokens, a compact/comfortable density switch, one focus-ring rule, and calm neutral surfaces. Changed: did not adopt Spectrum 2 itself, because its style macros need a build-time transform that the Next 15 stack would have to add and verify. Added a dark call mode, since pure Spectrum calm reads as enterprise-generic rather than cutting-edge. Research: Mobbin live-assist, scorecard and wizard screens (Fireflies, Grain, WRITER, Higgsfield), plus Second Nature, Hyperbound and Yoodli. Self-scores: A 8, B 7, C 7. Mobbin notes high AI usage, unlimited during beta.",
+  "ui_stack": [
+    {
+      "name": "react-aria-components",
+      "role": "Behavior, ARIA, focus, keyboard and RTL for every control",
+      "why": "Adobe's accessibility and i18n work (30+ languages, RTL, 13 calendar systems) with no visual lock-in; data-attribute states map cleanly onto Tailwind variants."
+    },
+    {
+      "name": "@internationalized/date and @internationalized/number",
+      "role": "Locale-aware dates, timers, numbers and rubric weights",
+      "why": "Weights and timestamps render correctly in de-DE or ar-SA without custom formatting code."
+    },
+    {
+      "name": "next-intl",
+      "role": "ICU message catalogs in the App Router",
+      "why": "Pluralization and grammatical agreement for seven launch locales."
+    },
+    {
+      "name": "Tailwind CSS 3 with CSS-variable semantic tokens",
+      "role": "Styling, light, dark and call-mode themes via :root variables",
+      "why": "Keeps the current stack and avoids a Tailwind 4 migration during the redesign."
+    },
+    {
+      "name": "lucide-react",
+      "role": "Icons, always paired with a visible or aria label",
+      "why": "Already a dependency; consistent stroke weight across screens."
+    },
+    {
+      "name": "Recharts with the Okabe-Ito palette",
+      "role": "Progress and trend charts, each with a table alternative",
+      "why": "Colorblind-safe categorical colors and a View as table toggle for screen-reader users."
+    },
+    {
+      "name": "next/font with Inter, Sora and Noto Sans subsets",
+      "role": "Typography, with script fallbacks loaded per locale",
+      "why": "Arabic, Hebrew and CJK fonts load only for locales that need them."
+    },
+    {
+      "name": "Playwright with @axe-core/playwright, plus forced-colors and reduced-motion projects",
+      "role": "CI accessibility gates",
+      "why": "Contrast, focus and Windows High Contrast regressions block merges before they ship."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "canvas",
+        "hex": "#F6F7F9",
+        "use": "Light page background; warm neutral, not slate."
+      },
+      {
+        "token": "surface",
+        "hex": "#FFFFFF",
+        "use": "Cards, dialogs and popovers."
+      },
+      {
+        "token": "ink",
+        "hex": "#0B1220",
+        "use": "Primary text, about 18:1 on surface."
+      },
+      {
+        "token": "ink-muted",
+        "hex": "#475467",
+        "use": "Secondary text, 7.7:1 on surface."
+      },
+      {
+        "token": "border-control",
+        "hex": "#6B7280",
+        "use": "Input and checkbox outlines at 4.8:1, meeting WCAG 1.4.11 non-text contrast."
+      },
+      {
+        "token": "hairline",
+        "hex": "#E4E7EC",
+        "use": "Decorative dividers only, never the sole boundary of a control."
+      },
+      {
+        "token": "primary",
+        "hex": "#1D4ED8",
+        "use": "Main actions; white label at 6.7:1. Hover #1E40AF."
+      },
+      {
+        "token": "voice-teal",
+        "hex": "#0F766E",
+        "use": "Coach and voice accents at 5.5:1 on surface. Dark theme uses #5EEAD4."
+      },
+      {
+        "token": "positive",
+        "hex": "#15803D",
+        "use": "Gains and passes at 5.0:1, always with an icon and a word."
+      },
+      {
+        "token": "caution",
+        "hex": "#B45309",
+        "use": "Cues to watch and fallback states at 5.0:1."
+      },
+      {
+        "token": "negative",
+        "hex": "#B91C1C",
+        "use": "End call and misses; white label at 6.5:1."
+      },
+      {
+        "token": "focus-ring",
+        "hex": "#1D4ED8",
+        "use": "One rule everywhere: 2px ring with 2px offset. Dark mode uses #93C5FD at 10.4:1 on the call canvas."
+      },
+      {
+        "token": "call-canvas",
+        "hex": "#0B1220",
+        "use": "Live call background in call mode; panels use #131C2E."
+      }
+    ],
+    "typography": "Inter for UI and transcript, with tabular-nums on timers and scores. Sora for display headings only. Noto Sans family loaded per locale for Arabic, Hebrew and CJK. Body 16px and never below 14px, 1.5 line height; transcript 17px at 1.6. Text reflows at 320px width and 200% zoom.",
+    "shape_and_depth": "Controls 10px radius, cards 14px, chips fully round. 1px hairline borders. Shadows only on floating layers such as popovers and the coach sheet. The breathing orb becomes a three-state presence ring (listening, thinking, speaking) with a text label, and a static ring under reduced motion.",
+    "motion": "150ms ease-out for enter and exit. Cue cards fade in over 180ms with no slide or bounce. Meters animate only at turn boundaries. prefers-reduced-motion removes all non-essential motion, and no animation is needed to understand state.",
+    "iconography": "lucide-react at 1.75 stroke, 20px in controls and 16px in chips. Every icon has a visible label or an aria-label. Icons never carry meaning alone.",
+    "theme_modes": "Light by default, dark via prefers-color-scheme and a toggle. Call mode switches the live screen to a dark console. forced-colors (Windows High Contrast, which the owner's Windows machine can test) uses system colors. A compact or comfortable density switch follows Spectrum's density idea."
+  },
+  "navigation_and_ia": "Desktop top app bar, 64px: logo, Practice, Library, Dashboard, Team (managers only), then a Cmd/Ctrl+K command bar (RAC Autocomplete inside a Dialog) that jumps to any persona, scenario or setting. Language and theme selects and the account menu sit at the right. Below 768px the bar becomes a bottom tab bar of four labeled 56px items. The practice flow is linear and visible as three steps: Brief, Call, Debrief. Routes: /library for personas and scenarios, /library/packs for pack management, /contribute for contributor docs. A skip link is first in tab order, with landmarks for header, main and the coach complementary panel. View state (filters, sort, range) lives in the URL so views can be shared.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Top bar: logo, Practice, Library, Dashboard, a language select showing native names, theme toggle. Hero splits 55/45. Left: headline 'Practice the call before it counts', one-line subhead, primary 'Try a 60-second roleplay' (no sign-in) and secondary 'Self-host in 5 minutes'. Right: a captioned 20-second loop of the live cockpit showing one quiet-coach cue. Below: three columns (Coach, Score, Debrief), a 'Built with OpenAI' strip naming Realtime, GPT-4.1 mini and Codex, then a contributor band with good-first-persona issues. The README mirrors this order with a static hero and badges.",
+      "key_components": "Skip link, RAC Select locale picker, captioned figure with alt text, Button variants, OpenAI attribution chips, contributor card, footer with accessibility statement.",
+      "change_vs_today": "Swaps generic feature cards for a real product demo, adds a no-sign-in trial, names the OpenAI stack, and adds a locale picker and skip link."
+    },
+    {
+      "screen": "Persona and scenario library",
+      "layout": "Three zones. Left 260px facet panel: RAC Tree (industry, then sales job), TagGroup for objection type, a segmented Easy/Medium/Hard control, and a Select for persona language. Centre: live result count ('48 personas match'), sort, and a GridList of persona cards showing initials avatar, role, industry, difficulty as text, objection tags and duration. Arrow keys move between cards; Enter opens a Dialog that plays the opening line. Wide screens add a right drawer with goal and rubric. 'Create persona' opens the wizard.",
+      "key_components": "RAC Tree, TagGroup, ToggleButtonGroup, Select, GridList, SearchField, Dialog, Badge with icon and text, virtualized list for 500+ packs.",
+      "change_vs_today": "Replaces a three-item dropdown with a browsable library filtered by sales job, industry, difficulty, objection and persona language, with shareable URLs."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Five-step Dialog (full page on mobile) with a numbered stepper marked aria-current. Step 1 Source: paste text, add a URL, or drop a job description or call transcript into a DropZone, with a one-line privacy note. Step 2 Persona: role, seniority and temperament as Sliders whose aria-valuetext reads in words. Step 3 Objections and goal: TagGroup suggestions with Add. Step 4 Voice and language: ListBox with sample playback and a language Select. Step 5 Review: editable draft beside a live test call. Each AI-filled field shows a source chip and an 'AI draft' badge. Rubric weights use NumberField and must total 100.",
+      "key_components": "RAC Dialog, custom stepper, DropZone and FileTrigger, Slider, TagGroup, ListBox, NumberField, Disclosure, Toast for save results.",
+      "change_vs_today": "Replaces the form-heavy scenario editor with a guided, source-cited draft. Every AI-drafted field is labelled and must be confirmed before saving."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Breadcrumb: Library, Solar, Roof quote follow-up. Left column (about 60%): scenario card with industry and difficulty as text chips, a 'Your goal' block, a success checklist ('what good looks like'), and the talk track as an ordered list inside a Disclosure. Right column: persona card with initials avatar and presence text, a Voice/Text RadioGroup, a mic Meter with a Mic check button, and a Quiet coach selector (Full, Captions, Off). Sticky bottom bar: 'Start voice call (about 8 min)' with a keyboard hint. The blurred orb is removed.",
+      "key_components": "Breadcrumbs, RadioGroup, Meter, Disclosure, Switch, Kbd hints, sticky Toolbar.",
+      "change_vs_today": "Replaces the dropdown and blurred orb with a briefing that states the goal, success criteria and mic status before the call. Persona identity is text and an initials avatar, not decoration."
+    },
+    {
+      "screen": "Live call (coaching and live scoring)",
+      "layout": "Desktop, three columns. Centre (about 55%): transcript as turns with speaker name, time and text, newest at bottom, with a Jump to latest button. Header: persona name, timer in tabular digits, state chip with text ('Your turn', 'Persona speaking', 'Coach thinking'). Right 380px coach panel with tabs: Cues (latest one-glance cue of 12 words or fewer, plus Why?), Talk track (steps with check marks), Live score (rubric Meters with text values and trend arrows, updated at turn ends). Bottom dock: text input in text mode, Mute toggle, End and grade (Ctrl/Cmd+Enter, with a confirm Dialog). Call mode darkens the chrome.",
+      "key_components": "RAC Toolbar, Tabs, Meter, ToggleButton, Dialog, polite live region for cues, alert region reserved for compliance warnings, Kbd.",
+      "change_vs_today": "Replaces the chat app with a cockpit: cues, talk-track progress and live rubric scores sit beside the transcript and never move focus. Dark call mode cuts glare."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Top: a text-first summary ('Grade C, 62 of 100, Needs practice') with an icon, goal status in words, and a grader chip ('Graded by gpt-4.1-mini', or 'Heuristic fallback: grader unavailable'). Desktop has two columns. Left: Strengths, Areas to improve, and a 'Practice next' card aimed at the highest-impact gap. Right: a sticky transcript that highlights evidence. Main body: one Disclosure per criterion with a Meter, points text ('3 of 10 expected points'), rationale, and quote chips that jump to the transcript turn. Toolbar: Print or save PDF, Practice again, Share summary. Live and final scores appear in one comparison row.",
+      "key_components": "Disclosure, Meter, quote Link chips, sticky aside, Badge with icon, Alert for fallback state, Toolbar.",
+      "change_vs_today": "Replaces one long scroll with a scannable summary, collapsible criteria and evidence that links to the exact transcript line. The yellow fallback banner becomes a labelled chip."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Header row: range ToggleButtonGroup (7, 30, 90 days, All) and a scenario Select. Four KPI tiles with value, unit and change in words ('up 9 points in 30 days') in tabular numerals. Main: a trend chart per criterion in Okabe-Ito colors with direct labels and a View as table toggle that swaps in a RAC Table. Below: a session-by-criterion heat grid with values in cells, a Practice, Perform, Activate loop card, and a timeline of past sessions with grade chips. A Coach memory card lists the top recurring gap.",
+      "key_components": "ToggleButtonGroup, Select, Table as chart fallback, Recharts, heat grid, Timeline list, Card.",
+      "change_vs_today": "Replaces four numbers and a plain list with per-criterion trend lines, a heat grid and an accessible table alternative for every chart."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Left filter rail: team, role, date range, persona pack. Main: summary tiles (active reps, team average, sessions this week, weakest criterion team-wide) as text. A competency heat grid (reps by criteria) with values in cells, a pattern fill for low scores, and a legend. Below: a RAC Table of reps with sortable headers (aria-sort), row checkboxes and columns for sessions, average, weakest criterion, trend and last session. Selecting rows reveals a bulk action bar. Row click opens a drawer with scorecards and manager-only notes, labelled private, plus an Assign pack Dialog.",
+      "key_components": "Table with selection, Checkbox, Tabs, Toolbar, Dialog, Drawer, heat grid, Badge reading 'Manager only'.",
+      "change_vs_today": "Adds the team surface the data model already supports but the UI never exposed. The sortable table and heat grid replace hidden per-person pages."
+    },
+    {
+      "screen": "Mobile live call (390px)",
+      "layout": "Single column at 390px with no horizontal scroll. Top bar 56px: back, persona name, timer, state chip. The transcript fills the screen at 16px. The coach is a bottom sheet collapsed to a peek bar showing the latest cue in one line, with an expand button (44px target). The bottom dock sits above the safe-area inset: a 56px round mic with a visible label, a text field that grows to two lines, and End and grade in a secondary red button. The Next.js dev badge is disabled so it cannot cover the timer. The expanded sheet shows Cues, Talk track and Live score tabs.",
+      "key_components": "RAC Modal as bottom sheet, Tabs, Toolbar, 44px targets, safe-area padding, Kbd hidden on touch.",
+      "change_vs_today": "Fixes the crowded footer where the End button, text field and dev badge collide in the current mobile screenshot. Coaching moves into a peekable sheet so the transcript keeps the screen."
+    }
+  ],
+  "live_coaching_and_scoring": "Mechanism: after each turn, a fast coach pass (gpt-4.1-mini by default) receives the rubric, the talk-track step and the last six turns. It returns validated JSON: a one-glance cue (12 words or fewer), an objection tag, the current talk-track step, and rubric deltas. Target: cue visible within 1.5 seconds of the persona finishing. Cues go to a polite live region and a Cue card. Only compliance-type warnings use role=alert, so reps are not flooded. The coach never moves focus. Modes: Full, Captions, Off, plus per-criterion mute. Live meters update at turn boundaries with text values and trend arrows, and reuse the debrief rubric so live and final scores compare directly. In voice mode, audio whispers go to the rep's headset only, never the persona channel. Self-score D: 5.3. It meets the baseline with an accessibility edge; latency is the main risk.",
+  "persona_library_and_wizard": "The library ships as pack files (YAML, checked by the app's zod schema) covering a launch set of 12 sales jobs and 12 industries: SDR cold call, AE discovery, renewal, collections, recruiter screen, procurement, solar, insurance, mortgage, home services, auto and medical devices. Each persona has role, seniority, temperament, objections, talk track, rubric weights and speaking language. Persona language is separate from UI locale, so an English-language UI can practise against a Spanish-speaking homeowner. Target 120 personas at launch, with community packs after. The wizard takes any source (job description, product URL, CRM notes, pasted call), drafts five steps, requires a human to confirm each AI-drafted field, runs a test call, then saves or exports a pack that opens a prefilled PR. Self-score E: 5.2. Content volume is the constraint, not the UI.",
+  "signature_moments": [
+    "Quiet coach: one-glance cues in a polite live region that never steal focus, with Full, Captions and Off modes.",
+    "Every score is a word, a meter and a quote, never color alone.",
+    "Live and final scores share one rubric and sit side by side on the debrief.",
+    "Persona language is separate from UI locale, so one pack serves an English-speaking rep practising Spanish-speaking buyers.",
+    "Models are visible: Settings shows which model runs each role, with per-call token counts.",
+    "Contribute a persona from the wizard: export a pack and open a prefilled PR without leaving the app."
+  ],
+  "openai_fund_angle": "Models are visible, not hidden. Settings > Models names the model for four roles: persona voice (OpenAI Realtime or ElevenLabs), coach (gpt-4.1-mini), grader (gpt-4.1-mini, with an optional stronger model for debriefs), and wizard drafting, with token counts and estimated cost per session. Calls read 'Powered by OpenAI Realtime' when that engine is selected; debriefs read 'Graded by' plus the model. Contributors get a /contribute page with good-first-persona issues, a wizard that exports a pack and opens a prefilled PR, CI validation of packs, planned Codex-assisted PR review, and CONTRIBUTING notes for Codex CLI setup. Persona cards credit the author's GitHub handle. Business self-scores: F1 6 (team seats and managed packs), F2 7 (white-label for training firms and BPOs; multilingual packs are the wedge), F3 4 (worth building; funded rivals exist, but none is open source).",
+  "inspirations": [
+    {
+      "source": "Mobbin: Fireflies live assist",
+      "url": "https://mobbin.com/screens/2047129f-d283-45ef-81bb-09aa79a32ffe",
+      "borrowed": "Quick-action chips above a live 'listening' status line for the coach panel."
+    },
+    {
+      "source": "Mobbin: Zoom AI Companion",
+      "url": "https://mobbin.com/screens/dbb16d99-379c-4c87-a4ff-f56321dd3dd1",
+      "borrowed": "A side panel that opens with one-tap prompts and stays clearly off until the user opens it."
+    },
+    {
+      "source": "Mobbin: Grain coaching scorecard",
+      "url": "https://mobbin.com/screens/935c8872-3616-4fff-aec9-89d327f23b7c",
+      "borrowed": "Per-criterion 1-5 rating chips with timestamped evidence sentences."
+    },
+    {
+      "source": "Mobbin: 15Five competency results",
+      "url": "https://mobbin.com/screens/7465cd4d-c7de-4067-9aa0-bbd69f224e0c",
+      "borrowed": "A competency grid with a view toggle, adapted into the team heat grid."
+    },
+    {
+      "source": "Mobbin: WRITER Tune your voice",
+      "url": "https://mobbin.com/screens/645e5806-b6c3-45db-abe1-9e68902a0e3a",
+      "borrowed": "An analyze, review, preview, save stepper with the preview beside the form."
+    },
+    {
+      "source": "Mobbin: Higgsfield character picker",
+      "url": "https://mobbin.com/screens/baac4868-8b0e-4bbd-859e-4bbd82a9a8f6",
+      "borrowed": "Numbered wizard steps and a 'Create new' tile in a card grid for the library."
+    },
+    {
+      "source": "Mobbin: PlayAI agent creation",
+      "url": "https://mobbin.com/screens/0b53bd22-ed04-4cbe-9e71-4f475ab53eee",
+      "borrowed": "A left-hand stepper with a live preview pane for the persona wizard."
+    },
+    {
+      "source": "Mobbin: Codecademy recruiter phone screen",
+      "url": "https://mobbin.com/screens/cc19b91b-8c45-470e-aeb5-53264e14c815",
+      "borrowed": "A 'Powered by OpenAI' attribution in the header of a voice practice screen."
+    },
+    {
+      "source": "Mobbin: Uxcel assessment results",
+      "url": "https://mobbin.com/screens/7eae8d36-5100-4ad8-a241-f3d0bdac6cde",
+      "borrowed": "Skill-gap bars with a percentile marker for the progress dashboard."
+    },
+    {
+      "source": "React Aria: Quality",
+      "url": "https://react-aria.adobe.com/quality",
+      "borrowed": "Accessibility and internationalization as acceptance criteria: 30+ languages, RTL, date and number formats."
+    },
+    {
+      "source": "React Spectrum v1.0.0 release notes",
+      "url": "https://react-spectrum.adobe.com/releases/v1-0-0",
+      "borrowed": "Spectrum 2 consistency ideas: one focus style and overridable class names. Style macros were not adopted."
+    },
+    {
+      "source": "Yoodli vs Second Nature (vendor blog)",
+      "url": "https://yoodli.ai/blog/yoodli-vs-second-nature-which-ai-sales-roleplay-platform-is-better",
+      "borrowed": "One rubric for practice and real calls, and coach memory across sessions. Vendor claim, used as a feature checklist only."
+    },
+    {
+      "source": "Hyperbound: AI sales coaching platforms 2026 (vendor blog)",
+      "url": "https://www.hyperbound.ai/blog/ai-sales-coaching-platforms-2026",
+      "borrowed": "The Practice, Perform, Activate loop as the organizing card of the progress dashboard."
+    }
+  ],
+  "implementation": {
+    "effort": "L",
+    "migration_path": "Phase 1 (about 2 weeks, estimate): add react-aria-components, semantic tokens and next-intl; replace the Voice/Text toggle, the scenario select and the buttons; add axe checks to CI. Phase 2: live cockpit and debrief, which close gap D first. Phase 3: persona library, pack schema and wizard (gap E). Phase 4: progress dashboard and team view. Phase 5: seven launch locales, dark call mode and a forced-colors pass. Keep Tailwind 3, the Prisma data model and the existing API routes throughout."
+  },
+  "risks": [
+    "Coach latency above 1.5 seconds makes cues feel stale; mitigate with a small model, streamed JSON and a cue cache.",
+    "An OpenAI Realtime voice adapter is new code; ElevenLabs stays the default until the adapter passes the same tests.",
+    "LLM-drafted non-English personas need native-speaker review per locale; launch with en-US and es-US packs only.",
+    "Live cues during a voice call compete with the conversation; cue length and headset-only audio must be tested with real reps.",
+    "Dark call mode and forced-colors must pass contrast and focus checks on all nine screens, or launch is blocked.",
+    "Nine screens plus library content is a large scope; ship the live call and debrief first to protect the core demo."
+  ]
+}

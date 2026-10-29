@@ -1,0 +1,268 @@
+{
+  "id": "P36",
+  "lens": "Tactile hardware (Teenage Engineering-inspired): knobs, LEDs, physical-feeling controls for the call",
+  "name": "Patch Bay Console",
+  "one_liner": "A tactile call console: LEDs carry live coaching, a knob sets how much help the rep gets, and every rubric criterion is a channel strip that visibly moves during the call. The rest of the app uses the same tokens on a calmer paper surface.",
+  "lens_followed_or_changed": "Followed: the live call is built from physical-feeling controls (coach-intensity knob, LED cue strip, rubric channel strips, step-key talk track). Changed: the hardware look stops at the call. Debrief and library share the same tokens on a calmer bone surface, because dense reading and filtering suffer under skeuomorphism. Research sharpened the call: the vendor pages I read (Second Nature, Yoodli, Hyperbound) market practice plus real-call scoring, and none described a glanceable in-call cue panel, so that is the differentiator to test. Self-scores (1-10; F3 where lower means clearly worth building): A Look 8.0, B UX 7.5, C Unique 9.0, D Live coaching 5.3, E Library and wizard 5.2, F1 SaaS 6.0, F2 Selling to entities 6.5, F3 Not worth building 3.0.",
+  "ui_stack": [
+    {
+      "name": "shadcn/ui (copy-in) on Radix UI",
+      "role": "Base components: dialog, tabs, select, tooltip, toast, dropdown, command palette",
+      "why": "Component code lives in the repo so contributors can read and change it; accessibility comes from Radix. See https://vercel.com/i/shadcn-vs-radix"
+    },
+    {
+      "name": "React Aria hooks",
+      "role": "Keyboard and screen-reader behaviour for the custom rotary knob, step keys and sliders",
+      "why": "Radix has no rotary control; React Aria supplies the slider keyboard model. See https://heroui.com/en/blog/best-react-ui-component-libraries"
+    },
+    {
+      "name": "In-repo instrument kit (SVG)",
+      "role": "Knob, LEDRing, LEDBar, ChannelStrip, StepKey, CueStrip",
+      "why": "No library ships this look; a small, dependency-free kit that is tested per control with keyboard and screen reader"
+    },
+    {
+      "name": "Tailwind CSS v4 with CSS variables",
+      "role": "Design tokens for light, dark and console themes",
+      "why": "One token source; migrate from the current v3 config incrementally"
+    },
+    {
+      "name": "Motion",
+      "role": "LED chases, knob spring, cue slide-in",
+      "why": "Short spring physics reads as mechanical; reduced-motion users get instant colour changes"
+    },
+    {
+      "name": "Space Grotesk, Inter, JetBrains Mono (Google Fonts)",
+      "role": "Display titles, UI body, tabular numerals for timers and scores",
+      "why": "Monospace numerals stop timers and scores jittering during a live call; Inter stays for density"
+    },
+    {
+      "name": "lucide-react",
+      "role": "Icons inside keys",
+      "why": "Already in use, so no churn"
+    },
+    {
+      "name": "three.js / react-three-fiber (reduced)",
+      "role": "Voice-mode level visual only",
+      "why": "Removed from text mode and mobile, which drops the heaviest bundle from the common path"
+    },
+    {
+      "name": "Model layer: OpenAI Realtime API, gpt-4.1-mini, existing ElevenLabs Agents voice",
+      "role": "Voice persona, incremental rubric grading, separate live coach, persona generation in the wizard",
+      "why": "Surfacing each model in the UI is part of the OpenAI fund story (see openai_fund_angle)"
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "graphite",
+        "hex": "#17181C",
+        "use": "Console chassis, primary text on bone, dark-mode surface"
+      },
+      {
+        "token": "bone",
+        "hex": "#F2EFE8",
+        "use": "Light-mode page surface and debrief paper"
+      },
+      {
+        "token": "card",
+        "hex": "#FBFAF6",
+        "use": "Cards and channel strips in light mode"
+      },
+      {
+        "token": "hair",
+        "hex": "#D8D2C4",
+        "use": "1px hairlines and key bezel edges"
+      },
+      {
+        "token": "muted",
+        "hex": "#5F636B",
+        "use": "Secondary text on bone, about 5.4:1"
+      },
+      {
+        "token": "signal",
+        "hex": "#FF5B1F",
+        "use": "Primary action (Start call, Save); graphite label on it, about 6.4:1"
+      },
+      {
+        "token": "led-go",
+        "hex": "#35D07F",
+        "use": "Covered step, on-track cue, positive delta; always paired with a text label"
+      },
+      {
+        "token": "led-warn",
+        "hex": "#FFB020",
+        "use": "Next-question cue, partial coverage, grader fallback banner"
+      },
+      {
+        "token": "led-stop",
+        "hex": "#FF4D3D",
+        "use": "Objection alert, missed criterion, End and grade stop key"
+      },
+      {
+        "token": "led-listen",
+        "hex": "#3DD6F5",
+        "use": "Caller speaking, voice-level ring, coach thinking"
+      }
+    ],
+    "typography": "Space Grotesk 600 for screen titles with -0.02em tracking; Inter 400 and 500 for UI, 16px body and 14px dense labels; JetBrains Mono 500 with tabular figures for timers, scores and cue readouts. Nothing below 12px.",
+    "shape_and_depth": "6px radius on keys and cards, 12px only on the console chassis. 1px hairline plus a 2px inset bezel instead of soft shadows. No gradients and no blurred orbs. 8px spacing grid.",
+    "motion": "Mechanical and short: knob turns settle in about 120ms, LED chase runs 900ms while the coach thinks, step keys latch with a 60ms press. prefers-reduced-motion replaces all of it with instant colour changes.",
+    "iconography": "lucide-react at 1.75px stroke inside keys. Status is always LED colour plus glyph plus text, never colour alone.",
+    "theme_modes": "Dark-first on the live console, light bone elsewhere. Tokens are defined on root and redefined under prefers-color-scheme (guarded by root:not([data-theme=light])) and under root[data-theme=dark]. Targeted at WCAG AA for text; verify with an automated check before launch."
+  },
+  "navigation_and_ia": "Top rail with five items: Practice, Library, Create, Progress, and Team (Team appears only when the user belongs to an org). A command palette (Cmd or Ctrl+K) jumps to any persona or scenario and runs actions such as 'Start text call'. Practice opens the pre-call briefing, which hands off to the live console. Scenario editing moves under Create so the library stays a browse surface. Mobile uses a bottom dock with four keys; the live console takes the full screen and hides the rail.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Bone background, two columns. Left: headline 'Practice the call before it counts', a one-line promise, and a model chip row (Realtime voice, gpt-4.1-mini grading, MIT licence). Primary key 'Start a free practice call' in signal orange, secondary 'Run locally'. Right: a static SVG of the console with LEDs lit to show a coached call, replacing the blurry orb. Below: a three-step strip (Pick a persona, Run the call with live cues, Read the evidence debrief), a row of six patch cards with the library count, and a contributor band with 'Add a persona' and a Codex link to the repo. On phones the illustration becomes a static card.",
+      "key_components": "Model chip row, persona count readout, 'Run locally' snippet, GitHub and licence badges, demo-mode notice in the style of the current login-skipped banner.",
+      "change_vs_today": "Replaces the fake call card and blurry orb with the real console, adds visible model credits and a contributor band. README and site share one hero."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Left faceted rail (240px): job family, industry, difficulty as a five-position LED dial, objection type, channel, and source (built-in or community). Top bar: search, result count, sort, and a Create key. Main area: a grid of patch cards, three columns on desktop, two on tablet, one on phone. Each card shows persona name, role and company, industry tag, difficulty LEDs, top objection, and Practice and Duplicate keys. Selecting a card opens a right drawer with persona, rubric, talk track and recent scores. Long lists are virtualised and filters are kept in the URL so they can be shared.",
+      "key_components": "Chip rail with counts, LED difficulty meter, community badge and licence line, detail drawer, saved filter presets, empty-state prompt to run the wizard.",
+      "change_vs_today": "The three-item dropdown and read-only list become a browsable, filterable library of about 240 personas, with a visible path to create one."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Full-screen four-step flow with a vertical stepper on the left. Step 1 Source: three entry cards (Paste text, Generate from prompt, Import from URL), plus tabs for job description, CRM notes, ICP and call transcript; a side panel lists every source the model will read. Step 2 Persona: an editable index card with per-field regenerate keys. Step 3 Rubric: five criteria as knobs that sum to 100, with a total LED. Step 4 Dry run: a 60-second text call with the new persona, then Save or Contribute. The full editor stays one click away under Advanced.",
+      "key_components": "Source chips showing domain names, field-level regenerate, weight knobs with sum LED, dry-run mini console, provenance line 'drafted from 3 sources, reviewed by you'.",
+      "change_vs_today": "Replaces the single long scenario form for new items. The existing form stays as the Advanced editor."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Two columns. Left: an index card for the scenario showing the persona, what they know and do not know, the goal, and three things to nail, each with an LED status from the last attempt. Below it, the talk track previewed as six step keys. Right: a console panel with the persona identity badge (initials inside an idle LED ring), a physical Voice and Text toggle, a coach-intensity knob (Off, Hints, Full), a mic-check LED bar, and a large Start call key. On phones, Start call is pinned to the bottom edge.",
+      "key_components": "Mic-check LED bar, mode toggle, labelled coach knob, talk-track step preview, last-score sparkline, Edit scenario link.",
+      "change_vs_today": "Replaces the dropdown and blurry orb with a briefing that sets coach level and checks the microphone before the call starts."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Three columns on desktop. Left: talk-track sequencer, six step keys that latch when the grader marks a step covered. Centre: caller window with the name, a state LED ('Dana speaking' or 'Your turn'), a 12-LED voice-level ring, the last four turns as speaker-tagged lines, and the full transcript on scroll. Right: rubric rack of five channel strips, each with a coverage meter, a covered, partial or missed LED, and a one-line evidence quote on tap. Bottom: a cue strip with a colour-coded one-line cue, a Coach me key and a hint counter; then the composer, mute, a mono timer, and End and grade in stop red.",
+      "key_components": "Step keys, channel strips, cue strip, coach knob in the control row, mono timer, evidence tooltips, keys 1 to 6 jump to step keys.",
+      "change_vs_today": "A chat app with a hidden talk-track drawer becomes an instrument that coaches and scores during the call."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Top band: a large score dial with letter grade, a goal-status LED, and one verdict sentence. An amber strip appears when the grader fell back to the keyword heuristic. Main pane: one row per criterion with bar, score, rationale and quote chips; clicking a quote scrolls the transcript pane to that line and blinks it. Right sticky pane: strengths, areas to improve, and one focus criterion with a Practice this key. Bottom: a model ledger (grader model, tokens, estimated cost) and a print stylesheet.",
+      "key_components": "Score dial, criterion rows, quote-to-transcript links, focus card, model ledger, amber fallback banner, print view.",
+      "change_vs_today": "One long scroll becomes a two-pane evidence view: every quote links to the transcript, and the ledger shows which OpenAI model graded the call."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Top: four readout tiles (sessions, average, best, time practised) in mono numerals, each with a mini LED bar. Middle left: score trend across sessions with a toggle per criterion. Middle right: a heatmap of criteria across the last ten sessions, with LED cells coloured by score. Bottom: a session table with score LED, persona, industry, date and a Practice again key. Scenario and industry filters sit in the top bar.",
+      "key_components": "Readout tiles, trend chart with criterion toggles, LED heatmap, sortable session table, range selector.",
+      "change_vs_today": "Four numbers and a plain list become a skill view that shows which criteria are moving and which are stuck."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Top: team selector, date range, and four team readouts (active reps, team average, reps below threshold, sessions this week). Main: one channel strip per rep with avatar, sessions, average, weakest-criterion LED and last practice date; sortable by weakest criterion. Each row has an Assign key that opens a modal to push a scenario with a due date. A side drawer shows the rep's dashboard and supervisor notes. A greyed 'Connect call recordings' slot marks real-call coaching as not yet built.",
+      "key_components": "Rep channel strips, assign modal, supervisor notes, team readouts, role gate that hides the view without an org.",
+      "change_vs_today": "Nothing like this exists in the UI today. It surfaces the existing org and role data as a team view."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "Single column at 390px. Top: compact console bar with mono timer, mute, and a coach LED. Under it: persona name with a turn LED, then the six talk-track steps as a horizontal strip. The rubric is a swipeable row of five mini channel strips with pager dots. The transcript shows the last three turns. A bottom dock holds the composer, send, Coach me and End and grade, each at least 44px. Cues rise as a sheet above the dock and tick via vibration where supported.",
+      "key_components": "Swipeable channel strips, bottom dock, cue sheet, safe-area padding, larger type than desktop.",
+      "change_vs_today": "The current 390px screen has a truncated title and a timer partly covered by a floating badge. It becomes a thumb-reachable console."
+    }
+  ],
+  "live_coaching_and_scoring": "Score D: 5.3 (meets the baseline with a modest margin). One event stream drives the live console. Each rep turn triggers (a) an incremental grader call on gpt-4.1-mini that returns covered, partial or missed plus one evidence line per rubric criterion, moving the rubric LEDs and talk-track steps; and (b) a separate coach call on a rolling window of recent turns that returns at most one cue: next question, objection alert, or on-track. The coach runs in its own call so the persona never breaks character. A coach-intensity knob (Off, Hints, Full) gates cue frequency, and a Coach me key requests a cue on demand. Target: a cue within 2.5 seconds of the rep finishing, measured in the app. Not delivered: real-call coaching. Cue quality needs a labelled transcript set before cues ship on by default.",
+  "persona_library_and_wizard": "Score E: 5.2. Library: about 240 seeded personas across roughly 20 industries and 12 job families (SDR cold call, AE discovery, CS renewal, collections, recruiting, and so on). Each persona ships with a rubric, opening line, objection set and two scripted replies. Filters: job family, industry, difficulty (five-LED dial), objection type, channel, and source (built-in or community). Wizard (Create): four steps, Source, Persona, Rubric, Dry run. Source accepts a product-page URL, job description, CRM notes, ICP fields, or a pasted call. gpt-4.1-mini drafts persona, objections and rubric weights. A 60-second dry run runs before save. Risk: 240 reviewed personas is content work, so the first release ships 60 human-reviewed personas and grows from there.",
+  "signature_moments": [
+    "Coach-intensity knob (Off, Hints, Full) that visibly changes how often the coach speaks",
+    "Talk-track step keys that latch and light as the grader marks each step covered",
+    "Rubric rack of five channel strips whose LEDs move after every rep turn",
+    "Cue strip with a green, amber and red LED language and a momentary Coach me key",
+    "Debrief quote chips that scroll the transcript to the exact line and blink it",
+    "Persona patch cards with difficulty LEDs and a Contribute button that exports persona JSON",
+    "Model ledger on every debrief showing which model graded, tokens and estimated cost"
+  ],
+  "openai_fund_angle": "Model ledger on every debrief and the README hero: which model graded, which coached, token count and estimated cost per session, linked to OpenAI's pricing page. Bring-your-own-key settings accept any OpenAI-compatible base URL with gpt-4.1-mini as default and a Realtime voice toggle, so credit usage is visible rather than claimed. Contributor path: the wizard's output is persona JSON; Contribute opens a prefilled pull-request template, /contribute lists good-first-persona issues, and AGENTS.md documents setup so the Codex link on the contributor band works. Codex is used for PR review and release notes in the repo itself, so the programme's use cases are real. OpenAI is credited in text only, with no logo use without brand approval.",
+  "inspirations": [
+    {
+      "source": "Grain coaching score dialog (Mobbin)",
+      "url": "https://mobbin.com/screens/d9198b71-48a8-4db2-bd45-eff6115f91f5",
+      "borrowed": "Speaker-picker step before scoring, used to choose which speaker the rubric grades."
+    },
+    {
+      "source": "Apollo conversations, Insights tabs (Mobbin)",
+      "url": "https://mobbin.com/screens/09749e5b-4b42-4a07-84c9-f41973fc12ac",
+      "borrowed": "Tabbed insight rail (Summary, Transcript, Scoring) and per-speaker talk-share bars for the call debrief."
+    },
+    {
+      "source": "Hume AI chat history (Mobbin)",
+      "url": "https://mobbin.com/screens/71393937-6a06-4b94-acb6-9ba9d7a68208",
+      "borrowed": "Metric bars beside the transcript and small annotation chips under each turn."
+    },
+    {
+      "source": "Langdock agent templates (Mobbin)",
+      "url": "https://mobbin.com/screens/6eac5e15-8d92-4912-b620-210111f6f5ce",
+      "borrowed": "Category chip rail with counts for the persona library filters."
+    },
+    {
+      "source": "Adobe Express explore (Mobbin)",
+      "url": "https://mobbin.com/screens/695b842e-f913-440f-8223-de3aa242f976",
+      "borrowed": "Left filter rail with grouped checkboxes, plus tag pills above the results."
+    },
+    {
+      "source": "Heidi template community (Mobbin)",
+      "url": "https://mobbin.com/screens/bfa0d997-f972-43fc-8adf-7503b23e6c38",
+      "borrowed": "Community cards with author verification and usage counts, for contributed personas."
+    },
+    {
+      "source": "Jasper writing-task flow (Mobbin)",
+      "url": "https://mobbin.com/flows/213ae30f-b4f5-4f36-874d-e56b982b88a4",
+      "borrowed": "Completed steps collapse to a check and summary, an optional add-more-information drawer, and a pinned generate button in the wizard."
+    },
+    {
+      "source": "HubSpot generate-website flow (Mobbin)",
+      "url": "https://mobbin.com/flows/1a932f05-d002-46ec-b9a9-22cf5c33f57b",
+      "borrowed": "Numbered step progress with Step 1 of 3, and a single describe-your-business field to start."
+    },
+    {
+      "source": "Chronicle import flow (Mobbin)",
+      "url": "https://mobbin.com/flows/bdf79980-7199-410c-99fc-e0b1120b76a6",
+      "borrowed": "Three entry cards for paste, prompt or URL as the wizard's first step."
+    },
+    {
+      "source": "Second Nature (vendor site)",
+      "url": "https://secondnature.ai/",
+      "borrowed": "SCORM and LTI integration as an enterprise lever for the F2 entity sales case (vendor claim, unverified)."
+    },
+    {
+      "source": "Yoodli vs Second Nature (vendor blog)",
+      "url": "https://yoodli.ai/blog/yoodli-vs-second-nature-which-ai-sales-roleplay-platform-is-better",
+      "borrowed": "Stage-of-week framing (learn, practise, graded real call, coach, follow-up roleplay). Vendor-authored comparison."
+    },
+    {
+      "source": "Mindtickle: Second Nature vs Hyperbound",
+      "url": "https://www.mindtickle.com/article/second-nature-vs-hyperbound-ai-sales-role-play-platform/",
+      "borrowed": "Real-call-to-practice loop as the framing for linking the live console to practice. Vendor-influenced comparison."
+    },
+    {
+      "source": "HeroUI roundup of React UI libraries",
+      "url": "https://heroui.com/en/blog/best-react-ui-component-libraries",
+      "borrowed": "Library comparison that places React Aria as the accessibility foundation for custom controls."
+    },
+    {
+      "source": "Vercel: shadcn/ui vs Radix UI",
+      "url": "https://vercel.com/i/shadcn-vs-radix",
+      "borrowed": "Copy-in code ownership on Radix primitives, so accessibility patches can live in the repo."
+    }
+  ],
+  "implementation": {
+    "effort": "L",
+    "migration_path": "Phase 0: tokens and the instrument kit behind a feature flag, with a preview page for the kit. Phase 1: app shell, debrief and dashboard, which carry no realtime risk. Phase 2: the live console, once the grader and coach calls are stable and a labelled eval set exists. Phase 3: library seed (60 reviewed personas first, then toward 240) and the wizard. Phase 4: team view. Each phase ships to the live demo so the OpenAI application shows working software throughout."
+  },
+  "risks": [
+    "Viability, self-scored: F1 SaaS 6.0. The category is crowded (Second Nature, Hyperbound, Yoodli, Mindtickle) and an open-source core caps price, so hosted convenience and team features must carry revenue. F2 Selling to entities 6.5. Training firms and call centres will pay for persona packs and LMS links (SCORM, LTI), but they will ask for real-call coaching, which this plan does not yet deliver. F3 Not worth building 3.0: clearly worth building for portfolio and open-source credibility, with moderate direct revenue.",
+    "Competitor claims come from vendor blogs and marketing pages. I did not see their in-app UI, so treat competitive points as hypotheses to test.",
+    "Teenage Engineering-style hardware can read as novelty. Mitigate with AA contrast, 14px minimum labels, and a test of the live console with about five reps before committing to the full look.",
+    "LED-coded states must never rely on colour alone. A colour-blind check is required on every status.",
+    "Custom knobs need full keyboard and screen-reader support. Test with VoiceOver and NVDA, not only an automated checker.",
+    "Live cues that are wrong or late will break trust. The coach knob limits damage, but cues should not default to on until a labelled eval set shows they help.",
+    "Nine screens at once risks shipping nothing. The phased plan keeps a working demo live throughout.",
+    "The 240-persona library is a content project. Generated personas need human review, and any industry data needs clear licensing."
+  ]
+}

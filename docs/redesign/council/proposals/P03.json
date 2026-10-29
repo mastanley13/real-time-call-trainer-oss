@@ -1,0 +1,264 @@
+{
+  "id": "P03",
+  "lens": "visionOS / spatial glass: layered translucent panels, depth, the call as a floating window",
+  "name": "Spatial Glass Call Window",
+  "one_liner": "A dark, floating call window with a glass persona orb at its center and a coach HUD held in space around it, so practice feels like a spatial instrument instead of a chat app.",
+  "lens_followed_or_changed": "Followed visionOS: layered translucent panels, four depth tiers, and the call as a floating window. Research changed three things. First, Mobbin call peers split between dark canvases (PlayAI, Vapi) and light ones (ElevenLabs, Hume), so the dark live stage is our signature choice, not a category norm. Second, the debrief and dashboard default to light \"paper-glass\" for reading and printing. Third, text-heavy panes stay about 80 percent opaque so transcripts keep contrast. Council self-scores (1-10): A look 8, B UX 7, C unique 8, D live coaching 5.4 (conditional on the coach channel shipping), E library and wizard 5.5. Business: F1 SaaS 4.5 (crowded, price pressure), F2 entity sales 6.5 (white-label call window for training firms and call centers), F3 not worth building 3.5 (leans worth building).",
+  "ui_stack": [
+    {
+      "name": "Radix Themes 3.x",
+      "role": "Accessible primitives (Dialog, Tabs, Slider, SegmentedControl, Tooltip) with CSS-variable tokens",
+      "why": "Accessibility and theming without shipping its default look. Start from its panelBackground translucent option, then override tokens with our glass recipe. MIT licensed."
+    },
+    {
+      "name": "Tailwind 3 (kept)",
+      "role": "Layout and spacing utilities",
+      "why": "Already in the repo. The hand-rolled classes in globals.css retire in favor of Radix plus a small glass plugin."
+    },
+    {
+      "name": "Motion (motion.dev)",
+      "role": "Spring animations for window entrance, cue slide-ins and the mobile bottom sheet",
+      "why": "Physics-based motion reads as spatial, and it has a reduced-motion path."
+    },
+    {
+      "name": "react-three-fiber + drei",
+      "role": "The call orb, rebuilt with a transmission material and audio-reactive displacement",
+      "why": "Already in the stack. The glass orb becomes the emotional focal point of every call."
+    },
+    {
+      "name": "cmdk",
+      "role": "Command palette (Cmd+K) for persona search and jump-to-scenario",
+      "why": "Makes a 300-persona library navigable in seconds."
+    },
+    {
+      "name": "TanStack Virtual",
+      "role": "Virtualized persona grid",
+      "why": "Keeps the library smooth at hundreds of cards."
+    },
+    {
+      "name": "visx",
+      "role": "Sparklines, skill radar and objection heatmap, styled to glass",
+      "why": "Lightweight and fully custom, so charts match the material."
+    },
+    {
+      "name": "Lucide, Sora, Inter, Geist Mono",
+      "role": "Icons and type via next/font",
+      "why": "Lucide and Sora are kept for continuity. Geist Mono handles timers and tabular scores."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "canvas-ink",
+        "hex": "#070B14",
+        "use": "Dark app canvas and live-call stage"
+      },
+      {
+        "token": "canvas-frost",
+        "hex": "#E9F1FA",
+        "use": "Light canvas for debrief and dashboard"
+      },
+      {
+        "token": "glass-dark",
+        "hex": "#FFFFFF14",
+        "use": "Window fill on dark (8 percent white)"
+      },
+      {
+        "token": "glass-light",
+        "hex": "#FFFFFFB8",
+        "use": "Window fill on light (72 percent white)"
+      },
+      {
+        "token": "hairline",
+        "hex": "#FFFFFF24",
+        "use": "1px window edge and top specular stroke"
+      },
+      {
+        "token": "signal-blue",
+        "hex": "#5EA3FF",
+        "use": "Dark-mode accent, primary action, persona voice"
+      },
+      {
+        "token": "brand-blue",
+        "hex": "#1D4ED8",
+        "use": "Light-mode accent, continuity with the current brand"
+      },
+      {
+        "token": "coach-teal",
+        "hex": "#2DD4BF",
+        "use": "On-track cues and positive scores"
+      },
+      {
+        "token": "cue-amber",
+        "hex": "#FBBF24",
+        "use": "Objection alerts and provisional warnings"
+      },
+      {
+        "token": "live-rose",
+        "hex": "#FB7185",
+        "use": "Recording state and End and grade"
+      },
+      {
+        "token": "ai-violet",
+        "hex": "#A78BFA",
+        "use": "AI-generated content and wizard citations"
+      },
+      {
+        "token": "ink-text",
+        "hex": "#F1F5F9 / #071827",
+        "use": "Text on dark / text on light"
+      }
+    ],
+    "typography": "Sora 600-700 for display headings and window titles, which keeps brand continuity. Inter 400-600 for UI and transcripts at 15-16px with 1.5 line height. Geist Mono with tabular figures for timers, scores and cost readouts. Body text is never below 16px on mobile.",
+    "shape_and_depth": "Radius 28px for windows, 20px for ornaments, 14px for cards, 999px for pills. Glass means a 40px backdrop blur at 180 percent saturate, a 1px top specular edge, and layered shadows (0 30px 80px at 45 percent black on dark). Four depth tiers: canvas, window, floating ornaments offset 16px from the window edge, and cues on top. Stacking never goes deeper than two levels.",
+    "motion": "Windows spring in on open (scale 0.96 to 1, 12px rise, stiffness 260, damping 30). The orb breathes at idle and displaces with mic or persona audio level. Coach cues slide from the window edge in 200ms. Live scores tween with a digit roll. Reduced motion swaps everything for 150ms opacity fades.",
+    "iconography": "Lucide at 20px with a 1.5px stroke, kept from today. Glyphs sit in 36px glass circles. No emoji. Status always pairs color with a text label.",
+    "theme_modes": "Dark is the default and is forced on the live-call stage. Light paper-glass is used for debrief, print and dashboard, following prefers-color-scheme with a toggle in the dock. prefers-reduced-transparency and prefers-contrast swap glass for solid fills."
+  },
+  "navigation_and_ia": "Replace the sticky header with a floating glass dock: bottom-center on desktop and a bottom dock on mobile. Items: Practice, Library, Progress, Team (manager role only), plus a Cmd+K button. Routes: /library and /library/[slug] for persona packs, /wizard for the persona builder, /brief/[scenario], /call/[id], /debrief/[id], /progress and /team. Contribute lives in the dock overflow and the footer, linking to CONTRIBUTING and persona-pack issues. During a live call the dock collapses to a single red End control, so nothing competes with the orb. Account, MFA and access-code screens move into one glass settings sheet.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Full-bleed canvas-ink (#070B14) with three slow mesh light blobs in blue, teal and violet. Left: Sora 64px headline 'Practice the call before it counts', a one-line subhead, a glass primary button 'Start a live call' and a ghost 'Star on GitHub' with a live count. Right: a tilted floating glass window showing a miniature live call, with the orb, a coach cue chip and rubric meters moving. Below the fold: a 'Powered by OpenAI' model-chip row, a carousel of six persona cards, and a contributor rail with three doors: run locally, pick a persona issue, export a persona.",
+      "key_components": "Hero window mockup, model chips, persona carousel, contributor rail, footer with license and live-demo link.",
+      "change_vs_today": "Replaces the four generic feature cards and the fake debrief bars with the product itself, shown in space."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Three columns on the canvas. Left: a sticky glass facet panel with Job (SDR cold call, AE discovery, customer success, collections), Industry (solar, insurance, mortgage, home services, auto, medical devices, procurement, retail), Difficulty, Objection (price, timing, competitor, 'send me an email') and Channel. Center: a virtualized grid of persona cards, each with an industry-tinted orb, role, temperament meter, difficulty pip, objection tags and Preview or Practice buttons. Top: a cmdk search bar with Create persona at the end. Selecting a card slides in a glass preview sheet with the dossier and rubric weights.",
+      "key_components": "Facet panel, persona cards, Cmd+K palette, preview sheet, source badge (built-in, community, forked).",
+      "change_vs_today": "Replaces the three-item dropdown and the long scenario form with a browsable catalog that forks cleanly."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "A centered floating window, 760px wide, with a spatial four-step stepper: Source, Persona, Scenario and rubric, Test call. Step 1 is one large paste field that takes a job description, product URL, CRM notes, an ICP or a call transcript, with type chips detected as you paste. A draft card on the right fills field by field as the model streams, and each field carries a citation chip. Tapping a citation highlights the source sentence in a split view. Every field has Accept and Edit. Step 4 offers a 60-second test call and Export as PR.",
+      "key_components": "Source detector, streaming draft card, citation chips, split source view, Accept and Edit per field, Export as PR.",
+      "change_vs_today": "Replaces the blank manual form with a draft that shows its evidence before the rep saves anything."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Two floating panes. Left glass pane: the goal in one sentence, a persona dossier (role, what they care about, likely objections from the persona file) and the talk track as a six-stop rail with progress. Right pane: a stage with the orb inside a glass capsule, a live mic-level meter, a device check and a segmented Voice or Text control. The primary Start call button sits bottom right. A status row shows whispers on or off, rubric version and weights, so the rep knows how the call will be graded before it starts.",
+      "key_components": "Goal line, persona dossier, talk-track rail, mic meter, Voice/Text segmented control, coach and rubric status row.",
+      "change_vs_today": "Replaces the scenario select and the collapsed talk track with a briefing that says what success looks like."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "A 960px floating call window with a 28px radius, centered on the dark stage. The orb sits at its center, with persona name, temperament chip and a Geist Mono timer above it. The transcript runs as glass bubbles in a scrolling lane below. Left ornament: the talk-track rail, with the current stop glowing. Right ornament: the coach HUD with live rubric meters (dotted outlines until settled), a next-best-question card and an amber objection chip when triggered. Whispered cues slide from the window edge as one-line chips and fade after eight seconds. Bottom ornament: mute, text input in text mode, and a red End and grade.",
+      "key_components": "Orb, timer, glass transcript lane, talk-track rail, coach HUD with rubric meters, cue chips, End control.",
+      "change_vs_today": "Adds live coaching and live scoring, which do not exist today, and moves the talk track out of a hidden drawer."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "A paper-glass light theme for reading and print. Top: a glass medallion with grade and score, a goal-status pill and an evidence-confidence meter. Beneath it, a horizontal replay ribbon with markers for coach cues, objections and score jumps; clicking a marker scrubs the transcript to that turn. Middle: rubric criteria in a two-column grid, each with a score ring, weight and quote chips that open the matching turn. Right: a dark glass next-drill card naming the weakest criterion and a three-minute drill. The fallback-grader warning becomes a small status chip that states its reason.",
+      "key_components": "Grade medallion, replay ribbon, rubric cards with quote chips, next-drill card, collapsed full transcript, provisional-vs-final drift readout.",
+      "change_vs_today": "Replaces the single long scroll with a navigable replay where every score links to its evidence."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "A bento grid of glass tiles: average score with a sparkline, best score, sessions, time practiced and a streak. A skill radar plots rubric dimensions across the last five sessions. An objection heatmap shows objection type by week. A next-drill card sits top right. Below, session history is a glass table with filter chips for persona, industry and grade, and score badges that open each debrief. Numerals use Geist Mono with tabular figures.",
+      "key_components": "Bento tiles, sparkline, skill radar, objection heatmap, filterable session table.",
+      "change_vs_today": "Replaces four stat tiles and a plain list with skill-level progress tied to the rubric."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "A floating vertical glass dock on the left (Team, Scenarios, Calls, Packs, Settings). Main area: a coaching queue of cards at the top, each naming a rep, the criterion slipping and an Assign drill button. Below, a rep-by-criterion heatmap with sortable columns, showing color plus numeric values. A right drawer opens a rep's last three debriefs and supervisor notes, reusing the debrief components. The footer shows team coverage across persona packs and objection types.",
+      "key_components": "Coaching queue cards, rep-by-criterion heatmap, rep drawer, supervisor notes, Assign drill action.",
+      "change_vs_today": "Creates the manager surface the data model already supports but the UI never shows."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "A full-screen glass sheet at 390px. A compact top bar holds the persona name, timer and a Your turn pill, with no truncated title. The orb fills the upper third at about 40 percent size. The transcript lives in a draggable bottom sheet with three snap points: peek, half and full. Coach cues appear as a single-line toast above the sheet handle for four seconds. A bottom dock inside the safe area holds mute, talk track and red End and grade, and nothing overlaps the timer.",
+      "key_components": "Compact top bar, orb, draggable transcript sheet, cue toast, safe-area bottom dock.",
+      "change_vs_today": "Fixes the clipped title and the timer crowded by bottom controls, and moves coaching into a toast."
+    }
+  ],
+  "live_coaching_and_scoring": "Two channels. The persona stays on a realtime voice model (gpt-realtime over the Realtime API, with the existing ElevenLabs agent kept behind a flag) and is never asked to coach. A separate coach channel reads a rolling transcript window every 5 to 8 seconds and returns zod-validated JSON: rubric deltas, the next-best question, an objection tag and the talk-track stop. Cues follow a budget of one whisper per 20 seconds, with priority: objection alert, then next question, then talk track. Live scores render dotted until they cite a transcript turn, so no unsupported number ever shows. The debrief reconciles provisional scores with the final grade and shows the drift. Target: a cue visible within 2.5 seconds of the rep finishing a sentence.",
+  "persona_library_and_wizard": "Ship about 300 persona packs at launch as plain JSON files in the repo: persona, scenario, talk track and rubric, one per job-and-industry pair across SDR, AE, customer success, collections, recruiting and the other listed jobs. Each pack is zod-validated in CI, so contributors get a fast PR check. Facets: job, industry, seniority, difficulty, objection type, channel and language. The wizard takes one paste (job description, product URL, CRM notes, ICP or a pasted call), fetches any URL, and asks gpt-4.1-mini (the current default) for a structured draft with a citation per field. Reps accept or edit field by field, run a test call, then save locally or export the pack as a pull request.",
+  "signature_moments": [
+    "The orb's rim turns amber for a second when an objection lands, and teal when the rep hits a rubric line.",
+    "A coach cue slides out of the window edge, then docks into the talk-track rail as a completed stop.",
+    "Tapping a quote chip in the debrief scrubs the replay to that exact second, with a glass lens highlight.",
+    "The wizard's draft card fills field by field, and each citation lights its source sentence in the split view.",
+    "The debrief medallion starts dotted (provisional) and settles to solid when the final grade lands."
+  ],
+  "openai_fund_angle": "Show OpenAI in the UI, not just the README. A models ribbon on the call and debrief names gpt-realtime for voice, the GPT coach model and gpt-4.1-mini for grading and the wizard, with latency, tokens and cost per call in Geist Mono. Transparent unit cost is what credit reviewers look for. Every screen has an Open prompts drawer that links to the actual prompt, rubric JSON and schema in the repo, so a contributor can edit a rubric and watch the debrief change. Contributor doors: Good first persona cards linking to labeled GitHub issues, Export as PR from the wizard, a Built with Codex badge in the hero, and Codex-assisted review of persona-pack PRs. That is a concrete Codex-for-open-source story: maintainers automate pack review, and the app runs on OpenAI models end to end.",
+  "inspirations": [
+    {
+      "source": "ElevenLabs agent call (Mobbin)",
+      "url": "https://mobbin.com/screens/cf492872-e47b-453b-b476-0b5495411a83",
+      "borrowed": "Centered orb with a side transcript lane and minimal call controls."
+    },
+    {
+      "source": "Dialpad live call with AI notes (Mobbin)",
+      "url": "https://mobbin.com/screens/8ada6545-583d-436a-b58b-5714a49967b3",
+      "borrowed": "Floating AI transcript and notes panel beside the live view, with tabs."
+    },
+    {
+      "source": "Klaviyo agent training review (Mobbin)",
+      "url": "https://mobbin.com/screens/d4889940-2b2d-4612-8772-81029a80d811",
+      "borrowed": "Review drawer with Use this answer or Edit answer for each AI output."
+    },
+    {
+      "source": "Vapi call review (Mobbin)",
+      "url": "https://mobbin.com/screens/007a4823-5c3d-4016-b2d1-8637a49cb015",
+      "borrowed": "Waveform timeline with transcript, logs and analysis tabs for the debrief replay."
+    },
+    {
+      "source": "Grain coaching scorecard (Mobbin)",
+      "url": "https://mobbin.com/screens/5ba5ca46-2c2d-4823-b771-0a75e817589a",
+      "borrowed": "Per-criterion 1-5 rows with numeric chips for rubric scoring."
+    },
+    {
+      "source": "Charma 360 review (Mobbin)",
+      "url": "https://mobbin.com/screens/7df4d45f-11c4-47e0-9254-7bb68b799c37",
+      "borrowed": "Evidence-led cards with short trait tags."
+    },
+    {
+      "source": "Pipedrive bot setup wizard (Mobbin)",
+      "url": "https://mobbin.com/screens/6c7d7a8a-6581-42e7-b25c-33db0e7ce92b",
+      "borrowed": "Three-step stepper with a progress rail for the persona wizard."
+    },
+    {
+      "source": "Chatbase agent creation (Mobbin)",
+      "url": "https://mobbin.com/screens/e6b6c766-ad61-48b3-aedd-f9a6b40bcb40",
+      "borrowed": "Describe-what-you-want free-text intake beside a live preview."
+    },
+    {
+      "source": "HubSpot agent setup, step 2 of 2 (Mobbin)",
+      "url": "https://mobbin.com/screens/a36c7c90-8c91-4000-aa13-65b0995c72f0",
+      "borrowed": "Source intake with a public URL field and file upload for grounding."
+    },
+    {
+      "source": "Second Nature (competitor)",
+      "url": "https://secondnature.ai/",
+      "borrowed": "Gap to beat: its Deal Coach gives AI coaching on live deals, but its UI is closed. We match live coaching in the open."
+    },
+    {
+      "source": "Yoodli vs Second Nature (competitor)",
+      "url": "https://yoodli.ai/blog/yoodli-vs-second-nature-which-ai-sales-roleplay-platform-is-better",
+      "borrowed": "Coaching on real calls and memory of past sessions. We borrow session memory for the progress tab."
+    },
+    {
+      "source": "Hyperbound alternatives (competitor)",
+      "url": "https://www.hyperbound.ai/uses/second-nature-ai-alternatives",
+      "borrowed": "Real-call scoring against practice scorecards. Its 2M-hours figure is the vendor's own claim."
+    },
+    {
+      "source": "Radix Themes dark mode docs",
+      "url": "https://www.radix-ui.com/themes/docs/theme/dark-mode",
+      "borrowed": "Theme appearance control and next-themes integration for the dark stage and light paper modes."
+    }
+  ],
+  "implementation": {
+    "effort": "XL",
+    "migration_path": "Phase 0, behind a feature flag: install Radix Themes, add the tokens and glass recipe, keep the old classes alive. Phase 1: retheme the shell and the debrief (read-only, lowest risk). Phase 2: the live-call window, orb rebuild and coach channel. Phase 3: persona packs, library and wizard. Phase 4: progress bento and manager view. Each phase ships behind a flag and keeps voice and text parity."
+  },
+  "risks": [
+    "Glass over transcripts hurts contrast and reading speed. Mitigate with 80 percent fills on text panes and a reduced-transparency mode.",
+    "Backdrop blur plus a transmission-material orb is GPU-heavy on older laptops and phones. Cap the orb at 30 fps on mobile and fall back to a 2D gradient.",
+    "Live whispers can distract reps or arrive late. Rate-limit them, keep an off switch, and measure cue latency before enabling cues by default.",
+    "Three hundred persona packs is a content effort, and quality needs human review. Codex-assisted PR review only partly covers that.",
+    "Second Nature, Hyperbound, Yoodli and Mindtickle already sell live-deal coaching and real-call scoring. The open-source core and the glass UX are the wedge, not a moat.",
+    "Dark-first may read as a gimmick to buyers who print debriefs. The paper-glass light mode is the answer and needs testing with real users."
+  ]
+}

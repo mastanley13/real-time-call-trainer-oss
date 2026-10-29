@@ -1,0 +1,247 @@
+{
+  "id": "P10",
+  "lens": "Raycast/Arc keyboard-first launcher: floating command bar, instant drills, minimal chrome",
+  "name": "Signal Console",
+  "one_liner": "A dark, command-first call console: a centred ⌘K bar drives every action, a quiet coach rail whispers during live calls, and a browsable persona library feeds an AI persona wizard.",
+  "lens_followed_or_changed": "Followed the Raycast/Arc lens: a centred ⌘K bar is the primary action surface, chrome is a 56px icon rail with no header bars, and drills are one Enter away. Changed it in one place: coaching cannot hide behind a command bar. Second Nature (Deal Coach), Hyperbound (Live Call Coaching) and Yoodli (moment playback) all surface coaching persistently, so the live coach gets a visible rail while ⌘K stays available. The library gets a browse grid because hundreds of personas do not work as palette results. Self-scores: A 8, B 7, C 7; D 5.6; E 5.3; F1 6 (crowded market, open-source core lowers acquisition cost); F2 7 (per-vertical persona packs and call-centre licences); F3 3 (worth building).",
+  "ui_stack": [
+    {
+      "name": "shadcn/ui (copy-in, Radix-based, Tailwind 3.4 kept)",
+      "role": "Base component set for every screen",
+      "why": "Components live in src/ so contributors can read and change them; no black-box library and no Tailwind 4 migration in the same change."
+    },
+    {
+      "name": "cmdk",
+      "role": "Engine for the ⌘K command bar and library filter palette",
+      "why": "Keyboard navigation, grouping and fuzzy match out of the box, as used by the shadcn Command component."
+    },
+    {
+      "name": "Radix Primitives (via shadcn)",
+      "role": "Dialog, Tabs, Toggle Group (Voice/Text), Slider (rubric weights), Tooltip (model provenance)",
+      "why": "Accessible focus handling so the keyboard-first UI still works with screen readers."
+    },
+    {
+      "name": "Vaul (via shadcn Drawer)",
+      "role": "Mobile coach sheet and talk-track drawer",
+      "why": "Native-feeling bottom sheet with drag-to-dismiss on phones."
+    },
+    {
+      "name": "Motion (motion/react)",
+      "role": "Cue enter/exit, list reflow in library, score ring tween",
+      "why": "Layout animation with reduced-motion support in one API."
+    },
+    {
+      "name": "Recharts",
+      "role": "Trend lines and small multiples on progress and debrief",
+      "why": "Already a common React choice; the manager heatmap stays a plain CSS grid for speed."
+    },
+    {
+      "name": "lucide-react (kept)",
+      "role": "Icon set",
+      "why": "Already in the stack; consistent 1.5px stroke. The three.js orb is retired from live screens in favour of a 2D signal ring."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "--canvas",
+        "hex": "#0B0D12",
+        "use": "App background, dark default"
+      },
+      {
+        "token": "--surface",
+        "hex": "#141821",
+        "use": "Cards, icon rail, transcript panel"
+      },
+      {
+        "token": "--raised",
+        "hex": "#1C2230",
+        "use": "Command bar, dock, drawers, popovers"
+      },
+      {
+        "token": "--line",
+        "hex": "#262E3D",
+        "use": "Hairline borders and dividers"
+      },
+      {
+        "token": "--ink",
+        "hex": "#E7ECF4",
+        "use": "Primary text and caller lines"
+      },
+      {
+        "token": "--muted",
+        "hex": "#8A94A6",
+        "use": "Secondary text, timestamps, hints"
+      },
+      {
+        "token": "--signal",
+        "hex": "#2DD4BF",
+        "use": "Rep speech, active coach, primary action (teal heritage from #14B8A6)"
+      },
+      {
+        "token": "--cue",
+        "hex": "#F5B942",
+        "use": "Whisper cues and warnings"
+      },
+      {
+        "token": "--risk",
+        "hex": "#F87171",
+        "use": "Objection alerts and End and grade"
+      },
+      {
+        "token": "--model",
+        "hex": "#8FA8FF",
+        "use": "AI provenance chips and AI-drafted fields"
+      }
+    ],
+    "typography": "Inter for all UI (14px body, 15px in the console). JetBrains Mono for timers, scores, timestamps and model IDs, with tabular numerals wherever a score appears. Sora is dropped except as an optional landing headline.",
+    "shape_and_depth": "Hairline borders and surface steps (canvas, surface, raised) instead of drop shadows. 10px radius on controls, 14px on cards, pill chips. One soft glow only on the active coach cue.",
+    "motion": "Command bar opens in 120ms (fade plus 0.98 to 1 scale). Whisper cues slide in beside the transcript line that triggered them over 200ms, dwell 6s, then fade. Score rings tween once on debrief. No looping animation during calls except a slow signal-ring pulse while the caller speaks. Reduced-motion removes all of it.",
+    "iconography": "lucide-react at 16px for controls and 20px in the rail. Every command row shows its shortcut as a mono kbd chip. AI provenance uses a small spark glyph in the model colour.",
+    "theme_modes": "Dark is the default. Light mode follows prefers-color-scheme and can be toggled from the ⌘K bar. Light values: canvas #F7F8FA, surface #FFFFFF, ink #0B0D12, signal text #0F766E. All colours are tokens on :root."
+  },
+  "navigation_and_ia": "Routes: / (landing), /library, /library/new (wizard), /practice/:scenario (briefing), /practice/live, /debrief/:id, /progress, /team, /settings/models. A 56px icon rail (Home, Library, Practice, Progress, Team) expands on hover. No top header bars; each page has one title line. ⌘K is global and holds every action: start a scenario, search personas, build or contribute a persona, copy a Codex prompt for a persona or rubric change. Chords: G then L for library, G then P for progress. Auth and access pages are a single centred card.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Full-width dark hero. Left: headline 'Practice the call. Get coached while you talk. Score every line.' with two buttons, 'Try in browser' and 'Run it locally'. Right: a floating ⌘K bar typed 'price objection, solar' with three persona results under it. Below the fold: a live-call card with a whisper cue, rubric bars filling and a debrief ring, then a provenance strip naming each model. The README reuses this frame as a static 1280x640 image above the badges.",
+      "key_components": "Command bar mock, live-call card, provenance strip (Voice, Coach, Grader, Wizard with model IDs), 'Add a persona in 10 minutes' band, MIT and open-source-core badges.",
+      "change_vs_today": "Replaces the blurred orb and four generic feature cards with the product in motion."
+    },
+    {
+      "screen": "Persona and scenario library",
+      "layout": "Title 'Library' with counts ('412 personas, 118 scenarios') and a search field. One row of filter chips: Role, Industry (insurance, mortgage, solar, home services, auto, medical devices, B2B SaaS, retail), Difficulty (three-step meter), Objection (price, timing, competitor, send-info, trust). Chips toggle by keyboard. Main area: three-column card grid, one column on phone. Each card: monogram avatar, name, role and industry, two-line brief, difficulty meter, top objection tag, Run and Preview buttons. Core and Community tabs. Build persona button bottom-right.",
+      "key_components": "Filter chips with counts, saved filter presets, Core/Community tabs, card with Run and 5-second opening-line Preview, empty state linking to the wizard.",
+      "change_vs_today": "A three-item dropdown becomes a browsable catalogue covering every sales job."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Full-height sheet over the library. Top: four steps with a '2 of 4' counter: Sources, Persona, Scenario and rubric, Test drive. Step 1: left, drop zone and fields for job description, product URL, CRM notes, pasted call and ICP; right, detected facts as chips. Step 2: the draft persona card streams in; AI-drafted fields carry a model-colour left border, a 'why' link to the source sentence, and Accept or Edit. Step 4: a 60-second test call. Footer: Save to My library or Export as PR-ready file. A chat toggle offers ask-then-fix shaping.",
+      "key_components": "Source chips, streaming draft card, per-field provenance and why link, PII redaction notice, test-drive button, PR export.",
+      "change_vs_today": "Replaces the blank scenario form with a draft the rep edits."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Two columns. Left (wide): persona monogram card with name, role, mood and one-line goal; 'What they will push on' with three likely objections and a counter for each; a numbered six-step talk-track rail that ticks off during the call. Right (narrow): Voice or Text toggle, mic check meter, coach intensity (quiet, normal, heavy), rubric preview with weights as thin bars, and a large Start call button with an Enter hint.",
+      "key_components": "Persona monogram card, objection cards, talk-track rail, mic meter, intensity control, rubric weight bars, Start with Enter.",
+      "change_vs_today": "The dropdown, collapsed talk track and blurred orb become a 40-second readable brief."
+    },
+    {
+      "screen": "Live call with coaching and scoring",
+      "layout": "Three zones, no header bar. Top-left strip: persona name, 'Your turn' status, mono timer. Centre: transcript as one flowing conversation, caller lines in ink and rep lines in signal teal, no bubbles, each cue marked at the line that caused it. Right 320px coach rail: 'Next move' line, cue lane with the last two amber whispers, objection chip ('handled 1 of 3'), six-step talk-track progress, seven live rubric bars marked 'est.'. Bottom dock: large push-to-talk centre, text field, End and grade in risk coral at right. Space talks, ⌘. hides the rail, ⌘⇧E ends.",
+      "key_components": "Flowing transcript with cue markers, next-move line, whisper cue lane, objection chip, talk-track ticks, live rubric bars labelled estimate, push-to-talk dock.",
+      "change_vs_today": "A chat app with a side drawer becomes a coached call console. Today there is no coaching and no live scoring."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Slim header: scenario, date, duration, and a grader chip ('Graded by gpt-4.1-mini, 14 quotes verified'), or an amber 'Keyword fallback, low confidence' when the grader fails. Hero row: 0-100 score ring with letter, goal-status chip and a one-sentence summary. Below: two panes. Left, sticky criteria list with weights and score bars. Right, the selected criterion with rationale and evidence chips that jump the transcript and replay audio. Bottom: primary bar 'Drill your weakest: Pricing transparency, 31'. Transcript in a collapsible drawer with timestamps.",
+      "key_components": "Score ring, grader provenance chip, criteria list, evidence chips, replay button, drill bar, transcript drawer.",
+      "change_vs_today": "One long vertical scroll of cards becomes a two-pane review with evidence on demand."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Top row of four KPI tiles (sessions, average, best, minutes) with mono numerals and 14-day sparklines. Below: a trend chart with one overall line, toggling to seven small multiples, one per criterion. Middle: objection mastery heat tiles (price, timing, competitor, send-info, trust, budget). Right column: 'Next drills' cards built from the weakest criteria, and a sessions table with inline score bars and grader chips. Scenario filter at the top.",
+      "key_components": "KPI tiles with sparklines, trend chart with small-multiple toggle, objection heat tiles, next-drill cards, filtered sessions table.",
+      "change_vs_today": "Four static numbers and a plain list become a trend and a queue of drills."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "Team header with range selector (7, 30, 90 days) and a team switcher in ⌘K. Main: heatmap table with reps as rows and the seven rubric criteria as columns, cells coloured by score with the number inside, and a last-five-calls sparkline per rep. Right panel: flagged-calls feed (drops of 15+ points, pricing under 40), an Assign drill action per rep, and a supervisor notes thread. CSV export in the header.",
+      "key_components": "Heatmap grid, rep sparkline, flagged-calls feed, assign-drill button, supervisor notes, CSV export.",
+      "change_vs_today": "No manager surface exists today even though orgs are in the data model."
+    },
+    {
+      "screen": "Mobile live call (390px)",
+      "layout": "Single column with safe-area insets. Top 44px strip: persona name, mono timer, coach toggle. A whisper cue appears as a pill under the strip for 6 seconds; tapping it opens a Vaul bottom sheet with the full coach rail. Rubric chips scroll horizontally under the header with mini bars. Transcript fills the middle. Bottom dock 88px: round push-to-talk at centre, text entry collapses to an icon, End and grade is a text button that asks to confirm. All targets 44px minimum.",
+      "key_components": "Whisper pill, Vaul coach sheet, rubric chip row, round push-to-talk, collapsed text entry, confirm-to-end.",
+      "change_vs_today": "Two stacked panels and tiny buttons become a one-hand console."
+    }
+  ],
+  "live_coaching_and_scoring": "Coach is a separate, out-of-character model call that never speaks to the caller, so the persona rule stays intact. It streams typed events (cue, next_question, objection, step_progress, criterion_estimate), each carrying the ids of the transcript lines it refers to. Target: a cue within 2 seconds of the caller's turn ending; at most one whisper per 20 seconds; quiet, normal and heavy intensity. Live scores are labelled estimate and show no letter grade until the debrief. The debrief reuses the same evidence ids, so a live cue and the final verdict point at the same quote. Score D: 5.6. The design clears the baseline only if the event contract and latency ship; without them the console is a prettier chat.",
+  "persona_library_and_wizard": "The library is data, not code: each persona and scenario is a validated YAML or JSON file in a personas folder, tagged with role, industry, difficulty, objection types and a rubric template. v1 target: about 400 personas across 12 industries and 8 roles, plus about 120 scenarios, all added through reviewed pull requests. The wizard uses one structured-output schema, so drafts validate before they render. It accepts job descriptions, product URLs, CRM notes, pasted calls and ICP fields; it redacts PII before any model call and blocks fetches to private-network URLs. Score E: 5.3. It meets the baseline only if the content and the wizard both ship; the design alone does not exceed it.",
+  "signature_moments": [
+    "⌘K is the whole app: every action, persona search, scenario start and contribution lives in one centred bar.",
+    "Whisper cues appear beside the exact caller line that triggered them, with the quote, so the rep sees why.",
+    "Every rubric score is a chip that jumps to the moment in the transcript and replays it.",
+    "Each AI output carries a provenance chip with the model ID and call cost, for example 'gpt-4.1-mini, schema-validated, 14 quotes verified'.",
+    "The persona wizard streams the draft in field by field, and each field links back to the sentence that produced it.",
+    "'Drill your weakest' turns the lowest criterion into a 90-second drill started from the debrief."
+  ],
+  "openai_fund_angle": "Models are visible on purpose. Every AI surface carries a provenance chip with the model ID and call cost, and Settings, Models lists voice, coach, grader and wizard with per-session token spend. The voice path gets an OpenAI Realtime provider beside the current ElevenLabs path, so the default demo can run on OpenAI end to end; until that ships, the showcase claim is weaker. Contributors: a 'Contribute a persona' command runs the wizard and writes a validated file ready for a PR; a Good first persona board; an AGENTS.md so Codex CLI can add personas, rubrics and tests; and ⌘K commands that copy a ready-made Codex prompt. The README shows which OpenAI models are used and the cost per call.",
+  "inspirations": [
+    {
+      "source": "Second Nature (Deal Coach)",
+      "url": "https://secondnature.ai/",
+      "borrowed": "Coaching framed on live deals rather than only post-call reports; informs the coach rail."
+    },
+    {
+      "source": "Hyperbound, Live Call Coaching (private preview)",
+      "url": "https://www.hyperbound.ai/private-preview/live-call-coaching",
+      "borrowed": "Live call coaching as a named, visible feature; validates putting coaching on screen during the call."
+    },
+    {
+      "source": "Yoodli vs Second Nature comparison",
+      "url": "https://yoodli.ai/blog/yoodli-vs-second-nature-which-ai-sales-roleplay-platform-is-better",
+      "borrowed": "Plays back the exact moment that needs work; drives the evidence chips and Replay."
+    },
+    {
+      "source": "shadcn/ui Command",
+      "url": "https://ui.shadcn.com/docs/components/base/command",
+      "borrowed": "cmdk-based command menu with grouped actions in a dialog; the ⌘K bar."
+    },
+    {
+      "source": "reUI Command",
+      "url": "https://reui.io/components/command",
+      "borrowed": "Keyboard hint chips on command rows."
+    },
+    {
+      "source": "Mobbin: Klaviyo campaigns library",
+      "url": "https://mobbin.com/screens/c3d9bb50-e157-4c6b-baf2-d258935c1f95",
+      "borrowed": "Goal and channel filters over a card grid of pre-built drafts; basis for the library browse."
+    },
+    {
+      "source": "Mobbin: Quo onboarding, 4 of 4 with call summary",
+      "url": "https://mobbin.com/screens/5e60926e-c807-4a67-987b-593e386f68b8",
+      "borrowed": "Numbered step counter for the wizard; call summary with next steps for the debrief."
+    },
+    {
+      "source": "Mobbin: Delphi (Train / Preview toggle)",
+      "url": "https://mobbin.com/screens/82a59318-eb39-4216-8373-94ec26c7e773",
+      "borrowed": "Train versus Preview toggle and chat-first shaping for the wizard's ask-then-fix mode."
+    },
+    {
+      "source": "Mobbin: Telegram call screen",
+      "url": "https://mobbin.com/screens/be8506ea-f0fc-44fc-9416-54f21d1645bc",
+      "borrowed": "Minimal floating call controls for the mobile dock."
+    },
+    {
+      "source": "Mobbin: Gumloop score dashboard",
+      "url": "https://mobbin.com/screens/60ec82f0-afbf-4a61-b57a-0c56f540f9b6",
+      "borrowed": "KPI tiles with a score distribution histogram for the progress screen."
+    },
+    {
+      "source": "Mobbin: Meetup average event rating",
+      "url": "https://mobbin.com/screens/7daeec59-29c5-4899-b81b-b2cef49d0d79",
+      "borrowed": "Keyword evidence chips (what people liked, what went wrong) for criterion evidence."
+    },
+    {
+      "source": "Mobbin: Browserbase templates modal",
+      "url": "https://mobbin.com/screens/353269e7-207b-4afc-9088-a975db54c877",
+      "borrowed": "Filter pills over a template card grid inside a modal, for the library picker."
+    }
+  ],
+  "implementation": {
+    "effort": "L",
+    "migration_path": "Phase 0: tokens, shadcn primitives and the cmdk shell behind a flag; keep Tailwind 3.4 and map .card and .btn-primary onto the new classes. Phase 1: icon rail, ⌘K, landing page and README hero. Phase 2: live call console with the coach event contract, then the debrief. Phase 3: persona YAML schema and seed library, then the wizard. Phase 4: progress and manager views. Mobile pass in every phase. Retire the three.js orb from live screens only after the console ships. Add a voice provider abstraction before any OpenAI default."
+  },
+  "risks": [
+    "Whispers that arrive late or too often can wreck a call; ship with a throttle, an off switch and a visible latency gauge.",
+    "Live rubric estimates can discourage reps; label them as estimates and hide letter grades until the debrief.",
+    "400 personas is a content problem; without reviewer guidelines, generated personas can stereotype industries.",
+    "The wizard ingests URLs and CRM notes: SSRF and PII risk unless URL fetches are allowlisted and text is redacted before model calls.",
+    "When the grader fails, the debrief falls back to a keyword score; the amber fallback chip must stay conspicuous so it is not mistaken for a real grade.",
+    "Keyboard-first can hide features from mobile and screen-reader users; every ⌘K action needs a visible button.",
+    "If the default voice stays ElevenLabs, the OpenAI fund showcase is weak; the Realtime provider has to land.",
+    "Dark-first is a brand change the owner may reject; light tokens are defined as the fallback."
+  ]
+}

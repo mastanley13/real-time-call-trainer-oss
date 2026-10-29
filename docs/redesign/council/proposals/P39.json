@@ -1,0 +1,281 @@
+{
+  "id": "P39",
+  "lens": "Flight-simulator cockpit: pre-flight briefing, in-call HUD, post-flight debrief with black-box replay",
+  "name": "Flight Deck Cockpit",
+  "one_liner": "A dark instrument-panel cockpit: every call gets a pre-flight briefing, a live HUD that coaches and scores each turn, and a black-box debrief you can replay.",
+  "lens_followed_or_changed": "Followed the cockpit lens: pre-flight checklist, in-call HUD and black-box replay are core screens, sharing one grammar of gauges, status lamps and telemetry type. Changed three things. Research showed vendor UIs (Second Nature, Hyperbound, Mindtickle) are light and card-based, so a dark instrument UI stands apart, and a daylight mode keeps browsing readable. The lens says nothing about libraries, so the persona browser borrows faceted rails from Mobbin's WRITER and Lindy agent libraries. Chose shadcn/ui over HeroUI for owned code that contributors and Codex agents can edit. Self-scores if built as designed: A 8.5, B 8, C 8.5, D 6.5, E 6.5. Today's app falls short on D and E (no live coaching, three scenarios).",
+  "ui_stack": [
+    {
+      "name": "shadcn/ui on Base UI (MIT, copy-owned source)",
+      "role": "Component layer: Dialog, Sheet, Tabs, Switch, Slider, Combobox, Toast, all as source inside the repo",
+      "why": "Contributors and Codex agents can read and edit the components directly. Base UI became shadcn's default in July 2026; Radix and React Aria remain selectable. HeroUI (React Aria plus Tailwind v4, MCP server, llms.txt) is the runner-up if owned code is not wanted."
+    },
+    {
+      "name": "Tailwind CSS v4 (migrate from v3)",
+      "role": "Styling with CSS-variable tokens on :root for both themes",
+      "why": "Replaces the custom .card, .btn-primary and .input classes with shadcn variants; one token file drives dark cockpit and daylight modes."
+    },
+    {
+      "name": "Motion (motion/react)",
+      "role": "Gauge easing, cue card slide-in, sheet and replay transitions",
+      "why": "Declarative transitions with a reduced-motion path; keeps the HUD feeling alive without a custom animation engine."
+    },
+    {
+      "name": "TanStack Table",
+      "role": "Persona library list view, logbook, manager roster",
+      "why": "Headless sorting, filtering and faceting that pairs with shadcn table styling."
+    },
+    {
+      "name": "cmdk",
+      "role": "Command palette (Ctrl/Cmd+K) for persona search and quick-start flights",
+      "why": "Standard in shadcn and gives keyboard-first reps a fast path."
+    },
+    {
+      "name": "Recharts",
+      "role": "Score-over-time curve, skill trend lines, dial and bar charts",
+      "why": "React-native, lightweight, and easy for contributors to extend; draw the black-box timeline as custom SVG."
+    },
+    {
+      "name": "react-hook-form + zod",
+      "role": "Wizard steps, rubric editor, persona JSON validation",
+      "why": "The same zod schema validates wizard output, the seed library in CI, and contributed PRs."
+    },
+    {
+      "name": "wavesurfer.js",
+      "role": "Waveform and scrub sync for voice-mode black-box replay",
+      "why": "Gives the debrief a real audio timeline that lines up with transcript evidence."
+    },
+    {
+      "name": "Type stack: Sora, Inter, JetBrains Mono",
+      "role": "Display headings, UI and transcript body, HUD numerals",
+      "why": "Sora is already loaded for continuity; JetBrains Mono tabular-nums keep timers and scores from jittering."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "--deck",
+        "hex": "#0A0F1A",
+        "use": "Cockpit background, dark default for flight and debrief"
+      },
+      {
+        "token": "--panel",
+        "hex": "#111A2B",
+        "use": "Instrument panels and cards on dark"
+      },
+      {
+        "token": "--hairline",
+        "hex": "#24314D",
+        "use": "Dividers, gauge tracks and card borders on dark"
+      },
+      {
+        "token": "--ink",
+        "hex": "#E6EEF9",
+        "use": "Primary text on dark"
+      },
+      {
+        "token": "--ink-dim",
+        "hex": "#8A9BB8",
+        "use": "Secondary text and telemetry labels, about 6.7:1 on deck"
+      },
+      {
+        "token": "--signal",
+        "hex": "#22D3EE",
+        "use": "Live and active state, primary action on dark, cue glow"
+      },
+      {
+        "token": "--on-course",
+        "hex": "#34D399",
+        "use": "Goal met or criterion on track"
+      },
+      {
+        "token": "--caution",
+        "hex": "#FBBF24",
+        "use": "Watch items, heuristic-estimate lamp, pricing raised too early"
+      },
+      {
+        "token": "--alert",
+        "hex": "#F87171",
+        "use": "Objection alerts and the End and grade control"
+      },
+      {
+        "token": "--paper",
+        "hex": "#F5F7FB",
+        "use": "Daylight background for landing, library, wizard, logbook, team"
+      },
+      {
+        "token": "--primary",
+        "hex": "#0E7490",
+        "use": "Primary action on light, AA contrast on white"
+      }
+    ],
+    "typography": "Sora 600-700 for headings and persona names; Inter 400-600 for UI and transcript body (16px minimum in live views); JetBrains Mono with tabular-nums for timers, gauge numerals and scores. Desktop base 15px, mobile 16px.",
+    "shape_and_depth": "8px panel radius, 12px for sheets and drawers. 1px hairline borders, no heavy shadows on dark; depth comes from a 1px inner top highlight. Only the live element gets a cyan glow. Tape gauges are 6px bars with segment ticks.",
+    "motion": "Gauge tapes ease over 300ms; cue cards slide in from the right edge in 180ms and fade after 8 seconds; replay scrubbing is frame-accurate with requestAnimationFrame. prefers-reduced-motion swaps movement for opacity and freezes the orb.",
+    "iconography": "lucide-react at 1.5px stroke, 16px inline and 20px in HUD rails. Custom SVG instrument glyphs (gauge, tape, status lamp, altimeter) carry the cockpit metaphor. No emoji in product UI.",
+    "theme_modes": "Dark cockpit is default on /flight and /debrief; daylight on landing, library, wizard, logbook and team. A toggle in settings respects prefers-color-scheme. Both modes come from the same CSS variables on :root so contributors change one file. WCAG AA contrast for all text in both modes."
+  },
+  "navigation_and_ia": "Desktop: slim icon rail with Brief, Library, New persona, Logbook, Team, Contribute, Settings. Routes: /library, /library/[persona], /new (wizard), /brief/[scenario] (pre-flight), /flight/[id] (live HUD), /debrief/[id] (black box), /logbook, /team, /contribute. Mobile: bottom tab bar with Library, Fly, Logbook, More; Fly resumes the last pre-flight. Ctrl/Cmd+K opens the command palette to jump to any persona or start a flight. Keyboard: Space mutes, Enter sends, Esc opens the End and grade confirm.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Full-bleed dark hero. Left: 'Fly the call before it counts', one line of proof (voice and text, MIT, persona count), buttons 'Start a pre-flight' and 'Browse personas'. Right: a HUD mockup of a live call built from the product's own components (tape gauges, one coach cue, waveform). Below: a Brief, Fly, Debrief rail, then a band 'Runs on OpenAI models' naming Realtime (optional voice), GPT-4.1-mini (grading), Structured Outputs (wizard). Last: contributor strip with good-first-persona count and a Codex CLI setup link. README mirrors the hero.",
+      "key_components": "HUD mockup, three-step rail, OpenAI model chips, MIT and contributor strip, live demo button, README hero mirror",
+      "change_vs_today": "Replaces the blurry orb and four generic feature cards with a product-true hero that shows coaching and scoring on screen."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "Left facet rail: Role (SDR, AE, CSM, collections), Industry (home services, insurance, mortgage, solar, medical devices, B2B procurement), Difficulty, Objection type, Mode (voice or text), each with counts. Top: search with cmdk shortcut and sort. Main: card grid, three columns on desktop, one on phone. Each card: monogram avatar, name, role, industry chip, difficulty bars, top objection, 'flown N times'. First tile is 'Create with AI'. Clicking opens a right sheet with the persona brief and a Pre-flight button.",
+      "key_components": "Faceted filter rail with counts, saved filter chips, persona card with difficulty bars and usage count, 'Create with AI' tile, detail sheet, list view via TanStack Table",
+      "change_vs_today": "Replaces a three-item select dropdown with a browsable library spanning every sales job and objection type."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Left stepper rail: Source, Persona, Scenario, Rubric, Test flight. Source step uses tabs modeled on Synthesia (File, URL, Notes, Transcript) plus an ICP form. The model extracts persona fields and streams them into a live preview card on the right, each with a confidence chip the rep can accept or edit. Objections appear as toggles. Rubric step uses weight sliders totalling 100. Test flight runs a two-minute text sim before anything is saved to the library or exported as JSON.",
+      "key_components": "Stepper rail, source tabs, streaming field fill with confidence chips, objection toggles, rubric weight sliders, test flight, save and export-as-JSON",
+      "change_vs_today": "Replaces the long blank scenario editor with a guided build that starts from the user's own context."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Pre-flight screen in two columns. Left: checklist with status lamps (mic level meter for voice, persona loaded, goal read, talk track reviewed). Below it a mission card: persona, goal, and success criteria mapped to rubric areas and weights. Objection cards show the trap and a prep answer. Right: persona instrument card with avatar, mood dial, Voice or Text switch and a large Start flight button that enables once mic and goal are green. Talk track sits below as phases with checkboxes that tick live.",
+      "key_components": "Checklist with status lamps, mic meter, mission card, objection cards, mode switch, talk-track phases, Start flight button",
+      "change_vs_today": "Replaces a collapsed talk track and blurry orb with a briefing that sets goals and objections before the first word."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Dark cockpit with three zones. Centre: compact persona instrument (orb or waveform) above a flight-log transcript with timestamps and speaker tags. Top bar: timer in JetBrains Mono, On course status lamp, mode toggle, mute, End and grade. Left HUD rail: six rubric tape gauges that move each turn, with weight and tally (Discovery 3 of 10), plus talk-track progress with phase ticks. Right HUD: coach cue stack, at most two visible, each with Use line and Dismiss. Bottom: input with reply chips drawn from the talk track.",
+      "key_components": "Rubric tape gauges, talk-track phase ticks, coach cue cards (Use line, Dismiss), next-best-question chip, status lamp, timer, reply chips, End and grade",
+      "change_vs_today": "Replaces a chat app that gives no feedback until the end with gauges and cues that update after every rep turn."
+    },
+    {
+      "screen": "Debrief / scorecard (black box)",
+      "layout": "Header: outcome stamp (Goal achieved, Partial, Missed), score ring with letter grade, duration and turns, and an Estimate lamp if the grader fell back to heuristics. Centre: black-box timeline of the whole call with a score-over-time curve and event markers for objections and cues shown. Press play or scrub to replay transcript and audio, with the gauges rewinding to match. Below: criterion cards in two columns with score bar, rationale and evidence chips that seek the timeline. Right: Next flight card with one drill.",
+      "key_components": "Outcome stamp, score ring, black-box timeline with event markers, scrub and replay, evidence chips that seek, criterion cards, next-drill card, Print and Practice again",
+      "change_vs_today": "Replaces one long vertical scroll with a replayable timeline where every quoted line jumps to the exact moment it was said."
+    },
+    {
+      "screen": "Progress dashboard (logbook)",
+      "layout": "Top row of four radial dials: average score, flights, best run, time flown, each with a trend delta. Middle: skill heatmap with criteria as rows and the last 12 flights as columns, coloured by score; beside it a line chart for chosen criteria. Bottom: logbook table of past flights with persona, outcome stamp, score, duration and a replay button. Filters for persona, role and date. A streak counter and Next drill panel sit top right.",
+      "key_components": "Radial dials, skill heatmap, trend chart (Recharts), logbook table (TanStack Table), filters, replay links, Next drill panel",
+      "change_vs_today": "Replaces four stat tiles and a flat list with skill-level progress that shows which criterion is actually improving."
+    },
+    {
+      "screen": "Manager / team view (flight ops)",
+      "layout": "Left: org switcher and team filter. Main: 'Needs attention' queue at top listing reps below threshold or with repeated missed goals. Below: roster table with each rep's readiness dial, flights this week, last outcome and weakest criterion, then a criteria-by-rep heatmap. Right drawer opens a rep's logbook, replay links and supervisor notes, with an Assign drill action that sends a scenario to the rep. A compare view puts two reps side by side.",
+      "key_components": "Org switcher, needs-attention queue, roster table, readiness dials, criteria heatmap, rep drawer with supervisor notes, assign drill, compare view",
+      "change_vs_today": "Adds a manager surface that the UI lacks today, even though the data model already supports orgs and supervisor notes."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "390px width. Top: slim bar with persona name, Your turn lamp and timer. Under it a HUD strip of three pill gauges (Goal, Discovery, Pricing) that expand on tap. Centre: flight log showing the last three turns, scrollable. A coach cue rises as a bottom sheet that swipes away; its one-tap Use line fills the input. Bottom: input with mic and send, a Talk track tab, and End and grade as a long-press so it cannot be hit by accident. 16px gutters, no horizontal scroll.",
+      "key_components": "Pill gauge strip, bottom-sheet coach cue, one-tap Use line, long-press End and grade, talk-track tab, mic and send",
+      "change_vs_today": "Replaces a stacked chat screen with a red End button beside the input by putting the HUD and controls in the thumb zone."
+    }
+  ],
+  "live_coaching_and_scoring": "Self-score D: 6.5 if the sidecar ships as designed. Architecture: the persona stays forbidden to coach. A separate grader call runs after each rep turn and returns rubric deltas plus at most one cue, rendered only to the rep. Cues come from fixed categories (objection, next question, talk-track phase, forbidden early claim such as price), each with evidence quotes and a Use line action. Gauges move per turn and the final grade uses the same rubric, so live numbers and the debrief agree. Throttle: one cue per 20 seconds, cues expire after 8 seconds, and a heuristic fallback shows an amber Estimate lamp rather than a silent score. In voice mode cues stay on screen only, so the audio channel stays clean.",
+  "persona_library_and_wizard": "Self-score E: 6.5 if built as designed. Library: faceted browse across role, industry, difficulty, objection type and mode, seeded with a large open persona set. Each persona is a versioned JSON file validated by a zod schema in CI, so contributions arrive as reviewable PRs. Usage counts and 'flown N times' give social proof. Wizard: five steps (Source, Persona, Scenario, Rubric, Test flight). Source accepts a job description, product URL, CRM notes, an ICP or a pasted call. Generation uses OpenAI Structured Outputs against the same zod schema, streams fields into a preview with confidence chips, and never saves without a test flight. Export produces a PR-ready JSON file.",
+  "signature_moments": [
+    "Pre-flight checklist: mic level, goal read and persona loaded each show a status lamp before Start flight enables.",
+    "Coach cue sheet: at most two cues on screen; Use line drops the suggested phrase into the input in one tap.",
+    "Black-box replay: scrub the call timeline and the rubric gauges rewind with it.",
+    "Evidence chips seek the replay to the exact second a quote was said.",
+    "Amber Estimate lamp when the grader falls back to heuristics, so a fallback score is never mistaken for a graded one.",
+    "Mobile long-press End and grade with a progress ring, so the call cannot end by accident."
+  ],
+  "openai_fund_angle": "Show real OpenAI usage in the product, not just a logo. Each flight's report card lists the model behind each job: GPT-4.1-mini (default) for grading and coach cues, Structured Outputs for the wizard, and the Realtime API as a selectable voice engine beside ElevenLabs Agents, with a per-flight cost estimate. Settings lets a maintainer swap any slot to another OpenAI-compatible model. A /contribute page lists good-first personas and scenarios; the wizard drafts a persona JSON that passes the CI schema, then opens a prefilled GitHub PR for the contributor to submit (never auto-submitted). An AGENTS.md at the repo root tells Codex CLI how to run tests and add a persona. Codex fits maintainer work here: PR review of persona and rubric changes, release notes, and scorecard test fixtures.",
+  "inspirations": [
+    {
+      "source": "Grain (Mobbin screen)",
+      "url": "https://mobbin.com/screens/f677f7ba-ad23-444f-847d-96619cb8f585",
+      "borrowed": "Per-criterion 1-to-5 score chip rows beside the recording, for the debrief scorecard."
+    },
+    {
+      "source": "Fireflies (Mobbin screen)",
+      "url": "https://mobbin.com/screens/0faa4442-59e5-4a73-85f5-50a54c634fb5",
+      "borrowed": "Live suggestion chips and an assist-mode switch, for coach cues."
+    },
+    {
+      "source": "Dialpad (Mobbin screen)",
+      "url": "https://mobbin.com/screens/8ada6545-583d-436a-b58b-5714a49967b3",
+      "borrowed": "In-call right panel with transcript and AI action tabs."
+    },
+    {
+      "source": "WRITER agent library (Mobbin screen)",
+      "url": "https://mobbin.com/screens/1c2a36be-2d18-467a-905f-8baec911f81d",
+      "borrowed": "Industry and function facet rail with favourite stars for the persona library."
+    },
+    {
+      "source": "Lindy agent library (Mobbin screen)",
+      "url": "https://mobbin.com/screens/373a29bb-08be-40cc-a102-2390d7c10ef6",
+      "borrowed": "Role and use-case facets over a card grid."
+    },
+    {
+      "source": "Heidi template community (Mobbin screen)",
+      "url": "https://mobbin.com/screens/bfa0d997-f972-43fc-8adf-7503b23e6c38",
+      "borrowed": "Usage counts on template cards, reused as persona social proof."
+    },
+    {
+      "source": "Synthesia AI video assistant (Mobbin screen)",
+      "url": "https://mobbin.com/screens/458c4864-2900-428a-a4fa-eb73ab4dca35",
+      "borrowed": "File, URL, Prompt and Script source tabs for the wizard's first step."
+    },
+    {
+      "source": "PlayAI agent setup (Mobbin screen)",
+      "url": "https://mobbin.com/screens/3768dff1-5560-46f0-b113-b6a7a17565c6",
+      "borrowed": "Named stepper rail with checkmarks and a live preview pane."
+    },
+    {
+      "source": "Gamma Import with AI (Mobbin screen)",
+      "url": "https://mobbin.com/screens/d5707b60-8d08-4aff-98a7-325f4121b871",
+      "borrowed": "Output-type choice cards and a recent-prompts list for wizard entry."
+    },
+    {
+      "source": "ElevenLabs voice call (Mobbin screen)",
+      "url": "https://mobbin.com/screens/cf492872-e47b-453b-b476-0b5495411a83",
+      "borrowed": "Voice orb beside a live transcript, as the reference for the compact persona instrument."
+    },
+    {
+      "source": "Second Nature (vendor site)",
+      "url": "https://secondnature.ai/",
+      "borrowed": "LMS (SCORM and LTI) integration as the enterprise path. Vendor claims not verified."
+    },
+    {
+      "source": "Hyperbound vs Mindtickle vs Second Nature (vendor-written comparison)",
+      "url": "https://www.hyperbound.ai/blog/mindtickle-vs-hyperbound-vs-second-nature",
+      "borrowed": "Real-call scoring linked to next practice, as in the debrief's next-drill card. Vendor-written."
+    },
+    {
+      "source": "Outdoo AI comparison (vendor-written)",
+      "url": "https://www.outdoo.ai/blog/hyperbound-vs-second-nature-vs-outdoo",
+      "borrowed": "Critique that scripted wording penalises reps; score meaning rather than exact words. Cites a G2 review. Vendor-written."
+    },
+    {
+      "source": "Mindtickle comparison of Second Nature and Hyperbound",
+      "url": "https://www.mindtickle.com/article/second-nature-vs-hyperbound-ai-sales-role-play-platform/",
+      "borrowed": "Competitor feature split: Second Nature covers webcam pitches and Deal Coach, Hyperbound covers voice drills from cold call to renewal."
+    },
+    {
+      "source": "shadcn/ui vs MUI vs Mantine benchmark (Aleksei Aleinikov)",
+      "url": "https://www.alekseialeinikov.com/en/blog/topics/programming/shadcn-ui-vs-mui-vs-mantine",
+      "borrowed": "shadcn made Base UI the default in July 2026, with Radix and React Aria as options; ownership model comparison."
+    },
+    {
+      "source": "HeroUI roundup of React UI libraries",
+      "url": "https://heroui.com/en/blog/best-react-ui-component-libraries",
+      "borrowed": "Runner-up choice: React Aria plus Tailwind v4 with MCP server and llms.txt."
+    }
+  ],
+  "implementation": {
+    "effort": "XL",
+    "migration_path": "Phase 0, first PR: add Tailwind v4 and shadcn/ui on Base UI, map the old .card, .btn-primary and .input classes to shadcn variants, and ship the two token themes; no feature changes, so reviewers see only the token diff. Phase 1: persona JSON schema, seed library, library browse, wizard and Pre-flight screen. Phase 2: live HUD with the grader sidecar, cue throttle, heuristic fallback and mobile sheet, behind a flag until the live-call smoke test passes. Phase 3: black-box replay with wavesurfer for voice, logbook heatmap, manager view, and /contribute."
+  },
+  "risks": [
+    "Business viability: F1 as SaaS 4/10, crowded by funded rivals (Second Nature, Hyperbound, Mindtickle, Yoodli, Outdoo AI). F2 selling to entities 6/10: persona packs plus the scorecard engine licensed to training firms and call centres, with SCORM and LTI export as table stakes. F3 not worth building 3/10: worth building as open source, since OpenAI credits keep cost low.",
+    "Tailwind 3 to 4 migration touches every screen and the custom globals.css classes must be rewritten, so Phase 0 needs its own review.",
+    "Live coaching adds a per-turn grader call; if latency or cost is not budgeted, cues arrive after the moment has passed.",
+    "Dark cockpit can read as gimmicky or lose contrast; enforce WCAG AA on the token set and keep daylight mode as the browsing default.",
+    "Persona library quality is both the moat and the cost: a large set needs expert review, not just generation.",
+    "Sources disagree on Radix: shadcn says it stays fully supported, while one 2026 roundup says it is no longer maintained. Verify before choosing Base UI or Radix.",
+    "Process note: Mobbin reported high AI usage this month (about 895 credits used in this session) and said limits may require purchased credits once beta ends."
+  ]
+}

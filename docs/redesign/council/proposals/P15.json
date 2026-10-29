@@ -1,0 +1,272 @@
+{
+  "id": "P15",
+  "lens": "Mantine v8 full component kit: complete SaaS dashboard, rich forms, spotlight search",
+  "name": "Mantine Coaching Console",
+  "one_liner": "A Mantine v8 command console: a dark live-coaching cockpit, a job-based persona library, and a four-step AI persona wizard, applied across all nine screens.",
+  "lens_followed_or_changed": "Followed the lens: one Mantine v8 kit (AppShell, Stepper, Tabs, Accordion, RingProgress, Drawer, Dropzone, Notifications, @mantine/charts) across all nine screens, with Spotlight as the global search and command bar. Deviated where research pushed: Mantine defaults read as a generic template, so the live call uses a fixed dark console and a custom token set. Mobbin and competitor evidence favours dual-channel waveforms, criterion chip scorecards and stepper wizards (Vapi, Grain, HubSpot, Jasper). Mobbin search was web-only, so mobile patterns are reasoned, not sourced. Self-scores (1-10; F3 where 1 = clearly worth it): A 8, B 8, C 7, D 5.6, E 5.2, F1 6, F2 7, F3 3.",
+  "ui_stack": [
+    {
+      "name": "Mantine v8 core",
+      "role": "Single component system for the whole app: AppShell, Stepper, Tabs, Accordion, Drawer, RingProgress, Badge, Alert, Table, Chip, SegmentedControl",
+      "why": "120+ components and 70 hooks cover the dashboard, forms and wizard; native CSS styling is easy to override with our tokens; dark mode via defaultColorScheme."
+    },
+    {
+      "name": "@mantine/spotlight",
+      "role": "Global Ctrl+K search and command bar",
+      "why": "Grouped action lists and a fuzzy filter map directly to searching personas, scenarios, debriefs and actions like 'Build persona from this JD'."
+    },
+    {
+      "name": "@mantine/charts (recharts)",
+      "role": "Score trends, criteria radar, sparklines, readiness",
+      "why": "Charts inherit the Mantine theme, so we do not hand-style recharts on every screen."
+    },
+    {
+      "name": "@mantine/form + existing zod schemas",
+      "role": "Rich forms and wizard validation",
+      "why": "Keeps the zod contracts the repo already uses for scenarios and rubrics."
+    },
+    {
+      "name": "@mantine/dropzone and @mantine/notifications",
+      "role": "Upload of JDs, CRM notes and call transcripts; toasts and mic-permission prompts",
+      "why": "Native to the kit, so the wizard does not need a second upload library."
+    },
+    {
+      "name": "@tabler/icons-react",
+      "role": "Icon set",
+      "why": "Mantine's default family; 1.5 stroke reads well at 18px in dense consoles."
+    },
+    {
+      "name": "Geist + Geist Mono via next/font",
+      "role": "UI and display type; tabular numerals for timers and scores",
+      "why": "Distinct from default Inter/Sora look, with clean numerals for live scores."
+    },
+    {
+      "name": "Kept: Next.js 15, React 19, @elevenlabs/react, OpenAI Realtime, Prisma/Postgres, zod, three.js",
+      "role": "Engine and data layer unchanged",
+      "why": "Only the UI layer changes; three.js is lazy-loaded for the voice orb only."
+    },
+    {
+      "name": "Dropped: Tailwind 3 and globals.css component classes",
+      "role": "Removed after each route is ported",
+      "why": "One styling system instead of two."
+    }
+  ],
+  "design_language": {
+    "palette": [
+      {
+        "token": "--ct-canvas-dark",
+        "hex": "#0B1020",
+        "use": "Live console and dark-mode page background"
+      },
+      {
+        "token": "--ct-surface-dark",
+        "hex": "#131A2E",
+        "use": "Cards and rails on dark"
+      },
+      {
+        "token": "--ct-line-dark",
+        "hex": "#22304D",
+        "use": "Hairlines on dark surfaces"
+      },
+      {
+        "token": "--ct-canvas-light",
+        "hex": "#F6F7FB",
+        "use": "Light-mode page background (library, debrief, dashboard)"
+      },
+      {
+        "token": "--ct-ink",
+        "hex": "#0F172A",
+        "use": "Primary text on light; body text meets AA"
+      },
+      {
+        "token": "--ct-primary",
+        "hex": "#4A5AE8",
+        "use": "Rep actions and focus ring; white label passes AA at about 5.4:1. Use #8C9BFF for links on dark"
+      },
+      {
+        "token": "--ct-caller",
+        "hex": "#2BD4A4",
+        "use": "Persona channel on dark and strong scores. On light, text uses #0E7F62 for contrast"
+      },
+      {
+        "token": "--ct-coach",
+        "hex": "#F5B841",
+        "use": "Whisper cues and provisional score state; dark text on amber backgrounds"
+      },
+      {
+        "token": "--ct-alert",
+        "hex": "#C92A3A",
+        "use": "End and grade button and objection alerts on light; use #FF7A8C text on dark"
+      }
+    ],
+    "typography": "Geist for UI and display: headings 600 with -0.02em tracking; body 15px/1.5 on desktop and 16px on mobile. Geist Mono with tabular figures for timers, scores and transcript timestamps. Loaded via next/font/google.",
+    "shape_and_depth": "10px radius on controls, 16px on cards, pill chips. Depth comes from 1px hairlines and surface steps (canvas, surface, raised). Shadows only on floating elements such as Spotlight and Drawer. The live console is always dark, even when the rest of the app is in light mode.",
+    "motion": "Mantine transitions for Drawer and Spotlight at 150-200ms. Score bars ease over 400ms and delta arrows flash once. Waveform is canvas-drawn at about 30fps and pauses when the tab is hidden. Under prefers-reduced-motion, bars become static and the orb is replaced by a still persona avatar.",
+    "iconography": "Tabler icons through @tabler/icons-react at 1.5 stroke, 18px inline and 20px in navigation. Icons always pair with a text label on mobile.",
+    "theme_modes": "Light is the default for library, briefing, debrief, dashboard and team. Dark is the default for the live call and README hero. Both use Mantine defaultColorScheme set to auto plus CSS variables for tokens; the console is fixed dark everywhere so live screens look identical."
+  },
+  "navigation_and_ia": "Replace the glass header with a Mantine AppShell: a collapsible left navbar on desktop (Home, Practice, Library, Create persona, Progress, Team, Settings) and a bottom tab bar on mobile (Home, Library, Practice, Progress, More). Ctrl/Cmd+K opens Mantine Spotlight across personas, scenarios, past debriefs and actions, with grouped results. Entry points converge on one path: Library card to Pre-call briefing to Live call to Debrief to Targeted re-run. Team and org routes appear only when an org is connected, so the solo open-source experience stays clean.",
+  "screens": [
+    {
+      "screen": "Landing / README hero",
+      "layout": "Split hero. Left: headline 'Practice the call before it counts', a one-line subhead, a primary 'Try the live demo' button, a secondary 'Run it locally' button, and three proof badges (MIT, OpenAI models, persona count). Right: a looping console preview with a waveform, an amber whisper cue and rubric bars filling in. Below the fold: industry chip strip, rubric-to-debrief flow, a 'Models in this app' panel and a Contribute band. On phones the hero stacks and the console becomes a static card.",
+      "key_components": "Container, Title, Button, Badge, Paper-based console mock, Chip.Group of industries, SimpleGrid, Kbd for the Ctrl+K hint, anchor links to README sections.",
+      "change_vs_today": "Replaces the blurry orb and four generic feature cards with a live product preview and open-source proof."
+    },
+    {
+      "screen": "Persona & scenario library",
+      "layout": "AppShell with a 260px facet rail on the left (role, industry, difficulty, objection type, channel, length; each with counts). Top: search and filter chips with a Clear link. Main: grouped sections by sales job, each with a title, count and See all link, then a three-column card grid (two on tablet, one on phone). Card: initials avatar, persona name, role and company type, temperament meter, objection tags, difficulty badge, Preview and Practice buttons. Ctrl+K opens Spotlight over the same catalogue.",
+      "key_components": "AppShell.Navbar, Checkbox.Group, Chip.Group, SimpleGrid, Card, Badge, Avatar, Drawer for preview, Spotlight, Pagination, contributed-by author chip.",
+      "change_vs_today": "Replaces a three-item select with a browsable catalogue filterable by sales job, industry and objection."
+    },
+    {
+      "screen": "AI persona wizard",
+      "layout": "Full-width Stepper at the top: Source, Persona, Scenario, Dry run. Step 1: left column holds a Dropzone for files and a Textarea for pasted text or a URL; right column is a checklist of what will be extracted (role, buyer goal, objections, pricing stance) that ticks as inputs arrive. Steps 2 and 3: editable draft fields on the left, each with an AI badge and source-tag chips; a live buyer-view preview card on the right. Step 4: a 60-second dry run in voice or text, then Save to library or Download file. Drafts show Skeleton rows that fill in.",
+      "key_components": "Stepper, Dropzone, Textarea (autosize), TagsInput for objections, SegmentedControl for voice/text, Slider for temperament, NumberInput for rubric weights, Skeleton, Notifications.",
+      "change_vs_today": "Adds a creation path that drafts persona, scenario and rubric from a JD, URL, CRM notes or a call. Today there is none."
+    },
+    {
+      "screen": "Pre-call briefing",
+      "layout": "Two columns. Left, wide: persona header (initials avatar, name, role, one-line situation), a 'Your goal' line, a 'What they will push on' chip row, then the talk track as a vertical Timeline with six steps and time estimates. Right: rubric card with a stacked weight bar and criteria list, a Sparkline of your last three scores on this persona, a mic check meter, a Voice/Text SegmentedControl and a full-width Start button. Phone: one column with Start pinned at the bottom.",
+      "key_components": "Card, Timeline, Chip.Group, SegmentedControl, Progress (stacked), Sparkline from @mantine/charts, Button, Notifications for mic permission.",
+      "change_vs_today": "Replaces a collapsed talk track and dropdown with a briefing that shows goal, pressure points and weights first."
+    },
+    {
+      "screen": "Live call (coaching + live scoring)",
+      "layout": "Dark three-zone console. Left, 280px: persona panel with a dual-channel waveform (rep in indigo, persona in teal), a state chip ('Caller speaking', 'Your turn') and a Geist Mono timer. Centre: transcript with turn numbers, objection alerts pinned at top, and a dock with mute, Voice/Text and the alert-red 'End & grade'. Right rail, 320px: amber whisper cue card, talk-track Stepper, and live rubric rows with provisional bars, delta arrows and evidence chips. Ctrl+K stays available mid-call for battle cards.",
+      "key_components": "AppShell aside and main, ScrollArea, Stepper, Progress, Alert, Badge, Tooltip, Kbd, Affix, lazy-loaded three.js orb only when voice is on, reduced-motion fallback.",
+      "change_vs_today": "Replaces a chat app that gives no feedback with a coaching rail, a talk-track tracker and a live rubric."
+    },
+    {
+      "screen": "Debrief / scorecard",
+      "layout": "Summary first. Hero row: large RingProgress with the grade, a goal status chip (met, partly, missed) and a 'Coach's one fix' card with a single sentence. Below, two columns: a RadarChart of criteria on the left, a Strengths and Improve pair on the right. Then Tabs: 'By criterion' (Accordion rows showing score, weight, rationale and quote chips that jump to transcript lines) and 'Transcript' (side panel with highlighted evidence and Replay). The grader-fallback notice is a Mantine Alert. 'Re-run weakest criterion' is the primary action.",
+      "key_components": "RingProgress, RadarChart, Accordion, Tabs, Alert, Badge, quote chips as Anchors, ActionIcon for print, Button.",
+      "change_vs_today": "Turns the long scroll into one fix, a radar and drill-down evidence, with a clear next action."
+    },
+    {
+      "screen": "Progress dashboard",
+      "layout": "Top row of four KPI tiles (sessions, average, best, time practised), each with a Sparkline and week-on-week delta. Middle: AreaChart of score over time with a criterion Select, beside a RadarChart comparing your first five calls with your last five. Bottom left: practice streak grid built from SimpleGrid. Bottom right: recent-calls Table with persona, score, goal badge and Replay. A readiness panel shows a Progress bar per sales job with an unlock state for live calls.",
+      "key_components": "SimpleGrid, Paper stat tiles, Sparkline, AreaChart, RadarChart, Select, Table, Badge, Progress, Tooltip.",
+      "change_vs_today": "Replaces four numbers and a plain list with trends, readiness per job and one suggested next session."
+    },
+    {
+      "screen": "Manager / team view",
+      "layout": "AppShell with Team in the navbar. Header: team name, date-range SegmentedControl and an Assign persona button. Tabs: Roster, Skills heatmap, Assignments, Org library. Roster: sortable Table with readiness Progress, last session, weakest-criterion chip and a supervisor-note indicator. Heatmap: criteria as rows and reps as columns, cells coloured by average and labelled with values. Clicking a rep opens a Drawer with notes, history and an 'Approve for live calls' Switch.",
+      "key_components": "Tabs, Table, Badge, Progress, Box-grid heatmap with Tooltip, Drawer, Textarea for supervisor notes, Switch, Avatar.Group, Menu for bulk actions.",
+      "change_vs_today": "Adds the manager surface that the data model already supports but the UI never shows."
+    },
+    {
+      "screen": "Mobile live call",
+      "layout": "Full-screen dark layout at 390px with 16px gutters. Top: slim bar with persona name, state chip and timer, then a one-line strip of the three weakest criteria with compact bars. Middle: the last two turns in large type, with a tap to open the full transcript. The coaching cue sits in a bottom Drawer peek showing one amber line. Bottom dock within thumb reach: mute, Voice/Text toggle and a full-width alert-red 'End & grade'. Respects safe-area insets; no horizontal scroll.",
+      "key_components": "Drawer (bottom peek), sticky footer, compact Progress, SegmentedControl, ActionIcon, full-width Button, Notifications.",
+      "change_vs_today": "Replaces the stacked chat with a thumb-first console where coaching is one line and the transcript is optional."
+    }
+  ],
+  "live_coaching_and_scoring": "Three layers on one dark console. Whisper strip: one amber cue above the composer (for example 'Ask for the callback number before quoting price'), visible about 4 seconds, with Settings for off, text-only or audio whisper. Talk-track Stepper: six steps from the scenario, ticked as the model detects each one. Live rubric: each criterion shows a provisional score bar, a delta arrow after every turn, and an evidence chip that jumps to the transcript line that moved it. Scores stay dimmed until two consecutive turns agree. Objection alerts appear as a rose Alert pinned to the transcript. The debrief reuses the same rows, so live and final numbers match. Per-turn grading uses the current default gpt-4.1-mini under a token budget, and falls back to the keyword heuristic with a visible notice.",
+  "persona_library_and_wizard": "Library: grouped sections by sales job covering SDR cold call, AE discovery, SaaS, insurance, mortgage, real estate, solar, home services, auto, medical devices, B2B procurement, recruiting, retail, customer success and collections. A left facet rail filters by role, industry, difficulty, objection type and channel, with counts; filter chips sit above the grid. Cards show a generated initials avatar (no photoreal faces), role, temperament meter, objection tags, and Preview or Practice. Wizard: a four-step Stepper (Source, Persona, Scenario, Dry run). Source accepts a job description, product URL, CRM notes, ICP or a pasted call. Drafted fields stream in, each tagged with the source sentence it came from. Rubric weights must total 100, shown on a live bar. Save writes a persona file that can go into a pull request.",
+  "signature_moments": [
+    "Whisper strip: one amber cue fades in above the composer and never blocks typing.",
+    "Evidence chips: every rubric movement links to the transcript line that caused it.",
+    "Ctrl+K Spotlight across personas, scenarios, debriefs and actions, including 'Build persona from this JD'.",
+    "Wizard fields stream in tagged with their source sentence, so users see where each persona detail came from.",
+    "Debrief 'Replay this moment' jumps the transcript and audio to the quoted line.",
+    "Model stack panel: each feature names its OpenAI model and shows cost per session."
+  ],
+  "openai_fund_angle": "Make OpenAI visible and useful, not logo-stuffed. A 'Model stack' panel in Settings and the README shows which model runs each job: the OpenAI Realtime model for voice, gpt-4.1-mini (current default) for live cues and grading, and a larger GPT model for the persona wizard. Per-session token and cost chips let reviewers see real usage, and the landing page runs the live console on those calls. For contributors, every persona is a reviewable file, the wizard exports a PR-ready persona, and a root AGENTS.md plus a 'Contribute a persona' page explain how Codex CLI can draft and review persona pull requests. Use only OpenAI's official 'Powered by' assets under their brand guidelines.",
+  "inspirations": [
+    {
+      "source": "Mantine home page",
+      "url": "https://mantine.dev/",
+      "borrowed": "120+ components and 70 hooks; dark mode via defaultColorScheme; LLM-friendly docs."
+    },
+    {
+      "source": "Mantine Spotlight docs",
+      "url": "https://mantine.dev/x/spotlight/",
+      "borrowed": "Ctrl+K command center with grouped actions, action groups and a fuzzy filter."
+    },
+    {
+      "source": "Mantine Charts docs",
+      "url": "https://mantine.dev/charts/getting-started/",
+      "borrowed": "Recharts-based charts styled to the Mantine theme."
+    },
+    {
+      "source": "Vapi call detail (Mobbin)",
+      "url": "https://mobbin.com/screens/007a4823-5c3d-4016-b2d1-8637a49cb015",
+      "borrowed": "Dual-channel waveform, timestamped transcript and a per-call cost chip."
+    },
+    {
+      "source": "Fireflies live assist (Mobbin)",
+      "url": "https://mobbin.com/screens/2047129f-d283-45ef-81bb-09aa79a32ffe",
+      "borrowed": "Suggested-question chips and live notes beside an active conversation."
+    },
+    {
+      "source": "Grain scorecard (Mobbin)",
+      "url": "https://mobbin.com/screens/f677f7ba-ad23-444f-847d-96619cb8f585",
+      "borrowed": "Per-criterion 1-5 chips for quick rubric scoring."
+    },
+    {
+      "source": "Hume AI call summary (Mobbin)",
+      "url": "https://mobbin.com/screens/a9541ec3-37b9-4f85-88d8-387f92eb3e1f",
+      "borrowed": "Evaluation bars with a score per dimension and peak timelines."
+    },
+    {
+      "source": "Workable scorecard (Mobbin)",
+      "url": "https://mobbin.com/screens/69d271e5-a137-4513-9a2f-6ea96fc002e5",
+      "borrowed": "Question-level scorecard editor for rubric editing."
+    },
+    {
+      "source": "Apollo conversation insights (Mobbin)",
+      "url": "https://mobbin.com/screens/650408a0-5110-4ab6-a044-2e4006f21f2a",
+      "borrowed": "Insights panel with objections and next steps beside the call recording."
+    },
+    {
+      "source": "HubSpot blog generator flow (Mobbin)",
+      "url": "https://mobbin.com/flows/da528cf9-aed1-4c09-992d-7642e79cbb2d",
+      "borrowed": "Four-step AI creation stepper ending in a review step."
+    },
+    {
+      "source": "Jasper writing task flow (Mobbin)",
+      "url": "https://mobbin.com/flows/213ae30f-b4f5-4f36-874d-e56b982b88a4",
+      "borrowed": "Progressive sections with checkmarks and a Generate now action."
+    },
+    {
+      "source": "ClickUp Template Center (Mobbin)",
+      "url": "https://mobbin.com/screens/04818cc9-7502-402a-a6f8-ec356682723b",
+      "borrowed": "Category sidebar and grouped sections such as Sales and CRM, each with See more."
+    },
+    {
+      "source": "Adobe Express Explore (Mobbin)",
+      "url": "https://mobbin.com/screens/695b842e-f913-440f-8223-de3aa242f976",
+      "borrowed": "Filter chip row above a facet rail with counts."
+    },
+    {
+      "source": "Second Nature roundup of AI role-play platforms (competitor, web)",
+      "url": "https://secondnature.ai/the-9-best-ai-role-play-platforms-for-enterprise-sales-training/",
+      "borrowed": "Competitors' scored feedback arrives after the session, not live; SCORM/LTI and SSO are table stakes. This is the gap we can own. Vendor claim, not verified."
+    },
+    {
+      "source": "Mindtickle comparison of Second Nature and Hyperbound (web)",
+      "url": "https://www.mindtickle.com/article/second-nature-vs-hyperbound-ai-sales-role-play-platform/",
+      "borrowed": "Live-deal coaching and scoring of real calls are where the category is contested."
+    },
+    {
+      "source": "r/sales thread on AI roleplay tools (web)",
+      "url": "https://www.reddit.com/r/sales/comments/1hvqu38/ever_used_ai_roleplaying_tools_like_hyperbound_or/",
+      "borrowed": "Reps already use general chatbots to roleplay; that free baseline is the bar to beat."
+    }
+  ],
+  "implementation": {
+    "effort": "XL",
+    "migration_path": "Phase 1: install Mantine v8 with postcss-preset-mantine, define the token theme, build AppShell and Spotlight, then remove Tailwind last. Phase 2: port Pre-call briefing and the live console behind a feature flag, leaving API routes, Prisma and the ElevenLabs and Realtime hooks untouched. Phase 3: ship the persona catalogue and wizard on a new JSON persona schema, seeded by contributors to 50+ personas. Phase 4: debrief, dashboard, team view and the mobile pass. Use screenshot diffs per route and keep Tailwind classes only until each route is ported."
+  },
+  "risks": [
+    "Mantine defaults look generic; without the custom token set and dark console the redesign repeats the template problem.",
+    "Live cues and scores can be wrong or unstable, and per-turn grading adds cost and latency that can break the feel of a call. Show provisional state, budget tokens and test on slow networks.",
+    "Persona quality and licensing: 50+ personas must be original, free of real-company names and copyrighted scripts, which needs a contributor guide and a review step.",
+    "Total rewrite of nine screens risks regressions in voice and text modes and in accessibility. Mitigate with feature flags and per-route screenshot diffs.",
+    "Free general chatbots are the baseline for many reps, so the open-source core must beat them on scoring evidence, not only on looks.",
+    "Enterprise competitors (Second Nature, Hyperbound, Yoodli, Mindtickle, Gong) publish SOC 2 and LMS integrations; SaaS viability depends on hosted, compliance and LMS layers beyond the open-source core.",
+    "Mobbin search was web-only, so the mobile live-call layout is reasoned rather than sourced from mobile references.",
+    "Waveforms and colour-coded scores need text labels, shape cues and reduced-motion fallbacks to meet accessibility standards."
+  ]
+}

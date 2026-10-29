@@ -1,19 +1,23 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AgentState } from "@/components/ui/orb";
 
 export type { AgentState };
 
-const ORB_COLORS: [string, string] = ["#BFD3FF", "#9FE7DD"];
+/** A token from globals.css (an RGB triplet) as a color three.js can parse, read where the orb sits so the .deck scope applies. */
+function tokenColor(el: Element, name: string): string | null {
+  const rgb = getComputedStyle(el).getPropertyValue(name).trim().split(/\s+/);
+  return rgb.length === 3 ? `rgb(${rgb.join(", ")})` : null;
+}
 
 /** Static brand gradient: SSR/loading state, reduced-motion users, and browsers without WebGL. */
 function OrbFallback({ state }: { state: AgentState }) {
   return (
     <div className="absolute inset-0 flex items-center justify-center" aria-hidden>
       <div
-        className={`h-[78%] w-[78%] rounded-full bg-[radial-gradient(circle_at_30%_25%,#5eead4,#1D4ED8_70%)] shadow-orb ${state === "talking" ? "motion-safe:animate-orb-talk" : state ? "motion-safe:animate-orb-breathe" : ""}`}
+        className={`h-[78%] w-[78%] rounded-full bg-[radial-gradient(circle_at_30%_25%,rgb(var(--primary-hover)),rgb(var(--primary))_70%)] shadow-glow ${state === "talking" ? "motion-safe:animate-orb-talk" : state ? "motion-safe:animate-orb-breathe" : ""}`}
       />
     </div>
   );
@@ -42,6 +46,15 @@ interface Props {
 export default function CallOrb({ state, getInputVolume, getOutputVolume, manual, className = "" }: Props) {
   const [animated, setAnimated] = useState(false);
   const [settled, setSettled] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  /** The orb's two hues come from the signal and ok tokens, so changing globals.css recolors it too. */
+  const [colors, setColors] = useState<[string, string] | null>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    const a = tokenColor(ref.current, "--signal"), b = tokenColor(ref.current, "--ok");
+    if (a && b) setColors([a, b]);
+  }, []);
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -59,11 +72,11 @@ export default function CallOrb({ state, getInputVolume, getOutputVolume, manual
   }, [animated]);
 
   return (
-    <div className={`relative aspect-square ${className}`}>
-      {(!animated || !settled) && <OrbFallback state={animated ? null : state} />}
-      {animated && (
+    <div ref={ref} className={`relative aspect-square ${className}`}>
+      {(!animated || !settled || !colors) && <OrbFallback state={animated ? null : state} />}
+      {animated && colors && (
         <div className="absolute inset-0"><Orb
-          colors={ORB_COLORS}
+          colors={colors}
           agentState={state}
           {...(manual
             ? { volumeMode: "manual" as const, manualInput: manual.input, manualOutput: manual.output }
