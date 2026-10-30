@@ -12,7 +12,7 @@ By Mykel Stanley · MIT licensed
 - **AI persona wizard** (`/library/new`): build a persona, objection bank and rubric from a job description, a product page URL (fetched server-side with SSRF protections), CRM notes, an ideal-customer profile or a pasted call. Every field shows the source it came from; export the result as a pack file for a pull request. Without a key it builds a template draft you can edit.
 - **Black-box debrief**: score ring and outcome stamp, a clickable moment strip, criterion evidence that jumps to the transcript line, a grader label naming the model that graded the call (or "rules-based"), a re-grade action, a *Retry from turn N* aimed at your weakest moment, and a next-drill suggestion. See [Grading and re-grades](#grading-and-re-grades).
 - **Progress logbook**: KPI sparklines, score trend, practice-day heatmap, skill averages by criterion and a "practise this next" drill.
-- **Voice practice** with [OpenAI Realtime](https://platform.openai.com/docs/guides/realtime) (the default whenever an OpenAI key is set, `gpt-realtime-1.5` over WebRTC) or [ElevenLabs Agents](https://elevenlabs.io/docs/agents-platform), or a text simulation that needs no voice keys. A scripted caller and a rules-based coach and grader take over when no LLM key is set.
+- **Voice practice** with [OpenAI Realtime](https://platform.openai.com/docs/guides/realtime) (the default whenever an OpenAI key is set, `gpt-realtime-2.1-mini` over WebRTC) or [ElevenLabs Agents](https://elevenlabs.io/docs/agents-platform), or a text simulation that needs no voice keys. A scripted caller and a rules-based coach and grader take over when no LLM key is set.
 - **Team view** (`/team`, managers and owners): KPIs, a rep-by-criterion heatmap, a coaching queue, supervisor notes, persona assignments with due dates, and a roster CSV export. Demo mode shows a sample team. See [Team view and assignments](#team-view-and-assignments).
 - **Command palette**: Ctrl K (⌘K on macOS) jumps to any page or persona, resumes your last persona and switches the theme.
 - **Model settings** (`/settings/models`): which model runs the coach, grading, wizard and text caller, which voice engines are on, and a one-token connection check (`/api/llm/check`). Keys and endpoint URLs are never shown.
@@ -63,7 +63,8 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 |---|---|---|
 | `OPENAI_REALTIME_API_KEY` | For voice | OpenAI key for Realtime voice calls. Falls back to `OPENAI_API_KEY`, then to `LLM_API_KEY` when `LLM_BASE_URL` is api.openai.com |
 | `OPENAI_API_KEY` | Optional | Voice key when `OPENAI_REALTIME_API_KEY` is unset. Also stands in for `LLM_API_KEY`, but only while `LLM_BASE_URL` is unset or points at api.openai.com, so an OpenAI key is never sent to another provider |
-| `REALTIME_MODEL` | Optional | Default `gpt-realtime-1.5` |
+| `REALTIME_MODEL` | Optional | Model for standard voice calls. Default `gpt-realtime-2.1-mini`, about a third of the full model's price. Set `gpt-realtime-2.1` to run every call on the full model |
+| `REALTIME_MODEL_PREMIUM` | Optional | Model for premium voice calls. Default `gpt-realtime-2.1`. Plans are not wired yet, so today every call is standard |
 | `REALTIME_VOICE` | Optional | Default `marin`. A persona's own `realtimeVoice` wins |
 | `REALTIME_TRANSCRIBE_MODEL` | Optional | Transcribes your side of a voice call. Default `gpt-4o-mini-transcribe` |
 | `VOICE_ENGINE` | Optional | `openai` (default) or `elevenlabs`: which engine the briefing picks first when both are set up |

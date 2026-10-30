@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  DEFAULT_REALTIME_MODEL, DEFAULT_REALTIME_VOICE, TurnAssembler, applyRealtimeEvent, averageLevel, chooseVoiceEngine,
+  DEFAULT_REALTIME_MODEL, DEFAULT_REALTIME_PREMIUM_MODEL, DEFAULT_REALTIME_VOICE, TurnAssembler, applyRealtimeEvent, averageLevel, chooseVoiceEngine,
   micErrorMessage, openingInstructions, orderVoiceEngines, pickRealtimeVoice, realtimeModel, realtimeUpstreamMessage, resolveRealtimeKey,
 } from "@/lib/realtime";
 import { getCapabilities } from "@/lib/serverConfig";
@@ -32,8 +32,20 @@ describe("model and voice", () => {
   it("defaults the model and honours REALTIME_MODEL", () => {
     vi.stubEnv("REALTIME_MODEL", "");
     expect(realtimeModel()).toBe(DEFAULT_REALTIME_MODEL);
+    expect(realtimeModel()).toBe("gpt-realtime-2.1-mini");
     vi.stubEnv("REALTIME_MODEL", "gpt-realtime-2.1");
     expect(realtimeModel()).toBe("gpt-realtime-2.1");
+    expect(realtimeModel("standard")).toBe("gpt-realtime-2.1");
+  });
+  it("keeps premium calls on the full model and honours REALTIME_MODEL_PREMIUM", () => {
+    vi.stubEnv("REALTIME_MODEL", "gpt-realtime-2.1-mini");
+    vi.stubEnv("REALTIME_MODEL_PREMIUM", "");
+    expect(realtimeModel("premium")).toBe(DEFAULT_REALTIME_PREMIUM_MODEL);
+    expect(DEFAULT_REALTIME_PREMIUM_MODEL).toBe("gpt-realtime-2.1");
+    vi.stubEnv("REALTIME_MODEL_PREMIUM", " gpt-realtime-2.2 ");
+    expect(realtimeModel("premium")).toBe("gpt-realtime-2.2");
+    // The premium setting never leaks into standard calls.
+    expect(realtimeModel()).toBe("gpt-realtime-2.1-mini");
   });
   it("picks persona voice, then env voice, then the default, ignoring unknown names", () => {
     expect(pickRealtimeVoice("Cedar", "ash")).toBe("cedar");

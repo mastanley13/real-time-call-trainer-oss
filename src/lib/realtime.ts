@@ -25,8 +25,14 @@ export const VOICE_ENGINE_LABELS: Record<VoiceEngine, string> = { openai: "OpenA
 export const REALTIME_VOICES = ["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"] as const;
 export type RealtimeVoice = (typeof REALTIME_VOICES)[number];
 
-/** gpt-realtime is marked deprecated on the models page; gpt-realtime-1.5 is the flagship audio-in, audio-out model. */
-export const DEFAULT_REALTIME_MODEL = "gpt-realtime-1.5";
+/**
+ * gpt-realtime-2.1-mini runs every standard call: about a third of the full model's audio token price.
+ * Premium calls keep the full gpt-realtime-2.1 (REALTIME_MODEL_PREMIUM overrides it).
+ */
+export const DEFAULT_REALTIME_MODEL = "gpt-realtime-2.1-mini";
+export const DEFAULT_REALTIME_PREMIUM_MODEL = "gpt-realtime-2.1";
+/** Which plan a voice call is billed to. Only "standard" is wired today; plans arrive with STR-689/STR-690. */
+export type RealtimeTier = "standard" | "premium";
 export const DEFAULT_REALTIME_VOICE: RealtimeVoice = "marin";
 export const DEFAULT_TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe";
 
@@ -41,7 +47,10 @@ export function resolveRealtimeKey(env: Env): string | undefined {
 }
 
 export const realtimeKey = (): string | undefined => resolveRealtimeKey(process.env);
-export const realtimeModel = (): string => process.env.REALTIME_MODEL?.trim() || DEFAULT_REALTIME_MODEL;
+export const realtimeModel = (tier: RealtimeTier = "standard"): string =>
+  tier === "premium"
+    ? process.env.REALTIME_MODEL_PREMIUM?.trim() || DEFAULT_REALTIME_PREMIUM_MODEL
+    : process.env.REALTIME_MODEL?.trim() || DEFAULT_REALTIME_MODEL;
 export const realtimeTranscribeModel = (): string => process.env.REALTIME_TRANSCRIBE_MODEL?.trim() || DEFAULT_TRANSCRIBE_MODEL;
 
 export const isRealtimeVoice = (v: unknown): v is RealtimeVoice => typeof v === "string" && (REALTIME_VOICES as readonly string[]).includes(v);
