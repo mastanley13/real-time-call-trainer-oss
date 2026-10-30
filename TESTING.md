@@ -164,6 +164,7 @@ Every limit is a fixed window in memory, per server instance, and resets on rest
 | `/api/coach/turn` (live coach) | `RATE_LIMIT_COACH_MAX` (120 per 600 s) | Set 3 and keep talking: after the third turn the rail shows the wait message, and the call itself carries on |
 | `/api/persona/generate` + `/api/persona/fetch-url` (wizard, shared) | `RATE_LIMIT_WIZARD_MAX` (20 per 3600 s) | Set 2, import a URL twice, then **Draft persona** |
 | `/api/realtime/session` (OpenAI Realtime voice) | `RATE_LIMIT_REALTIME_MAX` (10 per 3600 s) | Set 1 and start two voice calls |
+| `/api/auth/google/start` + `/callback` (Google sign-in, shared) | `RATE_LIMIT_GOOGLE_MAX` (30 per 900 s) | Full mode with Google keys. Set 1 and press **Continue with Google** twice |
 | `/api/elevenlabs/token` (ElevenLabs voice) | `RATE_LIMIT_TOKEN_MAX` (10 per 3600 s) | Set 1 and start two ElevenLabs calls |
 | `/api/llm/check` (Models page) | fixed, 6 per 10 min | Press **Check connection** seven times |
 | `/api/access` | fixed, 10 per 15 min | See Access code above |
@@ -176,6 +177,8 @@ Each `_MAX` has a matching `_WINDOW_SEC`.
 | Route | Limit |
 |---|---|
 | `/api/persona/generate` + `/api/persona/fetch-url` (wizard, shared) | 20 per hour |
+| `/api/onboarding` + `/api/personas` + `/api/personas/import` (writes, shared) | 30 per 10 minutes |
+| `PATCH /api/team/members` (roles and managers) | 60 per 10 minutes |
 | `/api/evaluate-call` | 10 per minute |
 | `PATCH /api/transcripts/[id]` (re-grade) | 5 per 10 minutes |
 | `/api/llm/check` | 20 per hour |
@@ -208,3 +211,15 @@ done                              # 200, 200, 429
 node -e 'process.stdout.write(JSON.stringify({ url: "x".repeat(250000) }))' |
   curl -s -i -X POST localhost:3000/api/persona/fetch-url -H "content-type: application/json" --data-binary @-
 ```
+
+## Accounts, teams and onboarding (full mode)
+
+Needs `DATABASE_URL`, `JWT_SECRET` and `npm run db:migrate` (migration `20261030000000_accounts_teams_personas`).
+
+1. **Sign up as an owner.** Register with email (or **Sign up with Google** when the Google keys are set). You land on `/onboarding`: pick industries, untick a few suggested personas, **Import**. The library shows them under "Your team's personas".
+2. **Invite a manager.** On the done step or the Team page, copy the invite link and sign up a second account with it in a private window. As the owner, open Team, Members and managers, and set that person's role to Manager.
+3. **Invite reps to a manager.** Signed in as the manager, copy the Team page invite link (it carries `&manager=`). Reps who sign up with it show "reports to <manager>". A rep who joined with the plain code shows **Add to my team** for every manager.
+4. **Scope.** The manager's Team page lists only their reps; another manager's rep is absent, and opening that rep's debrief by URL returns 403. The owner sees everyone and can pick one manager's team from the **Everyone** menu.
+5. **Assignments.** A manager's "whole team" assignment reaches only their reps (check **Assigned to you** on a rep of another manager: it isn't there). An owner's reaches everyone.
+6. **Google.** With `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `APP_URL=http://localhost:3000`, **Continue with Google** signs in; a Google account whose email matches an existing password account is linked to it, and an account with MFA still asks for the authenticator code. Cancelling at Google returns to `/login` with a message.
+7. **Custom team personas.** As a manager, build a persona in the wizard and press **Save to team**. Reps see it with a Team badge.

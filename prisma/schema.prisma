@@ -34,12 +34,16 @@ model Organization {
   /// Nullable = keep training records indefinitely. When set, the nightly
   /// purge job deletes TrainerSession rows older than this many days.
   sessionRetentionDays Int?
+  /// Job family ids (see JOB_FAMILIES) picked at onboarding. Drives which
+  /// library personas are suggested for import.
+  industries String[] @default([])
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   users               User[]
   trainerSessions     TrainerSession[]
   trainingAssignments TrainingAssignment[]
+  teamPersonas        TeamPersona[]
 }
 
 enum UserRole {
@@ -51,7 +55,10 @@ enum UserRole {
 model User {
   id               String   @id @default(cuid())
   email            String   @unique
-  passwordHash     String
+  /// Null for accounts that only ever signed in with Google.
+  passwordHash     String?
+  /// Google account id ("sub" claim). Set on first Google sign-in.
+  googleSub        String?  @unique
   firstName        String?
   lastName         String?
   phone            String?
@@ -62,6 +69,13 @@ model User {
   /// Optional for platform admins who don't need an org.
   organizationId   String?
   organization     Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  /// The manager this rep reports to (same org). A rep has one manager;
+  /// managers see only the reps that point at them, owners see everyone.
+  managerId        String?
+  manager          User?    @relation("ManagerReports", fields: [managerId], references: [id], onDelete: SetNull)
+  reports          User[]   @relation("ManagerReports")
+  /// Set when the user finishes (or skips) onboarding.
+  onboardedAt      DateTime?
   lastLoginAt      DateTime?
   failedLoginCount Int      @default(0)
   lockedUntil      DateTime?
@@ -78,8 +92,10 @@ model User {
   auditEvents         AuditEvent[]
   assignmentsCreated  TrainingAssignment[] @relation("AssignmentAssigner")
   assignmentsReceived TrainingAssignment[] @relation("AssignmentAssignee")
+  teamPersonasCreated TeamPersona[]
 
   @@index([organizationId])
+  @@index([managerId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -137,6 +153,10 @@ model TrainingAssignment {
   assignedBy     User         @relation("AssignmentAssigner", fields: [assignedById], references: [id], onDelete: Cascade)
   /// Null means the whole team.
   assigneeId     String?
+  /// For a whole-team assignment made by a manager: that manager's id, so it
+  /// reaches only their reps. Null on an owner's whole-team assignment means
+  /// everyone in the org.
+  teamOfId       String?
   assignee       User?        @relation("AssignmentAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
   scenarioId     String
   /// Denormalized so the list still reads well if the persona is renamed or removed.
@@ -150,6 +170,34 @@ model TrainingAssignment {
   @@index([organizationId, archivedAt])
   @@index([assigneeId])
   @@index([assignedById])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Team personas
+// ─────────────────────────────────────────────────────────────────────────
+
+/// The personas a team practises. Either a reference to a library persona
+/// (imported at onboarding, `data` null, `scenarioId` = the library id) or a
+/// custom persona a manager created (`data` holds the full scenario,
+/// `scenarioId` starts with "team-").
+model TeamPersona {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdById    String?
+  createdBy      User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  scenarioId     String
+  /// "library" or "custom".
+  source         String
+  title          String
+  /// Job family id.
+  role           String
+  data           Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, scenarioId])
+  @@index([organizationId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────

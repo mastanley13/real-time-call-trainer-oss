@@ -71,9 +71,10 @@ export function verifyMfaChallengeToken(token: string): string | null {
 
 export async function verifyPassword(
   plain: string,
-  hash: string,
+  hash: string | null,
 ): Promise<{ ok: boolean; needsRehash: boolean }> {
   // Only bcrypt hashes are accepted. Plaintext comparison is never performed.
-  if (!/^\$2[aby]\$/.test(hash)) return { ok: false, needsRehash: false };
+  // Google-only accounts have no hash and can't sign in with a password.
+  if (!hash || !/^\$2[aby]\$/.test(hash)) return { ok: false, needsRehash: false };
   return { ok: await bcrypt.compare(plain, hash), needsRehash: false };
 }

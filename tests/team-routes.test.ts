@@ -35,7 +35,7 @@ beforeEach(() => {
   mocks.prisma.user.findUnique.mockResolvedValue({ id: "m-1", role: "manager", isPlatformAdmin: false, organizationId: "o-1", firstName: "Mia", lastName: "Chen", email: "m-1@example.test" });
   mocks.prisma.user.findMany.mockResolvedValue([
     { id: "m-1", firstName: "Mia", lastName: "Chen", email: "m-1@example.test", role: "manager" },
-    { id: "r-1", firstName: "Ravi", lastName: "Shah", email: "r-1@example.test", role: "trainee" },
+    { id: "r-1", firstName: "Ravi", lastName: "Shah", email: "r-1@example.test", role: "trainee", managerId: "m-1" },
   ]);
   mocks.prisma.organization.findUnique.mockResolvedValue({ id: "o-1", name: "Harbor Point", sessionRetentionDays: null });
   mocks.prisma.trainingAssignment.findMany.mockResolvedValue([]);
@@ -67,6 +67,37 @@ describe("team overview", () => {
     expect(body.matrix.criteria).not.toContain("Said hello");
     expect(body.queue.map((q) => q.sessionId)).not.toContain("s-own");
   });
+
+  it("shows a manager only their own reps, and asks the database for only their sessions", async () => {
+    mocks.prisma.user.findMany.mockResolvedValue([
+      { id: "m-1", firstName: "Mia", lastName: "Chen", email: "m-1@example.test", role: "manager", managerId: null },
+      { id: "r-1", firstName: "Ravi", lastName: "Shah", email: "r-1@example.test", role: "trainee", managerId: "m-1" },
+      { id: "m-2", firstName: "Leo", lastName: "Park", email: "m-2@example.test", role: "manager", managerId: null },
+      { id: "r-2", firstName: "Ana", lastName: "Ruiz", email: "r-2@example.test", role: "trainee", managerId: "m-2" },
+    ]);
+    mocks.prisma.trainerSession.findMany.mockResolvedValue([]);
+    const res = await overview(new NextRequest("http://localhost/api/team/overview?days=30"));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as TeamOverview;
+    // The roster lists reps; the other manager's rep is not there.
+    expect(body.roster.map((r) => r.id)).toEqual(["r-1"]);
+    const where = mocks.prisma.trainerSession.findMany.mock.calls[0][0].where;
+    expect(where.userId).toEqual({ in: ["m-1", "r-1"] });
+  });
+
+  it("lets an owner narrow the view to one manager's team", async () => {
+    mocks.prisma.user.findUnique.mockResolvedValue({ id: "o-1u", role: "owner", isPlatformAdmin: false, organizationId: "o-1", managerId: null, firstName: "Olu", lastName: "B", email: "o@example.test" });
+    mocks.prisma.user.findMany.mockResolvedValue([
+      { id: "m-1", firstName: "Mia", lastName: "Chen", email: "m-1@example.test", role: "manager", managerId: null },
+      { id: "r-1", firstName: "Ravi", lastName: "Shah", email: "r-1@example.test", role: "trainee", managerId: "m-1" },
+      { id: "r-2", firstName: "Ana", lastName: "Ruiz", email: "r-2@example.test", role: "trainee", managerId: "m-2" },
+    ]);
+    mocks.prisma.trainerSession.findMany.mockResolvedValue([]);
+    const all = (await (await overview(new NextRequest("http://localhost/api/team/overview?days=30"))).json()) as TeamOverview;
+    expect(all.roster.map((r) => r.id).sort()).toEqual(["r-1", "r-2"]);
+    const one = (await (await overview(new NextRequest("http://localhost/api/team/overview?days=30&manager=m-1"))).json()) as TeamOverview;
+    expect(one.roster.map((r) => r.id)).toEqual(["r-1"]);
+  });
 });
 
 describe("team assignments", () => {
@@ -74,7 +105,7 @@ describe("team assignments", () => {
     assign(new NextRequest("http://localhost/api/team/assignments", { method: "POST", body: JSON.stringify({ scenarioId, scenarioTitle: "Some persona", assigneeId: "r-1" }), headers: { "Content-Type": "application/json" } }));
 
   it("refuses a persona that isn't in the library", async () => {
-    mocks.prisma.user.findFirst.mockResolvedValue({ id: "r-1" });
+    mocks.prisma.user.findFirst.mockResolvedValue({ id: "r-1", managerId: "m-1" });
     const res = await post(CUSTOM_ID);
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: "invalid_persona" });
@@ -82,11 +113,19 @@ describe("team assignments", () => {
   });
 
   it("assigns a library persona", async () => {
-    mocks.prisma.user.findFirst.mockResolvedValue({ id: "r-1" });
+    mocks.prisma.user.findFirst.mockResolvedValue({ id: "r-1", managerId: "m-1" });
     mocks.prisma.trainingAssignment.create.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
       Promise.resolve({ id: "a-1", createdAt: new Date(NOW), dueAt: null, ...data }));
     const res = await post(LIBRARY_ID);
     expect(res.status).toBe(201);
     expect(mocks.prisma.trainingAssignment.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ scenarioId: LIBRARY_ID }) }));
+  });
+
+  it("refuses to assign a rep on another manager's team", async () => {
+    mocks.prisma.user.findFirst.mockResolvedValue({ id: "r-1", managerId: "m-2" });
+    const res = await post(LIBRARY_ID);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "invalid_assignee" });
+    expect(mocks.prisma.trainingAssignment.create).not.toHaveBeenCalled();
   });
 });

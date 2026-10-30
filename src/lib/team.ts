@@ -254,6 +254,8 @@ export interface Assignment {
   dueAt: string | null;
   createdAt: string;
   archivedAt: string | null;
+  /** Set on a manager's whole-team assignment: it reaches only that manager's reps. */
+  teamOfId?: string | null;
 }
 
 export interface AssignmentProgress {

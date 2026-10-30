@@ -259,10 +259,12 @@ describe("PATCH /api/transcripts/[id] (server re-grade)", () => {
     expect(mocks.prisma.auditEvent.create.mock.calls[0][0].data.metadata.scenarioSource).toBe("client");
   });
 
-  it("allows the owner, same-org managers and platform admins only", async () => {
+  it("allows the owner, the rep's manager, same-org owners and platform admins only", async () => {
     const actor = (role: string, organizationId: string | null, isPlatformAdmin = false) => {
       signIn();
-      mocks.prisma.user.findUnique.mockResolvedValue({ id: mocks.user.id, role, organizationId, isPlatformAdmin });
+      const me = { id: mocks.user.id, role, organizationId, isPlatformAdmin };
+      // The rep reports to the signed-in user, so a manager here is the rep's own manager.
+      mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => (where.id === me.id ? me : { id: where.id, managerId: me.id }));
     };
     actor("trainee", "org-1");
     expect((await patch({})).status).toBe(403);

@@ -5,7 +5,8 @@ import { prisma } from "@/lib/db";
 import { LIBRARY } from "@/lib/personas";
 import { buildOverview, canManageTeam, gradeOf, memberName, parseWindow, type TeamSession } from "@/lib/team";
 import { buildSampleOverview } from "@/lib/teamSample";
-import { forbidden, limitFor, loadActor, loadAssignmentViews, noOrganization, orgMembers, serverError, teamIsLocal } from "../_lib/server";
+import { seesWholeOrg } from "@/lib/teamScope";
+import { forbidden, limitFor, loadActor, loadAssignmentViews, managerScope, noOrganization, scopedMembers, serverError, teamIsLocal } from "../_lib/server";
 
 /**
  * Team overview for managers and owners (and platform admins), scoped to the
@@ -15,14 +16,15 @@ import { forbidden, limitFor, loadActor, loadAssignmentViews, noOrganization, or
 
 const DAY = 86_400_000;
 const HISTORY_DAYS = 90;
-const Query = z.object({ days: z.enum(["7", "30", "90"]).default("30") });
+/** `manager` (owners only) narrows the view to one manager's team. */
+const Query = z.object({ days: z.enum(["7", "30", "90"]).default("30"), manager: z.string().trim().min(1).max(64).optional() });
 const titles = new Map(LIBRARY.map((s) => [s.id, s.title]));
 
 export async function GET(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 
-  const parsed = Query.safeParse({ days: req.nextUrl.searchParams.get("days") ?? undefined });
+  const parsed = Query.safeParse({ days: req.nextUrl.searchParams.get("days") ?? undefined, manager: req.nextUrl.searchParams.get("manager") || undefined });
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid_query", message: "Pick a window of 7, 30 or 90 days." }, { status: 400 });
   }
@@ -43,24 +45,28 @@ export async function GET(req: NextRequest) {
     const since = new Date(now.getTime() - days * DAY);
     const historySince = new Date(now.getTime() - Math.max(days, HISTORY_DAYS) * DAY);
 
-    const [org, members, windowRows, historyRows, lastSeenRows] = await Promise.all([
+    // Managers see their own reps; owners see everyone, or one manager's team with ?manager=.
+    const members = await scopedMembers(actor, seesWholeOrg(actor) ? parsed.data.manager : null);
+    const scoped = !seesWholeOrg(actor) || !!parsed.data.manager;
+    const people = scoped ? { userId: { in: members.map((m) => m.id) } } : {};
+
+    const [org, windowRows, historyRows, lastSeenRows] = await Promise.all([
       prisma.organization.findUnique({ where: { id: orgId }, select: { id: true, name: true } }),
-      orgMembers(orgId),
       // Evaluations are only read for the window: they drive the matrix, weakest criterion and queue.
       prisma.trainerSession.findMany({
-        where: { organizationId: orgId, createdAt: { gte: since } },
+        where: { organizationId: orgId, ...people, createdAt: { gte: since } },
         orderBy: { createdAt: "desc" },
         take: 2000,
         select: { id: true, userId: true, scenarioId: true, scenarioTitle: true, overallScore: true, goalAchieved: true, evaluation: true, createdAt: true, supervisorNotes: true },
       }),
       // Older scores feed sparklines and the last-session column only.
       prisma.trainerSession.findMany({
-        where: { organizationId: orgId, createdAt: { gte: historySince, lt: since } },
+        where: { organizationId: orgId, ...people, createdAt: { gte: historySince, lt: since } },
         orderBy: { createdAt: "desc" },
         take: 2000,
         select: { id: true, userId: true, scenarioId: true, scenarioTitle: true, overallScore: true, goalAchieved: true, createdAt: true },
       }),
-      prisma.trainerSession.groupBy({ by: ["userId"], where: { organizationId: orgId }, _max: { createdAt: true } }),
+      prisma.trainerSession.groupBy({ by: ["userId"], where: { organizationId: orgId, ...people }, _max: { createdAt: true } }),
     ]);
 
     const title = (id: string, t: string | null) => t ?? titles.get(id) ?? id;
@@ -85,7 +91,7 @@ export async function GET(req: NextRequest) {
       })),
     ];
     const lastSeen = Object.fromEntries(lastSeenRows.flatMap((r) => (r._max.createdAt ? [[r.userId, r._max.createdAt.toISOString()]] : [])));
-    const assignments = await loadAssignmentViews(orgId, members);
+    const assignments = await loadAssignmentViews(orgId, members, managerScope(actor, members));
 
     return NextResponse.json(buildOverview({
       org: org ?? { id: orgId, name: "Your team" }, days, now, members, sessions, lastSeen,
