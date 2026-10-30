@@ -200,6 +200,18 @@ for i in 1 2 3; do
 done                              # 200, 200, 429
 ```
 
+### Spend guard
+`PAID_FEATURES_ENABLED=false` is the hard kill switch. `/api/realtime/session`, `/api/realtime/sdp`, `/api/coach/turn`, `/api/evaluate-call` and `/api/persona/generate` answer 503 `{ "error": "paid_features_off", "message": ... }` and the UI shows the message. `/api/simulate/turn` keeps working and answers from the scenario's scripted lines (`source: "scripted"`).
+
+`DAILY_REALTIME_MINUTES_CAP` caps voice minutes per UTC day. Each voice session reserves 10 minutes when its client secret is minted (and gives them back if OpenAI fails to mint it). Once the day's reservations reach the cap, the same routes answer 503 `daily_cap_reached` until midnight UTC. Like the rate limits, the counter is in memory per server instance.
+
+```bash
+PAID_FEATURES_ENABLED=false DEMO_MODE=true npm run dev
+curl -s -i -X POST localhost:3000/api/coach/turn -H "content-type: application/json" -d '{}'   # 503 paid_features_off
+```
+
+With `DAILY_REALTIME_MINUTES_CAP=10`, start one voice call: the second answers 503 and a text call uses the scripted caller.
+
 ### Size caps
 - The text caller rejects a history over 200 turns or 20,000 characters with 400. The live coach sends only the most recent turns of a long call, so it keeps working. Grading and re-grades read the first 1,000 turns and 120,000 characters, and the debrief notes when a call was longer instead of refusing it.
 - A request body over 200 KB is rejected with 400:
