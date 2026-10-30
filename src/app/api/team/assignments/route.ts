@@ -5,7 +5,8 @@ import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { LIBRARY } from "@/lib/personas";
 import { AssignmentInputSchema, assignmentInputMessage, assignmentProgress, canManageTeam, parseDueAt, teamIdsOf, toAssignmentView } from "@/lib/team";
-import { forbidden, limitFor, loadActor, loadAssignmentViews, noOrganization, orgMembers, serverError, teamIsLocal, toAssignment } from "../_lib/server";
+import { seesWholeOrg } from "@/lib/teamScope";
+import { forbidden, limitFor, loadActor, loadAssignmentViews, managerScope, noOrganization, orgMembers, scopedMembers, serverError, teamIsLocal, toAssignment } from "../_lib/server";
 
 /**
  * Training assignments: a manager asks one rep, or the whole team, to practise
@@ -38,8 +39,12 @@ export async function GET(req: NextRequest) {
     if (!actor.organizationId) return NextResponse.json({ assignments: [] });
     // Trainees only ever see their own list, whatever they ask for.
     const mine = scope.data === "mine" || !canManageTeam(actor.role, actor.isPlatformAdmin);
-    const members = await orgMembers(actor.organizationId);
-    const assignments = await loadAssignmentViews(actor.organizationId, members, mine ? actor.id : undefined);
+    const members = mine ? await orgMembers(actor.organizationId) : await scopedMembers(actor);
+    const assignments = await loadAssignmentViews(
+      actor.organizationId,
+      members,
+      mine ? { forUser: { id: actor.id, managerId: actor.managerId ?? null } } : managerScope(actor, members),
+    );
     return NextResponse.json({ assignments, scope: mine ? "mine" : "team" });
   } catch (error) {
     console.error("[/api/team/assignments] GET error:", error);
@@ -84,10 +89,14 @@ export async function POST(req: NextRequest) {
     if (!actor.organizationId) return noOrganization();
     const orgId = actor.organizationId;
 
+    const whole = seesWholeOrg(actor);
     if (body.assigneeId) {
-      const assignee = await prisma.user.findFirst({ where: { id: body.assigneeId, organizationId: orgId }, select: { id: true } });
+      const assignee = await prisma.user.findFirst({ where: { id: body.assigneeId, organizationId: orgId }, select: { id: true, managerId: true } });
       if (!assignee) {
         return NextResponse.json({ error: "invalid_assignee", message: "That person is not in your organization. Refresh the page and pick someone from the list." }, { status: 400 });
+      }
+      if (!whole && assignee.id !== actor.id && assignee.managerId !== actor.id) {
+        return NextResponse.json({ error: "invalid_assignee", message: "That person is not on your team. Pick one of your reps." }, { status: 400 });
       }
     }
 
@@ -96,6 +105,8 @@ export async function POST(req: NextRequest) {
         organizationId: orgId,
         assignedById: actor.id,
         assigneeId: body.assigneeId ?? null,
+        // A manager's "whole team" means their own reps; an owner's means everyone.
+        teamOfId: !body.assigneeId && !whole ? actor.id : null,
         scenarioId: body.scenarioId,
         scenarioTitle: body.scenarioTitle,
         note: body.note ? body.note : null,
@@ -111,7 +122,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const members = await orgMembers(orgId);
+    const members = await scopedMembers(actor);
     const assignment = toAssignment(created);
     // Brand new, so nobody has completed it yet.
     const view = toAssignmentView(assignment, new Map(members.map((m) => [m.id, m.name])), assignmentProgress(assignment, [], teamIdsOf(members)));
@@ -139,7 +150,11 @@ export async function DELETE(req: NextRequest) {
     if (!actor.organizationId) return noOrganization();
 
     // Same-org check is part of the lookup, so another org's id reads as not found.
-    const existing = await prisma.trainingAssignment.findFirst({ where: { id: id.data, organizationId: actor.organizationId, archivedAt: null }, select: { id: true } });
+    const existing = await prisma.trainingAssignment.findFirst({ where: { id: id.data, organizationId: actor.organizationId, archivedAt: null }, select: { id: true, assignedById: true, assigneeId: true, teamOfId: true } });
+    if (existing && !seesWholeOrg(actor) && existing.assignedById !== actor.id && existing.teamOfId !== actor.id) {
+      const team = await scopedMembers(actor);
+      if (!existing.assigneeId || !team.some((m) => m.id === existing.assigneeId)) return forbidden();
+    }
     if (!existing) return NextResponse.json({ error: "Not found", message: "That assignment is already archived or does not exist." }, { status: 404 });
 
     await prisma.trainingAssignment.update({ where: { id: existing.id }, data: { archivedAt: new Date() } });

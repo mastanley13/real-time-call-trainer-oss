@@ -8,18 +8,21 @@ import {
   CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps,
   type CallType, type ObjectionType, type Scenario,
 } from "@/lib/scenarios";
-import { duplicateScenario, listScenarios } from "@/lib/scenarioStore";
+import { duplicateScenario, listScenarios, TEAM_PERSONAS_CHANGED, teamScenarioIds } from "@/lib/scenarioStore";
 import { useAuth } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
 import Sheet from "@/components/ui/Sheet";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 
-type Source = "built-in" | "draft" | "mine";
+type Source = "built-in" | "draft" | "mine" | "team";
 interface Filters { role: Set<string>; industry: Set<string>; difficulty: Set<string>; objection: Set<string>; callType: Set<string>; source: Set<string> }
 const EMPTY: Filters = { role: new Set(), industry: new Set(), difficulty: new Set(), objection: new Set(), callType: new Set(), source: new Set() };
 
-const sourceOf = (s: Scenario): Source => (!s.builtIn ? "mine" : s.status === "draft" ? "draft" : "built-in");
-const SOURCE_LABEL: Record<Source, string> = { "built-in": "Reviewed", draft: "Draft (needs review)", mine: "Mine" };
+const isTeamCustom = (s: Scenario) => s.id.startsWith("team-");
+const sourceOf = (s: Scenario): Exclude<Source, "team"> => (!s.builtIn ? "mine" : s.status === "draft" ? "draft" : "built-in");
+/** A persona can be both, say, "Reviewed" and on the team's list. */
+const sourcesOf = (s: Scenario, team: Set<string>): Source[] => (team.has(s.id) ? [sourceOf(s), "team"] : [sourceOf(s)]);
+const SOURCE_LABEL: Record<Source, string> = { team: "Team list", "built-in": "Reviewed", draft: "Draft (needs review)", mine: "Mine" };
 
 /** Pack file contents as contributors would submit them (no runtime-only flags). */
 export function packJson(s: Scenario) {
@@ -28,9 +31,9 @@ export function packJson(s: Scenario) {
   return JSON.stringify(rest, null, 2);
 }
 
-function matches(s: Scenario, f: Filters, q: string, skip?: keyof Filters) {
+function matches(s: Scenario, f: Filters, q: string, team: Set<string>, skip?: keyof Filters) {
   const has = (k: keyof Filters, v: string | string[]) => k === skip || f[k].size === 0 || (Array.isArray(v) ? v.some((x) => f[k].has(x)) : f[k].has(v));
-  if (!has("role", s.role) || !has("industry", s.industry) || !has("difficulty", s.difficulty) || !has("callType", s.callType) || !has("source", sourceOf(s))) return false;
+  if (!has("role", s.role) || !has("industry", s.industry) || !has("difficulty", s.difficulty) || !has("callType", s.callType) || !has("source", sourcesOf(s, team))) return false;
   if (!has("objection", s.objections.map((o) => o.type))) return false;
   if (!q) return true;
   const hay = `${s.title} ${s.industry} ${s.aiPersona.name} ${s.aiPersona.role} ${jobFamilyLabel(s.role)} ${s.objections.map((o) => o.line).join(" ")}`.toLowerCase();
@@ -48,7 +51,13 @@ export default function LibraryClient() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const searchRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => setAll(listScenarios()), []);
+  const [team, setTeam] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const load = () => { setAll(listScenarios()); setTeam(teamScenarioIds()); };
+    load();
+    window.addEventListener(TEAM_PERSONAS_CHANGED, load);
+    return () => window.removeEventListener(TEAM_PERSONAS_CHANGED, load);
+  }, []);
   useEffect(() => {
     if (!isLoading && capabilities && !isAuthenticated) router.replace("/login");
   }, [isLoading, capabilities, isAuthenticated, router]);
@@ -66,7 +75,7 @@ export default function LibraryClient() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const results = useMemo(() => (all ?? []).filter((s) => matches(s, filters, q)), [all, filters, q]);
+  const results = useMemo(() => (all ?? []).filter((s) => matches(s, filters, q, team)), [all, filters, q, team]);
   const filtering = q.trim() !== "" || Object.values(filters).some((v) => v.size > 0);
 
   /** Facet values with live counts (each facet counted with the other facets applied). */
@@ -74,7 +83,7 @@ export default function LibraryClient() {
     const list = all ?? [];
     const count = (key: keyof Filters, valuesOf: (s: Scenario) => string[]) => {
       const m = new Map<string, number>();
-      for (const s of list) if (matches(s, filters, q, key)) for (const v of new Set(valuesOf(s))) m.set(v, (m.get(v) ?? 0) + 1);
+      for (const s of list) if (matches(s, filters, q, team, key)) for (const v of new Set(valuesOf(s))) m.set(v, (m.get(v) ?? 0) + 1);
       return m;
     };
     return {
@@ -83,9 +92,9 @@ export default function LibraryClient() {
       difficulty: count("difficulty", (s) => [s.difficulty]),
       objection: count("objection", (s) => s.objections.map((o) => o.type)),
       callType: count("callType", (s) => [s.callType]),
-      source: count("source", (s) => [sourceOf(s)]),
+      source: count("source", (s) => sourcesOf(s, team)),
     };
-  }, [all, filters, q]);
+  }, [all, filters, q, team]);
 
   function toggle(key: keyof Filters, value: string) {
     setFilters((f) => {
@@ -103,7 +112,8 @@ export default function LibraryClient() {
   if (!all || !capabilities) return <PageSkeleton rows={3} />;
 
   const families = [...JOB_FAMILIES.map((f) => f.id), ...new Set(all.map((s) => s.role).filter((r) => !JOB_FAMILIES.some((f) => f.id === r)))];
-  const mine = all.filter((s) => !s.builtIn);
+  const mine = all.filter((s) => !s.builtIn && !isTeamCustom(s));
+  const teamList = all.filter((s) => team.has(s.id));
   const featured = all.filter((s) => s.builtIn && s.status === "reviewed");
   const familyCount = new Set(all.map((s) => s.role)).size;
 
@@ -184,6 +194,12 @@ export default function LibraryClient() {
             </section>
           ) : (
             <>
+              {teamList.length > 0 && (
+                <section aria-labelledby="sec-team">
+                  <SectionHead id="sec-team" title="Your team's personas" count={teamList.length} note="Imported for your industries or built by your manager" />
+                  {grid(teamList)}
+                </section>
+              )}
               {mine.length > 0 && (
                 <section aria-labelledby="sec-mine">
                   <SectionHead id="sec-mine" title="Your personas" count={mine.length} />
@@ -305,7 +321,9 @@ function PersonaCard({ s, onOpen, onDuplicate }: { s: Scenario; onOpen: () => vo
       </div>
       <div className="pointer-events-none relative mt-3 flex flex-wrap gap-1.5">
         {s.objections.slice(0, 3).map((o, i) => <span key={i} className="chip !px-2 !text-[11px]">{OBJECTION_LABELS[o.type]}</span>)}
-        {src !== "built-in" && <span className={`chip !px-2 !text-[11px] ${src === "mine" ? "!border-primary/50 !text-primary" : "!border-caution/40 !text-caution"}`}>{src === "mine" ? "Mine" : "Draft"}</span>}
+        {isTeamCustom(s)
+          ? <span className="chip !border-primary/50 !px-2 !text-[11px] !text-primary">Team</span>
+          : src !== "built-in" && <span className={`chip !px-2 !text-[11px] ${src === "mine" ? "!border-primary/50 !text-primary" : "!border-caution/40 !text-caution"}`}>{src === "mine" ? "Mine" : "Draft"}</span>}
       </div>
       <div className="relative mt-auto flex items-center justify-between gap-2 pt-4">
         <span className="pointer-events-none truncate font-mono text-[11px] text-ink-muted">{s.industry || "General"} · {s.durationMin} min</span>

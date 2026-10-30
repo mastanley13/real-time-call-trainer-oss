@@ -3,10 +3,11 @@
 Any Node 22+ host works (Vercel, Fly, Render, a VPS). You need a Postgres database for accounts.
 
 ## Checklist
-1. **Database**: provision Postgres; set `DATABASE_URL`. Run `npm run db:migrate` (use the direct, non-pooled URL for migrations on Neon/Supabase). Run it again on every deploy that adds a migration; the team view needs `20261027000000_training_assignments`.
+1. **Database**: provision Postgres; set `DATABASE_URL`. Run `npm run db:migrate` (use the direct, non-pooled URL for migrations on Neon/Supabase). Run it again on every deploy that adds a migration; the team view needs `20261027000000_training_assignments`, and Google sign-in, manager teams and onboarding need `20261030000000_accounts_teams_personas` (it marks existing users as already onboarded).
 2. **Secrets**: `JWT_SECRET` (`node generate-jwt-secret.js`; it also keys the grade seal and the access-code cookie, so rotating it signs everyone out), `CRON_SECRET`.
 3. **Voice**: OpenAI Realtime needs only an OpenAI key (`OPENAI_REALTIME_API_KEY`, or `OPENAI_API_KEY`). ElevenLabs is optional: `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`, with overrides enabled on the agent (see README). With both, `VOICE_ENGINE` picks the default.
 4. **Coach, grading and wizard** (optional): `LLM_API_KEY` (+ `LLM_BASE_URL`, `LLM_MODEL`). Check it from Settings, Models after deploying. `OPENAI_API_KEY` stands in for `LLM_API_KEY` only while `LLM_BASE_URL` points at OpenAI; a custom base URL needs its own `LLM_API_KEY`.
+4b. **Google sign-in** (optional): in Google Cloud Console create an OAuth client of type Web application, add the authorized redirect URI `https://<your domain>/api/auth/google/callback`, and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `APP_URL=https://<your domain>`. The consent screen only needs the `openid`, `email` and `profile` scopes.
 5. **Do not set `DEMO_MODE`**. It disables authentication.
 6. Build and start: `npm run build && npm start`.
 7. **Retention**: `vercel.json` schedules `/api/cron/purge-expired` daily on Vercel, and Vercel Cron sends `Authorization: Bearer $CRON_SECRET` when the variable is set. Elsewhere, call it with that header. The route accepts nothing else (the `x-vercel-cron` header is ignored) and returns 401 when `CRON_SECRET` is unset. Per-org retention is set in the database (`Organization.sessionRetentionDays`).

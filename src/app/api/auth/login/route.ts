@@ -8,6 +8,7 @@ import {
 } from "@/lib/auth";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
+import { needsOnboarding } from "@/lib/session";
 
 const LoginSchema = z.object({
   email: z.string().email().max(254),
@@ -152,6 +153,7 @@ export async function POST(request: NextRequest) {
         }
       : null,
     token,
+    needsOnboarding: needsOnboarding(user),
   });
   res.cookies.set("authToken", token, {
     httpOnly: true,

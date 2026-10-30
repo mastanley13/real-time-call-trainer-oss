@@ -5,18 +5,32 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
+import GoogleButton, { OrDivider } from "@/components/GoogleButton";
 
 export default function RegisterPage() {
-  const { register, isAuthenticated, capabilities } = useAuth();
+  const { register, isAuthenticated, capabilities, needsOnboarding } = useAuth();
   const router = useRouter();
   const [mode, setMode] = useState<"create" | "join">("create");
   const [f, setF] = useState({ firstName: "", lastName: "", email: "", password: "", orgName: "", orgCode: "" });
+  /** A manager's invite link: /register?code=123456&manager=<id>. */
+  const [invite, setInvite] = useState<{ code: string; manager?: string } | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (isAuthenticated) router.replace("/trainer");
-  }, [isAuthenticated, router]);
+    if (isAuthenticated) router.replace(needsOnboarding ? "/onboarding" : "/trainer");
+  }, [isAuthenticated, needsOnboarding, router]);
+
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const code = sp.get("code") ?? "";
+    if (/^[0-9]{3,8}$/.test(code)) {
+      const manager = sp.get("manager")?.slice(0, 64) || undefined;
+      setInvite({ code, manager });
+      setMode("join");
+      setF((cur) => ({ ...cur, orgCode: code }));
+    }
+  }, []);
 
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
 
@@ -30,9 +44,11 @@ export default function RegisterPage() {
         lastName: f.lastName,
         email: f.email,
         password: f.password,
-        ...(mode === "create" ? { newOrgName: f.orgName } : { joinOrgCode: f.orgCode }),
+        ...(mode === "create"
+          ? { newOrgName: f.orgName }
+          : { joinOrgCode: f.orgCode, ...(invite?.manager && invite.code === f.orgCode ? { managerId: invite.manager } : {}) }),
       });
-      router.push("/trainer");
+      // The effect above sends new accounts on to onboarding.
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {
@@ -44,6 +60,13 @@ export default function RegisterPage() {
     <AuthShell title="Create your account" subtitle="Start a team workspace or join one with a code.">
       {capabilities && !capabilities.database && !capabilities.demoMode && (
         <div className="banner-warn mb-4">Registration needs a database. Set <code>DATABASE_URL</code> or use <code>DEMO_MODE=true</code>.</div>
+      )}
+      {invite && <p className="mb-4 rounded-lg bg-sunken px-3 py-2 text-sm">You&rsquo;re joining team <span className="mono">{invite.code}</span>{invite.manager ? " on your manager\u2019s team" : ""}.</p>}
+      {capabilities?.google && (
+        <>
+          <GoogleButton label="Sign up with Google" next="/onboarding" code={invite?.code} manager={invite?.manager} />
+          <OrDivider />
+        </>
       )}
       <form onSubmit={onSubmit} className="space-y-4">
         <div className="grid grid-cols-2 gap-3">

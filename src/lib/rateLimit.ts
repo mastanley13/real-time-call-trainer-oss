@@ -111,6 +111,8 @@ export const IP_LIMITS = {
   coach: () => ({ limit: envInt("RATE_LIMIT_COACH_MAX", 120), windowMs: envInt("RATE_LIMIT_COACH_WINDOW_SEC", 600) * 1000 }),
   /** Persona wizard: generation and URL fetching. */
   wizard: () => ({ limit: envInt("RATE_LIMIT_WIZARD_MAX", 20), windowMs: envInt("RATE_LIMIT_WIZARD_WINDOW_SEC", 3600) * 1000 }),
+  /** Google sign-in: /api/auth/google/start and /callback, shared. */
+  google: () => ({ limit: envInt("RATE_LIMIT_GOOGLE_MAX", 30), windowMs: envInt("RATE_LIMIT_GOOGLE_WINDOW_SEC", 900) * 1000 }),
 } as const;
 
 /**
@@ -120,6 +122,10 @@ export const IP_LIMITS = {
 export const USER_LIMITS = {
   /** Shared by /api/persona/generate and /api/persona/fetch-url. */
   wizard: { limit: 20, windowMs: 3_600_000 },
+  /** Onboarding and team persona writes (create org, import, create, delete). */
+  personas: { limit: 30, windowMs: 600_000 },
+  /** Roster changes: role and manager moves. */
+  roster: { limit: 60, windowMs: 600_000 },
 } as const;
 
 function limitedResponse(r: RateLimitResult): Response | null {

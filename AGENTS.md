@@ -47,7 +47,9 @@ src/app/                          App Router pages and API routes
   settings/page.tsx               Settings index
   settings/security/              TOTP MFA enrolment
   settings/models/                Models page: which model runs each AI job, plus a connection check
-  access/, login/, register/      Access-code gate, sign-in, sign-up
+  access/, login/, register/      Access-code gate, sign-in, sign-up (email or Google)
+  onboarding/                     Create or join a team, pick industries, import personas
+  auth/complete/                  Landing page after Google sign-in
   api/
     coach/turn                    Live coach: estimate, talk-track steps, at most one cue
     persona/generate              Persona wizard (LLM JSON or template draft)
@@ -62,6 +64,10 @@ src/app/                          App Router pages and API routes
     transcripts                   Saved sessions; POST stores a score only with a valid grade seal
     transcripts/[id]              GET one session; PATCH re-grades the stored transcript (canRegrade, capped by gradable)
     sessions/[sessionId]/notes    Supervisor notes (Postgres, org-scoped); PUT with expectedNotesAt gets 409 conflict on a stale save
+    auth/google/{start,callback}  Google OAuth (PKCE, state, nonce); auth/session hands the cookie session to the client
+    onboarding                    Create or join an org, finish onboarding
+    personas, personas/import     Team persona list: imported library ids and custom team personas (org-scoped)
+    team/members                  Roster with manager links; owners set roles, managers claim or release reps
     auth/*, me, access, config, health, cron/purge-expired
 src/components/
   call/Deck.tsx                   Live call deck (dark .deck scope): transcript, composer, phone coach sheet
@@ -92,6 +98,9 @@ src/lib/
   access.ts + src/middleware.ts   Optional TRAINER_ACCESS_CODE gate
   realtime.ts                     OpenAI Realtime helpers shared by server and client (see Secrets below)
   team.ts                         Team view logic (pure): KPIs, matrix, queue, assignment progress
+  teamScope.ts                    Who sees and manages whom (pure): owners see the org, managers their own reps
+  teamPersonas.ts                 Team persona list rules (pure): industry suggestions, import and create schemas
+  googleAuth.ts, session.ts       Google sign-in helpers and the shared session cookie (server-only)
   teamSample.ts, assignmentStore.ts    Sample team, and browser-only assignments and notes, for demo mode
   gradeSeal.ts                    HMAC seal on server grades; POST /api/transcripts stores only sealed scores
 scripts/                          validate-personas.ts, coach-smoke.ts, calibration-check.ts
@@ -119,7 +128,7 @@ Every route in `src/app/api` follows the same order. Copy `src/app/api/coach/tur
 1. `const auth = requireAuth(req); if (auth instanceof NextResponse) return auth;`
 2. Cost-bearing and write routes: `ipLimitResponse(req, "<scope>")` from `rateLimit.ts`, plus a per-user limit: `userLimitResponse(auth.id, "<scope>")` with a `USER_LIMITS` entry, or `rateLimit({ key: \`<scope>:${auth.id}\`, ... })`. New per-IP scopes go in `IP_LIMITS` with `RATE_LIMIT_<SCOPE>_MAX` / `_WINDOW_SEC` env overrides, and get a row in the README env table and the TESTING.md rate-limit tables. Read the IP only with `clientIp(req)`; never parse `X-Forwarded-For` yourself.
 3. Parse with `readJsonLimited(req)` and a zod schema. Bound every string and array; transcripts respect `MAX_TURNS` and `MAX_TRANSCRIPT_CHARS`.
-4. Org scoping: any read or write of stored data checks that the actor owns the row, or is a `manager`/`owner` with the same `organizationId`, or a platform admin (see `api/transcripts/[id]/route.ts`). Re-grades also pass `canRegrade` from `gradable.ts`: the trainee may not replace an AI grade. Edits that two people can make at once send the version they loaded and get 409 `conflict` when it is stale (see `api/sessions/[sessionId]/notes/route.ts`).
+4. Org scoping: any read or write of stored data checks that the actor owns the row, or is an `owner` with the same `organizationId`, the rep's own manager (`User.managerId`), or a platform admin. Use `canSeeMember` / `canCoachMember` from `teamScope.ts` (see `api/transcripts/[id]/route.ts`). Re-grades also pass `canRegrade` from `gradable.ts`: the trainee may not replace an AI grade. Edits that two people can make at once send the version they loaded and get 409 `conflict` when it is stale (see `api/sessions/[sessionId]/notes/route.ts`).
 5. Errors use the existing shapes: `{ error: "snake_case_code", message?: "Human sentence." }` with the right status (400, 401, 403, 404, 429 with `Retry-After`, 502, 503). Never return or log a provider's raw error body; log the status code only.
 6. Any route that calls a provider has a no-key fallback or returns 503 with a clear `*_not_configured` error. Demo mode must keep working.
 

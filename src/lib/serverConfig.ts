@@ -1,6 +1,7 @@
 import "server-only";
 import { safeEqual } from "./access";
 import { orderVoiceEngines, realtimeKey, realtimeModel } from "./realtime";
+import { googleEnabled } from "./googleAuth";
 
 /** Runtime capability flags. Everything is optional; the UI degrades gracefully. */
 export function getCapabilities() {
@@ -16,6 +17,8 @@ export function getCapabilities() {
     ...(realtime ? { realtimeModel: realtimeModel() } : {}),
     llm: Boolean(llmKey()),
     database: Boolean(process.env.DATABASE_URL),
+    /** "Continue with Google" is offered (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set, and not demo mode). */
+    google: googleEnabled() && Boolean(process.env.DATABASE_URL),
     /** Model used for the coach, grading, persona wizard and text caller. Shown in provenance chips. */
     model: llmModel(),
     /** "openai" when LLM_BASE_URL is unset or points at api.openai.com; the URL itself is never exposed. */

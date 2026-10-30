@@ -17,6 +17,8 @@ export interface RegisterFormData {
   /** Exactly one of these two is supplied. */
   joinOrgCode?: string;
   newOrgName?: string;
+  /** From a manager's invite link; ignored unless that manager is in the joined org. */
+  managerId?: string;
 }
 
 export interface User {
@@ -43,6 +45,8 @@ export interface Capabilities {
   /** Model id for coach, grading and wizard (e.g. "gpt-4.1-mini"). */
   model?: string;
   provider?: "openai" | "custom";
+  /** "Continue with Google" is set up on the server. */
+  google?: boolean;
 }
 
 export interface MfaChallenge {
@@ -58,6 +62,12 @@ interface AuthContextType {
     code: string,
   ) => Promise<void>;
   register: (formData: RegisterFormData) => Promise<void>;
+  /** Picks up a session a redirect sign-in (Google) left in the cookie. */
+  adoptSession: () => Promise<void>;
+  /** Set after sign-in when the account still has onboarding to do. */
+  needsOnboarding: boolean;
+  /** Called by the onboarding page when it's done. */
+  finishOnboarding: () => void;
   logout: () => void;
   isLoading: boolean;
   isAuthenticated: boolean;
@@ -98,6 +108,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
 
   useEffect(() => {
     setIsLoading(true);
@@ -136,16 +147,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, []);
 
-  const persistSession = (sessionUser: User, token: string) => {
+  const persistSession = (sessionUser: User, token: string, onboarding = false) => {
     localStorage.setItem("authToken", token);
     localStorage.setItem("userData", JSON.stringify(sessionUser));
     setUser(sessionUser);
+    setNeedsOnboarding(onboarding);
     setIsAuthenticated(true);
   };
 
   const clearSession = () => {
     localStorage.removeItem("authToken");
     localStorage.removeItem("userData");
+    localStorage.removeItem("rtct.teamPersonas.v1");
     setUser(null);
     setIsAuthenticated(false);
   };
@@ -169,7 +182,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       if (data.mfaRequired && data.challengeToken) {
         return { challengeToken: data.challengeToken, email: credentials.email };
       }
-      persistSession(data.user, data.token);
+      persistSession(data.user, data.token, !!data.needsOnboarding);
       return null;
     } catch (error) {
       clearSession();
@@ -195,8 +208,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         const err = await response.json().catch(() => ({}));
         throw new Error(err.error || "MFA challenge failed");
       }
-      const { user: sessionUser, token } = await response.json();
-      persistSession(sessionUser, token);
+      const { user: sessionUser, token, needsOnboarding: onboarding } = await response.json();
+      persistSession(sessionUser, token, !!onboarding);
     } catch (error) {
       clearSession();
       throw error;
@@ -218,8 +231,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         const err = await response.json().catch(() => ({}));
         throw new Error(err.error || "Registration failed");
       }
-      const { user: sessionUser, token } = await response.json();
-      persistSession(sessionUser, token);
+      const { user: sessionUser, token, needsOnboarding: onboarding } = await response.json();
+      persistSession(sessionUser, token, !!onboarding);
     } catch (error) {
       clearSession();
       throw error;
@@ -227,6 +240,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       setIsLoading(false);
     }
   };
+
+  const adoptSession = async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch("/api/auth/session", { credentials: "include" });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || err.error || "Sign-in did not finish. Try again.");
+      }
+      const { user: sessionUser, token, needsOnboarding: onboarding } = await response.json();
+      persistSession(sessionUser, token, !!onboarding);
+    } catch (error) {
+      clearSession();
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const finishOnboarding = () => setNeedsOnboarding(false);
+
+  // Keep the team's persona list fresh for the library, trainer and assign sheet.
+  useEffect(() => {
+    if (!isAuthenticated || !capabilities?.database || capabilities.demoMode) return;
+    import("@/lib/scenarioStore").then((m) => m.syncTeamPersonas()).catch(() => {});
+  }, [isAuthenticated, capabilities]);
 
   const logout = () => {
     setIsLoading(true);
@@ -244,6 +283,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         login,
         completeMfaChallenge,
         register,
+        adoptSession,
+        needsOnboarding,
+        finishOnboarding,
         logout,
         isLoading,
         isAuthenticated,

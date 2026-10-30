@@ -10,19 +10,21 @@ import { evaluateCall } from "@/lib/grader";
 import type { Evaluation } from "@/lib/grader-types";
 import { canRegrade, gradable, gradedNote, isAiGrade } from "@/lib/gradable";
 import { getCapabilities, llmKey } from "@/lib/serverConfig";
+import { canCoachMember } from "@/lib/teamScope";
 
 type Params = { params: Promise<{ id: string }> };
 
-/** Managers/owners of the session's org, or a platform admin. */
-async function managesOrgOf(userId: string, session: { organizationId: string }): Promise<boolean> {
-  const actor = await prisma.user.findUnique({ where: { id: userId } });
-  return (
-    !!actor &&
-    (actor.isPlatformAdmin || ((actor.role === "manager" || actor.role === "owner") && actor.organizationId === session.organizationId))
-  );
+/** Owners of the session's org, the rep's own manager, or a platform admin (see teamScope.ts). */
+async function managesOrgOf(userId: string, session: { userId: string; organizationId: string }): Promise<boolean> {
+  const [actor, rep] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId } }),
+    prisma.user.findUnique({ where: { id: session.userId }, select: { id: true, managerId: true } }),
+  ]);
+  if (!actor) return false;
+  return canCoachMember(actor, { id: session.userId, organizationId: session.organizationId, managerId: rep?.managerId ?? null });
 }
 
-/** Owners can act on their own session; managers/owners on their org's sessions; platform admins on any. */
+/** Owners can act on their own session; managers on their reps'; org owners on their org's; platform admins on any. */
 async function canAccess(userId: string, session: { userId: string; organizationId: string }): Promise<boolean> {
   return session.userId === userId || managesOrgOf(userId, session);
 }
