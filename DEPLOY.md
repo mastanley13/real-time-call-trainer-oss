@@ -10,7 +10,7 @@ Any Node 22+ host works (Vercel, Fly, Render, a VPS). You need a Postgres databa
 5. **Do not set `DEMO_MODE`**. It disables authentication.
 6. Build and start: `npm run build && npm start`.
 7. **Retention**: `vercel.json` schedules `/api/cron/purge-expired` daily on Vercel, and Vercel Cron sends `Authorization: Bearer $CRON_SECRET` when the variable is set. Elsewhere, call it with that header. The route accepts nothing else (the `x-vercel-cron` header is ignored) and returns 401 when `CRON_SECRET` is unset. Per-org retention is set in the database (`Organization.sessionRetentionDays`).
-8. **Health**: `GET /api/health` reports DB, secrets and provider configuration (`elevenlabs`, `realtime`, `llm`).
+8. **Health**: `GET /api/health` returns `{ ok }` for uptime checks (503 when a required dependency is down). Send `Authorization: Bearer $CRON_SECRET`, or sign in as a platform admin, to see DB, secrets and provider configuration (`elevenlabs`, `realtime`, `llm`).
 9. **Proxies**: run the app behind at least one proxy that sets or appends `X-Forwarded-For`. If more than one sits in front of the app, set `TRUSTED_PROXY_HOPS` (see below).
 
 ## Client IP behind proxies
