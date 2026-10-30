@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ACCESS_COOKIE, accessCode, accessToken, safeEqual } from "@/lib/access";
+import { ACCESS_COOKIE, accessGateEnabled, gateCookieValid } from "@/lib/access";
 
-/** Optional site-wide (cron routes authenticate with CRON_SECRET instead) access gate, active only when TRAINER_ACCESS_CODE is set. */
+/**
+ * Optional site-wide access gate (cron routes authenticate with CRON_SECRET instead). Active when
+ * TRAINER_ACCESS_CODE is set or ALLOW_SHARED_ACCESS_CODE=false (invite-only). Passes with the
+ * shared-code cookie while the shared code is allowed, or with a signed invite-code cookie.
+ */
 export async function middleware(req: NextRequest) {
-  const code = accessCode();
-  if (!code) return NextResponse.next();
+  if (!accessGateEnabled()) return NextResponse.next();
 
   const { pathname } = req.nextUrl;
   if (pathname === "/access" || pathname === "/api/access" || pathname === "/api/health" || pathname.startsWith("/api/cron/")) return NextResponse.next();
 
   const cookie = req.cookies.get(ACCESS_COOKIE)?.value ?? "";
-  if (cookie && safeEqual(cookie, await accessToken(code))) return NextResponse.next();
+  if (await gateCookieValid(cookie)) return NextResponse.next();
 
   if (pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "access_code_required" }, { status: 401 });

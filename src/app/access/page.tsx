@@ -41,7 +41,7 @@ export default function AccessPage() {
   }
 
   return (
-    <AuthShell title="Enter access code" subtitle="This trainer is invite-only. Enter the code you were given.">
+    <AuthShell title="Enter access code" subtitle="This trainer is invite-only. Enter the access code or invite code you were given.">
       <form onSubmit={onSubmit} className="space-y-4">
         <div>
           <label htmlFor="access-code" className="label">Access code</label>

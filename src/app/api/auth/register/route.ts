@@ -5,6 +5,8 @@ import { hashPassword, signSessionToken } from "@/lib/auth";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { generateOrgCode, isValidOrgCode } from "@/lib/orgCodes";
+import { ACCESS_COOKIE, verifyInviteAccessToken } from "@/lib/access";
+import { consumeInvite, hashInviteCode, invalidInvite, invitesConfigured } from "@/lib/invites";
 
 const RegisterSchema = z
   .object({
@@ -19,6 +21,8 @@ const RegisterSchema = z
     /// Exactly one of these two must be provided.
     joinOrgCode: z.string().regex(/^[0-9]{3,8}$/).optional(),
     newOrgName: z.string().trim().min(2).max(120).optional(),
+    /// Optional invite code. Without one, an invite gate cookie (from /access) is used.
+    inviteCode: z.string().trim().min(1).max(200).optional(),
   })
   .refine(
     (v) => !!v.joinOrgCode !== !!v.newOrgName,
@@ -62,6 +66,25 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Invite attribution: an explicit code wins, else the invite the gate cookie was issued for.
+  let inviteId: string | null = null;
+  let inviteVia: "code" | "access_cookie" | null = null;
+  if (body.inviteCode) {
+    if (!invitesConfigured()) {
+      return NextResponse.json(
+        { error: "invites_not_configured", message: "Invite codes need a database. Leave the invite code empty." },
+        { status: 503 },
+      );
+    }
+    const invite = await prisma.inviteCode.findUnique({ where: { codeHash: hashInviteCode(body.inviteCode) }, select: { id: true } });
+    if (!invite) return invalidInvite();
+    inviteId = invite.id;
+    inviteVia = "code";
+  } else if (invitesConfigured()) {
+    inviteId = await verifyInviteAccessToken(request.cookies.get(ACCESS_COOKIE)?.value ?? "");
+    if (inviteId) inviteVia = "access_cookie";
+  }
+
   try {
     const hashedPassword = await hashPassword(body.password);
 
@@ -89,6 +112,11 @@ export async function POST(request: NextRequest) {
         throw new Error("INVALID_REQUEST");
       }
 
+      // Takes one redemption atomically; a revoked, expired or used-up invite rolls the signup back.
+      if (inviteId && !(await consumeInvite(tx, inviteId))) {
+        throw new Error("INVALID_INVITE");
+      }
+
       const created = await tx.user.create({
         data: {
           email: emailLower,
@@ -98,6 +126,7 @@ export async function POST(request: NextRequest) {
           phone: body.phone,
           organizationId: orgId,
           role,
+          inviteCodeId: inviteId,
           lastLoginAt: new Date(),
         },
         include: { organization: true },
@@ -114,9 +143,16 @@ export async function POST(request: NextRequest) {
             role,
             organizationCode: created.organization?.code ?? null,
             joinOrCreate: body.newOrgName ? "create" : "join",
+            inviteCodeId: inviteId,
           } satisfies Prisma.InputJsonValue,
         },
       });
+
+      if (inviteId) {
+        await tx.auditEvent.create({
+          data: { userId: created.id, action: "invite.redeemed", resource: inviteId, ip: clientIp(request), metadata: { via: inviteVia } },
+        });
+      }
 
       return { user: created, organization: created.organization };
     });
@@ -149,6 +185,9 @@ export async function POST(request: NextRequest) {
     });
     return res;
   } catch (error) {
+    if (error instanceof Error && error.message === "INVALID_INVITE") {
+      return invalidInvite();
+    }
     if (error instanceof Error && error.message === "INVALID_ORG_CODE") {
       return NextResponse.json(
         { error: "Unknown organization code." },

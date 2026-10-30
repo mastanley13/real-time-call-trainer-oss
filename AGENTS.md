@@ -62,6 +62,7 @@ src/app/                          App Router pages and API routes
     transcripts                   Saved sessions; POST stores a score only with a valid grade seal
     transcripts/[id]              GET one session; PATCH re-grades the stored transcript (canRegrade, capped by gradable)
     sessions/[sessionId]/notes    Supervisor notes (Postgres, org-scoped); PUT with expectedNotesAt gets 409 conflict on a stale save
+    invites/redeem, admin/invites Per-person invite codes: link an account; platform admins create, list, revoke
     auth/*, me, access, config, health, cron/purge-expired
 src/components/
   call/Deck.tsx                   Live call deck (dark .deck scope): transcript, composer, phone coach sheet
@@ -89,7 +90,8 @@ src/lib/
   serverConfig.ts                 Capability flags; the only place that reads provider env vars for the UI
   apiAuth.ts, auth.ts, mfa.ts     requireAuth, JWT sessions, bcrypt, TOTP
   rateLimit.ts                    clientIp (TRUSTED_PROXY_HOPS), IP_LIMITS, USER_LIMITS, body and transcript caps
-  access.ts + src/middleware.ts   Optional TRAINER_ACCESS_CODE gate
+  access.ts + src/middleware.ts   Optional access gate: shared TRAINER_ACCESS_CODE (ALLOW_SHARED_ACCESS_CODE) and invite cookies
+  invites.ts                      Invite codes (server-only): generate, SHA-256 hash, status, atomic consume
   realtime.ts                     OpenAI Realtime helpers shared by server and client (see Secrets below)
   team.ts                         Team view logic (pure): KPIs, matrix, queue, assignment progress
   teamSample.ts, assignmentStore.ts    Sample team, and browser-only assignments and notes, for demo mode

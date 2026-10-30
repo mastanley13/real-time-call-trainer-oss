@@ -152,6 +152,15 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 ### Access code
 Run with `TRAINER_ACCESS_CODE=letmein`. Any page redirects to `/access`; `curl -i localhost:3000/api/config` returns 401 `access_code_required`; `/api/health` returns 200. A wrong code shows an error; the right one sets an httpOnly cookie and lands on the app. 11 wrong attempts within 15 minutes from one IP return 429. Unset the variable and the gate disappears.
 
+### Invite codes
+Full mode only (`DATABASE_URL`, `JWT_SECRET`, the `20261030000000_invite_codes` migration and a platform admin from `npm run db:seed`). Automated coverage is in `tests/invites.test.ts`.
+
+1. Signed in as the admin, `POST /api/admin/invites` with `{ "label": "Test invite", "maxRedemptions": 1 }` returns 201 and a code. `GET /api/admin/invites` lists it as `active` with no code or hash. A non-admin gets 403 `forbidden` on all three admin routes.
+2. With `TRAINER_ACCESS_CODE=letmein`, in a private window, the invite code at `/access` lands on the app. Register: the new account is linked to the invite and the list shows `redemptionCount: 1` and `exhausted`. Entering the same code at `/access` again now shows the generic wrong-code error.
+3. `DELETE /api/admin/invites/[id]` on a fresh invite: `/access` and `POST /api/invites/redeem` both refuse it.
+4. Set `ALLOW_SHARED_ACCESS_CODE=false` and restart: `letmein` is refused, a browser that got in with it is sent back to `/access`, and an invite code still works. Unset `TRAINER_ACCESS_CODE` too: the gate stays on.
+5. `DEMO_MODE=true` or no `DATABASE_URL`: the invite routes return 503 `invites_not_configured` and `letmein` still works.
+
 ### Rate limits
 Every limit is a fixed window in memory, per server instance, and resets on restart. There are two kinds: per-IP limits, most of which you can tune with `RATE_LIMIT_*` variables, and fixed per-account limits, so a signed-in user can't get past a limit by switching networks. Both apply; whichever runs out first answers 429. The client IP is read from `X-Forwarded-For` as set by `TRUSTED_PROXY_HOPS` (see [DEPLOY.md](DEPLOY.md#client-ip-behind-proxies)). The `RATE_LIMIT_*` limits, `/api/access` and the Models check answer with a `Retry-After` header and `{ "error": "rate_limited", "message": ... }`, and the UI shows the message.
 
@@ -166,7 +175,8 @@ Every limit is a fixed window in memory, per server instance, and resets on rest
 | `/api/realtime/session` (OpenAI Realtime voice) | `RATE_LIMIT_REALTIME_MAX` (10 per 3600 s) | Set 1 and start two voice calls |
 | `/api/elevenlabs/token` (ElevenLabs voice) | `RATE_LIMIT_TOKEN_MAX` (10 per 3600 s) | Set 1 and start two ElevenLabs calls |
 | `/api/llm/check` (Models page) | fixed, 6 per 10 min | Press **Check connection** seven times |
-| `/api/access` | fixed, 10 per 15 min | See Access code above |
+| `/api/access` and `POST /api/invites/redeem`, shared | fixed, 10 per 15 min | See Access code above |
+| `POST /api/admin/invites`, `DELETE /api/admin/invites/[id]` (platform admin invite writes) | `RATE_LIMIT_INVITES_MAX` (60 per 3600 s) | Set 1 and create two invites |
 | `/api/auth/login`, `/api/auth/register`, `/api/auth/mfa/challenge` | fixed, 10, 5 and 10 per minute | Full mode only. These answer with their own error text |
 
 Each `_MAX` has a matching `_WINDOW_SEC`.
@@ -183,6 +193,8 @@ Each `_MAX` has a matching `_WINDOW_SEC`.
 | `/api/simulate/turn` | 40 per minute |
 | `/api/realtime/session` | 6 per minute |
 | `/api/realtime/sdp` | 10 per minute |
+| `POST /api/invites/redeem` | 10 per 15 minutes |
+| `POST /api/admin/invites`, `DELETE /api/admin/invites/[id]` | 30 per hour |
 | `/api/elevenlabs/token` | 20 per minute |
 | `POST /api/transcripts` (save a session) | 30 per minute |
 | `PUT /api/sessions/[sessionId]/notes` | 30 per minute |
