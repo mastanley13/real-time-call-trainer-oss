@@ -71,6 +71,10 @@ model User {
   mfaSecret        String?
   mfaEnabled       Boolean  @default(false)
   mfaEnrolledAt    DateTime?
+  /// The invite code this account was created with or linked to (attribution).
+  /// Null for accounts made before invites, or through the shared access code.
+  inviteCodeId     String?
+  inviteCode       InviteCode? @relation("InviteRedeemers", fields: [inviteCodeId], references: [id], onDelete: SetNull)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -78,8 +82,37 @@ model User {
   auditEvents         AuditEvent[]
   assignmentsCreated  TrainingAssignment[] @relation("AssignmentAssigner")
   assignmentsReceived TrainingAssignment[] @relation("AssignmentAssignee")
+  invitesCreated      InviteCode[]         @relation("InviteCreator")
 
   @@index([organizationId])
+  @@index([inviteCodeId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Invite codes
+// ─────────────────────────────────────────────────────────────────────────
+
+/// A per-person (or per-group) code that replaces the one shared
+/// TRAINER_ACCESS_CODE. Only a SHA-256 hash of the code is stored; the plain
+/// code is shown once, when a platform admin creates it.
+model InviteCode {
+  id              String    @id @default(cuid())
+  codeHash        String    @unique
+  label           String
+  /// Null = unlimited.
+  maxRedemptions  Int?
+  redemptionCount Int       @default(0)
+  expiresAt       DateTime?
+  revokedAt       DateTime?
+  /// Practice minutes this invite grants. Stored only; enforcement is a later change.
+  minuteQuota     Int?
+  createdById     String?
+  createdBy       User?     @relation("InviteCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime  @default(now())
+
+  redeemers User[] @relation("InviteRedeemers")
+
+  @@index([createdAt])
 }
 
 // ─────────────────────────────────────────────────────────────────────────

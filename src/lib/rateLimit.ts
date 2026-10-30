@@ -107,6 +107,8 @@ export const IP_LIMITS = {
   /** OpenAI Realtime client secrets: one per voice call. */
   realtime: () => ({ limit: envInt("RATE_LIMIT_REALTIME_MAX", 10), windowMs: envInt("RATE_LIMIT_REALTIME_WINDOW_SEC", 3600) * 1000 }),
   access: () => ({ limit: 10, windowMs: 15 * 60_000 }),
+  /** Platform admin invite writes (create, revoke). Code guesses go through `access` instead. */
+  invites: () => ({ limit: envInt("RATE_LIMIT_INVITES_MAX", 60), windowMs: envInt("RATE_LIMIT_INVITES_WINDOW_SEC", 3600) * 1000 }),
   /** Live coach: one call per finished turn, so this is much looser than grading. */
   coach: () => ({ limit: envInt("RATE_LIMIT_COACH_MAX", 120), windowMs: envInt("RATE_LIMIT_COACH_WINDOW_SEC", 600) * 1000 }),
   /** Persona wizard: generation and URL fetching. */
@@ -120,6 +122,10 @@ export const IP_LIMITS = {
 export const USER_LIMITS = {
   /** Shared by /api/persona/generate and /api/persona/fetch-url. */
   wizard: { limit: 20, windowMs: 3_600_000 },
+  /** POST /api/invites/redeem: linking a signed-in account to an invite code. */
+  inviteRedeem: { limit: 10, windowMs: 15 * 60_000 },
+  /** Platform admin invite writes: create and revoke. */
+  inviteAdmin: { limit: 30, windowMs: 3_600_000 },
 } as const;
 
 function limitedResponse(r: RateLimitResult): Response | null {
