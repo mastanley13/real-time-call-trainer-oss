@@ -165,6 +165,8 @@ Every limit is a fixed window in memory, per server instance, and resets on rest
 | `/api/persona/generate` + `/api/persona/fetch-url` (wizard, shared) | `RATE_LIMIT_WIZARD_MAX` (20 per 3600 s) | Set 2, import a URL twice, then **Draft persona** |
 | `/api/realtime/session` (OpenAI Realtime voice) | `RATE_LIMIT_REALTIME_MAX` (10 per 3600 s) | Set 1 and start two voice calls |
 | `/api/elevenlabs/token` (ElevenLabs voice) | `RATE_LIMIT_TOKEN_MAX` (10 per 3600 s) | Set 1 and start two ElevenLabs calls |
+| `/api/usage/heartbeat`, `/api/usage/end`, `/api/usage/credit` (voice metering) | `RATE_LIMIT_USAGE_MAX` (1200 per 600 s) | Full mode only. Set 3, then `curl` `/api/usage/end` four times with a signed-in cookie |
+| `/api/billing/checkout` + `/api/billing/portal` (Stripe, shared) | `RATE_LIMIT_BILLING_MAX` (20 per 3600 s) | Needs `STRIPE_SECRET_KEY=sk_test_...`. Set 2 and press **Choose Pro** three times |
 | `/api/llm/check` (Models page) | fixed, 6 per 10 min | Press **Check connection** seven times |
 | `/api/access` | fixed, 10 per 15 min | See Access code above |
 | `/api/auth/login`, `/api/auth/register`, `/api/auth/mfa/challenge` | fixed, 10, 5 and 10 per minute | Full mode only. These answer with their own error text |
@@ -183,6 +185,8 @@ Each `_MAX` has a matching `_WINDOW_SEC`.
 | `/api/simulate/turn` | 40 per minute |
 | `/api/realtime/session` | 6 per minute |
 | `/api/realtime/sdp` | 10 per minute |
+| `/api/usage/*` (heartbeat, end, credit) | 60 per minute |
+| `/api/billing/checkout` + `/api/billing/portal` (shared) | 20 per hour |
 | `/api/elevenlabs/token` | 20 per minute |
 | `POST /api/transcripts` (save a session) | 30 per minute |
 | `PUT /api/sessions/[sessionId]/notes` | 30 per minute |

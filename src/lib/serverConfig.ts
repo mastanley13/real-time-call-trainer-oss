@@ -1,6 +1,12 @@
 import "server-only";
 import { safeEqual } from "./access";
 import { orderVoiceEngines, realtimeKey, realtimeModel } from "./realtime";
+import { stripeStatus } from "./stripe";
+
+/** Voice minutes are metered only for stored accounts: not in demo mode and not without a database. */
+export function meteringEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return env.DEMO_MODE !== "true" && Boolean(env.DATABASE_URL);
+}
 
 /** Runtime capability flags. Everything is optional; the UI degrades gracefully. */
 export function getCapabilities() {
@@ -16,6 +22,8 @@ export function getCapabilities() {
     ...(realtime ? { realtimeModel: realtimeModel() } : {}),
     llm: Boolean(llmKey()),
     database: Boolean(process.env.DATABASE_URL),
+    /** Stripe test-mode billing: false when unset, in demo mode, or when the key is not an sk_test_ key. */
+    billing: stripeStatus() === "ready",
     /** Model used for the coach, grading, persona wizard and text caller. Shown in provenance chips. */
     model: llmModel(),
     /** "openai" when LLM_BASE_URL is unset or points at api.openai.com; the URL itself is never exposed. */

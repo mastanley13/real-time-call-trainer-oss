@@ -29,7 +29,7 @@ Browser (Next.js App Router, Tailwind, WebRTC, @elevenlabs/react)
   ├─ /trainer/debrief/[id]  black-box debrief, retry from turn N
   ├─ /dashboard             progress logbook, assignments for you
   ├─ /team                  team view for managers and owners
-  └─ /settings/models, /settings/security
+  └─ /settings/models, /settings/security, /settings/billing (when Stripe test mode is on)
 Server routes (src/app/api)
   ├─ coach/turn        live coach: estimate, talk-track steps, one cue (LLM or rules-based)
   ├─ persona/generate  persona wizard (LLM structured JSON, or a template draft)
@@ -44,6 +44,9 @@ Server routes (src/app/api)
   ├─ team/overview     team KPIs, roster, heatmap and coaching queue (org-scoped)
   ├─ team/assignments  create, list and remove persona assignments
   ├─ llm/check         one-token connection check for the Models page
+  ├─ usage, usage/heartbeat, usage/end, usage/credit   voice minute metering: the ledger is the source of truth
+  ├─ billing/checkout, billing/portal   Stripe Checkout (subscription) and Billing Portal, test mode only
+  ├─ stripe/webhook    signature-verified, idempotent plan sync (checkout completed, subscription updated and deleted)
   └─ auth/*, access, me, health, config, cron/purge-expired
 ```
 Design tokens (daylight, dark and the call "deck") live in `src/app/globals.css`; the coach contract is `src/lib/coach-types.ts`; the wizard contract is `src/lib/wizard-types.ts`.
@@ -75,7 +78,7 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `DATABASE_URL` | For accounts | Postgres connection string |
 | `JWT_SECRET` | For accounts | 32+ random bytes (`node generate-jwt-secret.js`). Also keys the grade seal and the access-code cookie |
 | `CRON_SECRET` | Optional | Bearer secret for `/api/cron/purge-expired`. The route accepts only `Authorization: Bearer $CRON_SECRET` (Vercel Cron sends it when the variable is set) and returns 401 without it |
-| `TRAINER_ACCESS_CODE` | Optional | When set, every page and API route (except `/api/health` and `/api/cron/*`, which needs the `CRON_SECRET` bearer) requires this code via `/access`. Cookie is an HMAC keyed by `JWT_SECRET`, valid 30 days. Unset = no gate |
+| `TRAINER_ACCESS_CODE` | Optional | When set, every page and API route (except `/api/health`, `/api/stripe/webhook`, which checks the Stripe signature, and `/api/cron/*`, which needs the `CRON_SECRET` bearer) requires this code via `/access`. Cookie is an HMAC keyed by `JWT_SECRET`, valid 30 days. Unset = no gate |
 | `TRUSTED_PROXY_HOPS` | Optional | Number of proxies in front of the app that append to `X-Forwarded-For`. The client IP for rate limits and audit rows is read that many entries from the right. Default 1, which fits Vercel and a single proxy that appends. The app needs at least one proxy that sets or appends the header, or clients can pick their own address; see [DEPLOY.md](DEPLOY.md#client-ip-behind-proxies) |
 | `RATE_LIMIT_CALLER_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/simulate/turn`. Default 30 per 300 s |
 | `RATE_LIMIT_GRADING_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/evaluate-call` and re-grades (`PATCH /api/transcripts/[id]`). Default 10 per 3600 s |
@@ -83,6 +86,15 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `RATE_LIMIT_REALTIME_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/realtime/session` (one per voice call). Default 10 per 3600 s |
 | `RATE_LIMIT_COACH_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/coach/turn`. Default 120 per 600 s |
 | `RATE_LIMIT_WIZARD_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/persona/generate` and `/api/persona/fetch-url`. Default 20 per 3600 s |
+| `RATE_LIMIT_USAGE_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on the voice metering routes (`/api/usage/*`: a heartbeat every 10 s per call, plus end events). Default 1200 per 600 s |
+| `RATE_LIMIT_BILLING_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/billing/checkout` and `/api/billing/portal`. Default 20 per 3600 s |
+| `STRIPE_SECRET_KEY` | For billing | Stripe **test mode** key. Must start with `sk_test_`; any other key makes every Stripe call fail with `stripe_live_key_refused`. Unset, or `DEMO_MODE=true`: billing is off and the Billing tab is hidden |
+| `STRIPE_WEBHOOK_SECRET` | For billing | Signing secret (`whsec_...`) for `/api/stripe/webhook`. From `stripe listen` locally, or the endpoint's page in the Stripe dashboard |
+| `STRIPE_PRICE_PRO_MONTHLY`, `STRIPE_PRICE_PRO_ANNUAL` | For billing | Price ids for Pro ($29 per user per month, annual is 2 months free). Flat licensed prices only |
+| `STRIPE_PRICE_TEAM_MONTHLY`, `STRIPE_PRICE_TEAM_ANNUAL` | For billing | Price ids for Team ($59 per seat per month, 3 seats minimum), quantity = seats |
+| `STRIPE_PRICE_PREMIUM_MONTHLY`, `STRIPE_PRICE_PREMIUM_ANNUAL` | For billing | Price ids for the Premium Voice add-on (+$30 per seat per month), quantity = seats |
+| `APP_BASE_URL` | Optional | Public origin used in Stripe return links, for example `https://app.example.com`. Defaults to the request origin |
+| `GHL_BILLING_EVENTS` | Optional | `true` lets the billing webhook emit upgrade, downgrade and churn events to the CRM hook (`src/lib/billingEvents.ts`). Off by default. See the TODO there for the STR-714 emitter |
 | `DEMO_MODE` | Optional | `true` skips login; sessions, assignments and notes stay in the browser and `/team` shows a sample team. Never on a public deployment |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Optional | Used by `npm run db:seed` to create a platform admin. `ADMIN_FIRST_NAME` and `ADMIN_LAST_NAME` set its name (default Platform Admin) |
 
