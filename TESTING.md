@@ -165,6 +165,8 @@ Every limit is a fixed window in memory, per server instance, and resets on rest
 | `/api/persona/generate` + `/api/persona/fetch-url` (wizard, shared) | `RATE_LIMIT_WIZARD_MAX` (20 per 3600 s) | Set 2, import a URL twice, then **Draft persona** |
 | `/api/realtime/session` (OpenAI Realtime voice) | `RATE_LIMIT_REALTIME_MAX` (10 per 3600 s) | Set 1 and start two voice calls |
 | `/api/elevenlabs/token` (ElevenLabs voice) | `RATE_LIMIT_TOKEN_MAX` (10 per 3600 s) | Set 1 and start two ElevenLabs calls |
+| `PUT /api/team/mfa` (MFA policy) | `RATE_LIMIT_TEAM_MFA_POLICY_MAX` (20 per 600 s) | Full mode as a manager. Set 2 and toggle the rule three times |
+| `POST /api/team/mfa/reset` (support reset) | `RATE_LIMIT_TEAM_MFA_RESET_MAX` (20 per 600 s) | Full mode as a manager. Set 1 and reset two members |
 | `/api/llm/check` (Models page) | fixed, 6 per 10 min | Press **Check connection** seven times |
 | `/api/access` | fixed, 10 per 15 min | See Access code above |
 | `/api/auth/login`, `/api/auth/register`, `/api/auth/mfa/challenge` | fixed, 10, 5 and 10 per minute | Full mode only. These answer with their own error text |

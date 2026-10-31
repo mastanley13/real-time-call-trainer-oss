@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
-import { clientIp, readJsonLimited } from "@/lib/rateLimit";
+import { clientIp, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { canManageTeam } from "@/lib/team";
 import { forbidden, limitFor, loadActor, noOrganization, serverError, teamIsLocal } from "../../_lib/server";
 
@@ -22,6 +22,8 @@ export async function POST(req: NextRequest) {
   if (teamIsLocal()) {
     return NextResponse.json({ error: "local_only", message: "Demo mode has no stored accounts to reset." }, { status: 400 });
   }
+  const ipLimited = ipLimitResponse(req, "teamMfaReset");
+  if (ipLimited) return ipLimited;
   const limited = limitFor(`team:mfa-reset:${auth.id}`, 10, 60_000);
   if (limited) return limited;
 

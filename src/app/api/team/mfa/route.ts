@@ -4,7 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { canEnforceMfa, graceEndFor, MAX_GRACE_DAYS, mfaStateFor } from "@/lib/mfaPolicy";
-import { clientIp, readJsonLimited } from "@/lib/rateLimit";
+import { clientIp, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { canManageTeam, memberName } from "@/lib/team";
 import { forbidden, limitFor, loadActor, noOrganization, serverError, teamIsLocal } from "../_lib/server";
 
@@ -72,6 +72,8 @@ export async function PUT(req: NextRequest) {
   const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   if (teamIsLocal()) return localOnly();
+  const ipLimited = ipLimitResponse(req, "teamMfaPolicy");
+  if (ipLimited) return ipLimited;
   const limited = limitFor(`team:mfa-policy:${auth.id}`, 10, 60_000);
   if (limited) return limited;
 

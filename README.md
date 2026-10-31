@@ -83,6 +83,8 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `RATE_LIMIT_REALTIME_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/realtime/session` (one per voice call). Default 10 per 3600 s |
 | `RATE_LIMIT_COACH_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/coach/turn`. Default 120 per 600 s |
 | `RATE_LIMIT_WIZARD_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/persona/generate` and `/api/persona/fetch-url`. Default 20 per 3600 s |
+| `RATE_LIMIT_TEAM_MFA_POLICY_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `PUT /api/team/mfa`. Default 20 per 600 s |
+| `RATE_LIMIT_TEAM_MFA_RESET_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `POST /api/team/mfa/reset`. Default 20 per 600 s |
 | `DEMO_MODE` | Optional | `true` skips login; sessions, assignments and notes stay in the browser and `/team` shows a sample team. Never on a public deployment |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Optional | Used by `npm run db:seed` to create a platform admin. `ADMIN_FIRST_NAME` and `ADMIN_LAST_NAME` set its name (default Platform Admin) |
 

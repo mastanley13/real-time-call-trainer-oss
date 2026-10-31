@@ -137,6 +137,42 @@ describe("POST /api/team/mfa/reset", () => {
   });
 });
 
+describe("per-IP limits on the team MFA writes", () => {
+  const from = (ip: string, url: string, method: string, body: unknown) =>
+    new NextRequest(`http://localhost${url}`, { method, body: JSON.stringify(body), headers: { "Content-Type": "application/json", "x-forwarded-for": ip } });
+  const as = (id: string) => (mocks.user = { id, email: `${id}@example.test` });
+
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("shares the PUT allowance across users on one IP", async () => {
+    vi.stubEnv("RATE_LIMIT_TEAM_MFA_POLICY_MAX", "2");
+    const codes: number[] = [];
+    for (const id of ["ip-put-a", "ip-put-b", "ip-put-c"]) {
+      as(id);
+      mocks.prisma.user.findUnique.mockResolvedValue(actor({ id }));
+      codes.push((await setPolicy(from("203.0.113.61", "/api/team/mfa", "PUT", { requireMfa: false }))).status);
+    }
+    expect(codes).toEqual([200, 200, 429]);
+    as("ip-put-d");
+    mocks.prisma.user.findUnique.mockResolvedValue(actor({ id: "ip-put-d" }));
+    expect((await setPolicy(from("203.0.113.62", "/api/team/mfa", "PUT", { requireMfa: false }))).status).toBe(200);
+  });
+
+  it("shares the reset allowance across users on one IP", async () => {
+    vi.stubEnv("RATE_LIMIT_TEAM_MFA_RESET_MAX", "2");
+    mocks.prisma.user.findFirst.mockResolvedValue({ id: "r-1", role: "trainee", mfaEnabled: true, mfaSecret: "S" });
+    const codes: number[] = [];
+    for (const id of ["ip-reset-a", "ip-reset-b", "ip-reset-c"]) {
+      as(id);
+      mocks.prisma.user.findUnique.mockResolvedValue(actor({ id }));
+      const res = await resetMfa(from("203.0.113.71", "/api/team/mfa/reset", "POST", { userId: "r-1" }));
+      codes.push(res.status);
+      if (res.status === 429) expect(Number(res.headers.get("Retry-After"))).toBeGreaterThan(0);
+    }
+    expect(codes).toEqual([200, 200, 429]);
+  });
+});
+
 describe("POST /api/auth/mfa/disable", () => {
   const disable = () => disableMfa(json("/api/auth/mfa/disable", "POST", { code: "123456" }));
 
