@@ -1,5 +1,6 @@
 // Legal copy pending owner review.
 import type { Metadata } from "next";
+import SiteFooter from "@/components/SiteFooter";
 
 export const metadata: Metadata = {
   title: "Terms of service",
@@ -8,6 +9,7 @@ export const metadata: Metadata = {
 
 export default function TermsPage() {
   return (
+    <>
     <div className="page max-w-3xl py-12 sm:py-16">
       <p className="eyebrow">Legal</p>
       <h1 className="mt-1 text-3xl font-bold sm:text-4xl">Terms of service</h1>
@@ -64,5 +66,7 @@ export default function TermsPage() {
         </section>
       </div>
     </div>
+    <SiteFooter />
+    </>
   );
 }

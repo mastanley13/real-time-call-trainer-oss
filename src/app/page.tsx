@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, FileJson, GitPullRequest, KeyRound, LibraryBig, MessageSquareQuote, Radar } from "lucide-react";
 import HeroDeck from "@/components/landing/HeroDeck";
+import SiteFooter from "@/components/SiteFooter";
 import { LIBRARY } from "@/lib/personas";
 
 const families = new Set(LIBRARY.map((s) => s.role)).size;
@@ -115,13 +116,7 @@ DEMO_MODE=true npm run dev`}</pre>
         </div>
       </section>
 
-      <footer className="border-t border-line py-8 text-center text-sm text-ink-muted">
-        <p>MIT licensed · by Mykel Stanley · originally based on OpenAI&rsquo;s openai-realtime-agents demo</p>
-        <nav aria-label="Legal" className="mt-2 flex justify-center gap-4">
-          <Link href="/privacy" className="underline underline-offset-2 hover:text-ink">Privacy</Link>
-          <Link href="/terms" className="underline underline-offset-2 hover:text-ink">Terms</Link>
-        </nav>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }

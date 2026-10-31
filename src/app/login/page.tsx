@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
+import LegalLinks from "@/components/LegalLinks";
 
 export default function LoginPage() {
   const { login, completeMfaChallenge, isAuthenticated, capabilities } = useAuth();
@@ -70,6 +71,7 @@ export default function LoginPage() {
       <p className="mt-5 text-center text-sm text-ink-muted">
         New here? <Link href="/register" className="font-semibold text-primary">Create an account</Link>
       </p>
+      <LegalLinks />
     </AuthShell>
   );
 }

@@ -1,5 +1,6 @@
 // Legal copy pending owner review.
 import type { Metadata } from "next";
+import SiteFooter from "@/components/SiteFooter";
 
 export const metadata: Metadata = {
   title: "Privacy policy",
@@ -8,6 +9,7 @@ export const metadata: Metadata = {
 
 export default function PrivacyPage() {
   return (
+    <>
     <div className="page max-w-3xl py-12 sm:py-16">
       <p className="eyebrow">Legal</p>
       <h1 className="mt-1 text-3xl font-bold sm:text-4xl">Privacy policy</h1>
@@ -58,5 +60,7 @@ export default function PrivacyPage() {
         </section>
       </div>
     </div>
+    <SiteFooter />
+    </>
   );
 }
