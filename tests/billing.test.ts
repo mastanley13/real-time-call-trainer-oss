@@ -326,6 +326,12 @@ const deliverRaw = (e: unknown, header?: string | null) => {
   }));
 };
 
+/** Subscription item prices as Stripe returns them with the product expanded. */
+const itemPrice = (id: string, lookup_key: string | null, metadata: Record<string, string>) => ({ id, lookup_key, product: { metadata } });
+const PRO_PRICE = itemPrice("price_test_pro_y", "calltrainer_pro_annual", { plan: "pro" });
+const TEAM_PRICE = itemPrice("price_test_team_m", "calltrainer_team_monthly", { plan: "team", min_seats: "3", pooled_minutes_per_seat: "300" });
+const PREMIUM_PRICE = itemPrice("price_test_prem_m", "calltrainer_premium_monthly", {});
+
 /** Stripe's current state by subscription id. A missing id answers 404, like a subscription Stripe no longer has. */
 const liveStripe = new Map<string, unknown>();
 let retrieveSpy: MockInstance<typeof stripeApi.retrieveSubscription>;
@@ -349,8 +355,8 @@ function mirrorSnapshot(e: { type: string; data: { object: Record<string, unknow
     liveStripe.set(o.subscription, {
       id: o.subscription, customer: o.customer ?? "cus_test_1", status: "active", metadata: m,
       items: { data: [
-        m.plan === "team" ? { quantity: seats, price: { id: "price_test_team_m" } } : { quantity: 1, price: { id: "price_test_pro_m" } },
-        ...(m.premium === "true" ? [{ quantity: seats, price: { id: "price_test_prem_m" } }] : []),
+        m.plan === "team" ? { quantity: seats, price: TEAM_PRICE } : { quantity: 1, price: PRO_PRICE },
+        ...(m.premium === "true" ? [{ quantity: seats, price: PREMIUM_PRICE }] : []),
       ] },
     });
   }
@@ -366,9 +372,9 @@ const sub = (o: { id?: string; customer?: string; status?: string; team?: number
   status: o.status ?? "active",
   metadata: o.metadata ?? { userId: "owner-1" },
   items: { data: [
-    ...(o.team ? [{ quantity: o.team, price: { id: "price_test_team_m" } }] : []),
-    ...(o.pro ? [{ quantity: 1, price: { id: "price_test_pro_y" } }] : []),
-    ...(o.premium ? [{ quantity: o.premium, price: { id: "price_test_prem_m" } }] : []),
+    ...(o.team ? [{ quantity: o.team, price: TEAM_PRICE }] : []),
+    ...(o.pro ? [{ quantity: 1, price: PRO_PRICE }] : []),
+    ...(o.premium ? [{ quantity: o.premium, price: PREMIUM_PRICE }] : []),
   ] },
 });
 
@@ -483,9 +489,42 @@ describe("customer.subscription.updated", () => {
     expect(allowance("userId", "owner-1")?.minutesCap).toBe(200);
   });
 
-  it("does not touch a plan when the subscription has none of our prices", async () => {
-    await deliver(event("customer.subscription.updated", { ...sub({ id: "sub_test_team", customer: "cus_test_team" }), items: { data: [{ quantity: 1, price: { id: "price_unknown" } }] } }));
+  const withItems = (items: unknown[], status = "active") =>
+    deliver(event("customer.subscription.updated", { ...sub({ id: "sub_test_team", customer: "cus_test_team", metadata: { organizationId: "org-1" }, status }), items: { data: items } }));
+
+  it("does not change a paid plan when the items declare no valid plan", async () => {
+    await withItems([{ quantity: 1, price: itemPrice("price_unknown", null, {}) }]);
     expect(org().planTier).toBe("team");
+  });
+
+  it("an archived price with no lookup key still syncs from its product metadata", async () => {
+    const archived = itemPrice("price_test_archived_team", null, { plan: "team" });
+    await withItems([{ quantity: 5, price: archived }]);
+    expect(org()).toMatchObject({ planTier: "team", seatCount: 5 });
+    expect(allowance("organizationId", "org-1")?.minutesCap).toBe(1500);
+  });
+
+  it("an archived price that goes unpaid or past its lifetime still drops the org to Free", async () => {
+    const archived = itemPrice("price_test_archived_team", null, { plan: "team" });
+    await withItems([{ quantity: 3, price: archived }], "unpaid");
+    expect(org()).toMatchObject({ planTier: "free", subscriptionStatus: "unpaid" });
+  });
+
+  it("unpaid revokes access even when the items carry no plan metadata at all", async () => {
+    await withItems([{ quantity: 3, price: itemPrice("price_unknown", null, {}) }], "unpaid");
+    expect(org()).toMatchObject({ planTier: "free", subscriptionStatus: "unpaid" });
+    expect(allowance("organizationId", "org-1")).toMatchObject({ planTier: "free", minutesCap: 20 });
+  });
+
+  it("a product without plan metadata, or with an invalid one, never grants Team", async () => {
+    await update({ team: 3 });
+    await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_x", subscription: "sub_test_nometa", metadata: { plan: "team", organizationId: "org-2" } }));
+    liveStripe.set("sub_test_nometa", { ...sub({ id: "sub_test_nometa", customer: "cus_x" }), items: { data: [{ quantity: 9, price: itemPrice("price_a", "calltrainer_team_monthly", {}) }] } });
+    fake.seed("organization", { id: "org-2", code: "456", createdAt: new Date("2026-02-20T00:00:00Z") });
+    await deliverRaw(event("customer.subscription.updated", { id: "sub_test_nometa", customer: "cus_x", status: "active", metadata: { organizationId: "org-2" } }));
+    liveStripe.set("sub_test_nometa", { ...sub({ id: "sub_test_nometa", customer: "cus_x" }), items: { data: [{ quantity: 9, price: itemPrice("price_a", "calltrainer_team_monthly", { plan: "enterprise" }) }] } });
+    await deliverRaw(event("customer.subscription.updated", { id: "sub_test_nometa", customer: "cus_x", status: "active", metadata: { organizationId: "org-2" } }));
+    expect(fake.rows("organization").find((o) => o.id === "org-2")?.planTier ?? "free").toBe("free");
   });
 
   it("waits for an incomplete checkout to finish", async () => {
@@ -493,10 +532,33 @@ describe("customer.subscription.updated", () => {
     expect(org().seatCount).toBe(3);
   });
 
-  it("derives entitlement from price ids: Team wins over Pro, Premium is only a flag", () => {
-    expect(entitlementFromItems([{ priceId: "price_test_team_y", quantity: 2 }], PRICES)).toEqual({ plan: "team", seats: 3, premium: false });
-    expect(entitlementFromItems([{ priceId: "price_test_pro_m", quantity: 1 }, { priceId: "price_test_prem_m", quantity: 1 }], PRICES)).toEqual({ plan: "pro", seats: 1, premium: true });
-    expect(entitlementFromItems([{ priceId: "price_test_prem_m", quantity: 1 }], PRICES)).toBeNull();
+  it("derives entitlement from product metadata: the plan must be declared, Premium is only a flag", () => {
+    expect(entitlementFromItems([{ quantity: 2, productMetadata: { plan: "team" } }])).toEqual({ plan: "team", seats: 3, premium: false });
+    expect(entitlementFromItems([{ quantity: 1, productMetadata: { plan: "pro" } }, { quantity: 1, lookupKey: "calltrainer_premium_monthly", productMetadata: {} }])).toEqual({ plan: "pro", seats: 1, premium: true });
+    expect(entitlementFromItems([{ quantity: 1, lookupKey: "calltrainer_premium_monthly" }])).toBeNull();
+  });
+
+  it("missing, invalid or conflicting metadata grants nothing", () => {
+    expect(entitlementFromItems([{ quantity: 3, lookupKey: "calltrainer_team_monthly", productMetadata: {} }])).toBeNull();
+    expect(entitlementFromItems([{ quantity: 3, lookupKey: "calltrainer_team_monthly", productMetadata: null }])).toBeNull();
+    for (const plan of ["enterprise", "Team", "", "free"]) expect(entitlementFromItems([{ quantity: 3, productMetadata: { plan } }])).toBeNull();
+    // The lookup key says Team but the product says Pro, and the reverse.
+    expect(entitlementFromItems([{ quantity: 3, lookupKey: "calltrainer_team_annual", productMetadata: { plan: "pro" } }])).toBeNull();
+    expect(entitlementFromItems([{ quantity: 1, lookupKey: "calltrainer_pro_annual", productMetadata: { plan: "team" } }])).toBeNull();
+    // Two products declaring different plans on one subscription.
+    expect(entitlementFromItems([{ quantity: 1, productMetadata: { plan: "pro" } }, { quantity: 3, productMetadata: { plan: "team" } }])).toBeNull();
+  });
+
+  it("an item with no lookup key resolves by metadata alone", () => {
+    expect(entitlementFromItems([{ quantity: 6, lookupKey: null, productMetadata: { plan: "team", pooled_minutes_per_seat: "300" } }])).toEqual({ plan: "team", seats: 6, premium: false });
+  });
+
+  it("asks Stripe for the subscription with its products expanded", async () => {
+    const sent = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", sent);
+    retrieveSpy.mockRestore();
+    await stripeApi.retrieveSubscription("sub_test_1");
+    expect(decodeURIComponent((sent.mock.calls[0] as unknown as [string])[0])).toBe("https://api.stripe.com/v1/subscriptions/sub_test_1?expand[0]=items.data.price.product");
   });
 });
 

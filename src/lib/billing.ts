@@ -35,6 +35,7 @@ export const LOOKUP_KEYS = {
 } as const;
 
 const emptyPrices = (): PriceIds => ({ pro: { month: undefined, year: undefined }, team: { month: undefined, year: undefined }, premium: { month: undefined, year: undefined } });
+// Prices are only for building checkouts. What a subscription grants comes from its items' product metadata.
 
 const PriceList = z.object({
   data: z.array(z.object({
@@ -257,7 +258,18 @@ const SubscriptionObject = z.object({
   customer: z.string(),
   status: z.string(),
   metadata: Meta,
-  items: z.object({ data: z.array(z.object({ quantity: z.number().nullish(), price: z.object({ id: z.string() }) })) }),
+  items: z.object({
+    data: z.array(z.object({
+      quantity: z.number().nullish(),
+      price: z.object({
+        id: z.string(),
+        /** Null once the key has moved to a replacement price, so it is never the source of the plan. */
+        lookup_key: z.string().nullish(),
+        /** Expanded by retrieveSubscription. A bare id carries no metadata and is not interpreted. */
+        product: z.union([z.string(), z.object({ metadata: z.record(z.string()).nullish() })]).nullish(),
+      }),
+    })),
+  }),
 });
 type LiveSubscription = z.infer<typeof SubscriptionObject>;
 
@@ -266,19 +278,42 @@ const ENTITLED = new Set(["active", "trialing", "past_due"]);
 
 interface Entitlement { plan: PlanTier; seats: number; premium: boolean }
 
-/** Reads plan, seats and the premium flag from a subscription's price ids. Null when no known price is on it. */
-export function entitlementFromItems(items: { quantity?: number | null; priceId: string }[], prices: PriceIds): Entitlement | null {
-  const is = (id: string, p: Record<Interval, string | undefined>) => !!id && (id === p.month || id === p.year);
-  let plan: PlanTier | null = null;
+export interface SubscriptionItemInfo {
+  quantity?: number | null;
+  /** The price's lookup key, if it still has one. Only used to catch a mismatch with the product. */
+  lookupKey?: string | null;
+  /** The product's metadata. `plan` ("pro" or "team") decides the tier. */
+  productMetadata?: Record<string, string> | null;
+}
+
+const lookupPlan = (key: string | null | undefined): PaidPlan | null =>
+  key?.startsWith("calltrainer_team_") ? "team" : key?.startsWith("calltrainer_pro_") ? "pro" : null;
+
+const isPremiumItem = (it: SubscriptionItemInfo): boolean =>
+  (it.lookupKey ?? "").startsWith("calltrainer_premium_") || it.productMetadata?.plan === "premium" || it.productMetadata?.addon === "premium_voice";
+
+/**
+ * Reads plan, seats and the premium flag from the subscription's own items, independent of which prices
+ * are current. The tier comes only from each product's `plan` metadata, so a price that was archived or lost
+ * its lookup key still resolves, and a product without valid metadata never grants anything. Null when no
+ * item declares a valid plan, when a lookup key contradicts its product, or when items declare different plans.
+ */
+export function entitlementFromItems(items: SubscriptionItemInfo[]): Entitlement | null {
+  const plans = new Set<PaidPlan>();
   let seats = 1;
   let premium = false;
   for (const it of items) {
     const qty = Math.max(0, it.quantity ?? 1);
-    if (is(it.priceId, prices.team)) { plan = "team"; seats = Math.min(TEAM_MAX_SEATS, Math.max(TEAM_MIN_SEATS, qty)); }
-    else if (is(it.priceId, prices.pro) && plan !== "team") { plan = "pro"; seats = 1; }
-    else if (is(it.priceId, prices.premium) && qty > 0) premium = true;
+    const declared = it.productMetadata?.plan;
+    if (declared === "pro" || declared === "team") {
+      const byKey = lookupPlan(it.lookupKey);
+      if (byKey && byKey !== declared) return null;
+      plans.add(declared);
+      if (declared === "team") seats = Math.min(TEAM_MAX_SEATS, Math.max(TEAM_MIN_SEATS, qty));
+    } else if (isPremiumItem(it) && qty > 0) premium = true;
   }
-  return plan ? { plan, seats, premium } : null;
+  if (plans.size !== 1) return null;
+  return { plan: [...plans][0], seats: plans.has("team") ? seats : 1, premium };
 }
 
 type Subject = { kind: "user"; id: string } | { kind: "organization"; id: string };
@@ -376,7 +411,7 @@ type Live = LiveSubscription | "gone" | null;
  * the outcome depends only on `live` and what the owner currently holds, never on the event's snapshot.
  */
 async function reconcile(
-  tx: Tx, subscriptionId: string, live: Live, hint: { customerId?: string | null; metadata?: Record<string, string> | null }, now: Date, prices: PriceIds,
+  tx: Tx, subscriptionId: string, live: Live, hint: { customerId?: string | null; metadata?: Record<string, string> | null }, now: Date,
 ): Promise<Applied | null> {
   if (live === null) return null;
   if (live === "gone") {
@@ -386,9 +421,18 @@ async function reconcile(
   }
   // "incomplete" is a checkout still being paid; wait for it to become active.
   if (live.status === "incomplete") return null;
-  const found = entitlementFromItems(live.items.data.map((i) => ({ quantity: i.quantity, priceId: i.price.id })), prices);
-  // A subscription with none of our prices is not ours to interpret; leave the plan alone.
-  if (!found) return null;
+  const found = entitlementFromItems(live.items.data.map((i) => ({
+    quantity: i.quantity,
+    lookupKey: i.price.lookup_key,
+    productMetadata: typeof i.price.product === "object" ? i.price.product?.metadata : null,
+  })));
+  if (!found) {
+    // Items that declare no valid plan never grant access. A subscription that is no longer paid still
+    // revokes it from whoever holds it, so an unpaid or canceled state is honored whatever the items say.
+    if (ENTITLED.has(live.status)) return null;
+    const holder = await subjectOfSubscription(tx, live.id);
+    return holder ? applyEntitlement(tx, holder, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status }, now) : null;
+  }
   const subject = await findSubject(tx, { subscriptionId: live.id, customerId: live.customer, metadata: { ...(hint.metadata ?? {}), ...(live.metadata ?? {}) } });
   if (!subject) return null;
 
@@ -402,19 +446,19 @@ async function reconcile(
   return applyEntitlement(tx, subject, next, { customerId: live.customer, subscriptionId: live.id, status: live.status }, now);
 }
 
-async function onCheckoutPaid(tx: Tx, obj: unknown, live: Live, now: Date, prices: PriceIds, requirePaid: boolean): Promise<Applied | null> {
+async function onCheckoutPaid(tx: Tx, obj: unknown, live: Live, now: Date, requirePaid: boolean): Promise<Applied | null> {
   const s = SessionObject.parse(obj);
   if (s.mode && s.mode !== "subscription") return null;
   if (!s.subscription) return null;
   // A delayed payment method completes Checkout before the money arrives. Nothing is granted until Stripe says
   // the payment succeeded (async_payment_succeeded) or the subscription itself becomes active.
   if (requirePaid && s.payment_status === "unpaid") return null;
-  return reconcile(tx, s.subscription, live, { customerId: s.customer, metadata: s.metadata }, now, prices);
+  return reconcile(tx, s.subscription, live, { customerId: s.customer, metadata: s.metadata }, now);
 }
 
-async function onSubscriptionChanged(tx: Tx, obj: unknown, live: Live, now: Date, prices: PriceIds): Promise<Applied | null> {
+async function onSubscriptionChanged(tx: Tx, obj: unknown, live: Live, now: Date): Promise<Applied | null> {
   const sub = SubscriptionObject.pick({ id: true, customer: true, metadata: true }).parse(obj);
-  return reconcile(tx, sub.id, live, { customerId: sub.customer, metadata: sub.metadata }, now, prices);
+  return reconcile(tx, sub.id, live, { customerId: sub.customer, metadata: sub.metadata }, now);
 }
 
 async function onSubscriptionDeleted(tx: Tx, obj: unknown, now: Date): Promise<Applied | null> {
@@ -472,19 +516,17 @@ async function fetchLive(id: string | null, deps: StripeDeps): Promise<Live> {
  * a failure rolls both back and Stripe's retry is processed, while a redelivery of a handled event is a no-op.
  * Updates and completed checkouts are applied from the subscription's current state, not the event body.
  */
-export async function handleStripeEvent(event: StripeEventLike, now = new Date(), pricesArg?: PriceIds, deps: StripeDeps = liveDeps): Promise<EventResult> {
+export async function handleStripeEvent(event: StripeEventLike, now = new Date(), deps: StripeDeps = liveDeps): Promise<EventResult> {
   if ((await prisma.stripeEvent.findUnique({ where: { id: event.id } })) !== null) return "duplicate";
   const live = RECONCILED.has(event.type) ? await fetchLive(subscriptionIdOf(event), deps) : null;
-  // Resolved before the transaction opens so the Stripe call never holds it. A failure answers 500 and Stripe retries.
-  const prices = pricesArg ?? (RECONCILED.has(event.type) ? await resolvePriceIds() : emptyPrices());
   let applied: Applied | null = null;
   try {
     applied = await prisma.$transaction(async (tx) => {
       await tx.stripeEvent.create({ data: { id: event.id, type: event.type } });
       switch (event.type) {
-        case "checkout.session.completed": return onCheckoutPaid(tx, event.data.object, live, now, prices, true);
-        case "checkout.session.async_payment_succeeded": return onCheckoutPaid(tx, event.data.object, live, now, prices, false);
-        case "customer.subscription.updated": return onSubscriptionChanged(tx, event.data.object, live, now, prices);
+        case "checkout.session.completed": return onCheckoutPaid(tx, event.data.object, live, now, true);
+        case "checkout.session.async_payment_succeeded": return onCheckoutPaid(tx, event.data.object, live, now, false);
+        case "customer.subscription.updated": return onSubscriptionChanged(tx, event.data.object, live, now);
         case "customer.subscription.deleted": return onSubscriptionDeleted(tx, event.data.object, now);
         // A failed delayed payment grants nothing; the session is cleared so the account can start a new checkout.
         case "checkout.session.async_payment_failed":
@@ -513,9 +555,8 @@ async function afterApplied(applied: Applied | null, deps: StripeDeps): Promise<
  * Applies a completed Checkout Session without waiting for its webhook. Reconciliation depends only on the
  * subscription as Stripe has it now, so running it again when the webhook arrives changes nothing.
  */
-async function applyCompletedCheckout(session: z.infer<typeof SessionObject>, now: Date, deps: StripeDeps, pricesArg?: PriceIds): Promise<void> {
-  const prices = pricesArg ?? (await resolvePriceIds());
+async function applyCompletedCheckout(session: z.infer<typeof SessionObject>, now: Date, deps: StripeDeps): Promise<void> {
   const live = await fetchLive(session.subscription ?? null, deps);
-  const applied = await prisma.$transaction((tx) => onCheckoutPaid(tx, session, live, now, prices, true));
+  const applied = await prisma.$transaction((tx) => onCheckoutPaid(tx, session, live, now, true));
   await afterApplied(applied, deps);
 }
