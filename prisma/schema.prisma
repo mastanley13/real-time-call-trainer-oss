@@ -31,6 +31,14 @@ model Organization {
   name      String
   /// Subscription tier; "free" until billing/webhook sets otherwise.
   planTier  String   @default("free")
+  /// Paid seats on the Team plan; the voice pool is seatCount x 300 minutes. 1 while on Free.
+  seatCount Int      @default(1)
+  /// Premium Voice add-on (quantity = seats). Premium voice is capped at 60% of plan minutes.
+  premiumVoice Boolean @default(false)
+  /// Stripe ids (test mode only for now). Set by the webhook, never by the client.
+  stripeCustomerId     String? @unique
+  stripeSubscriptionId String? @unique
+  subscriptionStatus   String?
   /// Nullable = keep training records indefinitely. When set, the nightly
   /// purge job deletes TrainerSession rows older than this many days.
   sessionRetentionDays Int?
@@ -40,6 +48,7 @@ model Organization {
   users               User[]
   trainerSessions     TrainerSession[]
   trainingAssignments TrainingAssignment[]
+  poolAllowance       UsageAllowance? @relation("OrgPool")
 }
 
 enum UserRole {
@@ -71,9 +80,19 @@ model User {
   mfaSecret        String?
   mfaEnabled       Boolean  @default(false)
   mfaEnrolledAt    DateTime?
+  /// Individual plan: free | pro. Team members draw from their organization's pool instead.
+  planTier         String   @default("free")
+  premiumVoice     Boolean  @default(false)
+  stripeCustomerId     String? @unique
+  stripeSubscriptionId String? @unique
+  subscriptionStatus   String?
+  /// Monthly usage reset anchor for all plans. Defaults to signup time and never moves.
+  usageAnchorAt    DateTime @default(now())
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
+  usageAllowance      UsageAllowance?
+  usageEntries        UsageEntry[]
   trainerSessions     TrainerSession[]
   auditEvents         AuditEvent[]
   assignmentsCreated  TrainingAssignment[] @relation("AssignmentAssigner")
@@ -99,7 +118,18 @@ model TrainerSession {
   scenarioCategory   String?
   scenarioDifficulty String?
   scenarioTitle      String?
+  /// Client-reported length, for display only. Billing uses the server timestamps below.
   durationSeconds    Int      @default(0)
+  /// Voice metering, all set by the server. A null connectedAt means the call never connected.
+  connectedAt        DateTime?
+  endedAt            DateTime?
+  endReason          CallEndReason?
+  lastHeartbeatAt    DateTime?
+  /// First moment a heartbeat reported the connection as recovering; cleared when it recovers.
+  degradedAt         DateTime?
+  billableSeconds    Int      @default(0)
+  billedMinutes      Int      @default(0)
+  usageEntries       UsageEntry[]
   /// Raw transcript turns.
   transcript         Json
   /// Full structured evaluation object (or null if eval failed).
@@ -120,6 +150,76 @@ model TrainerSession {
   @@index([organizationId])
   @@index([scenarioId])
   @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Voice minute metering
+// ─────────────────────────────────────────────────────────────────────────
+
+/// One row per billing subject: a user (Free, Pro) or an organization pool (Team).
+model UsageAllowance {
+  id             String   @id @default(cuid())
+  userId         String?  @unique
+  user           User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String?  @unique
+  organization   Organization? @relation("OrgPool", fields: [organizationId], references: [id], onDelete: Cascade)
+  /// free | pro | team
+  planTier       String
+  /// 20, 200, or seats x 300.
+  minutesCap     Int
+  /// Copied from User.usageAnchorAt (or the organization's createdAt for a Team pool).
+  anchorAt       DateTime
+  periodStart    DateTime
+  periodEnd      DateTime
+  /// Cached net sum of this period's ledger entries, updated in the same transaction as each entry.
+  minutesUsed    Int      @default(0)
+  updatedAt      DateTime @updatedAt
+}
+
+/// Append-only ledger. Usage is positive, credits are negative. A session has at most one entry
+/// per kind, which is what makes repeated end events idempotent.
+model UsageEntry {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  allowanceId      String
+  trainerSessionId String?
+  trainerSession   TrainerSession? @relation(fields: [trainerSessionId], references: [id], onDelete: SetNull)
+  kind             UsageKind
+  minutes          Int
+  createdAt        DateTime @default(now())
+
+  @@unique([trainerSessionId, kind])
+  @@index([allowanceId, createdAt])
+  @@index([userId])
+}
+
+enum UsageKind {
+  voice_call
+  credit_drop
+  credit_manual
+}
+
+enum CallEndReason {
+  user_hangup
+  network_drop
+  provider_error
+  server_error
+  cap_reached
+  max_duration
+  heartbeat_timeout
+  failed_connect
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Billing
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Stripe event ids already handled by the webhook, so a redelivery is acknowledged and ignored.
+model StripeEvent {
+  id          String   @id
+  type        String
+  processedAt DateTime @default(now())
 }
 
 // ─────────────────────────────────────────────────────────────────────────
