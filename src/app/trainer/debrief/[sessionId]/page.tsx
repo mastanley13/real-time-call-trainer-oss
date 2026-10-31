@@ -10,7 +10,7 @@ import { listScenarios } from "@/lib/scenarioStore";
 import type { Scenario } from "@/lib/scenarios";
 import type { Evaluation } from "@/lib/grader-types";
 import { goalStatusOf, graderLabel, isLegacyGrader, scoreLabel, stripGraderNote } from "@/lib/grader-types";
-import { isFirstGradedCall, nextDrill, nextStepLine, retryPoint, scoreHeadline } from "@/lib/debrief";
+import { isFirstGradedCall, nextDrill, nextStepLine, resolveFirstCall, retryPoint, scoreHeadline, type FirstCallState } from "@/lib/debrief";
 import { canRegrade, isAiGrade, wasCapped } from "@/lib/gradable";
 import { canManageTeam } from "@/lib/team";
 import { CUE_LABELS } from "@/lib/coach-types";
@@ -20,6 +20,8 @@ import { PersonaAvatar } from "@/components/ui/Persona";
 import { CUE_ICON } from "@/components/call/CopilotRail";
 
 interface View {
+  /** The session this view was loaded for, so a view left over from another session never renders. */
+  sessionId: string;
   title: string;
   scenario?: Scenario;
   scenarioId?: string;
@@ -80,8 +82,9 @@ export default function DebriefPage() {
   const [view, setView] = useState<View | null>(null);
   const [error, setError] = useState("");
   const [focus, setFocus] = useState<number | null>(null);
-  // Set once earlier graded calls are known; until then the grade shows as a baseline rather than a letter that may be wrong.
-  const [firstCall, setFirstCall] = useState(true);
+  // Tied to the session it was worked out for; until it resolves the grade shows as a baseline rather than a letter that may be wrong.
+  const [firstState, setFirstState] = useState<FirstCallState | null>(null);
+  const firstCall = resolveFirstCall(firstState, sessionId);
   const [regrading, setRegrading] = useState(false);
   const [regradeMsg, setRegradeMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const lineRefs = useRef<Record<number, HTMLLIElement | null>>({});
@@ -91,37 +94,32 @@ export default function DebriefPage() {
 
   useEffect(() => {
     if (!capabilities || isLoading) return;
+    // Drop another session's view at once, and ignore any response that arrives after leaving this one.
+    let stale = false;
+    setView((v) => (v && v.sessionId === sessionId ? v : null));
+    setError("");
     if (sessionId.startsWith("local-")) {
       const s = getLocalSession(sessionId);
       if (!s) { setError("This session isn’t stored in this browser."); return; }
-      setView({ title: s.scenario.title, scenario: s.scenario, scenarioId: s.scenario.id, role: s.scenario.role, createdAt: s.createdAt, durationSeconds: s.durationSeconds, transcript: s.transcript, evaluation: s.evaluation, callerName: s.scenario.aiPersona.name, coach: s.coach, local: true });
+      const earlier = listLocalSessions().filter((x) => x.id !== sessionId).map((x) => ({ createdAt: x.createdAt, graded: !!x.evaluation }));
+      setFirstState({ sessionId, first: isFirstGradedCall(s.createdAt, earlier) });
+      setView({ sessionId, title: s.scenario.title, scenario: s.scenario, scenarioId: s.scenario.id, role: s.scenario.role, createdAt: s.createdAt, durationSeconds: s.durationSeconds, transcript: s.transcript, evaluation: s.evaluation, callerName: s.scenario.aiPersona.name, coach: s.coach, local: true });
       return;
     }
     if (!isAuthenticated) { router.replace("/login"); return; }
-    fetch(`/api/transcripts/${sessionId}`)
+    fetch(`/api/transcripts/${encodeURIComponent(sessionId)}`)
       .then(async (r) => {
         if (!r.ok) throw new Error(r.status === 404 ? "Session not found." : "Could not load this session.");
-        const { session } = await r.json();
+        // The server works out first-call status for the session's owner, so a manager sees the trainee's baseline, not their own.
+        const { session, firstGradedCall } = await r.json();
+        if (stale) return;
         const sc = listScenarios().find((x) => x.id === session.scenarioId);
-        setView({ title: session.scenarioTitle ?? session.scenarioId, scenario: sc, scenarioId: session.scenarioId, role: sc?.role, createdAt: session.createdAt, durationSeconds: session.durationSeconds, transcript: session.transcript, evaluation: session.evaluation, supervisorNotes: session.supervisorNotes, callerName: sc?.aiPersona.name ?? "Caller", local: false, ownerId: session.userId });
+        setFirstState({ sessionId, first: firstGradedCall !== false });
+        setView({ sessionId, title: session.scenarioTitle ?? session.scenarioId, scenario: sc, scenarioId: session.scenarioId, role: sc?.role, createdAt: session.createdAt, durationSeconds: session.durationSeconds, transcript: session.transcript, evaluation: session.evaluation, supervisorNotes: session.supervisorNotes, callerName: sc?.aiPersona.name ?? "Caller", local: false, ownerId: session.userId });
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => { if (!stale) setError(e.message); });
+    return () => { stale = true; };
   }, [sessionId, capabilities, isLoading, isAuthenticated, router]);
-
-  useEffect(() => {
-    if (!view) return;
-    const others = (rows: { id: string; createdAt: string; graded: boolean }[]) => rows.filter((r) => r.id !== sessionId);
-    if (view.local) {
-      setFirstCall(isFirstGradedCall(view.createdAt, others(listLocalSessions().map((s) => ({ id: s.id, createdAt: s.createdAt, graded: !!s.evaluation })))));
-      return;
-    }
-    fetch("/api/transcripts")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: { sessions?: { id: string; createdAt: string; overallScore: number | null }[] } | null) => {
-        if (d?.sessions) setFirstCall(isFirstGradedCall(view.createdAt, others(d.sessions.map((s) => ({ id: s.id, createdAt: s.createdAt, graded: s.overallScore !== null })))));
-      })
-      .catch(() => {});
-  }, [view, sessionId]);
 
   const ev = view?.evaluation ?? null;
   const critColor = useMemo(() => Object.fromEntries((ev?.criteria ?? []).map((c, i) => [c.id, CRIT_COLORS[i % CRIT_COLORS.length]])), [ev]);
@@ -173,7 +171,7 @@ export default function DebriefPage() {
   }
 
   if (error && !view) return <div className="deck min-h-screen"><div className="page"><p className="banner-warn">{error} <Link className="font-semibold underline" href="/dashboard">Back to progress</Link></p></div></div>;
-  if (!view) return <div className="deck min-h-screen"><PageSkeleton rows={2} /></div>;
+  if (!view || view.sessionId !== sessionId) return <div className="deck min-h-screen"><PageSkeleton rows={2} /></div>;
 
   const spoke = view.transcript.some((t) => t.role === "user" && t.text.trim());
   const gs = ev ? goalStatusOf(ev) : null;

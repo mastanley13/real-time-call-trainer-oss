@@ -45,6 +45,15 @@ export function isFirstGradedCall(thisCreatedAt: string, others: { createdAt: st
   return !others.some((o) => o.graded && Date.parse(o.createdAt) < t);
 }
 
+/**
+ * A first-call answer tied to the session it was worked out for. Anything unresolved or
+ * left over from another session reads as a baseline, so a stale "not first" never shows a letter grade.
+ */
+export interface FirstCallState { sessionId: string; first: boolean }
+export function resolveFirstCall(state: FirstCallState | null | undefined, sessionId: string): boolean {
+  return state && state.sessionId === sessionId ? state.first : true;
+}
+
 /** Score ring and label text: a first call is a baseline, never a bare letter grade. */
 export function scoreHeadline(ev: Pick<Evaluation, "overallScore" | "grade">, first: boolean): { ring: string; label?: string } {
   return first ? { ring: "Baseline", label: `Your baseline: ${ev.overallScore}%` } : { ring: `Grade ${ev.grade}` };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { detectPriceQuote, gradeHeuristically, type Turn } from "@/lib/grader";
-import { isFirstGradedCall, nextStepLine, scoreHeadline } from "@/lib/debrief";
+import { detectPriceQuote, gradeHeuristically, pricingCriterion, type Turn } from "@/lib/grader";
+import { isFirstGradedCall, nextStepLine, resolveFirstCall, scoreHeadline } from "@/lib/debrief";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 
 const scenario = BUILT_IN_SCENARIOS.find((s) => s.id === "home-services-inbound-lead")!;
@@ -25,6 +25,37 @@ describe("price detector", () => {
   it("marks a number that is framed as a fee", () => {
     expect(detectPriceQuote([{ text: "The fee is $89." }]).framed).toBeDefined();
     expect(detectPriceQuote([{ text: "Eighty nine dollars, all in." }]).framed).toBeUndefined();
+  });
+  it("finds spelled-out amounts from voice transcripts, single and compound", () => {
+    for (const t of ["Eighty nine dollars, all in.", "The fee is five dollars.", "It runs eighty-nine dollars.", "Two hundred and fifty dollars flat.", "That is a hundred bucks."]) {
+      expect(detectPriceQuote([{ text: t }]).quoted, t).toBeDefined();
+    }
+    expect(detectPriceQuote([{ text: "The fee is five dollars." }]).framed).toBeDefined();
+  });
+  it("credits only an affirmative zero-cost statement", () => {
+    for (const t of ["The estimate is free of charge.", "There is no charge for the visit.", "I can waive the fee today.", "The diagnostic is complimentary."]) {
+      expect(detectPriceQuote([{ text: t }]).quoted, t).toBeDefined();
+    }
+    for (const t of ["The fee cannot be waived.", "No charge has been determined yet.", "I don't know if there is no charge.", "The fee is waived only if you book."]) {
+      expect(detectPriceQuote([{ text: t }]).quoted, t).toBeUndefined();
+    }
+  });
+});
+
+describe("pricing criterion matching", () => {
+  it("matches pricing words, not substrings of other words", () => {
+    for (const [id, name] of [["fee", "Pricing transparency"], ["price_value", "Value"], ["quote", "Clear quote"], ["x", "Rates and fees"]]) {
+      expect(pricingCriterion(id, name), `${id} ${name}`).toBe(true);
+    }
+    for (const [id, name] of [["accuracy", "Accurate claims and due diligence"], ["details", "Accurate reservation details"], ["x", "Corporate tone"], ["x", "Generate interest"]]) {
+      expect(pricingCriterion(id, name), `${id} ${name}`).toBe(false);
+    }
+  });
+  it("gives no pricing bonus or dollar-amount fix to an unrelated criterion", () => {
+    const sc = { ...scenario, rubric: [{ id: "accuracy", name: "Accurate claims and due diligence", description: "States facts correctly.", weight: 100 }] };
+    const ev = gradeHeuristically(sc, call(OPEN, "The visit costs $89."));
+    expect(ev.criteria[0].rationale).not.toMatch(/price/i);
+    expect(ev.improvements.join(" ")).not.toContain("dollar amount");
   });
 });
 
@@ -83,6 +114,16 @@ describe("baseline framing", () => {
     expect(isFirstGradedCall(at, [])).toBe(true);
     expect(isFirstGradedCall(at, [{ createdAt: "2026-01-01T00:00:00Z", graded: false }, { createdAt: "2026-01-03T00:00:00Z", graded: true }])).toBe(true);
     expect(isFirstGradedCall(at, [{ createdAt: "2026-01-01T00:00:00Z", graded: true }])).toBe(false);
+  });
+  it("treats unresolved or other-session state as a baseline, so navigating never shows a stale grade", () => {
+    expect(resolveFirstCall(null, "b")).toBe(true);
+    expect(resolveFirstCall({ sessionId: "a", first: false }, "b")).toBe(true);
+    expect(resolveFirstCall({ sessionId: "b", first: false }, "b")).toBe(false);
+    // A late answer for session "a" cannot flip session "b": the state carries its own id.
+    let state = { sessionId: "a", first: false };
+    expect(resolveFirstCall(state, "a")).toBe(false);
+    state = { sessionId: "a", first: false };
+    expect(resolveFirstCall(state, "b")).toBe(true);
   });
   it("words the next step with score and weight", () => {
     expect(nextStepLine({ name: "Greeting & rapport", score: 35, weight: 15 })).toBe("You scored 35% on Greeting & rapport (worth 15%).");

@@ -141,9 +141,16 @@ const BOOKING_CRITERION_RE = /book|clos|appoint|schedul|next.?step|commit|confir
 const SLOT_TIME_RE = /\b(\d{1,2}(:\d{2})?\s?(a\.?m\.?|p\.?m\.?)|noon|tomorrow|today|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week|this (morning|afternoon|evening|week)|(morning|afternoon|evening) (window|slot))\b/i;
 // Only counts alongside SLOT_TIME_RE, so broad verbs ("Can I send...", "I can show it Saturday") stay safe.
 const SLOT_OFFER_RE = /\b(how about|would .* work|does .* work|can (do|offer|get|send|have)|(i|we) can (do|offer|get|send|show|meet|come|bring|have)|can (i|we) (do|offer|get|send|show|meet|come|book|set|pencil)|i have|we have|available|opening|slot|window|come out|stop by|schedule|book|appointment|visit|see you)\b/i;
-const PRICING_CRITERION_RE = /pric|fee|cost|quote|rate|charge|billing|payment/i;
+// Whole words only, so "accurate" never reads as "rate". Underscores in ids count as separators.
+const PRICING_CRITERION_RE = /\b(?:pric(?:e|es|ing)|fees?|costs?|quotes?|rates?|charges?|billing|payments?)\b/i;
+export const pricingCriterion = (id: string, name: string) => PRICING_CRITERION_RE.test(`${id} ${name}`.replace(/_/g, " "));
 // A dollar figure ("$89", "89 dollars", "ninety bucks") or an explicit zero-cost statement.
-const MONEY_RE = /(?:[$£€]\s?\d[\d,]*(?:\.\d{1,2})?|\b\d[\d,]*(?:\.\d{1,2})?\s?(?:dollars?|bucks|usd)\b|\b[a-z-]*(?:ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)\s+(?:dollars?|bucks)\b|\b(?:no (?:extra |additional )?(?:charge|cost|fee)|free of charge|complimentary|waived)\b)/i;
+const NUM_WORD = "(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)";
+const MONEY_RE = new RegExp(String.raw`(?:[$£€]\s?\d[\d,]*(?:\.\d{1,2})?|\b\d[\d,]*(?:\.\d{1,2})?\s?(?:dollars?|bucks|usd)\b|\b${NUM_WORD}(?:[\s-]+(?:and\s+)?${NUM_WORD})*\s+(?:dollars?|bucks)\b)`, "i");
+// An affirmative zero-cost statement. Negated or undecided sentences ("cannot be waived", "not determined yet") never count.
+const ZERO_COST_RE = /\b(?:at no (?:extra |additional )?(?:charge|cost)|there(?:'s| is) no (?:extra |additional )?(?:charge|cost|fee)\b|no (?:extra |additional )?(?:charge|cost|fee) (?:for|to|at all)\b|(?:it's|it is|that's|that is|is|are) (?:completely |totally )?free\b|free of charge|complimentary|(?:i'll|i will|we'll|we will|i can|we can) waive\b|(?:fee|charge) (?:is|has been|will be) waived)/i;
+const NEGATED_RE = /\b(?:cannot|can't|can not|won't|will not|not|never|unable|hasn't|haven't|isn't|aren't|don't|doesn't|yet|unless|if|unclear|unknown)\b/i;
+const isPriceStatement = (text: string) => MONEY_RE.test(text) || (ZERO_COST_RE.test(text) && !NEGATED_RE.test(text));
 const PRICE_WORD_RE = /\b(fee|price|cost|costs|charge|charges|rate|quote|estimate|total|per (?:month|year|visit|hour|seat))\b/i;
 const SLOT_CONFIRM_RE = /\b(confirm(ed|ing)?|you're (booked|all set|scheduled)|i've (booked|scheduled|put you)|locked in|see you (then|at|on|tomorrow)|all set)\b/i;
 
@@ -156,8 +163,8 @@ export function detectSlotOffer<T extends { text: string; line: number }>(senten
 
 /** Trainee stated a concrete price: a number or zero-cost statement (quoted), ideally framed as a fee or price (framed). */
 export function detectPriceQuote<T extends { text: string }>(sentences: T[]): { quoted?: T; framed?: T } {
-  const quoted = sentences.find((s) => MONEY_RE.test(s.text));
-  const framed = sentences.find((s) => MONEY_RE.test(s.text) && PRICE_WORD_RE.test(s.text));
+  const quoted = sentences.find((s) => isPriceStatement(s.text));
+  const framed = sentences.find((s) => isPriceStatement(s.text) && PRICE_WORD_RE.test(s.text));
   return { quoted, framed };
 }
 
@@ -268,7 +275,7 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
     }
     // Reps quote fees as "$89", which keyword overlap never sees, so a pricing criterion credits a stated number.
     let priceNote = "";
-    const pricing = PRICING_CRITERION_RE.test(`${c.id} ${c.name}`);
+    const pricing = pricingCriterion(c.id, c.name);
     if (pricing && price.quoted) {
       bonus += price.framed ? 35 : 25;
       evidenceSentences.unshift(price.framed ?? price.quoted);

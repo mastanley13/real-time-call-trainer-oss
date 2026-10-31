@@ -36,7 +36,12 @@ export async function GET(req: NextRequest, { params }: Params) {
   const session = await prisma.trainerSession.findUnique({ where: { id } });
   if (!session) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (!(await canAccess(auth.id, session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  return NextResponse.json({ session });
+  // First-call status belongs to the session's owner, not the viewer: a manager opening a trainee's debrief
+  // must not see it framed by the manager's own history. Only a yes/no leaves the server.
+  const earlier = await prisma.trainerSession.count({
+    where: { userId: session.userId, id: { not: session.id }, overallScore: { not: null }, createdAt: { lt: session.createdAt } },
+  });
+  return NextResponse.json({ session, firstGradedCall: earlier === 0 });
 }
 
 /**
