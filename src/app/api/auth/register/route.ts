@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import { hashPassword, signSessionToken } from "@/lib/auth";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
-import { generateOrgCode, isValidOrgCode } from "@/lib/orgCodes";
+import { generateOrgCode, isValidOrgCode, personalOrgName } from "@/lib/orgCodes";
 
 const RegisterSchema = z
   .object({
@@ -16,15 +16,15 @@ const RegisterSchema = z
       .string()
       .min(10, "Password must be at least 10 characters")
       .max(200),
-    /// Exactly one of these two must be provided.
+    /// At most one of these two. Neither means a solo sign-up with a personal workspace.
     joinOrgCode: z.string().regex(/^[0-9]{3,8}$/).optional(),
     newOrgName: z.string().trim().min(2).max(120).optional(),
     /// From a manager's invite link: put the new rep on that manager's team.
     managerId: z.string().trim().min(1).max(64).optional(),
   })
   .refine(
-    (v) => !!v.joinOrgCode !== !!v.newOrgName,
-    "Either joinOrgCode or newOrgName must be provided (but not both).",
+    (v) => !(v.joinOrgCode && v.newOrgName),
+    "Provide either joinOrgCode or newOrgName, not both.",
   );
 
 export async function POST(request: NextRequest) {
@@ -67,10 +67,11 @@ export async function POST(request: NextRequest) {
   try {
     const hashedPassword = await hashPassword(body.password);
 
-    const { user, organization } = await prisma.$transaction(async (tx) => {
+    const { user, organization, solo } = await prisma.$transaction(async (tx) => {
       let orgId: string;
       let role: "owner" | "trainee";
       let managerId: string | null = null;
+      let solo = false;
 
       if (body.newOrgName) {
         const code = await generateOrgCode();
@@ -83,7 +84,8 @@ export async function POST(request: NextRequest) {
         const org = await tx.organization.findUnique({
           where: { code: body.joinOrgCode },
         });
-        if (!org) {
+        // A personal workspace is never joinable, so its code behaves like an unknown one.
+        if (!org || org.isPersonal) {
           throw new Error("INVALID_ORG_CODE");
         }
         orgId = org.id;
@@ -96,8 +98,20 @@ export async function POST(request: NextRequest) {
           });
           managerId = lead?.id ?? null;
         }
+      } else if (body.joinOrgCode) {
+        throw new Error("INVALID_ORG_CODE");
       } else {
-        throw new Error("INVALID_REQUEST");
+        const org = await tx.organization.create({
+          data: {
+            name: personalOrgName({ firstName: body.firstName, lastName: body.lastName, email: emailLower }),
+            code: await generateOrgCode(),
+            planTier: "free",
+            isPersonal: true,
+          },
+        });
+        orgId = org.id;
+        role = "trainee";
+        solo = true;
       }
 
       const created = await tx.user.create({
@@ -110,6 +124,8 @@ export async function POST(request: NextRequest) {
           organizationId: orgId,
           role,
           managerId,
+          // Nothing to set up for a solo account, so it skips onboarding.
+          ...(solo ? { onboardedAt: new Date() } : {}),
           lastLoginAt: new Date(),
         },
         include: { organization: true },
@@ -125,12 +141,12 @@ export async function POST(request: NextRequest) {
           metadata: {
             role,
             organizationCode: created.organization?.code ?? null,
-            joinOrCreate: body.newOrgName ? "create" : "join",
+            joinOrCreate: solo ? "solo" : body.newOrgName ? "create" : "join",
           } satisfies Prisma.InputJsonValue,
         },
       });
 
-      return { user: created, organization: created.organization };
+      return { user: created, organization: created.organization, solo };
     });
 
     const sessionUser = {
@@ -148,10 +164,16 @@ export async function POST(request: NextRequest) {
         isPlatformAdmin: user.isPlatformAdmin,
       },
       organization: organization
-        ? { id: organization.id, name: organization.name, code: organization.code }
+        ? {
+            id: organization.id,
+            name: organization.name,
+            // A personal workspace has no code to share.
+            code: organization.isPersonal ? null : organization.code,
+            isPersonal: organization.isPersonal,
+          }
         : null,
       token,
-      needsOnboarding: true,
+      needsOnboarding: !solo,
     });
     res.cookies.set("authToken", token, {
       httpOnly: true,

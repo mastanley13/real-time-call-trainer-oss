@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { getCapabilities } from "@/lib/serverConfig";
-import { needsOnboarding, SESSION_COOKIE, toSessionUser } from "@/lib/session";
+import { needsOnboarding, orgView, SESSION_COOKIE, toSessionUser } from "@/lib/session";
 
 /**
  * Hands the browser the session that a redirect sign-in (Google) put in the
@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     user: { ...toSessionUser(user), isPlatformAdmin: user.isPlatformAdmin },
-    organization: user.organization ? { id: user.organization.id, name: user.organization.name, code: user.organization.code } : null,
+    organization: user.organization ? { id: user.organization.id, name: user.organization.name, code: orgView(user.organization).code, isPersonal: user.organization.isPersonal } : null,
     token,
     needsOnboarding: needsOnboarding(user),
   });

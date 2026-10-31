@@ -20,7 +20,7 @@ import { suggestForIndustries } from "@/lib/teamPersonas";
 
 interface State {
   user: { id: string; role: string; firstName: string | null; isPlatformAdmin: boolean };
-  organization: { id: string; name: string; code: string; industries: string[] } | null;
+  organization: { id: string; name: string; code: string | null; industries: string[]; isPersonal: boolean } | null;
   manager: { id: string; name: string } | null;
   needsOnboarding: boolean;
 }
@@ -38,7 +38,7 @@ export default function OnboardingPage() {
   const router = useRouter();
   const [state, setState] = useState<State | null>(null);
   const [step, setStep] = useState<Step>("team");
-  const [mode, setMode] = useState<"create" | "join">("create");
+  const [mode, setMode] = useState<"solo" | "create" | "join">("solo");
   const [orgName, setOrgName] = useState("");
   const [code, setCode] = useState("");
   const [industries, setIndustries] = useState<Set<string>>(new Set());
@@ -75,7 +75,7 @@ export default function OnboardingPage() {
     try {
       const s = await call<State>("/api/onboarding", {
         method: "POST",
-        body: JSON.stringify(mode === "create" ? { action: "create_org", name: orgName } : { action: "join_org", code }),
+        body: JSON.stringify(mode === "solo" ? { action: "solo" } : mode === "create" ? { action: "create_org", name: orgName } : { action: "join_org", code }),
       });
       setState(s);
       setStep(canManageTeam(s.user.role, s.user.isPlatformAdmin) ? "industries" : "done");
@@ -157,15 +157,17 @@ export default function OnboardingPage() {
 
       {step === "team" && (
         <form onSubmit={joinOrCreate} className="card space-y-4">
-          <h2 className="text-lg font-bold">Start a team or join one</h2>
-          <div className="grid grid-cols-2 gap-2 rounded-xl bg-sunken p-1 text-sm font-semibold">
-            {(["create", "join"] as const).map((m) => (
-              <button type="button" key={m} onClick={() => setMode(m)} aria-pressed={mode === m} className={`min-h-[40px] rounded-lg ${mode === m ? "bg-surface text-primary shadow-sm" : "text-ink-muted"}`}>
-                {m === "create" ? "New team" : "Join with a code"}
+          <h2 className="text-lg font-bold">How will you use it?</h2>
+          <div className="grid gap-2 rounded-xl bg-sunken p-1 text-sm font-semibold sm:grid-cols-3" role="group" aria-label="How will you use it?">
+            {(["solo", "create", "join"] as const).map((m) => (
+              <button type="button" key={m} onClick={() => setMode(m)} aria-pressed={mode === m} className={`min-h-[40px] rounded-lg px-2 ${mode === m ? "bg-surface text-primary shadow-sm" : "text-ink-muted"}`}>
+                {m === "solo" ? "Just me" : m === "create" ? "Start a team" : "Join a team (I have a code)"}
               </button>
             ))}
           </div>
-          {mode === "create" ? (
+          {mode === "solo" ? (
+            <p className="text-sm text-ink-soft">You get your own workspace on the Free plan. There is nothing else to set up.</p>
+          ) : mode === "create" ? (
             <div>
               <label htmlFor="org" className="label">Team or company name</label>
               <input id="org" className="input" value={orgName} onChange={(e) => setOrgName(e.target.value)} required minLength={2} maxLength={120} />

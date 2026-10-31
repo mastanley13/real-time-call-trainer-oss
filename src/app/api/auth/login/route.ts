@@ -8,15 +8,11 @@ import {
 } from "@/lib/auth";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
-import { needsOnboarding } from "@/lib/session";
+import { needsOnboarding, orgView } from "@/lib/session";
 
 const LoginSchema = z.object({
   email: z.string().email().max(254),
   password: z.string().min(1).max(200),
-  /// Legacy field. We no longer require it at login — the user's
-  /// organization is inferred from their account. It is accepted here
-  /// purely for backwards compatibility with clients that still send it.
-  orgCode: z.string().optional(),
 });
 
 const GENERIC_AUTH_ERROR = "Invalid email or password.";
@@ -100,7 +96,7 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // Password + org-code have passed. If this account has MFA enabled, DO
+  // The password has passed. If this account has MFA enabled, DO
   // NOT issue a session yet — return a short-lived challenge token instead
   // and require a valid TOTP to exchange it for a session.
   if (user.mfaEnabled && user.mfaSecret) {
@@ -149,7 +145,8 @@ export async function POST(request: NextRequest) {
       ? {
           id: user.organization.id,
           name: user.organization.name,
-          code: user.organization.code,
+          code: orgView(user.organization).code,
+          isPersonal: user.organization.isPersonal,
         }
       : null,
     token,

@@ -7,10 +7,17 @@ import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
 import GoogleButton, { OrDivider } from "@/components/GoogleButton";
 
+type Mode = "solo" | "create" | "join";
+const MODES: { id: Mode; label: string }[] = [
+  { id: "solo", label: "Just me" },
+  { id: "create", label: "Start a team" },
+  { id: "join", label: "Join a team (I have a code)" },
+];
+
 export default function RegisterPage() {
   const { register, isAuthenticated, capabilities, needsOnboarding } = useAuth();
   const router = useRouter();
-  const [mode, setMode] = useState<"create" | "join">("create");
+  const [mode, setMode] = useState<Mode>("solo");
   const [f, setF] = useState({ firstName: "", lastName: "", email: "", password: "", orgName: "", orgCode: "" });
   /** A manager's invite link: /register?code=123456&manager=<id>. */
   const [invite, setInvite] = useState<{ code: string; manager?: string } | null>(null);
@@ -18,8 +25,8 @@ export default function RegisterPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (isAuthenticated) router.replace(needsOnboarding ? "/onboarding" : "/trainer");
-  }, [isAuthenticated, needsOnboarding, router]);
+    if (isAuthenticated) router.replace(needsOnboarding ? "/onboarding" : mode === "solo" ? "/dashboard" : "/trainer");
+  }, [isAuthenticated, needsOnboarding, mode, router]);
 
   useEffect(() => {
     const sp = new URLSearchParams(window.location.search);
@@ -46,7 +53,9 @@ export default function RegisterPage() {
         password: f.password,
         ...(mode === "create"
           ? { newOrgName: f.orgName }
-          : { joinOrgCode: f.orgCode, ...(invite?.manager && invite.code === f.orgCode ? { managerId: invite.manager } : {}) }),
+          : mode === "join"
+            ? { joinOrgCode: f.orgCode, ...(invite?.manager && invite.code === f.orgCode ? { managerId: invite.manager } : {}) }
+            : {}),
       });
       // The effect above sends new accounts on to onboarding.
     } catch (err) {
@@ -57,14 +66,20 @@ export default function RegisterPage() {
   }
 
   return (
-    <AuthShell title="Create your account" subtitle="Start a team workspace or join one with a code.">
+    <AuthShell title="Create your account" subtitle="Practise on your own, start a team or join one with a code.">
       {capabilities && !capabilities.database && !capabilities.demoMode && (
         <div className="banner-warn mb-4">Registration needs a database. Set <code>DATABASE_URL</code> or use <code>DEMO_MODE=true</code>.</div>
       )}
       {invite && <p className="mb-4 rounded-lg bg-sunken px-3 py-2 text-sm">You&rsquo;re joining team <span className="mono">{invite.code}</span>{invite.manager ? " on your manager\u2019s team" : ""}.</p>}
       {capabilities?.google && (
         <>
-          <GoogleButton label="Sign up with Google" next="/onboarding" code={invite?.code} manager={invite?.manager} />
+          <GoogleButton
+            label="Sign up with Google"
+            next={mode === "solo" ? "/dashboard" : "/onboarding"}
+            intent={mode === "create" ? "team" : "solo"}
+            code={mode === "join" ? invite?.code : undefined}
+            manager={mode === "join" ? invite?.manager : undefined}
+          />
           <OrDivider />
         </>
       )}
@@ -76,16 +91,18 @@ export default function RegisterPage() {
         <div><label htmlFor="em" className="label">Email</label><input id="em" type="email" className="input" autoComplete="email" value={f.email} onChange={set("email")} required /></div>
         <div><label htmlFor="pw" className="label">Password (10+ characters)</label><input id="pw" type="password" minLength={10} className="input" autoComplete="new-password" value={f.password} onChange={set("password")} required /></div>
 
-        <div className="grid grid-cols-2 gap-2 rounded-xl bg-sunken p-1 text-sm font-semibold">
-          {(["create", "join"] as const).map((m) => (
-            <button type="button" key={m} onClick={() => setMode(m)} aria-pressed={mode === m} className={`min-h-[40px] rounded-lg ${mode === m ? "bg-surface text-primary shadow-sm" : "text-ink-muted"}`}>
-              {m === "create" ? "New team" : "Join a team"}
+        <div className="grid gap-2 rounded-xl bg-sunken p-1 text-sm font-semibold sm:grid-cols-3" role="group" aria-label="How will you use it?">
+          {MODES.map((m) => (
+            <button type="button" key={m.id} onClick={() => setMode(m.id)} aria-pressed={mode === m.id} className={`min-h-[40px] rounded-lg px-2 ${mode === m.id ? "bg-surface text-primary shadow-sm" : "text-ink-muted"}`}>
+              {m.label}
             </button>
           ))}
         </div>
-        {mode === "create" ? (
+        {mode === "solo" && <p className="text-xs text-ink-muted">You get your own workspace on the Free plan. You can join or start a team later.</p>}
+        {mode === "create" && (
           <div><label htmlFor="org" className="label">Team name</label><input id="org" className="input" value={f.orgName} onChange={set("orgName")} required minLength={2} /></div>
-        ) : (
+        )}
+        {mode === "join" && (
           <div><label htmlFor="code" className="label">Team code</label><input id="code" className="input" inputMode="numeric" pattern="[0-9]{3,8}" value={f.orgCode} onChange={set("orgCode")} required /></div>
         )}
         {error && <p role="alert" className="text-sm text-alert">{error}</p>}

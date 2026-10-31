@@ -11,7 +11,7 @@ import { ROLE_LABEL, type TeamRole } from "@/lib/team";
  */
 
 interface Member { id: string; name: string; role: TeamRole; managerId: string | null; joinedAt: string; lastLoginAt: string | null }
-interface Payload { organization: { name: string; code: string } | null; canEditRoles: boolean; members: Member[] }
+interface Payload { organization: { name: string; code: string | null } | null; canEditRoles: boolean; members: Member[] }
 
 export interface Lead { id: string; name: string }
 
@@ -62,7 +62,7 @@ export default function MembersPanel({ viewerId, onChanged, onLeads }: { viewerI
     }
   }
 
-  const invite = data?.organization && typeof window !== "undefined"
+  const invite = data?.organization?.code && typeof window !== "undefined"
     ? `${window.location.origin}/register?code=${data.organization.code}${viewer?.role === "manager" ? `&manager=${viewerId}` : ""}`
     : "";
 
@@ -74,7 +74,7 @@ export default function MembersPanel({ viewerId, onChanged, onLeads }: { viewerI
     <section className="panel overflow-hidden" aria-labelledby="members-h">
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-4 py-3 sm:px-5">
         <h2 id="members-h" className="text-sm font-bold">Members and managers</h2>
-        {data?.organization && <p className="font-mono text-[11px] text-ink-muted">team code {data.organization.code}</p>}
+        {data?.organization?.code && <p className="font-mono text-[11px] text-ink-muted">team code {data.organization.code}</p>}
       </div>
 
       {invite && (

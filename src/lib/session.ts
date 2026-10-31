@@ -29,6 +29,11 @@ export function startSession(res: NextResponse, user: SessionUser): string {
   return token;
 }
 
+/** The organization as the client sees it. A personal workspace has no code to show or share. */
+export function orgView<T extends { id: string; name: string; code: string; isPersonal: boolean }>(org: T) {
+  return { ...org, code: org.isPersonal ? null : org.code };
+}
+
 /** New users finish onboarding before practising; anyone without an org has to pick one first. */
 export function needsOnboarding(u: { onboardedAt: Date | null; organizationId: string | null; isPlatformAdmin: boolean }): boolean {
   if (u.isPlatformAdmin) return false;

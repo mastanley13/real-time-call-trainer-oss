@@ -59,6 +59,8 @@ export const FlowStateSchema = z.object({
   next: z.string().max(200),
   joinCode: z.string().regex(/^[0-9]{3,8}$/).optional(),
   managerId: z.string().min(1).max(64).optional(),
+  /** "team" leaves a new user without an org so onboarding can start a team. Anything else is solo. */
+  intent: z.enum(["solo", "team"]).optional(),
 });
 export type FlowState = z.infer<typeof FlowStateSchema>;
 

@@ -5,8 +5,9 @@
  * Google; nothing about the flow runs in the browser. Shown only when the
  * server has Google sign-in set up.
  */
-export default function GoogleButton({ next, code, manager, label = "Continue with Google" }: { next?: string; code?: string; manager?: string; label?: string }) {
+export default function GoogleButton({ next, code, manager, intent, label = "Continue with Google" }: { next?: string; code?: string; manager?: string; intent?: "solo" | "team"; label?: string }) {
   const params = new URLSearchParams();
+  if (intent) params.set("intent", intent);
   if (next) params.set("next", next);
   if (code) params.set("code", code);
   if (code && manager) params.set("manager", manager);
