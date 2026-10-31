@@ -164,23 +164,54 @@ describe("the cap is checked only when a call starts", () => {
 describe("fractional usage", () => {
   it("any minutes left let a Free call start, and a second start cannot take the same half minute", async () => {
     await freeUserWith(9.5);
-    expect(checkCap({ remaining: 0.5, plan: "free" })).toEqual({ ok: true });
-    expect(checkCap({ remaining: 0, plan: "free" })).toEqual({ ok: false, error: "cap_reached" });
+    expect(checkCap({ remaining: 0.5 })).toEqual({ ok: true });
+    expect(checkCap({ remaining: 0 })).toEqual({ ok: false, error: "cap_reached" });
     const first = await beginCall("u-1", scn, at(0));
     expect(first).toMatchObject({ ok: true, remaining: 0.5, maxSeconds: MAX_CALL_SECONDS });
     expect(allowanceOf("u-1").minutesReserved).toBe(1);
     expect(await beginCall("u-1", scn, at(1))).toEqual({ ok: false, error: "minutes_reserved" });
   });
 
-  it("a plan the cap stops mid-call still needs one whole minute to start", async () => {
-    expect(checkCap({ remaining: 0.5, plan: "pro" })).toEqual({ ok: false, error: "cap_reached" });
-    expect(checkCap({ remaining: 1, plan: "pro" })).toEqual({ ok: true });
+  it("Pro and Team start with any minutes left, like Free: what the screen shows is what the check enforces", async () => {
+    expect(checkCap({ remaining: 0.5 })).toEqual({ ok: true });
+    expect(checkCap({ remaining: 0.01 })).toEqual({ ok: true });
+    expect(checkCap({ remaining: 0 })).toEqual({ ok: false, error: "cap_reached" });
+
+    // Pro at 199.5 of 200: 0.5 minutes left, so the call starts. It holds one whole minute and is stopped at it.
     addUser("u-1", { planTier: "pro" });
     await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
     allowanceOf("u-1").minutesUsed = 199.5;
+    expect(await resolveAllowance(fake.db as never, "u-1", at(0))).toMatchObject({ plan: "pro", remaining: 0.5 });
+    const begun = await beginCall("u-1", scn, at(0));
+    expect(begun).toMatchObject({ ok: true, remaining: 0.5, maxSeconds: 60 });
+    if (!begun.ok) return;
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    expect(await heartbeat("u-1", begun.callId, "ok", at(30))).toMatchObject({ found: true, stop: false });
+    // The cap still stops a Pro call: at its one reserved minute, billed that minute, nothing more.
+    expect(await heartbeat("u-1", begun.callId, "ok", at(70))).toMatchObject({ found: true, stop: true, reason: "cap_reached" });
+    expect(session(begun.callId)).toMatchObject({ billedMinutes: 1, endReason: "cap_reached" });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 200.5, minutesReserved: 0 });
+    // Now nothing is left, so the next start is refused.
+    expect(await beginCall("u-1", scn, at(100))).toEqual({ ok: false, error: "cap_reached" });
+  });
+
+  it("a Team pool with half a minute left starts a call for a member, and a second start cannot take the same minute", async () => {
+    fake.seed("organization", { id: "org-1", code: "123", createdAt: MAR10, planTier: "team", seatCount: 3 });
+    addUser("u-1");
+    addUser("u-2");
+    await ensureAllowance(fake.db as never, { organizationId: "org-1" }, at(0));
+    const pool = fake.rows("usageAllowance").find((a) => a.organizationId === "org-1")!;
+    pool.minutesUsed = 899.5;
+    expect(await beginCall("u-1", scn, at(0))).toMatchObject({ ok: true, remaining: 0.5, maxSeconds: 60 });
+    expect(pool.minutesReserved).toBe(1);
+    expect(await beginCall("u-2", scn, at(1))).toEqual({ ok: false, error: "minutes_reserved" });
+  });
+
+  it("a Pro user at exactly the cap is still refused", async () => {
+    addUser("u-1", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
+    allowanceOf("u-1").minutesUsed = 200;
     expect(await beginCall("u-1", scn, at(0))).toEqual({ ok: false, error: "cap_reached" });
-    allowanceOf("u-1").minutesUsed = 198.5;
-    expect(await beginCall("u-1", scn, at(0))).toMatchObject({ ok: true, maxSeconds: 60 });
   });
 
   it("a half-minute support credit takes an account from 10 to 9.5 and lets it start a call", async () => {
@@ -380,6 +411,132 @@ describe("a Team that ends does not give its members a fresh Free allowance", ()
     downgrade();
     fake.rows("user").find((u) => u.id === "u-1")!.planTier = "pro";
     expect(await resolveAllowance(fake.db as never, "u-1", downgradedAt)).toMatchObject({ plan: "pro", usedElsewhere: 0, remaining: 200 });
+  });
+});
+
+describe("carried Team usage follows when the call ran, not when it was settled", () => {
+  // The organization resets on the 20th at 12:00 UTC. Member u-1 resets on the 10th, member u-2 on the 25th.
+  const ORG_ANCHOR = new Date("2026-03-20T12:00:00Z");
+  const U2_ANCHOR = new Date("2026-03-25T12:00:00Z");
+  const utc = (s: string) => new Date(`2026-${s}Z`);
+  const AFTER = utc("11-12T12:00:00"); // a Free call is judged here: u-1's period is Nov 10 12:00 to Dec 10 12:00
+
+  async function setUp() {
+    fake.seed("organization", { id: "org-1", code: "123", createdAt: ORG_ANCHOR, planTier: "team", seatCount: 3 });
+    addUser("u-1");
+    addUser("u-2", { usageAnchorAt: U2_ANCHOR });
+  }
+  /** A Team call that really ran from `start` for `seconds`. The ledger rows are written at settlement, whenever that is. */
+  async function teamCall(userId: string, start: Date, seconds: number) {
+    const begun = await beginCall(userId, scn, start);
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat(userId, begun.callId, "connected", start);
+    await endCall(userId, begun.callId, "user_hangup", new Date(start.getTime() + seconds * 1000));
+    return begun.callId;
+  }
+  const endTeam = () => { fake.rows("organization")[0].planTier = "free"; };
+  const carried = async (userId: string, now = AFTER) => (await resolveAllowance(fake.db as never, userId, now))!;
+
+  it("a 10 minute Team call with 5 minutes after the member's reset counts only 5 against Free", async () => {
+    await setUp();
+    const callId = await teamCall("u-1", utc("11-10T11:55:00"), 600); // 11:55 to 12:05, reset at 12:00
+    // The organization's period did not change at the member's reset: all 10 minutes are in the pool.
+    expect(fake.rows("usageAllowance").find((a) => a.organizationId === "org-1")).toMatchObject({ minutesUsed: 10 });
+    expect(session(callId)).toMatchObject({ billedMinutes: 10, billableSeconds: 600 });
+    endTeam();
+
+    const r = await carried("u-1");
+    expect(r).toMatchObject({ plan: "free", pooled: false, usedElsewhere: 5, remaining: 5, available: 5 });
+    expect(await usageSummary("u-1", AFTER)).toMatchObject({ minutesCap: 10, minutesUsed: 5, remaining: 5 });
+    // 5 minutes are left, so the member is not refused.
+    expect(await beginCall("u-1", scn, AFTER)).toMatchObject({ ok: true, remaining: 5 });
+  });
+
+  it("a call that ended before the member's reset counts nothing, however late it was settled", async () => {
+    await setUp();
+    await teamCall("u-1", utc("11-10T11:40:00"), 600); // 11:40 to 11:50
+    endTeam();
+    expect(await carried("u-1")).toMatchObject({ usedElsewhere: 0, remaining: 10 });
+    expect(await beginCall("u-1", scn, AFTER)).toMatchObject({ ok: true, remaining: 10 });
+  });
+
+  it("a call that ran entirely after the reset counts in full, and 10 of them refuse the next call", async () => {
+    await setUp();
+    await teamCall("u-1", utc("11-10T12:30:00"), 600);
+    endTeam();
+    expect(await carried("u-1")).toMatchObject({ usedElsewhere: 10, remaining: 0 });
+    expect(await beginCall("u-1", scn, AFTER)).toEqual({ ok: false, error: "cap_reached" });
+  });
+
+  it("a call that started before the reset and ran past it counts only the part after it", async () => {
+    await setUp();
+    await teamCall("u-1", utc("11-10T11:50:00"), 1200); // 20 minutes, 10 of them after the reset
+    endTeam();
+    expect(await carried("u-1")).toMatchObject({ usedElsewhere: 10, remaining: 0 });
+    expect(await beginCall("u-1", scn, AFTER)).toEqual({ ok: false, error: "cap_reached" });
+  });
+
+  it("calls add up by when they ran: 5 from the straddling call and 4 after the reset leave 1 minute", async () => {
+    await setUp();
+    await teamCall("u-1", utc("11-10T11:55:00"), 600);
+    await teamCall("u-1", utc("11-10T13:00:00"), 240);
+    endTeam();
+    expect(await carried("u-1")).toMatchObject({ usedElsewhere: 9, remaining: 1 });
+    expect(await beginCall("u-1", scn, AFTER)).toMatchObject({ ok: true, remaining: 1 });
+  });
+
+  it("5 straddling minutes and 6 after the reset together are over the Free cap", async () => {
+    await setUp();
+    await teamCall("u-1", utc("11-10T11:55:00"), 600);
+    await teamCall("u-1", utc("11-10T13:00:00"), 360);
+    endTeam();
+    expect(await carried("u-1")).toMatchObject({ usedElsewhere: 11, remaining: 0 });
+    expect(await beginCall("u-1", scn, AFTER)).toEqual({ ok: false, error: "cap_reached" });
+  });
+
+  it("members with different reset days are judged on their own month: the same pool call counts differently", async () => {
+    await setUp();
+    const at1155 = utc("11-10T11:55:00");
+    await teamCall("u-1", at1155, 600);
+    await teamCall("u-2", at1155, 600);
+    endTeam();
+    // u-1 resets at 12:00 that day: 5 of the 10 minutes are in its month.
+    expect(await carried("u-1")).toMatchObject({ usedElsewhere: 5, remaining: 5 });
+    // u-2's month runs Oct 25 to Nov 25, so all 10 minutes are in it.
+    expect(await carried("u-2")).toMatchObject({ usedElsewhere: 10, remaining: 0 });
+    expect(await beginCall("u-2", scn, AFTER)).toEqual({ ok: false, error: "cap_reached" });
+  });
+
+  it("the carry does not depend on when the ledger rows were written", async () => {
+    await setUp();
+    await teamCall("u-1", utc("11-10T11:55:00"), 600);
+    endTeam();
+    const answer = await carried("u-1");
+    // Move every ledger row to a different day: nothing about the answer may change.
+    for (const e of fake.rows("usageEntry")) e.createdAt = utc("12-01T00:00:00");
+    expect(await carried("u-1")).toMatchObject({ usedElsewhere: answer.usedElsewhere, remaining: answer.remaining });
+    for (const e of fake.rows("usageEntry")) e.createdAt = utc("01-01T00:00:00");
+    expect(await carried("u-1")).toMatchObject({ usedElsewhere: 5, remaining: 5 });
+  });
+
+  it("a support credit given on the pool this month lowers the carried minutes", async () => {
+    await setUp();
+    await teamCall("u-1", utc("11-10T12:30:00"), 600); // 10 minutes after the reset
+    const pool = fake.rows("usageAllowance").find((a) => a.organizationId === "org-1")!;
+    fake.seed("usageEntry", { userId: "u-1", allowanceId: pool.id, kind: "credit_manual", minutes: -4, createdAt: utc("11-11T09:00:00") });
+    endTeam();
+    expect(await carried("u-1")).toMatchObject({ usedElsewhere: 6, remaining: 4 });
+  });
+
+  it("another member's pool calls are never counted, and a short credited drop counts nothing", async () => {
+    await setUp();
+    await teamCall("u-2", utc("11-10T12:30:00"), 600);
+    const begun = await beginCall("u-1", scn, utc("11-10T13:00:00"));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", utc("11-10T13:00:00"));
+    await endCall("u-1", begun.callId, "network_drop", utc("11-10T13:00:12")); // credited back, billed 0
+    endTeam();
+    expect(await carried("u-1")).toMatchObject({ usedElsewhere: 0, remaining: 10 });
   });
 });
 

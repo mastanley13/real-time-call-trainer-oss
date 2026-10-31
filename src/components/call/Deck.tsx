@@ -22,8 +22,10 @@ export interface DeckVoice { muted: boolean; onToggleMute: () => void; getInputV
 const FOCUSABLE = "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
 const clock = (iso: string | undefined, start: number) => (iso ? formatDuration(Math.max(0, Math.round((Date.parse(iso) - start) / 1000))) : "");
 
-export default function Deck({ scenario, turns, startedAt, elapsed, orbState, status, grading, gradingLabel, onEnd, coach, coachMode, onCoachModeChange, coachLabel, text, voice, inserted, onInsert, error }: {
+export default function Deck({ scenario, turns, startedAt, elapsed, orbState, status, grading, gradingLabel, onEnd, coach, coachMode, onCoachModeChange, coachLabel, text, voice, inserted, onInsert, error, canUpgrade = true }: {
   error?: string;
+  /** False for a Team pool member who is not an owner or manager: the cap message says to ask their admin, with no Upgrade link. */
+  canUpgrade?: boolean;
   scenario: Scenario;
   turns: StoredTurn[];
   startedAt: number;
@@ -200,7 +202,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
           </div>
 
           <div className="shrink-0 border-t border-line bg-surface px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 sm:px-6">
-            {error && <CallError message={error} className="mb-3" />}
+            {error && <CallError message={error} className="mb-3" canUpgrade={canUpgrade} />}
             {text?.hungUp && (
               <div className="mb-3 flex flex-col items-center gap-2 rounded-panel bg-caution-soft p-3 text-center text-sm sm:flex-row sm:justify-between sm:text-left" role="status">
                 <span><strong>{persona.name} hung up.</strong> The call is over.</span>

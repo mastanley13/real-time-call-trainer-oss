@@ -122,7 +122,7 @@ function MicCheck({ onResult }: { onResult: (r: MicResult) => void }) {
   );
 }
 
-export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, minutesLeft }: {
+export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, minutesLeft, canUpgrade = true }: {
   scenario: Scenario;
   capabilities: Capabilities;
   mode: "voice" | "text";
@@ -139,6 +139,8 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
   notice?: string;
   /** Voice minutes left this period; null or undefined when minutes are not metered (demo mode, no billing). */
   minutesLeft?: number | null;
+  /** False for a Team pool member who is not an owner or manager: they are told to ask their admin, with no Upgrade link. */
+  canUpgrade?: boolean;
 }) {
   const p = scenario.aiPersona;
   const steps = talkTrackSteps(scenario.callScript);
@@ -295,13 +297,13 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
               <p className="mt-2 text-xs text-ink-muted">{MODE_HELP[coachMode]}</p>
             </div>
 
-            {error && <CallError message={error} />}
+            {error && <CallError message={error} canUpgrade={canUpgrade} />}
 
             {/* Voice minutes left, before Start. With none left the refusal and Upgrade link show now, not after a failed start. */}
             {mode === "voice" && !blocked && minutesLeft != null && (
               minutesLeft > 0
                 ? <p className="mono text-sm text-ink-soft" role="status">{minutesLeftLabel(minutesLeft)}</p>
-                : !error && <CallError message={CAP_REACHED_MESSAGE} role="status" />
+                : !error && <CallError message={CAP_REACHED_MESSAGE} role="status" canUpgrade={canUpgrade} />
             )}
 
             <button className="btn-primary btn-xl w-full" onClick={onStart} disabled={blocked}>

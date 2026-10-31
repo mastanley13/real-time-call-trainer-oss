@@ -27,6 +27,8 @@ export async function GET(req: NextRequest) {
       enabled: stripeStatus() === "ready",
       testMode: stripeTestMode(),
       canBuyTeam: manages && !!user.organization,
+      // A member of a Team pool who is not an owner or manager has nothing to upgrade: the admin buys the minutes.
+      canUpgrade: !(summary.pooled && !manages),
       hasPortal: !!((manages && user.organization?.stripeCustomerId) || user.stripeCustomerId),
       seats: summary.pooled ? user.organization?.seatCount ?? 1 : 1,
       status: (summary.pooled ? user.organization?.subscriptionStatus : user.subscriptionStatus) ?? null,

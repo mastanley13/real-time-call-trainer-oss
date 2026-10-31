@@ -191,27 +191,44 @@ export async function resolveAllowance(db: Tx, userId: string, now: Date): Promi
 }
 
 /**
- * Net ledger minutes this user used in the current period of `allowance` on any OTHER allowance, which is the Team
- * pool they spent from before it ended. Entries on `allowance` itself are already in its minutesUsed, so nothing is
- * counted twice; entries from before the period started are not counted.
+ * Minutes this user used on any OTHER allowance (the Team pool they spent from before it ended) that fall inside the
+ * current period of `allowance`. Calls on `allowance` itself are already in its minutesUsed, so nothing is counted twice.
+ *
+ * The ledger's createdAt is when a call was settled, not when it ran, and the pool's period and the member's own
+ * period can start on different days. So each call is placed by when it actually ran: its billed minutes are shared
+ * out in proportion to how much of its billed time (start to start plus billableSeconds) lies inside this period.
+ * A 10 minute call with 5 minutes after the member's reset counts 5 here, and a call that ended before the reset counts 0.
+ * Support credits are not calls; they count when they were given.
  */
 async function usedInOtherAllowances(db: Tx, userId: string, allowance: UsageAllowance): Promise<number> {
-  const entries = await db.usageEntry.findMany({ where: { userId, createdAt: { gte: allowance.periodStart } } });
-  const total = entries.filter((e) => e.allowanceId !== allowance.id).reduce((n, e) => n + e.minutes, 0);
-  return Math.max(0, total);
+  const periodStartMs = allowance.periodStart.getTime();
+  const periodEndMs = allowance.periodEnd.getTime();
+  // A call can start up to the call length limit before the period and still run into it.
+  const sessions = await db.trainerSession.findMany({ where: { userId, createdAt: { gte: new Date(periodStartMs - MAX_CALL_SECONDS * 1000) } } });
+  let total = 0;
+  for (const s of sessions) {
+    if (!s.allowanceId || s.allowanceId === allowance.id || !s.endedAt || s.billableSeconds <= 0 || s.billedMinutes <= 0) continue;
+    const startMs = billingStart(s).getTime();
+    const ranMs = s.billableSeconds * 1000;
+    const insideMs = Math.max(0, Math.min(startMs + ranMs, periodEndMs) - Math.max(startMs, periodStartMs));
+    total += s.billedMinutes * Math.min(1, insideMs / ranMs);
+  }
+  const credits = await db.usageEntry.findMany({ where: { userId, createdAt: { gte: allowance.periodStart } } });
+  total += credits.filter((e) => e.kind === "credit_manual" && e.allowanceId !== allowance.id).reduce((n, e) => n + e.minutes, 0);
+  return roundMinutes(Math.max(0, total));
 }
 
 /** Usage can be a half minute (a support credit), so remaining is kept clear of floating point dust. */
 const roundMinutes = (n: number) => Math.round(n * 100) / 100;
 
 /**
- * The cap check (rule 11). A call the plan cap will stop (Pro, Team) needs at least one whole minute left,
- * because its reservation is whole minutes. A Free call is checked only here and never stopped later, so any
- * minutes left, even half of one, let it start: 9.5 of 10 used still starts, 10 or more does not.
+ * The cap check (rule 11), the same for every plan: any minutes left let a call start, even half of one. What the
+ * screen shows as "0.5 voice minutes left" is what this enforces. 9.5 of 10 used starts, 10 or more does not.
+ * A Free call then runs to its end. A Pro or Team call holds a whole minute, because reservations are whole minutes
+ * and every started minute counts, so it can end at most half a minute over its plan.
  */
-export function checkCap(r: Pick<Resolved, "remaining" | "plan">): { ok: true } | { ok: false; error: "cap_reached" } {
-  const needed = midCallCapApplies(r.plan) ? 1 : Number.MIN_VALUE;
-  return r.remaining >= needed ? { ok: true } : { ok: false, error: "cap_reached" };
+export function checkCap(r: Pick<Resolved, "remaining">): { ok: true } | { ok: false; error: "cap_reached" } {
+  return r.remaining > 0 ? { ok: true } : { ok: false, error: "cap_reached" };
 }
 
 // ---- Voice engine -----------------------------------------------------------------------------
@@ -268,12 +285,12 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
       if (!check.ok) return check;
       if (!user.organizationId) return { ok: false, error: "no_organization" } as const;
       const capApplies = midCallCapApplies(r.plan);
-      // Free needs any minutes not held by another start; a capped plan needs a whole minute, as it did before.
-      if (capApplies ? r.available < 1 : r.available <= 0) return { ok: false, error: "minutes_reserved" } as const;
+      // Any minutes not held by another start let this one begin, on every plan.
+      if (r.available <= 0) return { ok: false, error: "minutes_reserved" } as const;
 
-      // Reservations are whole minutes. A Free call holds at least one so a second start cannot take the same
-      // last minutes, even if that holds half a minute more than is left.
-      const wanted = Math.min(capApplies ? Math.floor(r.available) : Math.max(1, Math.ceil(r.available)), MAX_RESERVE_MINUTES);
+      // Reservations are whole minutes and round up: a call holds at least one so a second start cannot take the same
+      // last minutes, even if that holds up to half a minute more than is left.
+      const wanted = Math.min(Math.max(1, Math.ceil(r.available)), MAX_RESERVE_MINUTES);
       const { engine, premiumMinutes } = chooseEngine(r, wanted);
       // A Premium call may use only the Premium minutes it holds, so that share is its reservation (and maxSeconds).
       const reserve = engine === "premium" ? premiumMinutes : wanted;

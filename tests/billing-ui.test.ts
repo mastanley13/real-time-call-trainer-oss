@@ -11,7 +11,9 @@ vi.mock("@/lib/apiAuth", async () => ({
   isDemoUser: () => false,
 }));
 
+import CallError from "@/components/call/CallError";
 import {
+  ASK_ADMIN_MESSAGE, canUpgradeFromUsage, capCopy,
   CAP_REACHED_MESSAGE, CAP_STOPPED_MESSAGE, PRICE, clampSeats, formatMinutes, freeOverCapNotice, isCapMessage, minutesLeftFromUsage, minutesLeftLabel,
   planPriceLine, premiumLabel, proButtonLabel, teamButtonLabel, usageHeaderCopy,
 } from "@/lib/billingUi";
@@ -215,6 +217,100 @@ describe("a Free user over the cap (Prism b)", () => {
       expect(notice).toMatch(/13 of 10/);
       expect(first.remaining).toBe(10);
       expect(freeOverCapNotice({ plan: first.plan, used: first.minutesUsed, cap: first.minutesCap, resetDate: reset })).toBeNull();
+    });
+  });
+});
+
+describe("Team pool members who cannot buy minutes (Prism 2)", () => {
+  type Seen = { text: string[]; hrefs: string[] };
+  /** Walks the element tree a component returns, collecting its text and any link targets. */
+  function walk(n: unknown, out: Seen = { text: [], hrefs: [] }): Seen {
+    if (n == null || typeof n === "boolean") return out;
+    if (typeof n === "string" || typeof n === "number") { out.text.push(String(n)); return out; }
+    if (Array.isArray(n)) { n.forEach((c) => walk(c, out)); return out; }
+    const el = n as { props?: { href?: string; children?: unknown } };
+    if (el.props?.href) out.hrefs.push(el.props.href);
+    walk(el.props?.children, out);
+    return out;
+  }
+  const render = (message: string, canUpgrade?: boolean) => walk(CallError({ message, canUpgrade }));
+
+  it("a person who can upgrade gets the message and an Upgrade link to billing", () => {
+    for (const canUpgrade of [undefined, true]) {
+      const seen = render(CAP_REACHED_MESSAGE, canUpgrade);
+      expect(seen.text.join(" ")).toContain(CAP_REACHED_MESSAGE);
+      expect(seen.text).toContain("Upgrade");
+      expect(seen.hrefs).toEqual(["/settings/billing"]);
+      expect(seen.text.join(" ")).not.toContain(ASK_ADMIN_MESSAGE);
+    }
+  });
+
+  it("a pool member who is not an admin gets no Upgrade link and is told to ask their team admin", () => {
+    for (const message of [CAP_REACHED_MESSAGE, CAP_STOPPED_MESSAGE]) {
+      const seen = render(message, false);
+      expect(seen.hrefs).toEqual([]);
+      expect(seen.text).not.toContain("Upgrade");
+      expect(seen.text.join(" ")).toContain("Ask your team admin for more minutes.");
+      expect(seen.text.join(" ")).toContain("Switch to Text to practice.");
+      expect(seen.text.join(" ")).not.toMatch(/upgrade/i);
+    }
+  });
+
+  it("other errors are untouched for everyone", () => {
+    for (const canUpgrade of [true, false]) {
+      const seen = render("Voice connection error", canUpgrade);
+      expect(seen.text).toEqual(["Voice connection error"]);
+      expect(seen.hrefs).toEqual([]);
+    }
+    expect(capCopy("Voice connection error", false)).toEqual({ text: "Voice connection error", action: null });
+  });
+
+  it("the copy has no dashes and the screens pass canUpgrade through", () => {
+    expect(ASK_ADMIN_MESSAGE).not.toMatch(new RegExp("[\\u2013\\u2014]"));
+    expect(capCopy(CAP_REACHED_MESSAGE, false).text).not.toMatch(new RegExp("[\\u2013\\u2014]"));
+    const read = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
+    expect(read("src/components/call/Briefing.tsx")).toMatch(/<CallError message=\{error\} canUpgrade=\{canUpgrade\} \/>/);
+    expect(read("src/components/call/Briefing.tsx")).toMatch(/message=\{CAP_REACHED_MESSAGE\} role="status" canUpgrade=\{canUpgrade\}/);
+    expect(read("src/components/call/Deck.tsx")).toMatch(/<CallError message=\{error\} className="mb-3" canUpgrade=\{canUpgrade\} \/>/);
+    expect(read("src/components/TrainerClient.tsx")).toMatch(/canUpgrade=\{canUpgrade\}/);
+    expect(read("src/components/TrainerClient.tsx")).toMatch(/error, canUpgrade \};/);
+  });
+
+  it("reads canUpgrade from /api/usage, and assumes yes when it is not said", () => {
+    expect(canUpgradeFromUsage({ billing: { canUpgrade: false } })).toBe(false);
+    expect(canUpgradeFromUsage({ billing: { canUpgrade: true } })).toBe(true);
+    expect(canUpgradeFromUsage({ billing: { enabled: true } })).toBe(true);
+    expect(canUpgradeFromUsage({ metered: false })).toBe(true);
+    expect(canUpgradeFromUsage(null)).toBe(true);
+  });
+
+  describe("from GET /api/usage", () => {
+    beforeEach(() => {
+      mocks.fake = createFakePrisma();
+      const anchor = new Date("2026-03-10T12:00:00Z");
+      mocks.fake.seed("organization", { id: "org-1", code: "123", createdAt: anchor, planTier: "team", seatCount: 3 });
+      mocks.fake.seed("user", { id: "rep-1", email: "rep-1@example.test", organizationId: "org-1", usageAnchorAt: anchor, createdAt: anchor, role: "rep" });
+      mocks.fake.seed("user", { id: "mgr-1", email: "mgr-1@example.test", organizationId: "org-1", usageAnchorAt: anchor, createdAt: anchor, role: "manager" });
+      mocks.fake.seed("user", { id: "own-1", email: "own-1@example.test", organizationId: "org-1", usageAnchorAt: anchor, createdAt: anchor, role: "owner" });
+      vi.stubEnv("DATABASE_URL", "postgresql://ci:ci@localhost:5432/ci");
+      vi.stubEnv("DEMO_MODE", "");
+      vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
+    });
+    afterEach(() => { vi.unstubAllEnvs(); mocks.authId = "u-1"; });
+    const asUser = async (id: string) => { mocks.authId = id; return (await usageRoute(new NextRequest("http://localhost/api/usage"))).json(); };
+
+    it("a pool member who is not an owner or manager cannot upgrade; an owner and a manager can", async () => {
+      const rep = await asUser("rep-1");
+      expect(rep).toMatchObject({ plan: "team", pooled: true, billing: { canUpgrade: false, canBuyTeam: false } });
+      expect(canUpgradeFromUsage(rep)).toBe(false);
+      expect(canUpgradeFromUsage(await asUser("mgr-1"))).toBe(true);
+      expect(canUpgradeFromUsage(await asUser("own-1"))).toBe(true);
+    });
+
+    it("once the Team has ended, the same member is on their own Free allowance and can upgrade", async () => {
+      mocks.fake.rows("organization")[0].planTier = "free";
+      const rep = await asUser("rep-1");
+      expect(rep).toMatchObject({ plan: "free", pooled: false, billing: { canUpgrade: true } });
     });
   });
 });

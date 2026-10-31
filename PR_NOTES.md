@@ -42,15 +42,23 @@ ever moves off an archived Premium price, set `addon=premium_voice` on its produ
 - Fractional usage: `minutesUsed` and `UsageEntry.minutes` are floats (migration `20261031050000_fractional_usage_minutes`).
   Call billing is still whole minutes, every started minute counts; a half minute only comes from a support credit
   (the credit route takes 0.5 steps). A Free call starts with any minutes left, so 9.5 of 10 starts, runs 3 minutes
-  uninterrupted and reads 12.5. Pro and Team still need one whole minute left to start, because the cap stops their calls.
-  A Free start holds one whole minute so a second start cannot take the same last half minute.
+  uninterrupted and reads 12.5. Every plan starts with any minutes left, so "0.5 voice minutes left" on screen is what the
+  check enforces. A start holds one whole minute (reservations are whole and round up) so a second start cannot take the
+  same last half minute. A Pro or Team call is still stopped at that reserved minute and billed it, so it can end at most
+  half a minute over its plan; a Free call is not stopped.
 - A Free call reaped as silent is billed through its last confirmed heartbeat, plus the silent stretch after it bounded by
   the call's reservation. (It used to be clamped to the reservation as a whole, so 3 confirmed minutes could count as 1.)
   Pro and Team are unchanged: their whole call is bounded by the reservation.
-- When a Team ends (cancelled or unpaid), `resolveAllowance` counts the member's net ledger minutes on other allowances
-  (the pool) in the current Free period against the 10 minute cap (`Resolved.usedElsewhere`), so leaving the pool is not
-  a fresh 10 minutes. Entries from earlier periods, other members, and Pro members are not counted, and entries on the
-  personal allowance are not counted twice. The usage summary shows the combined number.
+- When a Team ends (cancelled or unpaid), `resolveAllowance` counts the member's pool minutes in the current Free period
+  against the 10 minute cap (`Resolved.usedElsewhere`), so leaving the pool is not a fresh 10 minutes. The carry is placed
+  by when each call ran, not by ledger createdAt (settlement time): a call's billed minutes are prorated by how much of
+  its billed time (billing start to start plus billableSeconds) lies inside the member's personal period, because the
+  organization and the member can reset on different days. A 10 minute call with 5 minutes after the member's reset counts
+  5. Support credits on the pool count by their own date. Other members, Pro members, earlier periods and calls on the
+  personal allowance (already in its minutesUsed) are not counted. The usage summary shows the combined number.
+- Pool members who are not an owner or manager cannot buy minutes. `/api/usage` returns `billing.canUpgrade` and the
+  cap message shows "Ask your team admin for more minutes." with no Upgrade link for them (`capCopy`, `CallError`).
+- vitest now compiles JSX with the automatic runtime, to match Next, so a test can call a component directly.
 - Text practice is not metered on any plan.
 - The Free reset is the signup anchor (the existing usage anchor), not the calendar month, and the billing page copy says
   "each month on your signup date". Switching Free to calendar-month resets would change `ensureAllowance`; not done.

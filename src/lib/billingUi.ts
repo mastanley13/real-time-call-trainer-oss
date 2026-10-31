@@ -14,8 +14,25 @@ export const CAP_STOPPED_MESSAGE = "You have used all your voice minutes for thi
 
 export const BILLING_PATH = "/settings/billing";
 
+/** For a Team pool member who cannot buy minutes themselves. Shown instead of the Upgrade link. */
+export const ASK_ADMIN_MESSAGE = "Ask your team admin for more minutes.";
+const POOL_MEMBER_CAP_MESSAGE = "You have used all your voice minutes for this period. Switch to Text to practice.";
+
 /** True for the two messages that mean "out of voice minutes", so the UI can offer an upgrade next to them. */
 export const isCapMessage = (message: string | null | undefined): boolean => message === CAP_REACHED_MESSAGE || message === CAP_STOPPED_MESSAGE;
+
+/**
+ * What to show for an error on the briefing or call screen. A cap message normally offers an Upgrade link. A member of a
+ * Team pool who is not an owner or manager cannot buy anything, so they are told to ask their admin and get no link.
+ * Other errors pass through unchanged.
+ */
+export function capCopy(message: string, canUpgrade = true): { text: string; action: "upgrade" | "ask_admin" | null } {
+  if (!isCapMessage(message)) return { text: message, action: null };
+  return canUpgrade ? { text: message, action: "upgrade" } : { text: POOL_MEMBER_CAP_MESSAGE, action: "ask_admin" };
+}
+
+/** Whether this person can buy or change a plan, from a /api/usage response. Defaults to yes when it is not said. */
+export const canUpgradeFromUsage = (data: unknown): boolean => (data as { billing?: { canUpgrade?: unknown } } | null)?.billing?.canUpgrade !== false;
 
 // ---- Minutes -------------------------------------------------------------------------------------
 
