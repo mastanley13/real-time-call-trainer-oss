@@ -24,7 +24,7 @@ const DEFAULTS: Record<string, () => Record<string, unknown>> = {
   user: () => ({ voiceBlockedUntil: null, planTier: "free", premiumVoice: false, stripeCustomerId: null, stripeSubscriptionId: null, subscriptionStatus: null, ...NO_CHECKOUT, organizationId: null, role: "trainee", isPlatformAdmin: false, createdAt: new Date(), usageAnchorAt: new Date() }),
   organization: () => ({ planTier: "free", seatCount: 1, premiumVoice: false, stripeCustomerId: null, stripeSubscriptionId: null, subscriptionStatus: null, ...NO_CHECKOUT, createdAt: new Date() }),
   usageAllowance: () => ({ userId: null, organizationId: null, minutesUsed: 0, minutesReserved: 0, premiumMinutesUsed: 0, premiumMinutesReserved: 0, version: 0 }),
-  usageEntry: () => ({ trainerSessionId: null, createdAt: new Date() }),
+  usageEntry: () => ({ trainerSessionId: null, ranFrom: null, ranTo: null, createdAt: new Date() }),
   trainerSession: () => ({ connectedAt: null, endedAt: null, endReason: null, lastHeartbeatAt: null, degradedAt: null, billableSeconds: 0, billedMinutes: 0, durationSeconds: 0, allowanceId: null, allowancePeriodStart: null, reservedMinutes: 0, engineTier: "standard", premiumReservedMinutes: 0, carriedMinutes: 0, carriedPremiumMinutes: 0, abuseFlagged: false, capEnforced: true, createdAt: new Date() }),
   stripeEvent: () => ({ processedAt: new Date() }),
   auditEvent: () => ({}),
@@ -132,6 +132,16 @@ export function createFakePrisma() {
         const hit = rows().filter((r) => matches(r, args.where));
         hit.forEach((r) => apply(r, args.data));
         return { count: hit.length };
+      },
+      deleteMany: async (args: { where?: Where } = {}) => {
+        const gone = rows().filter((r) => matches(r, args.where ?? {}));
+        // In place, so anything holding the array from rows() still sees the live data.
+        for (const r of gone) rows().splice(rows().indexOf(r), 1);
+        // UsageEntry.trainerSession is onDelete: SetNull, so a purged call leaves its ledger entries unlinked, not deleted.
+        if (name === "trainerSession") {
+          for (const e of data.usageEntry) if (gone.some((g) => g.id === e.trainerSessionId)) e.trainerSessionId = null;
+        }
+        return { count: gone.length };
       },
       _copy: copy,
     };

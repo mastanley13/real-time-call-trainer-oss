@@ -195,26 +195,34 @@ export async function resolveAllowance(db: Tx, userId: string, now: Date): Promi
  * current period of `allowance`. Calls on `allowance` itself are already in its minutesUsed, so nothing is counted twice.
  *
  * The ledger's createdAt is when a call was settled, not when it ran, and the pool's period and the member's own
- * period can start on different days. So each call is placed by when it actually ran: its billed minutes are shared
- * out in proportion to how much of its billed time (start to start plus billableSeconds) lies inside this period.
- * A 10 minute call with 5 minutes after the member's reset counts 5 here, and a call that ended before the reset counts 0.
- * Support credits are not calls; they count when they were given.
+ * period can start on different days. So each call is placed by when it actually ran: every call entry stores the
+ * call's run interval (ranFrom to ranTo), and its minutes are shared out in proportion to how much of that interval
+ * lies inside this period. A 10 minute call with 5 minutes after the member's reset counts 5 here, and a call that
+ * ended before the reset counts 0. The calculation reads only the usage ledger, never TrainerSession: the retention
+ * purge deletes call rows, and a purged call must not hand back minutes it already used.
+ *
+ * Entries with no run interval are counted at their createdAt: support credits (not calls, so they count when they
+ * were given) and call entries from before the interval was stored whose call row was already gone at backfill.
  */
 async function usedInOtherAllowances(db: Tx, userId: string, allowance: UsageAllowance): Promise<number> {
   const periodStartMs = allowance.periodStart.getTime();
   const periodEndMs = allowance.periodEnd.getTime();
-  // A call can start up to the call length limit before the period and still run into it.
-  const sessions = await db.trainerSession.findMany({ where: { userId, createdAt: { gte: new Date(periodStartMs - MAX_CALL_SECONDS * 1000) } } });
   let total = 0;
-  for (const s of sessions) {
-    if (!s.allowanceId || s.allowanceId === allowance.id || !s.endedAt || s.billableSeconds <= 0 || s.billedMinutes <= 0) continue;
-    const startMs = billingStart(s).getTime();
-    const ranMs = s.billableSeconds * 1000;
-    const insideMs = Math.max(0, Math.min(startMs + ranMs, periodEndMs) - Math.max(startMs, periodStartMs));
-    total += s.billedMinutes * Math.min(1, insideMs / ranMs);
+  // Calls: any entry whose call was still running at or after the start of the period.
+  const timed = await db.usageEntry.findMany({ where: { userId, ranTo: { gte: allowance.periodStart } } });
+  for (const e of timed) {
+    if (e.allowanceId === allowance.id || !e.ranFrom || !e.ranTo) continue;
+    const fromMs = e.ranFrom.getTime();
+    const ranMs = e.ranTo.getTime() - fromMs;
+    if (ranMs <= 0) continue;
+    const insideMs = Math.max(0, Math.min(e.ranTo.getTime(), periodEndMs) - Math.max(fromMs, periodStartMs));
+    total += e.minutes * Math.min(1, insideMs / ranMs);
   }
-  const credits = await db.usageEntry.findMany({ where: { userId, createdAt: { gte: allowance.periodStart } } });
-  total += credits.filter((e) => e.kind === "credit_manual" && e.allowanceId !== allowance.id).reduce((n, e) => n + e.minutes, 0);
+  // Everything without a run interval, by the date it was written.
+  const untimed = await db.usageEntry.findMany({ where: { userId, createdAt: { gte: allowance.periodStart } } });
+  for (const e of untimed) {
+    if (e.allowanceId !== allowance.id && !e.ranFrom && !e.ranTo) total += e.minutes;
+  }
   return roundMinutes(Math.max(0, total));
 }
 
@@ -548,14 +556,16 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   });
   if (won.count === 0) return null;
 
+  // When the call really ran, written on every call entry so it outlives the TrainerSession row (see usedInOtherAllowances).
+  const ran = b.billableSeconds > 0 ? { ranFrom: start, ranTo: new Date(start.getTime() + b.billableSeconds * 1000) } : {};
   if (b.gross > 0) {
-    await tx.usageEntry.create({ data: { userId: s.userId, allowanceId: allowance.id, trainerSessionId: s.id, kind: "voice_call", minutes: b.gross } });
+    await tx.usageEntry.create({ data: { userId: s.userId, allowanceId: allowance.id, trainerSessionId: s.id, kind: "voice_call", minutes: b.gross, ...ran } });
   }
   if (b.credit > 0) {
-    await tx.usageEntry.create({ data: { userId: s.userId, allowanceId: allowance.id, trainerSessionId: s.id, kind: "credit_drop", minutes: -b.credit } });
+    await tx.usageEntry.create({ data: { userId: s.userId, allowanceId: allowance.id, trainerSessionId: s.id, kind: "credit_drop", minutes: -b.credit, ...ran } });
   }
   if (b.priorNet > 0) {
-    await tx.usageEntry.create({ data: { userId: s.userId, allowanceId: allowance.id, trainerSessionId: s.id, kind: "voice_call_prior", minutes: b.priorNet, createdAt: b.priorAt } });
+    await tx.usageEntry.create({ data: { userId: s.userId, allowanceId: allowance.id, trainerSessionId: s.id, kind: "voice_call_prior", minutes: b.priorNet, createdAt: b.priorAt, ...ran } });
   }
   // Release the reservation and book the minutes in one atomic update; increments never read a stale value.
   if (b.net > 0 || b.releaseMinutes > 0 || b.releasePremium > 0) {

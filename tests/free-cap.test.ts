@@ -19,6 +19,7 @@ import { POST as saveTranscript } from "@/app/api/transcripts/route";
 import { POST as evaluate } from "@/app/api/evaluate-call/route";
 import { POST as simulate } from "@/app/api/simulate/turn/route";
 import { POST as creditRoute } from "@/app/api/usage/credit/route";
+import { GET as purge } from "@/app/api/cron/purge-expired/route";
 
 const T0 = new Date("2026-10-15T12:00:00Z");
 const at = (sec: number) => new Date(T0.getTime() + sec * 1000);
@@ -537,6 +538,116 @@ describe("carried Team usage follows when the call ran, not when it was settled"
     await endCall("u-1", begun.callId, "network_drop", utc("11-10T13:00:12")); // credited back, billed 0
     endTeam();
     expect(await carried("u-1")).toMatchObject({ usedElsewhere: 0, remaining: 10 });
+  });
+
+  describe("call timing is durable: the retention purge cannot hand minutes back", () => {
+    const NOW = utc("11-14T12:00:00"); // inside u-1's month (Nov 10 12:00 to Dec 10 12:00)
+    const callEntries = () => fake.rows("usageEntry").filter((e) => e.kind !== "credit_manual");
+
+    /** Runs the real nightly purge with a 3 day retention window, as of Nov 14: Nov 10 calls are past it. */
+    async function purgeOldCalls() {
+      fake.rows("organization")[0].sessionRetentionDays = 3;
+      vi.stubEnv("CRON_SECRET", "cron-test-secret-not-real");
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(NOW);
+      const res = await purge(new NextRequest("https://trainer.example/api/cron/purge-expired", { headers: { authorization: "Bearer cron-test-secret-not-real" } }));
+      expect(res.status).toBe(200);
+      vi.useRealTimers();
+    }
+
+    it("every call entry stores when the call ran, apart from the call row", async () => {
+      await setUp();
+      const callId = await teamCall("u-1", utc("11-10T11:55:00"), 600);
+      const entries = callEntries().filter((e) => e.trainerSessionId === callId);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({ kind: "voice_call", minutes: 10 });
+      expect((entries[0].ranFrom as Date).toISOString()).toBe("2026-11-10T11:55:00.000Z");
+      expect((entries[0].ranTo as Date).toISOString()).toBe("2026-11-10T12:05:00.000Z");
+    });
+
+    it("a purged call keeps its carried 5 minutes: the member is not given those Free minutes back", async () => {
+      await setUp();
+      await teamCall("u-1", utc("11-10T11:55:00"), 600); // 5 minutes after the member's reset
+      endTeam();
+      expect(await carried("u-1", NOW)).toMatchObject({ usedElsewhere: 5, remaining: 5 });
+      const entriesBefore = callEntries().length;
+
+      await purgeOldCalls();
+      // The call row is gone and its ledger entry is unlinked, not deleted.
+      expect(fake.rows("trainerSession").filter((s) => s.userId === "u-1")).toHaveLength(0);
+      expect(callEntries()).toHaveLength(entriesBefore);
+      expect(callEntries().every((e) => e.trainerSessionId === null)).toBe(true);
+
+      expect(await carried("u-1", NOW)).toMatchObject({ usedElsewhere: 5, remaining: 5, available: 5 });
+      expect(await usageSummary("u-1", NOW)).toMatchObject({ minutesUsed: 5, remaining: 5 });
+    });
+
+    it("a purged call that used the whole Free allowance still refuses the next call", async () => {
+      await setUp();
+      await teamCall("u-1", utc("11-10T11:55:00"), 600); // 5 carried
+      await teamCall("u-1", utc("11-10T13:00:00"), 360); // 6 carried, 11 in all
+      endTeam();
+      expect(await beginCall("u-1", scn, NOW)).toEqual({ ok: false, error: "cap_reached" });
+
+      await purgeOldCalls();
+      expect(fake.rows("trainerSession").filter((s) => s.userId === "u-1")).toHaveLength(0);
+      expect(await carried("u-1", NOW)).toMatchObject({ usedElsewhere: 11, remaining: 0 });
+      expect(await beginCall("u-1", scn, NOW)).toEqual({ ok: false, error: "cap_reached" });
+      expect(fake.rows("trainerSession").filter((s) => s.userId === "u-1")).toHaveLength(0); // nothing was started
+    });
+
+    it("the purge changes nothing about a call before the member's reset, a drop credit, or another member", async () => {
+      await setUp();
+      await teamCall("u-1", utc("11-10T11:30:00"), 600); // before the reset: 0
+      await teamCall("u-2", utc("11-10T12:30:00"), 600); // someone else
+      const dropped = await beginCall("u-1", scn, utc("11-10T13:00:00"));
+      if (!dropped.ok) throw new Error(dropped.error);
+      await heartbeat("u-1", dropped.callId, "connected", utc("11-10T13:00:00"));
+      await endCall("u-1", dropped.callId, "network_drop", utc("11-10T13:00:12")); // billed 1, credited 1
+      endTeam();
+      const before = await carried("u-1", NOW);
+      expect(before).toMatchObject({ usedElsewhere: 0, remaining: 10 });
+      await purgeOldCalls();
+      expect(await carried("u-1", NOW)).toMatchObject({ usedElsewhere: 0, remaining: 10 });
+      // u-2's month runs to Nov 25, so its 10 minutes are all in it, purged or not.
+      expect(await carried("u-2", NOW)).toMatchObject({ usedElsewhere: 10, remaining: 0 });
+    });
+
+    it("a call that ran across the personal reset is prorated from its stored interval after the purge", async () => {
+      await setUp();
+      await teamCall("u-1", utc("11-10T11:50:00"), 1200); // 20 minutes, 10 of them after the reset
+      endTeam();
+      await purgeOldCalls();
+      expect(await carried("u-1", NOW)).toMatchObject({ usedElsewhere: 10, remaining: 0 });
+    });
+
+    it("support credits are unaffected by the purge, and untimed call entries from before the columns existed count by date written", async () => {
+      await setUp();
+      await teamCall("u-1", utc("11-10T12:30:00"), 600); // 10 minutes after the reset
+      const pool = fake.rows("usageAllowance").find((a) => a.organizationId === "org-1")!;
+      fake.seed("usageEntry", { userId: "u-1", allowanceId: pool.id, kind: "credit_manual", minutes: -4, createdAt: utc("11-11T09:00:00") });
+      // A call entry written before ranFrom and ranTo existed, whose call row was already gone: no interval, so its date counts.
+      fake.seed("usageEntry", { userId: "u-1", allowanceId: pool.id, kind: "voice_call", minutes: 3, createdAt: utc("11-11T10:00:00") });
+      fake.seed("usageEntry", { userId: "u-1", allowanceId: pool.id, kind: "voice_call", minutes: 7, createdAt: utc("11-09T10:00:00") }); // last month
+      endTeam();
+      await purgeOldCalls();
+      expect(await carried("u-1", NOW)).toMatchObject({ usedElsewhere: 9, remaining: 1 }); // 10 - 4 + 3
+    });
+
+    it("the carry is computed from the usage ledger and never reads call rows", async () => {
+      await setUp();
+      await teamCall("u-1", utc("11-10T11:55:00"), 600);
+      endTeam();
+      const reads: string[] = [];
+      const table = fake.db.trainerSession as unknown as Record<string, (...a: unknown[]) => unknown>;
+      for (const m of ["findMany", "findUnique", "findUniqueOrThrow"]) {
+        const real = table[m].bind(table);
+        table[m] = (...a: unknown[]) => { reads.push(m); return real(...a); };
+      }
+      // resolveAllowance itself does not touch call rows; settleStale (in beginCall) does, so only resolve here.
+      expect(await resolveAllowance(fake.db as never, "u-1", NOW)).toMatchObject({ usedElsewhere: 5 });
+      expect(reads).toEqual([]);
+    });
   });
 });
 

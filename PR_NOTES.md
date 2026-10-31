@@ -54,7 +54,14 @@ ever moves off an archived Premium price, set `addon=premium_voice` on its produ
   by when each call ran, not by ledger createdAt (settlement time): a call's billed minutes are prorated by how much of
   its billed time (billing start to start plus billableSeconds) lies inside the member's personal period, because the
   organization and the member can reset on different days. A 10 minute call with 5 minutes after the member's reset counts
-  5. Support credits on the pool count by their own date. Other members, Pro members, earlier periods and calls on the
+  5. Support credits on the pool count by their own date.
+- The call timing is stored on the usage ledger, not read from `TrainerSession`: `UsageEntry.ranFrom` and `ranTo`
+  (migration `20261031060000_usage_entry_call_timing`, nullable, index on `userId, ranTo`) are written with every
+  `voice_call`, `voice_call_prior` and `credit_drop` entry. The retention purge deletes `TrainerSession` rows
+  (`UsageEntry.trainerSessionId` is set to null, the entries stay), so carried minutes survive it. The migration backfills
+  existing entries from the call rows that still exist, using the same billing start rule as `billingStart`. Entries with no
+  interval (support credits, and call entries whose call row was already purged before the backfill) count at their
+  `createdAt`. Run `prisma migrate deploy` and `prisma generate`. Other members, Pro members, earlier periods and calls on the
   personal allowance (already in its minutesUsed) are not counted. The usage summary shows the combined number.
 - Pool members who are not an owner or manager cannot buy minutes. `/api/usage` returns `billing.canUpgrade` and the
   cap message shows "Ask your team admin for more minutes." with no Upgrade link for them (`capCopy`, `CallError`).

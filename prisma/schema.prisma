@@ -229,11 +229,18 @@ model UsageEntry {
   kind             UsageKind
   /// Negative for credits. Half minutes only appear in support credits.
   minutes          Float
+  /// When the call these minutes belong to actually ran: its billing start and billing start plus billable seconds.
+  /// Written with every call entry (voice_call, voice_call_prior, credit_drop) so what part of a call falls in a
+  /// given month survives the retention purge of TrainerSession. Null for support credits and for rows written
+  /// before these columns existed (backfilled from TrainerSession where the call row was still there).
+  ranFrom          DateTime?
+  ranTo            DateTime?
   createdAt        DateTime @default(now())
 
   @@unique([trainerSessionId, kind])
   @@index([allowanceId, createdAt])
   @@index([userId])
+  @@index([userId, ranTo])
 }
 
 enum UsageKind {
