@@ -63,6 +63,8 @@ export interface Resolved {
   pooled: boolean;
   plan: PlanTier;
   premiumVoice: boolean;
+  /** Free members only: minutes already used this period from a Team pool that has ended. Counts against the cap. */
+  usedElsewhere: number;
   /** Cap minus used: what the plan still has this period. */
   remaining: number;
   /** remaining minus what open calls have reserved: what a new call can take. */
@@ -172,14 +174,31 @@ export async function resolveAllowance(db: Tx, userId: string, now: Date): Promi
   const org = user.organization;
   const pooled = !!org && org.planTier === "team";
   const allowance = await ensureAllowance(db, pooled ? { organizationId: org.id } : { userId }, now);
+  const plan: PlanTier = pooled ? "team" : planOf(user.planTier) === "team" ? "free" : planOf(user.planTier);
+  // A member whose Team ended (cancelled or unpaid) now has the Free allowance. Minutes they already used from the
+  // pool this month still count against its cap, so leaving the pool is not a fresh 10 minutes.
+  const usedElsewhere = !pooled && plan === "free" ? await usedInOtherAllowances(db, userId, allowance) : 0;
+  const used = allowance.minutesUsed + usedElsewhere;
   return {
     allowance,
     pooled,
-    plan: pooled ? "team" : planOf(user.planTier) === "team" ? "free" : planOf(user.planTier),
+    plan,
     premiumVoice: pooled ? org.premiumVoice : user.premiumVoice,
-    remaining: roundMinutes(Math.max(0, allowance.minutesCap - allowance.minutesUsed)),
-    available: roundMinutes(Math.max(0, allowance.minutesCap - allowance.minutesUsed - allowance.minutesReserved)),
+    usedElsewhere,
+    remaining: roundMinutes(Math.max(0, allowance.minutesCap - used)),
+    available: roundMinutes(Math.max(0, allowance.minutesCap - used - allowance.minutesReserved)),
   };
+}
+
+/**
+ * Net ledger minutes this user used in the current period of `allowance` on any OTHER allowance, which is the Team
+ * pool they spent from before it ended. Entries on `allowance` itself are already in its minutesUsed, so nothing is
+ * counted twice; entries from before the period started are not counted.
+ */
+async function usedInOtherAllowances(db: Tx, userId: string, allowance: UsageAllowance): Promise<number> {
+  const entries = await db.usageEntry.findMany({ where: { userId, createdAt: { gte: allowance.periodStart } } });
+  const total = entries.filter((e) => e.allowanceId !== allowance.id).reduce((n, e) => n + e.minutes, 0);
+  return Math.max(0, total);
 }
 
 /** Usage can be a half minute (a support credit), so remaining is kept clear of floating point dust. */
@@ -456,11 +475,17 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   const connected = !!s.connectedAt || naturalEnd.getTime() > start.getTime();
   const reason: CallEndReasonId = connected ? requested : "failed_connect";
 
-  const endedAt = connected ? naturalEnd : now;
-  // The reservation limits what a call is billed, except for a Free call that ended normally: it is billed for
-  // every minute it ran. A call reaped as silent is still bounded by its reservation, because the server cannot
-  // tell how long a silent call really ran and must not bill a closed browser tab for a day.
-  const bounded = callCapApplies(s) || requested === "heartbeat_timeout";
+  // The reservation limits what a capped call (Pro, Team) is billed. A Free call is billed for every minute it ran.
+  const bounded = callCapApplies(s);
+  // A Free call reaped as silent keeps everything it was confirmed to have used: its time is counted through the last
+  // heartbeat the server saw. Only the silent stretch after that is bounded, by the call's reservation, because the
+  // server cannot tell how long a silent call really ran and must not bill a closed browser tab for a day.
+  let billedEnd = naturalEnd;
+  if (!bounded && requested === "heartbeat_timeout") {
+    const confirmedMs = Math.max(start.getTime(), s.lastHeartbeatAt?.getTime() ?? 0);
+    billedEnd = new Date(Math.min(naturalEnd.getTime(), confirmedMs + s.reservedMinutes * 60 * 1000));
+  }
+  const endedAt = connected ? billedEnd : now;
   const st = settleCall({ connectedAt: connected ? start : null, endedAt, reason, remainingMinutes: bounded ? target.remaining : Number.POSITIVE_INFINITY });
   // A stale call keeps its own reason when the reservation is what clamped it.
   let endReason: CallEndReasonId = requested === "heartbeat_timeout" && st.endReason === "cap_reached" ? "heartbeat_timeout" : st.endReason;
@@ -653,7 +678,7 @@ export async function usageSummary(userId: string, now = new Date()): Promise<Us
       plan: r.plan,
       pooled: r.pooled,
       minutesCap: r.allowance.minutesCap,
-      minutesUsed: r.allowance.minutesUsed,
+      minutesUsed: roundMinutes(r.allowance.minutesUsed + r.usedElsewhere),
       remaining: r.remaining,
       periodStart: r.allowance.periodStart.toISOString(),
       periodEnd: r.allowance.periodEnd.toISOString(),

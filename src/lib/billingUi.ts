@@ -49,6 +49,22 @@ export function usageHeaderCopy(plan: PlanTier | undefined, pooled = false): str
   return "Your plan and billing in one place.";
 }
 
+/**
+ * What a Free account that has used up its voice minutes is told on the billing page: why it can be over the cap
+ * (the last call was allowed to finish), when voice comes back, and that text practice is still open.
+ * Null when there is nothing to explain: not Free, or minutes are left. `resetDate` is the already formatted date
+ * the minutes reset.
+ */
+export function freeOverCapNotice(input: { plan: PlanTier | undefined; used: number; cap: number; resetDate: string }): string | null {
+  const { plan, used, cap, resetDate } = input;
+  if (plan !== "free" || cap <= 0 || used < cap) return null;
+  const when = resetDate ? ` when your minutes reset on ${resetDate}` : " when your minutes reset next month";
+  const lead = used > cap
+    ? `Your last call was allowed to finish, so you have used ${formatMinutes(used)} of ${formatMinutes(cap)} voice minutes this month.`
+    : `You have used all ${formatMinutes(cap)} voice minutes this month.`;
+  return `${lead} Voice calls start again${when}. Text practice is still open.`;
+}
+
 // ---- Plans and prices ------------------------------------------------------------------------------
 
 export type Interval = "month" | "year";

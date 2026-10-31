@@ -12,7 +12,7 @@ vi.mock("@/lib/apiAuth", async () => ({
 }));
 
 import {
-  CAP_REACHED_MESSAGE, CAP_STOPPED_MESSAGE, PRICE, clampSeats, formatMinutes, isCapMessage, minutesLeftFromUsage, minutesLeftLabel,
+  CAP_REACHED_MESSAGE, CAP_STOPPED_MESSAGE, PRICE, clampSeats, formatMinutes, freeOverCapNotice, isCapMessage, minutesLeftFromUsage, minutesLeftLabel,
   planPriceLine, premiumLabel, proButtonLabel, teamButtonLabel, usageHeaderCopy,
 } from "@/lib/billingUi";
 import { stripeTestMode } from "@/lib/stripe";
@@ -51,7 +51,7 @@ describe("copy rules", () => {
     premiumLabel("month"), premiumLabel("year"), proButtonLabel("team"), minutesLeftLabel(0.5),
   ];
   it("has no em or en dashes", () => {
-    for (const s of all) expect(s).not.toMatch(/[–—]/);
+    for (const s of all) expect(s).not.toMatch(new RegExp("[\\u2013\\u2014]"));
   });
 
   it("the cap refusal says practice, not practising, and still points to Text and upgrading", () => {
@@ -152,6 +152,70 @@ describe("annual prices (item 9)", () => {
 
   it("annual is ten months for twelve, as the Annual, 2 months free label says", () => {
     for (const p of ["pro", "team", "premium"] as const) expect(PRICE[p].year).toBe(PRICE[p].month * 10);
+  });
+});
+
+describe("a Free user over the cap (Prism b)", () => {
+  const reset = "11/10/2026";
+
+  it("13 of 10 explains that the last call was allowed to finish, when voice resets, and that text is open", () => {
+    const t = freeOverCapNotice({ plan: "free", used: 13, cap: 10, resetDate: reset })!;
+    expect(t).toMatch(/last call was allowed to finish/);
+    expect(t).toMatch(/13 of 10 voice minutes this month/);
+    expect(t).toContain(`reset on ${reset}`);
+    expect(t).toMatch(/Voice calls start again/);
+    expect(t).toMatch(/Text practice is still open/);
+    expect(t).not.toMatch(new RegExp("[\\u2013\\u2014]"));
+  });
+
+  it("shows a half minute as is, and says all minutes are used at exactly the cap", () => {
+    expect(freeOverCapNotice({ plan: "free", used: 12.5, cap: 10, resetDate: reset })).toMatch(/12\.5 of 10/);
+    const exact = freeOverCapNotice({ plan: "free", used: 10, cap: 10, resetDate: reset })!;
+    expect(exact).toMatch(/used all 10 voice minutes this month/);
+    expect(exact).not.toMatch(/last call was allowed/);
+    expect(exact).toMatch(/Text practice is still open/);
+  });
+
+  it("says nothing while minutes are left, or on a paid plan", () => {
+    expect(freeOverCapNotice({ plan: "free", used: 9.5, cap: 10, resetDate: reset })).toBeNull();
+    expect(freeOverCapNotice({ plan: "free", used: 0, cap: 10, resetDate: reset })).toBeNull();
+    expect(freeOverCapNotice({ plan: "pro", used: 250, cap: 200, resetDate: reset })).toBeNull();
+    expect(freeOverCapNotice({ plan: "team", used: 1000, cap: 900, resetDate: reset })).toBeNull();
+    expect(freeOverCapNotice({ plan: undefined, used: 13, cap: 10, resetDate: reset })).toBeNull();
+  });
+
+  it("still gives a usable sentence when the reset date is unknown", () => {
+    expect(freeOverCapNotice({ plan: "free", used: 13, cap: 10, resetDate: "" })).toMatch(/Voice calls start again when your minutes reset next month\./);
+  });
+
+  it("the billing page renders the notice from the usage numbers", () => {
+    const src = readFileSync(join(process.cwd(), "src/components/settings/BillingClient.tsx"), "utf8");
+    expect(src).toMatch(/freeOverCapNotice\(\{ plan: u\.plan, used: u\.minutesUsed \?\? 0, cap: u\.minutesCap \?\? 0/);
+    expect(src).toMatch(/\{overCap && <p className="banner-warn mt-3" role="status">\{overCap\}<\/p>\}/);
+  });
+
+  describe("from GET /api/usage", () => {
+    beforeEach(() => {
+      mocks.fake = createFakePrisma();
+      mocks.fake.seed("organization", { id: "org-1", code: "123", createdAt: new Date("2026-03-10T12:00:00Z") });
+      mocks.fake.seed("user", { id: "u-1", email: "u-1@example.test", organizationId: "org-1", usageAnchorAt: new Date("2026-03-10T12:00:00Z"), createdAt: new Date("2026-03-10T12:00:00Z"), role: "rep" });
+      vi.stubEnv("DATABASE_URL", "postgresql://ci:ci@localhost:5432/ci");
+      vi.stubEnv("DEMO_MODE", "");
+      vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
+    });
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("a Free account at 13 of 10 reports 13 used and none left, which is what the notice reads", async () => {
+      const first = await (await usageRoute(new NextRequest("http://localhost/api/usage"))).json();
+      expect(first).toMatchObject({ plan: "free", minutesCap: 10, minutesUsed: 0, remaining: 10 });
+      mocks.fake.rows("usageAllowance")[0].minutesUsed = 13;
+      const body = await (await usageRoute(new NextRequest("http://localhost/api/usage"))).json();
+      expect(body).toMatchObject({ plan: "free", minutesCap: 10, minutesUsed: 13, remaining: 0 });
+      const notice = freeOverCapNotice({ plan: body.plan, used: body.minutesUsed, cap: body.minutesCap, resetDate: reset });
+      expect(notice).toMatch(/13 of 10/);
+      expect(first.remaining).toBe(10);
+      expect(freeOverCapNotice({ plan: first.plan, used: first.minutesUsed, cap: first.minutesCap, resetDate: reset })).toBeNull();
+    });
   });
 });
 

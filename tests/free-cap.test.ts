@@ -247,6 +247,142 @@ describe("past the cap, the next voice call is refused", () => {
   });
 });
 
+describe("a Free call that goes silent keeps the time it was confirmed to have used", () => {
+  /** Starts a call, heartbeats every 10 seconds for `confirmedSec`, then says nothing more. */
+  async function goSilentAfter(confirmedSec: number) {
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    for (let t = 10; t < confirmedSec; t += 10) await heartbeat("u-1", begun.callId, "ok", at(t));
+    return begun;
+  }
+
+  it("9.5 used, 3 minutes of heartbeats, then lost connection: the 3 minutes count, not just the 1 minute reserved", async () => {
+    await freeUserWith(9.5);
+    const begun = await goSilentAfter(180); // last heartbeat at 170 seconds
+    expect(allowanceOf("u-1").minutesReserved).toBe(1);
+
+    await usageSummary("u-1", at(600)); // the server notices the silence and settles the call
+    const s = session(begun.callId);
+    expect(s).toMatchObject({ endReason: "heartbeat_timeout", abuseFlagged: false });
+    // Through the last heartbeat (170 s) plus the silent stretch bounded by the 1 minute reservation: 230 s, 4 minutes.
+    expect(s.billableSeconds).toBe(230);
+    expect(s.billedMinutes).toBe(4);
+    expect(s.billedMinutes as number).toBeGreaterThanOrEqual(3);
+    // The old rule clamped the whole call to its reservation: 1 minute, usage 10.5.
+    expect(allowanceOf("u-1").minutesUsed).toBe(13.5);
+    expect(allowanceOf("u-1").minutesUsed as number).toBeGreaterThan(10.5);
+    expect(allowanceOf("u-1")).toMatchObject({ minutesReserved: 0 });
+  });
+
+  it("a longer confirmed call is counted in full, however long the silence that follows", async () => {
+    await freeUserWith(9.5);
+    const begun = await goSilentAfter(25 * 60); // 25 minutes of heartbeats, last at 1490 s
+    await usageSummary("u-1", at(24 * 3600));
+    const s = session(begun.callId);
+    expect(s.billableSeconds).toBe(1490 + 60); // confirmed time plus at most the reservation
+    expect(s.billedMinutes).toBe(26);
+    expect(allowanceOf("u-1").minutesUsed).toBe(9.5 + 26);
+  });
+
+  it("a call that never sent a heartbeat is still bounded by its reservation", async () => {
+    await freeUserWith(0);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await usageSummary("u-1", at(3 * 3600));
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 10 });
+    expect(allowanceOf("u-1").minutesUsed).toBe(10);
+  });
+});
+
+describe("a Free user at 9.5 of 10 used can start a voice call", () => {
+  it("the realtime route mints a session and holds one minute, instead of answering cap_reached", async () => {
+    await freeUserWith(9.5);
+    vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ value: "ek_test", expires_at: 9999999999 }), { status: 200 })));
+    const res = await realtimeSession(post("/api/realtime/session", { scenario }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.callId).toBeTruthy();
+    expect(body.maxSeconds).toBe(MAX_CALL_SECONDS);
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 9.5, minutesReserved: 1 });
+  });
+
+  it("any minutes left count as under the cap, and none left do not", async () => {
+    for (const [used, ok] of [[9, true], [9.5, true], [9.99, true], [10, false], [13, false]] as const) {
+      fake = createFakePrisma();
+      mocks.fake = fake;
+      await freeUserWith(used);
+      expect((await beginCall("u-1", scn, at(0))).ok, `${used} of 10 used`).toBe(ok);
+    }
+  });
+});
+
+describe("a Team that ends does not give its members a fresh Free allowance", () => {
+  const SEATS = { planTier: "team", seatCount: 3 };
+  const downgrade = () => { fake.rows("organization")[0].planTier = "free"; };
+  const downgradedAt = at(2 * 3600);
+
+  async function setUpTeam() {
+    fake.seed("organization", { id: "org-1", code: "123", createdAt: MAR10, ...SEATS });
+    addUser("u-1");
+    addUser("u-2");
+  }
+
+  it("a member who used 12 minutes of the pool this month is over the Free cap and cannot start a call", async () => {
+    await setUpTeam();
+    await runCall("u-1", { endAt: 12 * 60 }); // 12 minutes from the Team pool
+    expect(fake.rows("usageAllowance").find((a) => a.organizationId === "org-1")).toMatchObject({ minutesUsed: 12 });
+    downgrade();
+
+    const r = await resolveAllowance(fake.db as never, "u-1", downgradedAt);
+    expect(r).toMatchObject({ plan: "free", pooled: false, usedElsewhere: 12, remaining: 0, available: 0 });
+    expect(await usageSummary("u-1", downgradedAt)).toMatchObject({ plan: "free", minutesCap: 10, minutesUsed: 12, remaining: 0 });
+    const before = fake.rows("trainerSession").length;
+    expect(await beginCall("u-1", scn, downgradedAt)).toEqual({ ok: false, error: "cap_reached" });
+    expect(fake.rows("trainerSession")).toHaveLength(before);
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
+  });
+
+  it("a member who used 4 minutes keeps the other 6, and a member who used none has all 10", async () => {
+    await setUpTeam();
+    await runCall("u-1", { endAt: 4 * 60 });
+    downgrade();
+    expect(await resolveAllowance(fake.db as never, "u-1", downgradedAt)).toMatchObject({ usedElsewhere: 4, remaining: 6 });
+    // Another member's pool usage is not this member's.
+    expect(await resolveAllowance(fake.db as never, "u-2", downgradedAt)).toMatchObject({ usedElsewhere: 0, remaining: 10 });
+    expect(await beginCall("u-1", scn, downgradedAt)).toMatchObject({ ok: true, remaining: 6 });
+  });
+
+  it("a Free call after the downgrade adds to the pool usage and is not counted twice", async () => {
+    await setUpTeam();
+    await runCall("u-1", { endAt: 4 * 60 });
+    downgrade();
+    const { callId } = await runCall("u-1", { start: 2 * 3600, endAt: 3 * 60 }); // 3 more minutes, now on the Free allowance
+    expect(session(callId).billedMinutes).toBe(3);
+    expect(allowanceOf("u-1").minutesUsed).toBe(3);
+    expect(await usageSummary("u-1", at(3 * 3600))).toMatchObject({ minutesUsed: 7, remaining: 3 });
+  });
+
+  it("usage from before the current month is not carried", async () => {
+    await setUpTeam();
+    await runCall("u-1", { endAt: 12 * 60 });
+    downgrade();
+    // The personal month rolls over on Nov 10 at 12:00 UTC: the pool minutes belong to the month that ended.
+    const nextMonth = new Date("2026-11-10T12:00:00Z");
+    expect(await resolveAllowance(fake.db as never, "u-1", nextMonth)).toMatchObject({ usedElsewhere: 0, remaining: 10 });
+    expect(await beginCall("u-1", scn, nextMonth)).toMatchObject({ ok: true });
+  });
+
+  it("a member who moves to Pro does not have pool minutes counted against the Pro cap", async () => {
+    await setUpTeam();
+    await runCall("u-1", { endAt: 12 * 60 });
+    downgrade();
+    fake.rows("user").find((u) => u.id === "u-1")!.planTier = "pro";
+    expect(await resolveAllowance(fake.db as never, "u-1", downgradedAt)).toMatchObject({ plan: "pro", usedElsewhere: 0, remaining: 200 });
+  });
+});
+
 describe("text practice is never capped", () => {
   it("5: at 10 or more used a text session starts, is graded and is saved, and writes no usage", async () => {
     await freeUserWith(12);

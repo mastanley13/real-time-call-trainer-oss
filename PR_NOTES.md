@@ -44,6 +44,13 @@ ever moves off an archived Premium price, set `addon=premium_voice` on its produ
   (the credit route takes 0.5 steps). A Free call starts with any minutes left, so 9.5 of 10 starts, runs 3 minutes
   uninterrupted and reads 12.5. Pro and Team still need one whole minute left to start, because the cap stops their calls.
   A Free start holds one whole minute so a second start cannot take the same last half minute.
+- A Free call reaped as silent is billed through its last confirmed heartbeat, plus the silent stretch after it bounded by
+  the call's reservation. (It used to be clamped to the reservation as a whole, so 3 confirmed minutes could count as 1.)
+  Pro and Team are unchanged: their whole call is bounded by the reservation.
+- When a Team ends (cancelled or unpaid), `resolveAllowance` counts the member's net ledger minutes on other allowances
+  (the pool) in the current Free period against the 10 minute cap (`Resolved.usedElsewhere`), so leaving the pool is not
+  a fresh 10 minutes. Entries from earlier periods, other members, and Pro members are not counted, and entries on the
+  personal allowance are not counted twice. The usage summary shows the combined number.
 - Text practice is not metered on any plan.
 - The Free reset is the signup anchor (the existing usage anchor), not the calendar month, and the billing page copy says
   "each month on your signup date". Switching Free to calendar-month resets would change `ensureAllowance`; not done.

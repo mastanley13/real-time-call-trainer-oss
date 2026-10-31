@@ -1025,3 +1025,49 @@ describe("checkout completion does not grant access to an unpaid subscription", 
     expect(org()).toMatchObject({ planTier: "team", seatCount: 4 });
   });
 });
+
+describe("a Team that cancels or goes unpaid carries this month's pool usage into the Free cap", () => {
+  const scnInfo = { id: "quote-follow-up" };
+
+  /** The member runs a real call against the Team pool: `minutes` whole minutes, on a clock that starts now. */
+  async function memberUsesPool(minutes: number) {
+    const { beginCall, endCall, heartbeat } = await import("@/lib/usage");
+    const t0 = new Date();
+    const begun = await beginCall("owner-1", scnInfo, t0);
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("owner-1", begun.callId, "connected", t0);
+    await endCall("owner-1", begun.callId, "user_hangup", new Date(t0.getTime() + minutes * 60_000));
+  }
+
+  beforeEach(async () => {
+    await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_team", subscription: "sub_test_team", metadata: { plan: "team", userId: "owner-1", organizationId: "org-1", seats: "3" } }));
+    expect(org()).toMatchObject({ planTier: "team", seatCount: 3 });
+  });
+
+  const cancel = () => deliver(event("customer.subscription.deleted", sub({ id: "sub_test_team", customer: "cus_test_team", metadata: {}, team: 3 })));
+  const unpaid = () => deliver(event("customer.subscription.updated", sub({ id: "sub_test_team", customer: "cus_test_team", metadata: { organizationId: "org-1" }, team: 3, status: "unpaid" })));
+
+  for (const [name, end] of [["cancellation", cancel], ["an unpaid subscription", unpaid]] as const) {
+    it(`${name}: a member with 12 pool minutes this month is over the Free cap and cannot start another call`, async () => {
+      const { beginCall, resolveAllowance } = await import("@/lib/usage");
+      await memberUsesPool(12);
+      expect(allowance("organizationId", "org-1")).toMatchObject({ planTier: "team", minutesUsed: 12 });
+      await end();
+      expect(org().planTier).toBe("free");
+
+      const r = await resolveAllowance(fake.db as never, "owner-1", new Date());
+      expect(r).toMatchObject({ plan: "free", pooled: false, usedElsewhere: 12, remaining: 0 });
+      const calls = fake.rows("trainerSession").length;
+      expect(await beginCall("owner-1", scnInfo)).toEqual({ ok: false, error: "cap_reached" });
+      expect(fake.rows("trainerSession")).toHaveLength(calls);
+    });
+
+    it(`${name}: a member with 4 pool minutes keeps 6 Free minutes and can start a call`, async () => {
+      const { beginCall, resolveAllowance } = await import("@/lib/usage");
+      await memberUsesPool(4);
+      await end();
+      expect(await resolveAllowance(fake.db as never, "owner-1", new Date())).toMatchObject({ plan: "free", usedElsewhere: 4, remaining: 6 });
+      expect(await beginCall("owner-1", scnInfo)).toMatchObject({ ok: true, remaining: 6 });
+    });
+  }
+});

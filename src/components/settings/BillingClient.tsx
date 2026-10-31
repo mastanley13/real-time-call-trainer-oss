@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CreditCard, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageSkeleton } from "@/components/ui/Skeleton";
-import { clampSeats, formatMinutes, planPriceLine, premiumLabel, proButtonLabel, teamButtonLabel, usageHeaderCopy } from "@/lib/billingUi";
+import { clampSeats, formatMinutes, freeOverCapNotice, planPriceLine, premiumLabel, proButtonLabel, teamButtonLabel, usageHeaderCopy } from "@/lib/billingUi";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "@/lib/usagePlan";
 import SettingsNav from "./SettingsNav";
 
@@ -93,6 +93,7 @@ export default function BillingClient() {
   const pct = u?.minutesCap ? Math.min(100, Math.round(((u.minutesUsed ?? 0) / u.minutesCap) * 100)) : 0;
   const paid = u?.plan && u.plan !== "free";
   const checkout = params.get("checkout");
+  const overCap = u?.metered ? freeOverCapNotice({ plan: u.plan, used: u.minutesUsed ?? 0, cap: u.minutesCap ?? 0, resetDate: u.periodEnd ? new Date(u.periodEnd).toLocaleDateString() : "" }) : null;
 
   return (
     <div className="page enter max-w-5xl space-y-6">
@@ -113,6 +114,7 @@ export default function BillingClient() {
             <p className="mono text-xs text-ink-muted">Resets {u.periodEnd ? new Date(u.periodEnd).toLocaleDateString() : ""}</p>
           </div>
           <p className="mt-3 text-2xl font-bold">{formatMinutes(u.remaining ?? 0)} <span className="text-base font-normal text-ink-soft">of {u.minutesCap} voice minutes left</span></p>
+          {overCap && <p className="banner-warn mt-3" role="status">{overCap}</p>}
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-sunken" role="img" aria-label={`${pct}% of voice minutes used`}>
             <div className={`h-full ${pct >= 90 ? "bg-alert" : "bg-primary"}`} style={{ width: `${pct}%` }} />
           </div>
