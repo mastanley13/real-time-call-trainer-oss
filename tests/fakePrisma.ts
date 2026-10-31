@@ -50,6 +50,30 @@ export function createFakePrisma() {
   let seq = 0;
   let data: Record<string, Row[]> = Object.fromEntries(Object.keys(UNIQUE).map((t) => [t, []]));
   const failOnce: Record<string, number> = {};
+  // Open transaction snapshots, innermost last, and one-shot hooks that run another writer's committed work.
+  const open: { snapshot: Record<string, Row[]> }[] = [];
+  const hooks: { table: string; method: string; when: (args: { where: Where; data: Record<string, unknown> }) => boolean; run: () => Promise<void> }[] = [];
+
+  /**
+   * Runs `run` as a transaction that committed from outside: its writes land in the live data and in the snapshot of
+   * every open transaction, so a rollback of the transaction it interrupted does not undo it.
+   */
+  async function commitElsewhere(run: () => Promise<void>) {
+    const live = data;
+    for (const t of open) {
+      data = t.snapshot;
+      await run();
+      t.snapshot = data;
+    }
+    data = live;
+    await run();
+  }
+  async function fire(tableName: string, method: string, args: { where: Where; data: Record<string, unknown> }) {
+    const i = hooks.findIndex((h) => h.table === tableName && h.method === method && h.when(args));
+    if (i < 0) return;
+    const [hook] = hooks.splice(i, 1);
+    await commitElsewhere(hook.run);
+  }
 
   const dupError = () => new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" });
 
@@ -96,6 +120,7 @@ export function createFakePrisma() {
         return { ...row };
       },
       update: async (args: { where: Where; data: Record<string, unknown> }) => {
+        await fire(name, "update", args);
         if (failOnce[name] > 0) { failOnce[name] -= 1; throw new Error("injected failure"); }
         const r = find(args.where);
         if (!r) throw new Error(`${name} not found`);
@@ -103,6 +128,7 @@ export function createFakePrisma() {
         return { ...r };
       },
       updateMany: async (args: { where: Where; data: Record<string, unknown> }) => {
+        await fire(name, "updateMany", args);
         const hit = rows().filter((r) => matches(r, args.where));
         hit.forEach((r) => apply(r, args.data));
         return { count: hit.length };
@@ -121,12 +147,15 @@ export function createFakePrisma() {
     auditEvent: table("auditEvent"),
     /** Runs fn on the same store; a throw restores the data as it was, like a rolled-back transaction. */
     $transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
-      const snapshot = structuredClone(data);
+      const entry = { snapshot: structuredClone(data) };
+      open.push(entry);
       try {
         return await fn(db);
       } catch (e) {
-        data = snapshot;
+        data = entry.snapshot;
         throw e;
+      } finally {
+        open.splice(open.indexOf(entry), 1);
       }
     },
   };
@@ -139,6 +168,13 @@ export function createFakePrisma() {
       const r = { id: `${name}-${++seq}`, ...DEFAULTS[name](), ...row } as Row;
       data[name].push(r);
       return r;
+    },
+    /**
+     * Just before the next matching write on `table`, runs `run` as if another connection committed it at that
+     * moment. Models the interleavings a real database allows between a transaction's read and its write.
+     */
+    interleave: (table: keyof typeof UNIQUE, method: "update" | "updateMany", run: () => Promise<void>, when: (args: { where: Where; data: Record<string, unknown> }) => boolean = () => true) => {
+      hooks.push({ table, method, when, run });
     },
     failNextUpdate: (name: keyof typeof UNIQUE) => { failOnce[name] = 1; },
   };

@@ -10,7 +10,7 @@ vi.mock("@/lib/apiAuth", async () => ({
   isDemoUser: () => false,
 }));
 
-import { beginCall, endCall, heartbeat, settleStale } from "@/lib/usage";
+import { beginCall, endCall, ensureAllowance, heartbeat, settleStale } from "@/lib/usage";
 import { maxMinutesAfter, splitAcrossBoundary, VOICE_BLOCK_SECONDS, OVERRUN_GRACE_SECONDS } from "@/lib/usagePlan";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
@@ -83,7 +83,7 @@ describe("Premium minutes are reserved at mint", () => {
     expect(allowanceOf("u-1")).toMatchObject({ minutesReserved: 180, premiumMinutesReserved: 120 });
   });
 
-  it("a call that holds only part of the Premium share is not ended at the limit; the rest books as standard", async () => {
+  it("a call that holds only part of the Premium share is limited to it: its reservation is that share", async () => {
     addUser("u-1", { planTier: "pro", premiumVoice: true });
     const a = await beginCall("u-1", scn, at(0)); // 60 premium
     const b = await beginCall("u-1", scn, at(1)); // 60 premium
@@ -93,18 +93,16 @@ describe("Premium minutes are reserved at mint", () => {
     // a ends after 10 minutes: 10 premium minutes used, the other 50 it held go back.
     await endCall("u-1", a.callId, "user_hangup", at(600));
     expect(allowanceOf("u-1")).toMatchObject({ premiumMinutesUsed: 10, premiumMinutesReserved: 60 });
-    // That freed Premium share is available to the next call, which holds all 50.
+    // That freed Premium share goes to the next call, which holds all 50 and can run no longer than that.
     const d = await beginCall("u-1", scn, at(700));
     if (!d.ok) throw new Error(d.error);
-    expect(d.engine).toBe("premium");
-    expect(session(d.callId).premiumReservedMinutes).toBe(50);
-    // d runs 55 minutes: 50 book as Premium, 5 as standard. It was never stopped.
+    expect(d).toMatchObject({ engine: "premium", maxSeconds: 50 * 60 });
+    expect(session(d.callId)).toMatchObject({ premiumReservedMinutes: 50, reservedMinutes: 50 });
     await heartbeat("u-1", d.callId, "connected", at(700));
-    const r = await heartbeat("u-1", d.callId, "ok", at(700 + 55 * 60));
-    expect(r).toMatchObject({ found: true, stop: false });
-    await endCall("u-1", d.callId, "user_hangup", at(700 + 55 * 60));
-    expect(allowanceOf("u-1")).toMatchObject({ premiumMinutesUsed: 60, premiumMinutesReserved: 60 });
-    expect(allowanceOf("u-1").minutesUsed).toBe(65);
+    expect(await heartbeat("u-1", d.callId, "ok", at(700 + 49 * 60))).toMatchObject({ found: true, stop: false });
+    expect(await heartbeat("u-1", d.callId, "ok", at(700 + 50 * 60))).toMatchObject({ found: true, stop: true, reason: "cap_reached" });
+    // Every minute of d booked as Premium; none drifted onto the standard rate.
+    expect(allowanceOf("u-1")).toMatchObject({ premiumMinutesUsed: 60, premiumMinutesReserved: 60, minutesUsed: 60 });
   });
 
   it("a failed mint releases its Premium share", async () => {
@@ -153,6 +151,45 @@ describe("a call that crosses the monthly reset", () => {
     expect(orgAllowance()).toMatchObject({ minutesCap: 20, minutesUsed: 20, minutesReserved: 0 });
     expect(session(calls[0].callId).carriedMinutes).toBe(20);
     expect(session(calls[1].callId).carriedMinutes).toBe(0);
+  });
+
+  it("a rollover that commits between a settlement's read and its write cannot make the reservation negative", async () => {
+    addUser("u-1", { planTier: "pro" }); // 200 minutes, 60 minute calls
+    const c = await begin("u-1", utc("10-10T11:30:00"));
+    // The settlement reads the old period at 11:50. Before it writes, another request rolls the period over.
+    fake.interleave(
+      "usageAllowance",
+      "updateMany",
+      async () => { await ensureAllowance(fake.db as never, { userId: "u-1" }, utc("10-10T12:05:00")); },
+      (a) => "periodStart" in a.where && !("version" in a.where),
+    );
+    await endCall("u-1", c.callId, "user_hangup", utc("10-10T11:50:00"));
+    // The call ended before the reset: its 20 minutes belong to the old period (ledger only) and the carry it
+    // held in the new one is released, so nothing is charged to the new period and nothing goes below zero.
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0, premiumMinutesReserved: 0 });
+    expect(allowanceOf("u-1").periodStart).toEqual(utc("10-10T12:00:00"));
+    expect(session(c.callId)).toMatchObject({ billedMinutes: 20, endReason: "user_hangup" });
+    expect(fake.rows("usageEntry").map((e) => [e.kind, e.minutes])).toEqual([["voice_call_prior", 20]]);
+  });
+
+  it("a settlement that lands between a rollover's carry read and its swap makes the rollover start again", async () => {
+    fake.seed("organization", { id: "org-1", code: "123", createdAt: MAR10, planTier: "team", seatCount: 3 });
+    addUser("u-1");
+    addUser("u-2");
+    const a = await begin("u-1", utc("10-10T11:30:00"));
+    await begin("u-2", utc("10-10T11:30:00"));
+    // Rollover has read both calls as open. Then call a settles in the old period and releases its reservation.
+    fake.interleave(
+      "usageAllowance",
+      "updateMany",
+      async () => { await endCall("u-1", a.callId, "user_hangup", utc("10-10T11:55:00")); },
+      (x) => "version" in x.where,
+    );
+    await ensureAllowance(fake.db as never, { organizationId: "org-1" }, utc("10-10T12:05:00"));
+    // Only b is still open, with the 30 minutes it can still use after the reset. a's carry is not leaked.
+    expect(orgAllowance()).toMatchObject({ minutesUsed: 0, minutesReserved: 30 });
+    expect(orgAllowance().periodStart).toEqual(utc("10-10T12:00:00"));
+    expect(session(a.callId)).toMatchObject({ endReason: "user_hangup", billedMinutes: 25 });
   });
 
   it("calls that fit inside the new cap are charged in full", async () => {
@@ -235,11 +272,47 @@ describe("calls that outlive their reservation", () => {
     expect(userRow("u-2").voiceBlockedUntil).toBeNull();
   });
 
-  it("a silent client settled by the server is not treated as abuse", async () => {
+  it("a silent client reaped inside its reservation is not flagged", async () => {
     addUser("u-1", { planTier: "pro" });
     const c = await begin("u-1", at(0));
-    await fake.db.$transaction(async (tx) => settleStale(tx as never, "u-1", at(RESERVED * 2)));
-    expect(session(c.callId)).toMatchObject({ abuseFlagged: false });
+    await fake.db.$transaction(async (tx) => settleStale(tx as never, "u-1", at(RESERVED / 2)));
+    expect(session(c.callId)).toMatchObject({ abuseFlagged: false, endReason: "heartbeat_timeout" });
     expect(userRow("u-1").voiceBlockedUntil).toBeNull();
+  });
+
+  it("a silent client reaped after its reservation ran out is flagged, and its next mint is blocked", async () => {
+    addUser("u-1", { planTier: "pro" });
+    const c = await begin("u-1", at(0));
+    const next = await beginCall("u-1", scn, at(RESERVED + OVERRUN_GRACE_SECONDS + 5)); // reaps the silent call, then checks the block
+    expect(session(c.callId)).toMatchObject({ abuseFlagged: true, billedMinutes: 60 });
+    expect(next).toMatchObject({ ok: false, error: "voice_blocked", retryAfterSeconds: VOICE_BLOCK_SECONDS });
+    expect(fake.rows("auditEvent").filter((e) => e.action === "usage.abuse_flagged")).toHaveLength(1);
+  });
+
+  it("a heartbeat or end event for a call the server already reaped, past its reservation, is flagged", async () => {
+    addUser("u-1", { planTier: "pro" });
+    const c = await begin("u-1", at(0));
+    await fake.db.$transaction(async (tx) => settleStale(tx as never, "u-1", at(120))); // reaped early, billed 2 minutes
+    expect(session(c.callId)).toMatchObject({ abuseFlagged: false, endReason: "heartbeat_timeout" });
+    await heartbeat("u-1", c.callId, "ok", at(RESERVED - 60)); // still inside the reservation: nothing to see
+    expect(session(c.callId).abuseFlagged).toBe(false);
+    await endCall("u-1", c.callId, "user_hangup", at(RESERVED + OVERRUN_GRACE_SECONDS + 1));
+    expect(session(c.callId).abuseFlagged).toBe(true);
+    expect(userRow("u-1").voiceBlockedUntil).not.toBeNull();
+
+    addUser("u-2", { planTier: "pro" });
+    const d = await begin("u-2", at(0));
+    await fake.db.$transaction(async (tx) => settleStale(tx as never, "u-2", at(120)));
+    await heartbeat("u-2", d.callId, "ok", at(RESERVED + OVERRUN_GRACE_SECONDS + 1));
+    expect(session(d.callId).abuseFlagged).toBe(true);
+  });
+
+  it("a user who ended the call themselves is not flagged by a late stray event", async () => {
+    addUser("u-1", { planTier: "pro" });
+    const c = await begin("u-1", at(0));
+    await endCall("u-1", c.callId, "user_hangup", at(300));
+    await endCall("u-1", c.callId, "user_hangup", at(RESERVED + 600));
+    await heartbeat("u-1", c.callId, "ok", at(RESERVED + 600));
+    expect(session(c.callId).abuseFlagged).toBe(false);
   });
 });

@@ -25,6 +25,26 @@ import {
 type Tx = Prisma.TransactionClient;
 
 /**
+ * Thrown when the allowance changed period under a settlement (a rollover committed between its read and its
+ * write). The transaction rolls back and `runMetered` runs it again against the new period.
+ */
+export class StaleAllowanceError extends Error {
+  constructor() { super("allowance changed period during settlement"); }
+}
+
+const TX_ATTEMPTS = 4;
+
+async function runMetered<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await prisma.$transaction(fn);
+    } catch (e) {
+      if (!(e instanceof StaleAllowanceError) || attempt >= TX_ATTEMPTS) throw e;
+    }
+  }
+}
+
+/**
  * A metered voice call has a TrainerSession row from the moment it starts, with an empty transcript until
  * the client saves the call. Lists and team numbers count only calls that have a transcript.
  */
@@ -52,7 +72,7 @@ const planOf = (v: unknown): PlanTier => (isPlanTier(v) ? v : "free");
  * immediately) and rolls the period when the anchor date has passed. The anchor itself never moves,
  * and a plan change keeps minutesUsed; only a new period resets it, with no rollover.
  */
-export async function ensureAllowance(db: Tx, subject: Subject, now: Date): Promise<UsageAllowance> {
+export async function ensureAllowance(db: Tx, subject: Subject, now: Date, depth = 0): Promise<UsageAllowance> {
   let plan: PlanTier;
   let cap: number;
   let anchor: Date;
@@ -80,13 +100,15 @@ export async function ensureAllowance(db: Tx, subject: Subject, now: Date): Prom
   if (existing.planTier !== plan) data.planTier = plan;
   if (existing.minutesCap !== cap) data.minutesCap = cap;
   if (existing.anchorAt.getTime() !== anchor.getTime()) data.anchorAt = anchor;
-  if (existing.periodStart.getTime() !== period.start.getTime()) {
+  // Periods only move forward: a caller whose clock reading is slightly behind a rollover that just committed
+  // (a settlement retried after one) keeps the newer period instead of rolling it back.
+  if (existing.periodStart.getTime() < period.start.getTime()) {
     // A new period starts clean, except that calls still open from the old one may run into it: each holds
     // the minutes it can still use here (its carry), so nothing else can take them before it settles.
     // Only one caller wins the swap on periodStart, so the carry is computed and written once.
     const carry = await openCarry(db, existing, period.start, cap);
     const won = await db.usageAllowance.updateMany({
-      where: { id: existing.id, periodStart: existing.periodStart },
+      where: { id: existing.id, periodStart: existing.periodStart, version: existing.version },
       data: {
         ...data,
         periodStart: period.start,
@@ -98,9 +120,13 @@ export async function ensureAllowance(db: Tx, subject: Subject, now: Date): Prom
         version: { increment: 1 },
       },
     });
-    if (won.count === 1) {
-      for (const c of carry.calls) await db.trainerSession.update({ where: { id: c.id }, data: { carriedMinutes: c.minutes, carriedPremiumMinutes: c.premium } });
+    if (won.count === 0) {
+      // Another writer got there first: a rollover (nothing left to do) or a settlement that changed the counters
+      // this carry was computed from. Start again from what is stored now.
+      if (depth >= 5) throw new StaleAllowanceError();
+      return ensureAllowance(db, subject, now, depth + 1);
     }
+    for (const c of carry.calls) await db.trainerSession.update({ where: { id: c.id }, data: { carriedMinutes: c.minutes, carriedPremiumMinutes: c.premium } });
     return db.usageAllowance.findUniqueOrThrow({ where: { id: existing.id } });
   }
   return Object.keys(data).length ? db.usageAllowance.update({ where: { id: existing.id }, data }) : existing;
@@ -163,9 +189,9 @@ export type VoiceEngine = "premium" | "standard";
 /**
  * Which engine the NEXT minted session uses, and how many Premium minutes it holds. Premium needs the add-on
  * and a free share of the 60% Premium limit: used plus reserved by open calls, so concurrent calls cannot all
- * pick Premium. A premium call holds at most what is left of that share (up to its own reservation). It is
- * never ended at the limit, but the provider session cannot change engine mid-call, so minutes past its
- * Premium share are booked as standard and the call's reservation bounds that overshoot.
+ * pick Premium. A premium call holds at most what is left of that share (up to its own reservation). beginCall makes
+ * that share the call's whole reservation: the provider session cannot change engine mid-call, so the call is
+ * stopped when its Premium minutes run out instead of drifting onto the standard rate.
  */
 export function chooseEngine(
   r: Pick<Resolved, "premiumVoice"> & { allowance: Pick<UsageAllowance, "minutesCap" | "premiumMinutesUsed" | "premiumMinutesReserved"> },
@@ -196,7 +222,7 @@ const RESERVE_ATTEMPTS = 5;
  * than run on Premium for free.
  */
 export async function beginCall(userId: string, scenario: ScenarioInfo, now = new Date(), opts: { standardAvailable?: boolean } = {}): Promise<BeginResult> {
-  return prisma.$transaction(async (tx) => {
+  return runMetered(async (tx) => {
     await settleStale(tx, userId, now);
     const user = await tx.user.findUnique({ where: { id: userId }, select: { organizationId: true, voiceBlockedUntil: true } });
     if (!user) return { ok: false, error: "user_not_found" } as const;
@@ -211,8 +237,10 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
       if (!user.organizationId) return { ok: false, error: "no_organization" } as const;
       if (r.available < 1) return { ok: false, error: "minutes_reserved" } as const;
 
-      const reserve = Math.min(r.available, MAX_RESERVE_MINUTES);
-      const { engine, premiumMinutes } = chooseEngine(r, reserve);
+      const wanted = Math.min(r.available, MAX_RESERVE_MINUTES);
+      const { engine, premiumMinutes } = chooseEngine(r, wanted);
+      // A Premium call may use only the Premium minutes it holds, so that share is its reservation (and maxSeconds).
+      const reserve = engine === "premium" ? premiumMinutes : wanted;
       if (engine === "standard" && opts.standardAvailable === false) return { ok: false, error: "standard_unavailable" } as const;
       const claimed = await tx.usageAllowance.updateMany({
         where: { id: r.allowance.id, version: r.allowance.version },
@@ -256,6 +284,19 @@ function billingStart(s: Pick<OpenSession, "createdAt" | "connectedAt">): Date {
   return new Date(s.connectedAt ? Math.min(s.connectedAt.getTime(), cutoff) : cutoff);
 }
 
+/**
+ * True when the call is still alive, as far as the server can tell, well past the end of its reservation:
+ * `now` is beyond the billing start plus the reserved length plus the grace period.
+ */
+function pastReservation(s: Pick<OpenSession, "createdAt" | "connectedAt" | "reservedMinutes" | "allowanceId">, now: Date): boolean {
+  if (!s.allowanceId) return false;
+  const end = billingStart(s).getTime() + maxSecondsOf(s.reservedMinutes) * 1000;
+  return now.getTime() - end > OVERRUN_GRACE_SECONDS * 1000;
+}
+
+/** End reasons of a call the server settled: the reservation clamped it, or nobody reported its end. */
+const SERVER_ENDED: ReadonlySet<string> = new Set(["cap_reached", "max_duration", "heartbeat_timeout"]);
+
 /** The most seconds this call may run: what it reserved at mint time, and never more than the 24 hour limit. */
 const maxSecondsOf = (reservedMinutes: number) => Math.min(reservedMinutes * 60, MAX_CALL_SECONDS);
 
@@ -274,14 +315,13 @@ export type HeartbeatResult =
  * server's mint time whether or not the client ever says "connected".
  */
 export async function heartbeat(userId: string, callId: string, state: HeartbeatState, now = new Date()): Promise<HeartbeatResult> {
-  return prisma.$transaction(async (tx) => {
+  return runMetered(async (tx) => {
     const s = await tx.trainerSession.findUnique({ where: { id: callId } });
     if (!s || s.userId !== userId) return { found: false } as const;
     if (s.endedAt) {
-      // The server already told this client to stop. Still heartbeating well after a clamped end means the
-      // browser kept the provider session running past its reservation.
-      const clamped = s.endReason === "cap_reached" || s.endReason === "max_duration";
-      if (clamped && now.getTime() - s.endedAt.getTime() > OVERRUN_GRACE_SECONDS * 1000) await flagOverrun(tx, s, now);
+      // The server already settled this call. Still heartbeating well past the end of its reservation means the
+      // browser kept the provider session running, whether the server clamped it or reaped it as silent.
+      if (SERVER_ENDED.has(s.endReason ?? "") && pastReservation(s, now)) await flagOverrun(tx, s, now);
       return { found: true, stop: true, reason: "ended", settlement: null } as const;
     }
 
@@ -437,8 +477,10 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   }
   // Release the reservation and book the minutes in one atomic update; increments never read a stale value.
   if (b.net > 0 || b.releaseMinutes > 0 || b.releasePremium > 0) {
-    await tx.usageAllowance.update({
-      where: { id: allowance.id },
+    // Guarded on the period this settlement was worked out for. A rollover that committed since reset the counters
+    // and reserved a carry for this call, so writing now would charge old-period minutes to the new period.
+    const booked = await tx.usageAllowance.updateMany({
+      where: { id: allowance.id, periodStart: allowance.periodStart },
       data: {
         minutesUsed: { increment: b.net },
         minutesReserved: { decrement: b.releaseMinutes },
@@ -447,11 +489,11 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
         version: { increment: 1 },
       },
     });
+    if (booked.count === 0) throw new StaleAllowanceError();
   }
   // A client that reports the end long after the reservation ran out kept the provider session open.
-  const clampedEnd = b.endReason === "cap_reached" || b.endReason === "max_duration";
-  const overranBy = now.getTime() - (start.getTime() + b.billableSeconds * 1000);
-  if (connected && hasReservation && clampedEnd && requested !== "heartbeat_timeout" && overranBy > OVERRUN_GRACE_SECONDS * 1000) {
+  // A silent call reaped after its reservation ran out counts too: the server cannot tell it from a live one.
+  if (connected && hasReservation && SERVER_ENDED.has(b.endReason) && pastReservation({ ...s, connectedAt: start }, now)) {
     await flagOverrun(tx, s, now);
   }
   return { outcome: st.outcome, endReason: b.endReason, billableSeconds: b.billableSeconds, billedMinutes: b.net + b.priorNet, creditedMinutes: st.creditMinutes };
@@ -490,10 +532,14 @@ function storedResult(s: OpenSession): CallResult {
  * Returns null when the call does not belong to this user.
  */
 export async function endCall(userId: string, callId: string, reason: CallEndReasonId, now = new Date()): Promise<CallResult | null> {
-  return prisma.$transaction(async (tx) => {
+  return runMetered(async (tx) => {
     const s = await tx.trainerSession.findUnique({ where: { id: callId } });
     if (!s || s.userId !== userId) return null;
-    if (s.endedAt) return storedResult(s);
+    if (s.endedAt) {
+      // An end event for a call the server already settled, arriving after its reservation ran out.
+      if (SERVER_ENDED.has(s.endReason ?? "") && pastReservation(s, now)) await flagOverrun(tx, s, now);
+      return storedResult(s);
+    }
     const done = await settle(tx, s, reason, now);
     if (done) return done;
     const again = await tx.trainerSession.findUnique({ where: { id: callId } });
@@ -554,7 +600,7 @@ export interface UsageSummary {
 
 /** What the usage panel shows. Everything comes from the allowance row and this user's ledger entries. */
 export async function usageSummary(userId: string, now = new Date()): Promise<UsageSummary | null> {
-  return prisma.$transaction(async (tx) => {
+  return runMetered(async (tx) => {
     await settleStale(tx, userId, now);
     const r = await resolveAllowance(tx, userId, now);
     if (!r) return null;

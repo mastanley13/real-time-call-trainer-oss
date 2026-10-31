@@ -99,21 +99,18 @@ describe("Premium voice limit", () => {
     });
     const mint = () => realtimeSession(new NextRequest("http://localhost/api/realtime/session", { method: "POST", body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }), headers: { "content-type": "application/json" } }));
 
-    it("a call that crosses the 60% mark keeps running; the NEXT session is minted on the standard model", async () => {
+    it("a call holding the last Premium minute is stopped when it ends; the NEXT session is minted on the standard model", async () => {
       addUser("u-1", { planTier: "pro", premiumVoice: true });
       await ensureAllowance(fake.db as never, { userId: "u-1" }, base);
       allowanceOf("u-1").premiumMinutesUsed = 119; // 120 of 200 minutes is the Premium limit
 
       const first = await (await mint()).json();
       expect(bodies[0].session.model).toBe("model-premium-test");
+      expect(first.maxSeconds).toBe(60); // the whole call is the one Premium minute it holds
       await heartbeat("u-1", first.callId, "connected", at(0));
-      for (let t = 10; t <= 300; t += 10) {
-        const r = await heartbeat("u-1", first.callId, "ok", at(t));
-        expect(r).toMatchObject({ found: true, stop: false }); // never ended for crossing the Premium limit
-      }
-      await endCall("u-1", first.callId, "user_hangup", at(300));
-      // The call held 1 Premium minute, so only that one books as Premium; the other 4 book as standard.
-      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 5, premiumMinutesUsed: 120, premiumMinutesReserved: 0, minutesReserved: 0 });
+      expect(await heartbeat("u-1", first.callId, "ok", at(30))).toMatchObject({ found: true, stop: false });
+      expect(await heartbeat("u-1", first.callId, "ok", at(60))).toMatchObject({ found: true, stop: true, reason: "cap_reached" });
+      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 1, premiumMinutesUsed: 120, premiumMinutesReserved: 0, minutesReserved: 0 });
 
       vi.setSystemTime(at(310));
       const second = await (await mint()).json();
@@ -122,7 +119,7 @@ describe("Premium voice limit", () => {
       await heartbeat("u-1", second.callId, "connected", at(310));
       await endCall("u-1", second.callId, "user_hangup", at(310 + 180));
       // Standard minutes count against the plan but not against the Premium share.
-      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 8, premiumMinutesUsed: 120 });
+      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 4, premiumMinutesUsed: 120 });
       expect(session(first.callId).engineTier).toBe("premium");
       expect(session(second.callId).engineTier).toBe("standard");
     });
@@ -246,8 +243,8 @@ describe("heartbeat trust: usage is settled from the server's mint time", () => 
     addUser("u-1", { planTier: "pro" });
     const c = await begin("u-1");
     await heartbeat("u-1", c.callId, "connected", at(0));
-    // The browser went quiet but may still hold the provider connection. The next call by this user settles it.
-    await begin("u-1", 7200);
+    // The browser went quiet but may still hold the provider connection. The next read by this user settles it.
+    await usageSummary("u-1", at(7200));
     expect(session(c.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 60 });
     expect(allowanceOf("u-1").minutesUsed).toBe(60);
   });
