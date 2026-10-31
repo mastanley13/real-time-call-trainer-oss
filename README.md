@@ -147,6 +147,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 This project follows the Contributor Covenant. See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## Credits
-Originally based on OpenAI's openai-realtime-agents demo (MIT). See [LICENSE](LICENSE).
+Originally based on OpenAI's openai-realtime-agents demo (MIT). The OpenAI attribution lives in [NOTICE](NOTICE).
 
 > **Rate limits:** counters are in-memory (fixed window) and per server instance. On Vercel/serverless they are best-effort: each warm instance counts separately and cold starts reset them. Use a shared store (e.g. Upstash Redis) for strict enforcement. The `RATE_LIMIT_*` variables tune the per-IP limits, and `TRUSTED_PROXY_HOPS` sets where the client IP is read. Most routes also have a fixed per-account limit, so switching networks doesn't get around them: for example the wizard 20 per hour, re-grades 5 per 10 minutes, the Models check 20 per hour and new voice sessions 6 per minute. [TESTING.md](TESTING.md#rate-limits) lists every limit. Request bodies are capped at 200 KB. The live coach reads the most recent turns of a long call, the text caller accepts up to 200 turns and 20,000 characters, and grading reads the first 1,000 turns and 120,000 characters (the debrief says when a call was longer). `/api/access` attempts are limited to 10 per 15 min per IP.
