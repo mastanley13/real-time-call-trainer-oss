@@ -29,6 +29,12 @@ export async function accessToken(code: string): Promise<string> {
   return hmacHex(key, `trainer-access:${code}`);
 }
 
+/** True when the request carries the access cookie for `code`. Same check the middleware gate uses. */
+export async function hasValidAccessCookie(req: { cookies: { get(name: string): { value: string } | undefined } }, code: string): Promise<boolean> {
+  const cookie = req.cookies.get(ACCESS_COOKIE)?.value ?? "";
+  return !!cookie && safeEqual(cookie, await accessToken(code));
+}
+
 /** Compares digests of both values so the comparison is constant-time regardless of input length. */
 export async function codeMatches(input: string, code: string): Promise<boolean> {
   const [a, b] = await Promise.all([hmacHex("code-compare", input), hmacHex("code-compare", code)]);

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ACCESS_COOKIE, accessCode, accessToken, safeEqual } from "@/lib/access";
+import { accessCode, hasValidAccessCookie } from "@/lib/access";
 import { isPublicPath } from "@/lib/publicPaths";
 
 /** Pages that stay readable without the access cookie. Exact matches only. */
@@ -14,8 +14,7 @@ export async function middleware(req: NextRequest) {
   if (PUBLIC_PAGES.has(pathname) || pathname === "/access" || pathname === "/api/access" || pathname === "/api/health" || pathname.startsWith("/api/cron/")) return NextResponse.next();
   if (isPublicPath(pathname)) return NextResponse.next();
 
-  const cookie = req.cookies.get(ACCESS_COOKIE)?.value ?? "";
-  if (cookie && safeEqual(cookie, await accessToken(code))) return NextResponse.next();
+  if (await hasValidAccessCookie(req, code)) return NextResponse.next();
 
   if (pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "access_code_required" }, { status: 401 });
