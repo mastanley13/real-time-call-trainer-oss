@@ -1,4 +1,6 @@
 import { createHmac } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { NextRequest } from "next/server";
 import { createFakePrisma } from "./fakePrisma";
@@ -7,7 +9,8 @@ const mocks = vi.hoisted(() => ({ fake: null as unknown as ReturnType<typeof imp
 vi.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get: (_t, k) => (mocks.fake.db as Record<string | symbol, unknown>)[k] }) }));
 vi.mock("@/lib/apiAuth", () => ({ requireAuth: () => ({ id: mocks.authId, email: `${mocks.authId}@example.test` }), isDemoUser: () => false }));
 
-import { buildCheckoutParams, CheckoutConfigError, entitlementFromItems, priceIds, type PriceIds } from "@/lib/billing";
+import { buildCheckoutParams, CheckoutConfigError, entitlementFromItems, LOOKUP_KEYS, resetPriceCache, resolvePriceIds, type PriceIds } from "@/lib/billing";
+import { isTeamPlan } from "@/lib/usagePlan";
 import { billingGate, encodeForm, stripeApi, StripeApiError, stripeSecretKey, stripeStatus, StripeConfigError, verifyWebhookSignature } from "@/lib/stripe";
 import { classifyPlanChange, setBillingEventSink, type BillingLifecycleEvent } from "@/lib/billingEvents";
 import { POST as webhook } from "@/app/api/stripe/webhook/route";
@@ -20,10 +23,17 @@ const PRICES: PriceIds = {
   team: { month: "price_test_team_m", year: "price_test_team_y" },
   premium: { month: "price_test_prem_m", year: "price_test_prem_y" },
 };
-const PRICE_ENV: Record<string, string> = {
-  STRIPE_PRICE_PRO_MONTHLY: "price_test_pro_m", STRIPE_PRICE_PRO_ANNUAL: "price_test_pro_y",
-  STRIPE_PRICE_TEAM_MONTHLY: "price_test_team_m", STRIPE_PRICE_TEAM_ANNUAL: "price_test_team_y",
-  STRIPE_PRICE_PREMIUM_MONTHLY: "price_test_prem_m", STRIPE_PRICE_PREMIUM_ANNUAL: "price_test_prem_y",
+// What stripe.prices.list({ lookup_keys }) returns in these tests: no network, placeholder ids.
+const priceRow = (key: string, id: string, extra: Record<string, unknown> = {}) => ({ id, lookup_key: key, active: true, type: "recurring", recurring: { usage_type: "licensed" }, ...extra });
+const PRICE_LIST = {
+  data: [
+    priceRow(LOOKUP_KEYS.pro.month, PRICES.pro.month!, { product: { metadata: { plan: "pro" } } }),
+    priceRow(LOOKUP_KEYS.pro.year, PRICES.pro.year!),
+    priceRow(LOOKUP_KEYS.team.month, PRICES.team.month!, { product: { metadata: { plan: "team", min_seats: "3", pooled_minutes_per_seat: "300" } } }),
+    priceRow(LOOKUP_KEYS.team.year, PRICES.team.year!, { product: { metadata: { plan: "team" } } }),
+    priceRow(LOOKUP_KEYS.premium.month, PRICES.premium.month!),
+    priceRow(LOOKUP_KEYS.premium.year, PRICES.premium.year!),
+  ],
 };
 const WHSEC = "whsec_test_placeholder";
 const NOW = new Date("2026-10-31T10:00:00Z");
@@ -44,7 +54,8 @@ beforeEach(() => {
   vi.stubEnv("STRIPE_WEBHOOK_SECRET", WHSEC);
   vi.stubEnv("DEMO_MODE", "");
   vi.stubEnv("DATABASE_URL", "postgresql://ci:ci@localhost:5432/ci");
-  for (const [k, v] of Object.entries(PRICE_ENV)) vi.stubEnv(k, v);
+  resetPriceCache();
+  vi.spyOn(stripeApi, "listPricesByLookupKeys").mockResolvedValue(PRICE_LIST);
   setBillingEventSink(null);
 });
 afterEach(() => {
@@ -176,10 +187,58 @@ describe("checkout params per plan", () => {
     expect(() => buildCheckoutParams({ ...base, plan: "pro", premium: true }, { ...PRICES, premium: { month: undefined, year: undefined } })).toThrow(CheckoutConfigError);
   });
 
-  it("reads price ids from the six env var names", () => {
-    expect(priceIds()).toEqual(PRICES);
+  it("resolves the six prices by lookup key and caches the result", async () => {
+    const list = vi.mocked(stripeApi.listPricesByLookupKeys);
+    expect(await resolvePriceIds()).toEqual(PRICES);
+    expect([...list.mock.calls[0][0]].sort()).toEqual(Object.values(LOOKUP_KEYS).flatMap((k) => Object.values(k)).sort());
+    await resolvePriceIds();
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks Stripe for prices by lookup key with the product expanded, never by price id", async () => {
+    const sent = vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", sent);
+    vi.mocked(stripeApi.listPricesByLookupKeys).mockRestore();
+    await stripeApi.listPricesByLookupKeys(["calltrainer_pro_monthly"]);
+    const [url, init] = sent.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.method).toBe("GET");
+    expect(decodeURIComponent(url)).toBe("https://api.stripe.com/v1/prices?lookup_keys[0]=calltrainer_pro_monthly&active=true&limit=100&expand[0]=data.product");
+  });
+
+  it("leaves a price unresolved when it is inactive, metered, one-time or on the wrong product", async () => {
+    vi.mocked(stripeApi.listPricesByLookupKeys).mockResolvedValue({
+      data: [
+        priceRow(LOOKUP_KEYS.pro.month, "price_test_x1", { active: false }),
+        priceRow(LOOKUP_KEYS.pro.year, "price_test_x2", { recurring: { usage_type: "metered" } }),
+        priceRow(LOOKUP_KEYS.team.month, "price_test_x3", { type: "one_time", recurring: null }),
+        priceRow(LOOKUP_KEYS.team.year, "price_test_x4", { product: { metadata: { plan: "pro" } } }),
+      ],
+    });
     const none = { month: undefined, year: undefined };
-    expect(priceIds({})).toEqual({ pro: none, team: none, premium: none });
+    expect(await resolvePriceIds()).toEqual({ pro: none, team: none, premium: none });
+  });
+});
+
+describe("isTeamPlan", () => {
+  it("is true only for planTier team", () => {
+    expect(isTeamPlan({ planTier: "team" })).toBe(true);
+    for (const t of ["free", "pro", "TEAM", "", null, undefined]) expect(isTeamPlan({ planTier: t })).toBe(false);
+    expect(isTeamPlan(null)).toBe(false);
+  });
+});
+
+describe("no secrets or price ids in src", () => {
+  it("has no Stripe key, signing secret or price id literal", () => {
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (/\.tsx?$/.test(e.name) && /\b(sk|rk|pk)_(test|live)_[A-Za-z0-9]{10,}|\bwhsec_[A-Za-z0-9]{10,}|\bprice_[A-Za-z0-9]{14,}|\bprod_[A-Za-z0-9]{10,}/.test(readFileSync(full, "utf8"))) hits.push(full);
+      }
+    };
+    walk(join(process.cwd(), "src"));
+    expect(hits).toEqual([]);
   });
 });
 

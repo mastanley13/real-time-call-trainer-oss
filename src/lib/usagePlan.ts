@@ -38,6 +38,14 @@ export function isPlanTier(v: unknown): v is PlanTier {
   return v === "free" || v === "pro" || v === "team";
 }
 
+/**
+ * True only when the organization's planTier is "team". That value is written solely by the Stripe
+ * webhook sync in billing.ts, so this is the one check the Team MFA enforcement toggle should use.
+ */
+export function isTeamPlan(org: { planTier?: string | null } | null | undefined): boolean {
+  return org?.planTier === "team";
+}
+
 /** Minutes a plan grants per period. Seats only matter for Team. */
 export function capFor(plan: PlanTier, seats = 1): number {
   if (plan === "team") return Math.max(TEAM_MIN_SEATS, Math.floor(seats)) * TEAM_MINUTES_PER_SEAT;

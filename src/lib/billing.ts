@@ -19,7 +19,7 @@ import { stripeApi, StripeApiError, type StripeParams } from "./stripe";
 export type Interval = "month" | "year";
 export type PaidPlan = Exclude<PlanTier, "free">;
 
-// ---- Prices (env var names only; the ids themselves live in the server environment) -------------
+// ---- Prices (resolved by lookup key; no price id lives in code or env) --------------------------
 
 export interface PriceIds {
   pro: Record<Interval, string | undefined>;
@@ -27,13 +27,53 @@ export interface PriceIds {
   premium: Record<Interval, string | undefined>;
 }
 
-export function priceIds(env: Record<string, string | undefined> = process.env): PriceIds {
-  const get = (n: string) => env[n]?.trim() || undefined;
-  return {
-    pro: { month: get("STRIPE_PRICE_PRO_MONTHLY"), year: get("STRIPE_PRICE_PRO_ANNUAL") },
-    team: { month: get("STRIPE_PRICE_TEAM_MONTHLY"), year: get("STRIPE_PRICE_TEAM_ANNUAL") },
-    premium: { month: get("STRIPE_PRICE_PREMIUM_MONTHLY"), year: get("STRIPE_PRICE_PREMIUM_ANNUAL") },
-  };
+/** Lookup keys set on the test-mode prices. They are labels, not secrets. */
+export const LOOKUP_KEYS = {
+  pro: { month: "calltrainer_pro_monthly", year: "calltrainer_pro_annual" },
+  team: { month: "calltrainer_team_monthly", year: "calltrainer_team_annual" },
+  premium: { month: "calltrainer_premium_monthly", year: "calltrainer_premium_annual" },
+} as const;
+
+const emptyPrices = (): PriceIds => ({ pro: { month: undefined, year: undefined }, team: { month: undefined, year: undefined }, premium: { month: undefined, year: undefined } });
+
+const PriceList = z.object({
+  data: z.array(z.object({
+    id: z.string(),
+    lookup_key: z.string().nullish(),
+    active: z.boolean().optional(),
+    type: z.string().optional(),
+    recurring: z.object({ usage_type: z.string().optional() }).nullish(),
+    product: z.union([z.string(), z.object({ metadata: z.record(z.string()).nullish() })]).nullish(),
+  })),
+});
+
+const PRICE_CACHE_MS = 5 * 60 * 1000;
+let priceCache: { at: number; ids: PriceIds } | null = null;
+export const resetPriceCache = (): void => { priceCache = null; };
+
+/**
+ * Looks up the six prices with stripe.prices.list({ lookup_keys }). A key with no active price, a metered
+ * price (none are allowed) or a product whose `plan` metadata disagrees with the key resolves to undefined,
+ * which checkout reports as price_not_configured and the webhook treats as "not our price".
+ * Cached for a few minutes so a webhook burst makes one list call.
+ */
+export async function resolvePriceIds(api: Pick<typeof stripeApi, "listPricesByLookupKeys"> = stripeApi, nowMs = Date.now()): Promise<PriceIds> {
+  if (priceCache && nowMs - priceCache.at < PRICE_CACHE_MS) return priceCache.ids;
+  const intervals: Interval[] = ["month", "year"];
+  const wanted = (Object.keys(LOOKUP_KEYS) as (keyof typeof LOOKUP_KEYS)[]).flatMap((plan) => intervals.map((interval) => ({ plan, interval, key: LOOKUP_KEYS[plan][interval] })));
+  const list = PriceList.parse(await api.listPricesByLookupKeys(wanted.map((w) => w.key)));
+  const ids = emptyPrices();
+  for (const w of wanted) {
+    const price = list.data.find((p) => p.lookup_key === w.key && p.active !== false);
+    if (!price) continue;
+    if (price.type && price.type !== "recurring") continue;
+    if (price.recurring?.usage_type && price.recurring.usage_type !== "licensed") continue;
+    const productPlan = typeof price.product === "object" && price.product ? price.product.metadata?.plan : undefined;
+    if (w.plan !== "premium" && productPlan && productPlan !== w.plan) continue;
+    ids[w.plan][w.interval] = price.id;
+  }
+  priceCache = { at: nowMs, ids };
+  return ids;
 }
 
 // ---- Checkout -----------------------------------------------------------------------------------
@@ -65,7 +105,7 @@ export class CheckoutConfigError extends Error {
 }
 
 /** The Checkout Session body (mode=subscription). Team needs at least 3 seats; the Premium add-on quantity equals seats. */
-export function buildCheckoutParams(input: CheckoutInput, prices: PriceIds = priceIds()): StripeParams {
+export function buildCheckoutParams(input: CheckoutInput, prices: PriceIds): StripeParams {
   const seats = input.plan === "team" ? Math.floor(input.seats) : 1;
   if (input.plan === "team" && !(seats >= TEAM_MIN_SEATS && seats <= TEAM_MAX_SEATS)) {
     throw new CheckoutConfigError("invalid_seats", `Team needs between ${TEAM_MIN_SEATS} and ${TEAM_MAX_SEATS} seats.`);
@@ -227,7 +267,7 @@ const ENTITLED = new Set(["active", "trialing", "past_due"]);
 interface Entitlement { plan: PlanTier; seats: number; premium: boolean }
 
 /** Reads plan, seats and the premium flag from a subscription's price ids. Null when no known price is on it. */
-export function entitlementFromItems(items: { quantity?: number | null; priceId: string }[], prices: PriceIds = priceIds()): Entitlement | null {
+export function entitlementFromItems(items: { quantity?: number | null; priceId: string }[], prices: PriceIds): Entitlement | null {
   const is = (id: string, p: Record<Interval, string | undefined>) => !!id && (id === p.month || id === p.year);
   let plan: PlanTier | null = null;
   let seats = 1;
@@ -432,9 +472,11 @@ async function fetchLive(id: string | null, deps: StripeDeps): Promise<Live> {
  * a failure rolls both back and Stripe's retry is processed, while a redelivery of a handled event is a no-op.
  * Updates and completed checkouts are applied from the subscription's current state, not the event body.
  */
-export async function handleStripeEvent(event: StripeEventLike, now = new Date(), prices: PriceIds = priceIds(), deps: StripeDeps = liveDeps): Promise<EventResult> {
+export async function handleStripeEvent(event: StripeEventLike, now = new Date(), pricesArg?: PriceIds, deps: StripeDeps = liveDeps): Promise<EventResult> {
   if ((await prisma.stripeEvent.findUnique({ where: { id: event.id } })) !== null) return "duplicate";
   const live = RECONCILED.has(event.type) ? await fetchLive(subscriptionIdOf(event), deps) : null;
+  // Resolved before the transaction opens so the Stripe call never holds it. A failure answers 500 and Stripe retries.
+  const prices = pricesArg ?? (RECONCILED.has(event.type) ? await resolvePriceIds() : emptyPrices());
   let applied: Applied | null = null;
   try {
     applied = await prisma.$transaction(async (tx) => {
@@ -471,7 +513,8 @@ async function afterApplied(applied: Applied | null, deps: StripeDeps): Promise<
  * Applies a completed Checkout Session without waiting for its webhook. Reconciliation depends only on the
  * subscription as Stripe has it now, so running it again when the webhook arrives changes nothing.
  */
-async function applyCompletedCheckout(session: z.infer<typeof SessionObject>, now: Date, deps: StripeDeps, prices: PriceIds = priceIds()): Promise<void> {
+async function applyCompletedCheckout(session: z.infer<typeof SessionObject>, now: Date, deps: StripeDeps, pricesArg?: PriceIds): Promise<void> {
+  const prices = pricesArg ?? (await resolvePriceIds());
   const live = await fetchLive(session.subscription ?? null, deps);
   const applied = await prisma.$transaction((tx) => onCheckoutPaid(tx, session, live, now, prices, true));
   await afterApplied(applied, deps);

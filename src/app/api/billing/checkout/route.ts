@@ -4,7 +4,7 @@ import { requireAuth } from "@/lib/apiAuth";
 import { ipLimitResponse, userLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { billingGate, StripeApiError } from "@/lib/stripe";
-import { appBaseUrl, buildCheckoutParams, checkoutFingerprint, createOrReuseCheckout, CheckoutConfigError } from "@/lib/billing";
+import { appBaseUrl, buildCheckoutParams, checkoutFingerprint, createOrReuseCheckout, CheckoutConfigError, resolvePriceIds } from "@/lib/billing";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "@/lib/usagePlan";
 
 const Body = z.object({
@@ -56,6 +56,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const prices = await resolvePriceIds();
     const params = buildCheckoutParams({
       plan: body.plan,
       interval: body.interval,
@@ -67,7 +68,7 @@ export async function POST(req: NextRequest) {
       customerId: subject.stripeCustomerId,
       anchorAt: body.plan === "team" && org ? org.createdAt : user.usageAnchorAt,
       baseUrl: appBaseUrl(req),
-    });
+    }, prices);
     // One outstanding Checkout Session per billing subject: a repeat click reuses it, a different plan replaces it.
     const outcome = await createOrReuseCheckout({
       subject: { kind: subject === org ? "organization" : "user", id: subject.id },
