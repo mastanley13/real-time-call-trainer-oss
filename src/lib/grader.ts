@@ -141,6 +141,10 @@ const BOOKING_CRITERION_RE = /book|clos|appoint|schedul|next.?step|commit|confir
 const SLOT_TIME_RE = /\b(\d{1,2}(:\d{2})?\s?(a\.?m\.?|p\.?m\.?)|noon|tomorrow|today|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week|this (morning|afternoon|evening|week)|(morning|afternoon|evening) (window|slot))\b/i;
 // Only counts alongside SLOT_TIME_RE, so broad verbs ("Can I send...", "I can show it Saturday") stay safe.
 const SLOT_OFFER_RE = /\b(how about|would .* work|does .* work|can (do|offer|get|send|have)|(i|we) can (do|offer|get|send|show|meet|come|bring|have)|can (i|we) (do|offer|get|send|show|meet|come|book|set|pencil)|i have|we have|available|opening|slot|window|come out|stop by|schedule|book|appointment|visit|see you)\b/i;
+const PRICING_CRITERION_RE = /pric|fee|cost|quote|rate|charge|billing|payment/i;
+// A dollar figure ("$89", "89 dollars", "ninety bucks") or an explicit zero-cost statement.
+const MONEY_RE = /(?:[$£€]\s?\d[\d,]*(?:\.\d{1,2})?|\b\d[\d,]*(?:\.\d{1,2})?\s?(?:dollars?|bucks|usd)\b|\b[a-z-]*(?:ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)\s+(?:dollars?|bucks)\b|\b(?:no (?:extra |additional )?(?:charge|cost|fee)|free of charge|complimentary|waived)\b)/i;
+const PRICE_WORD_RE = /\b(fee|price|cost|costs|charge|charges|rate|quote|estimate|total|per (?:month|year|visit|hour|seat))\b/i;
 const SLOT_CONFIRM_RE = /\b(confirm(ed|ing)?|you're (booked|all set|scheduled)|i've (booked|scheduled|put you)|locked in|see you (then|at|on|tomorrow)|all set)\b/i;
 
 /** Trainee proposed a concrete day/time slot (offered) and/or confirmed one (confirmed). */
@@ -148,6 +152,13 @@ export function detectSlotOffer<T extends { text: string; line: number }>(senten
   const offered = sentences.find((s) => SLOT_TIME_RE.test(s.text) && SLOT_OFFER_RE.test(s.text));
   const confirmed = offered ? sentences.find((s) => SLOT_TIME_RE.test(s.text) && SLOT_CONFIRM_RE.test(s.text)) : undefined;
   return { offered, confirmed };
+}
+
+/** Trainee stated a concrete price: a number or zero-cost statement (quoted), ideally framed as a fee or price (framed). */
+export function detectPriceQuote<T extends { text: string }>(sentences: T[]): { quoted?: T; framed?: T } {
+  const quoted = sentences.find((s) => MONEY_RE.test(s.text));
+  const framed = sentences.find((s) => MONEY_RE.test(s.text) && PRICE_WORD_RE.test(s.text));
+  return { quoted, framed };
 }
 
 interface Sentence {
@@ -176,6 +187,24 @@ function repetitionPenalty(sentences: Sentence[]): number {
   return Math.min(1, dupShare * 1.2 + (diversity < 0.6 ? (0.6 - diversity) * 1.5 : 0));
 }
 
+const listPoints = (pts: string[]) => (pts.length <= 1 ? pts.join("") : `${pts.slice(0, -1).join(", ")} and ${pts[pts.length - 1]}`);
+
+/** Top 1-2 relative strengths (never empty once the rep spoke) and criterion-specific fixes, biggest weighted gap first. */
+function heuristicFeedback(criteria: CriterionResult[], spoke: boolean, pointsOf: (c: CriterionResult) => string[]) {
+  const ranked = [...criteria].sort((a, b) => b.score - a.score || b.weight - a.weight);
+  const top = spoke ? ranked.filter((c, i) => i === 0 || (i === 1 && c.score >= 50)) : [];
+  const strengths = top.map((c) => (c.score >= 75 ? `You covered ${c.name} well (${c.score}%).` : `${c.name} was your strongest area (${c.score}%).`));
+  const gap = (c: CriterionResult) => c.weight * (100 - c.score);
+  let fixes = criteria.filter((c) => c.score < 60).sort((a, b) => gap(b) - gap(a));
+  if (!fixes.length) fixes = criteria.filter((c) => c.score < 85).sort((a, b) => gap(b) - gap(a)).slice(0, 1);
+  const improvements = fixes.slice(0, 3).map((c) => {
+    const pts = pointsOf(c).slice(0, 3);
+    const head = `${c.name} (worth ${Math.round(c.weight)}%): you scored ${c.score}%.`;
+    return pts.length ? `${head} Work in ${listPoints(pts)}.` : `${head} Say it more completely, in your own words.`;
+  });
+  return { strengths, improvements };
+}
+
 /** Deterministic keyword-coverage grader used when no LLM key is configured. */
 export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: string): Evaluation {
   const rubric = normalizeWeights(scenario.rubric);
@@ -189,6 +218,8 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
   });
   const rep = repetitionPenalty(sentences);
   const slot = detectSlotOffer(sentences);
+  const price = detectPriceQuote(sentences);
+  const missingPoints = new Map<string, string[]>();
 
   const criteria: CriterionResult[] = rubric.map((c) => {
     const kws = keywordsOf(`${c.name} ${c.description}`);
@@ -198,9 +229,10 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
     const credit = new Map<Sentence, number>();
     let credited = 0;
     const turnsHit = new Set<number>();
-    res.forEach((re) => {
+    const uncovered: string[] = [];
+    res.forEach((re, ki) => {
       const s = sentences.find((x) => re.test(x.text) && (credit.get(x) ?? 0) < MAX_HITS_PER_SENTENCE);
-      if (!s) return;
+      if (!s) { uncovered.push(kws[ki]); return; }
       credit.set(s, (credit.get(s) ?? 0) + 1);
       turnsHit.add(s.turn);
       credited++;
@@ -234,6 +266,17 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
         apologyNote = sorry.length <= 2 ? `You apologized plainly and ${points}.` : `You apologized ${sorry.length} times; once, plainly, lands better. You ${points}.`;
       }
     }
+    // Reps quote fees as "$89", which keyword overlap never sees, so a pricing criterion credits a stated number.
+    let priceNote = "";
+    const pricing = PRICING_CRITERION_RE.test(`${c.id} ${c.name}`);
+    if (pricing && price.quoted) {
+      bonus += price.framed ? 35 : 25;
+      evidenceSentences.unshift(price.framed ?? price.quoted);
+      priceNote = price.framed ? "You stated the price outright, which is what this area asks for." : "You gave a number for the price.";
+    } else if (pricing) {
+      uncovered.unshift("an actual dollar amount");
+    }
+    missingPoints.set(c.id, uncovered);
     const raw = 20 + coverage * 80 + bonus;
     let score = sentences.length === 0 ? 0 : Math.max(0, Math.min(100, Math.round(raw * (1 - 0.4 * rep))));
     // Offering a concrete slot earns partial booking/closing credit; confirming it earns more.
@@ -255,7 +298,7 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
       name: c.name,
       weight: c.weight,
       score,
-      rationale: slotNote || apologyNote || (evidence.length
+      rationale: slotNote || apologyNote || priceNote || (evidence.length
         ? `You addressed ${Math.min(credited, kws.length)} of ${kws.length} expected points for this area${rep > 0.3 ? ", but repeated yourself a lot" : ""}.`
         : "Nothing you said clearly addressed this area."),
       evidence,
@@ -263,8 +306,7 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
   });
   const overallScore = weightedOverall(criteria);
   const goalStatus: GoalStatus = overallScore >= 70 || (slot.confirmed && overallScore >= 60) ? "achieved" : overallScore >= 45 || slot.offered ? "partial" : "not_achieved";
-  const weak = criteria.filter((c) => c.score < 60);
-  const strong = criteria.filter((c) => c.score >= 75);
+  const { strengths, improvements } = heuristicFeedback(criteria, sentences.length > 0, (c) => missingPoints.get(c.id) ?? []);
   return {
     method: "heuristic",
     graderVersion: GRADER_VERSIONS.heuristic,
@@ -272,8 +314,8 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
     grade: gradeFor(overallScore),
     summary: `Automatic estimate: ${overallScore}/100, based on how many of the rubric's topics you covered.`,
     criteria,
-    strengths: strong.map((c) => `You covered ${c.name} well.`),
-    improvements: weak.map((c) => `You could cover ${c.name} more clearly and completely.`),
+    strengths,
+    improvements,
     goalAchievement: {
       achieved: goalStatus === "achieved",
       status: goalStatus,

@@ -35,7 +35,7 @@ describe("retryPoint", () => {
       { id: "close", name: "Booking & next steps", score: 70 },
     ]);
     // The rep's own "price" line (T2) is skipped; the persona's cost question is T5.
-    expect(retryPoint(transcript, ev)).toEqual({ turn: 5, criterion: "Pricing transparency", score: 30 });
+    expect(retryPoint(transcript, ev)).toEqual({ turn: 5, criterion: "Pricing transparency", score: 30, weight: 1 });
   });
 
   it("never picks the opening line, and falls back to the persona line before the weakest evidence", () => {
