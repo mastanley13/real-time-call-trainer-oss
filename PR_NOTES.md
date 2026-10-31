@@ -39,8 +39,27 @@ ever moves off an archived Premium price, set `addon=premium_voice` on its produ
   billing clamp, and exempts the call from overrun flagging. Pro and Team behave as before.
 - Kept on purpose: the 24 hour call length limit, the 15 minute connect window, and the clamp on a call reaped as silent
   (it is billed up to its reservation, so a closed tab is not billed for a day).
-- Minutes are whole numbers and every started minute counts, so "9.5 of 10 used" is tested as 9 of 10 used.
+- Fractional usage: `minutesUsed` and `UsageEntry.minutes` are floats (migration `20261031050000_fractional_usage_minutes`).
+  Call billing is still whole minutes, every started minute counts; a half minute only comes from a support credit
+  (the credit route takes 0.5 steps). A Free call starts with any minutes left, so 9.5 of 10 starts, runs 3 minutes
+  uninterrupted and reads 12.5. Pro and Team still need one whole minute left to start, because the cap stops their calls.
+  A Free start holds one whole minute so a second start cannot take the same last half minute.
 - Text practice is not metered on any plan.
+- The Free reset is the signup anchor (the existing usage anchor), not the calendar month, and the billing page copy says
+  "each month on your signup date". Switching Free to calendar-month resets would change `ensureAllowance`; not done.
+
+## Billing page and call screens
+
+- Header copy is plan-aware (`usageHeaderCopy` in `src/lib/billingUi.ts`): Free says calls are checked only at start.
+- The cap refusal, on the briefing and on the deck, shows an Upgrade link to `/settings/billing` (`CallError`). The
+  message says "practice". The briefing shows "X voice minutes left" before Start, read from `/api/usage`; with none left it
+  shows the refusal and Upgrade link up front and leaves Start enabled, because the server is the authority.
+- Seats: the box holds raw text and clamps to 3 on blur and on submit. Checkout and portal buttons are `disabled` while
+  busy, with a ref guard for same-tick double clicks and a `pageshow` reset after Back from Stripe.
+- Annual mode shows $290 per user per year (Pro) and $590 per seat per year (Team), and the add-on at $300. Display
+  only: Stripe prices stay the source of truth at checkout.
+- A Team user sees "Included in Team" on Pro. The success banner uses `.banner-ok`. The "Test mode only" note shows
+  only when `/api/usage` reports `billing.testMode` (a Stripe `sk_test_` key).
 
 ## Prices
 

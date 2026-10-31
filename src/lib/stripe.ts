@@ -18,6 +18,9 @@ export function stripeStatus(env: Env = process.env): StripeStatus {
   return key.startsWith("sk_test_") ? "ready" : "live_key_refused";
 }
 
+/** True when Stripe is running with a test-mode key. The UI shows its "test cards only" note only then. */
+export const stripeTestMode = (env: Env = process.env): boolean => stripeStatus(env) === "ready";
+
 export class StripeConfigError extends Error {
   constructor(public code: "billing_not_configured" | "stripe_live_key_refused", message: string) {
     super(message);

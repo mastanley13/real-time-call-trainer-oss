@@ -8,6 +8,7 @@ import type { StoredTurn } from "@/lib/sessionStore";
 import { formatDuration } from "@/lib/format";
 import CallOrb, { type AgentState } from "@/components/CallOrb";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import CallError from "./CallError";
 import CopilotRail, { CueCard, Instruments } from "./CopilotRail";
 import type { LiveCue, RubricChip, useCoach } from "./useCoach";
 
@@ -199,7 +200,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
           </div>
 
           <div className="shrink-0 border-t border-line bg-surface px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 sm:px-6">
-            {error && <p role="alert" className="mb-3 rounded-panel border border-alert/40 bg-alert-soft p-3 text-sm">{error}</p>}
+            {error && <CallError message={error} className="mb-3" />}
             {text?.hungUp && (
               <div className="mb-3 flex flex-col items-center gap-2 rounded-panel bg-caution-soft p-3 text-center text-sm sm:flex-row sm:justify-between sm:text-left" role="status">
                 <span><strong>{persona.name} hung up.</strong> The call is over.</span>

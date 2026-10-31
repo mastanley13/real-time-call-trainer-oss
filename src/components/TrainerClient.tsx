@@ -17,6 +17,7 @@ import { CallMeter } from "@/lib/callMeter";
 import RealtimeVoiceSession, { type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
+import { minutesLeftFromUsage } from "@/lib/billingUi";
 
 type Mode = "voice" | "text";
 type Phase = "idle" | "live" | "grading";
@@ -118,6 +119,8 @@ export default function TrainerClient() {
   const [inserted, setInserted] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  /** Voice minutes left this period, shown on the briefing. Null when minutes are not metered. */
+  const [minutesLeft, setMinutesLeft] = useState<number | null>(null);
   /** Who wrote the latest text-call reply: the configured model, or the scripted fallback. */
   const [callerSource, setCallerSource] = useState<"llm" | "scripted" | null>(null);
   const [busy, setBusy] = useState(false);
@@ -202,6 +205,18 @@ export default function TrainerClient() {
   useEffect(() => {
     if (!isLoading && capabilities && !isAuthenticated) router.replace("/login");
   }, [isLoading, capabilities, isAuthenticated, router]);
+
+  // Read the minutes left each time the briefing shows, so it is right after a call and after an upgrade.
+  const stored = !!capabilities?.database && !capabilities?.demoMode;
+  useEffect(() => {
+    if (phase !== "idle" || !isAuthenticated || !stored) { setMinutesLeft(null); return; }
+    let live = true;
+    fetch("/api/usage", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (live) setMinutesLeft(minutesLeftFromUsage(d)); })
+      .catch(() => { if (live) setMinutesLeft(null); });
+    return () => { live = false; };
+  }, [phase, isAuthenticated, stored]);
 
   // Voice engine: the viewer's last pick if the server still offers it, else the server's first (OpenAI when a key is set).
   useEffect(() => {
@@ -381,7 +396,7 @@ export default function TrainerClient() {
     return (
       // Keyed by persona: revealed prep answers, "Got it" and the mic test belong to one buyer.
       <Briefing key={scenario.id} scenario={scenario} capabilities={capabilities} mode={mode} onModeChange={setMode} engine={engine} onEngineChange={setEngine} coachMode={coachMode} onCoachModeChange={setCoachMode}
-        onStart={begin} retryFrom={retry ? { turn: retry.turn, line: retry.line } : null} error={error} notice={notice} />
+        onStart={begin} retryFrom={retry ? { turn: retry.turn, line: retry.line } : null} error={error} notice={notice} minutesLeft={minutesLeft} />
     );
   }
 

@@ -196,14 +196,15 @@ model UsageAllowance {
   organization   Organization? @relation("OrgPool", fields: [organizationId], references: [id], onDelete: Cascade)
   /// free | pro | team
   planTier       String
-  /// 20, 200, or seats x 300.
+  /// 10, 200, or seats x 300.
   minutesCap     Int
   /// Copied from User.usageAnchorAt (or the organization's createdAt for a Team pool).
   anchorAt       DateTime
   periodStart    DateTime
   periodEnd      DateTime
   /// Cached net sum of this period's ledger entries, updated in the same transaction as each entry.
-  minutesUsed    Int      @default(0)
+  /// A float because a support credit can be half a minute; call billing itself is whole minutes.
+  minutesUsed    Float    @default(0)
   /// Minutes held by calls that have started and not settled. A new call can only take what is left after
   /// used and reserved, which is what stops two calls from spending the same minutes.
   minutesReserved Int     @default(0)
@@ -226,7 +227,8 @@ model UsageEntry {
   trainerSessionId String?
   trainerSession   TrainerSession? @relation(fields: [trainerSessionId], references: [id], onDelete: SetNull)
   kind             UsageKind
-  minutes          Int
+  /// Negative for credits. Half minutes only appear in support credits.
+  minutes          Float
   createdAt        DateTime @default(now())
 
   @@unique([trainerSessionId, kind])

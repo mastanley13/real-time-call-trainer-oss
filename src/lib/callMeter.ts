@@ -6,6 +6,8 @@
  * as each happens; the first heartbeat is sent when both have.
  */
 
+import { CAP_STOPPED_MESSAGE } from "./billingUi";
+
 export type MeterEndReason = "user_hangup" | "network_drop" | "provider_error" | "server_error" | "failed_connect";
 
 const HEARTBEAT_MS = 10_000;
@@ -55,7 +57,7 @@ export class CallMeter {
       const res = await fetch("/api/usage/heartbeat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId: this.callId, state }) });
       if (!res.ok) return;
       const data = (await res.json().catch(() => ({}))) as { stop?: boolean; message?: string };
-      if (data.stop && !this.ended) this.h.onStop(data.message || "You have used all your voice minutes for this period.");
+      if (data.stop && !this.ended) this.h.onStop(data.message || CAP_STOPPED_MESSAGE);
     } catch {
       /* a missed heartbeat is tolerated; the server ends the call 30 seconds after the last one */
     }

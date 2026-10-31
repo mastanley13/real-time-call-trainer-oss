@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { meteringEnabled } from "@/lib/serverConfig";
-import { stripeStatus } from "@/lib/stripe";
+import { stripeStatus, stripeTestMode } from "@/lib/stripe";
 import { usageSummary } from "@/lib/usage";
 
 /**
@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
     ...summary,
     billing: {
       enabled: stripeStatus() === "ready",
+      testMode: stripeTestMode(),
       canBuyTeam: manages && !!user.organization,
       hasPortal: !!((manages && user.organization?.stripeCustomerId) || user.stripeCustomerId),
       seats: summary.pooled ? user.organization?.seatCount ?? 1 : 1,

@@ -177,14 +177,22 @@ export async function resolveAllowance(db: Tx, userId: string, now: Date): Promi
     pooled,
     plan: pooled ? "team" : planOf(user.planTier) === "team" ? "free" : planOf(user.planTier),
     premiumVoice: pooled ? org.premiumVoice : user.premiumVoice,
-    remaining: Math.max(0, allowance.minutesCap - allowance.minutesUsed),
-    available: Math.max(0, allowance.minutesCap - allowance.minutesUsed - allowance.minutesReserved),
+    remaining: roundMinutes(Math.max(0, allowance.minutesCap - allowance.minutesUsed)),
+    available: roundMinutes(Math.max(0, allowance.minutesCap - allowance.minutesUsed - allowance.minutesReserved)),
   };
 }
 
-/** The cap check (rule 11): enough left for at least one minute. */
-export function checkCap(r: Pick<Resolved, "remaining">): { ok: true } | { ok: false; error: "cap_reached" } {
-  return r.remaining >= 1 ? { ok: true } : { ok: false, error: "cap_reached" };
+/** Usage can be a half minute (a support credit), so remaining is kept clear of floating point dust. */
+const roundMinutes = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * The cap check (rule 11). A call the plan cap will stop (Pro, Team) needs at least one whole minute left,
+ * because its reservation is whole minutes. A Free call is checked only here and never stopped later, so any
+ * minutes left, even half of one, let it start: 9.5 of 10 used still starts, 10 or more does not.
+ */
+export function checkCap(r: Pick<Resolved, "remaining" | "plan">): { ok: true } | { ok: false; error: "cap_reached" } {
+  const needed = midCallCapApplies(r.plan) ? 1 : Number.MIN_VALUE;
+  return r.remaining >= needed ? { ok: true } : { ok: false, error: "cap_reached" };
 }
 
 // ---- Voice engine -----------------------------------------------------------------------------
@@ -240,9 +248,13 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
       const check = checkCap(r);
       if (!check.ok) return check;
       if (!user.organizationId) return { ok: false, error: "no_organization" } as const;
-      if (r.available < 1) return { ok: false, error: "minutes_reserved" } as const;
+      const capApplies = midCallCapApplies(r.plan);
+      // Free needs any minutes not held by another start; a capped plan needs a whole minute, as it did before.
+      if (capApplies ? r.available < 1 : r.available <= 0) return { ok: false, error: "minutes_reserved" } as const;
 
-      const wanted = Math.min(r.available, MAX_RESERVE_MINUTES);
+      // Reservations are whole minutes. A Free call holds at least one so a second start cannot take the same
+      // last minutes, even if that holds half a minute more than is left.
+      const wanted = Math.min(capApplies ? Math.floor(r.available) : Math.max(1, Math.ceil(r.available)), MAX_RESERVE_MINUTES);
       const { engine, premiumMinutes } = chooseEngine(r, wanted);
       // A Premium call may use only the Premium minutes it holds, so that share is its reservation (and maxSeconds).
       const reserve = engine === "premium" ? premiumMinutes : wanted;
@@ -268,11 +280,11 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
           reservedMinutes: reserve,
           premiumReservedMinutes: premiumMinutes,
           engineTier: engine,
-          capEnforced: midCallCapApplies(r.plan),
+          capEnforced: capApplies,
         },
       });
       // Free calls are not limited by the plan cap once started, only by the call length limit.
-      const maxSeconds = midCallCapApplies(r.plan) ? reserve * 60 : MAX_CALL_SECONDS;
+      const maxSeconds = capApplies ? reserve * 60 : MAX_CALL_SECONDS;
       return { ok: true, callId: session.id, remaining: r.remaining, pooled: r.pooled, engine, maxSeconds } as const;
     }
     return { ok: false, error: "minutes_reserved" } as const;

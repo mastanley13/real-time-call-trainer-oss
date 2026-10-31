@@ -8,7 +8,8 @@ import { creditManual } from "@/lib/usage";
 
 const Body = z.object({
   userId: z.string().min(1).max(64),
-  minutes: z.number().int().min(1).max(1000),
+  /** Whole or half minutes: a half-minute credit is how an account ends up at 9.5 of 10. */
+  minutes: z.number().min(0.5).max(1000).multipleOf(0.5),
   reason: z.string().trim().min(1).max(200),
 });
 
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
   try {
     body = Body.parse(await readJsonLimited(req));
   } catch {
-    return NextResponse.json({ error: "invalid_request", message: "A credit needs a user id, whole minutes from 1 to 1000, and a reason." }, { status: 400 });
+    return NextResponse.json({ error: "invalid_request", message: "A credit needs a user id, minutes from 0.5 to 1000 in half minute steps, and a reason." }, { status: 400 });
   }
 
   const result = await creditManual({ targetUserId: body.userId, minutes: body.minutes, actorId: auth.id, reason: body.reason });

@@ -11,13 +11,14 @@ vi.mock("@/lib/apiAuth", async () => ({
   isDemoUser: () => false,
 }));
 
-import { beginCall, endCall, ensureAllowance, heartbeat, resolveAllowance, usageSummary } from "@/lib/usage";
+import { beginCall, checkCap, creditManual, endCall, ensureAllowance, heartbeat, resolveAllowance, usageSummary } from "@/lib/usage";
 import { FREE_MINUTES, MAX_CALL_SECONDS, capFor } from "@/lib/usagePlan";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
 import { POST as saveTranscript } from "@/app/api/transcripts/route";
 import { POST as evaluate } from "@/app/api/evaluate-call/route";
 import { POST as simulate } from "@/app/api/simulate/turn/route";
+import { POST as creditRoute } from "@/app/api/usage/credit/route";
 
 const T0 = new Date("2026-10-15T12:00:00Z");
 const at = (sec: number) => new Date(T0.getTime() + sec * 1000);
@@ -95,9 +96,10 @@ describe("the Free allowance", () => {
 });
 
 describe("the cap is checked only when a call starts", () => {
-  it("2: a call started at 9 of 10 used runs 3 minutes with no cutoff, is graded and debriefed, and usage reads 12", async () => {
-    // Minutes are whole and every started minute counts, so "9 of 10 used" is the closest start under the cap.
-    await freeUserWith(9);
+  it("2: a call started at 9.5 of 10 used runs 3 minutes with no cutoff, is graded and debriefed, and usage reads 12.5", async () => {
+    await freeUserWith(9.5);
+    const start = await resolveAllowance(fake.db as never, "u-1", at(0));
+    expect(start).toMatchObject({ remaining: 0.5, available: 0.5 });
     const { begun, callId, answers, result } = await runCall("u-1", { endAt: 180 });
 
     // Past the minute the call held, the server never said stop and never clamped it.
@@ -109,8 +111,8 @@ describe("the cap is checked only when a call starts", () => {
     expect(fake.rows("user")[0].voiceBlockedUntil ?? null).toBeNull();
 
     // Every minute counts toward the month, above the cap.
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 12, minutesReserved: 0 });
-    expect(await usageSummary("u-1", at(200))).toMatchObject({ minutesCap: 10, minutesUsed: 12, remaining: 0 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 12.5, minutesReserved: 0 });
+    expect(await usageSummary("u-1", at(200))).toMatchObject({ minutesCap: 10, minutesUsed: 12.5, remaining: 0 });
 
     // The debrief path is open: the call is graded and its transcript is saved against the metered call.
     const graded = await evaluate(post("/api/evaluate-call", { scenario, transcript }));
@@ -156,6 +158,46 @@ describe("the cap is checked only when a call starts", () => {
     expect(r).toMatchObject({ found: true, stop: false });
     await endCall("u-1", begun.callId, "user_hangup", at(15 * 60));
     expect(session(begun.callId).billedMinutes).toBe(15);
+  });
+});
+
+describe("fractional usage", () => {
+  it("any minutes left let a Free call start, and a second start cannot take the same half minute", async () => {
+    await freeUserWith(9.5);
+    expect(checkCap({ remaining: 0.5, plan: "free" })).toEqual({ ok: true });
+    expect(checkCap({ remaining: 0, plan: "free" })).toEqual({ ok: false, error: "cap_reached" });
+    const first = await beginCall("u-1", scn, at(0));
+    expect(first).toMatchObject({ ok: true, remaining: 0.5, maxSeconds: MAX_CALL_SECONDS });
+    expect(allowanceOf("u-1").minutesReserved).toBe(1);
+    expect(await beginCall("u-1", scn, at(1))).toEqual({ ok: false, error: "minutes_reserved" });
+  });
+
+  it("a plan the cap stops mid-call still needs one whole minute to start", async () => {
+    expect(checkCap({ remaining: 0.5, plan: "pro" })).toEqual({ ok: false, error: "cap_reached" });
+    expect(checkCap({ remaining: 1, plan: "pro" })).toEqual({ ok: true });
+    addUser("u-1", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
+    allowanceOf("u-1").minutesUsed = 199.5;
+    expect(await beginCall("u-1", scn, at(0))).toEqual({ ok: false, error: "cap_reached" });
+    allowanceOf("u-1").minutesUsed = 198.5;
+    expect(await beginCall("u-1", scn, at(0))).toMatchObject({ ok: true, maxSeconds: 60 });
+  });
+
+  it("a half-minute support credit takes an account from 10 to 9.5 and lets it start a call", async () => {
+    await freeUserWith(10);
+    expect(await beginCall("u-1", scn, at(0))).toEqual({ ok: false, error: "cap_reached" });
+    fake.seed("user", { id: "admin-1", email: "a@example.test", isPlatformAdmin: true });
+    mocks.authId = "admin-1";
+    const res = await creditRoute(post("/api/usage/credit", { userId: "u-1", minutes: 0.5, reason: "Goodwill" }));
+    expect(res.status).toBe(200);
+    expect(allowanceOf("u-1").minutesUsed).toBe(9.5);
+    expect(fake.rows("usageEntry")[0]).toMatchObject({ kind: "credit_manual", minutes: -0.5 });
+    mocks.authId = "u-1";
+    expect(await beginCall("u-1", scn, at(0))).toMatchObject({ ok: true });
+    // Only half minutes are accepted.
+    mocks.authId = "admin-1";
+    expect((await creditRoute(post("/api/usage/credit", { userId: "u-1", minutes: 0.3, reason: "Goodwill" }))).status).toBe(400);
+    expect(await creditManual({ targetUserId: "u-1", minutes: 1.5, actorId: "admin-1", reason: "Goodwill" }, at(5))).toMatchObject({ minutesUsed: 8 });
   });
 });
 

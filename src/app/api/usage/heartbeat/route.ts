@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/apiAuth";
 import { ipLimitResponse, userLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { meteringEnabled } from "@/lib/serverConfig";
 import { heartbeat } from "@/lib/usage";
+import { CAP_STOPPED_MESSAGE } from "@/lib/billingUi";
 
 // Only the call id and a state are read. Any times or durations the client adds are dropped by the schema.
 const Body = z.object({
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
   const r = await heartbeat(auth.id, body.callId, body.state);
   if (!r.found) return NextResponse.json({ error: "not_found", message: "That call was not found." }, { status: 404 });
   if (r.stop) {
-    const message = r.reason === "cap_reached" ? "You have used all your voice minutes for this period."
+    const message = r.reason === "cap_reached" ? CAP_STOPPED_MESSAGE
       : r.reason === "max_duration" ? "This call reached the maximum call length."
       : undefined;
     return NextResponse.json({ stop: true, reason: r.reason, message });
