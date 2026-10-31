@@ -11,7 +11,7 @@ export function pageMetadata({ title, description, path }: { title: string; desc
     title: { absolute: title },
     description,
     alternates: { canonical: url },
-    openGraph: { type: "website", url, siteName: "Real-Time Call Trainer", title, description, images: [{ url: "/opengraph-image", width: 1200, height: 630, alt: OG_ALT }] },
-    twitter: { card: "summary_large_image", title, description, images: ["/twitter-image"] },
+    openGraph: { type: "website", url, siteName: "Real-Time Call Trainer", title, description },
+    twitter: { card: "summary_large_image", title, description },
   };
 }

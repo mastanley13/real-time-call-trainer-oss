@@ -13,7 +13,7 @@ export default function PricingSummary({ src, seg }: { src: string; seg?: string
     },
     {
       name: "Pro", price: `$${PRICE.pro.month}/mo`, note: `or $${PRICE.pro.year}/yr`,
-      body: `${PRO_VOICE_MIN} voice minutes a month, full library, reviewed persona packs, persona wizard, score trends, MFA.`,
+      body: `${PRO_VOICE_MIN} voice minutes a month, full library, persona wizard, score trends, MFA. Reviewed persona packs: coming soon.`,
       href: registerHref({ plan: "pro", seg, src }), cta: "Start Pro",
     },
     {
