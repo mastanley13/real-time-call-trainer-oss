@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { LogOut, Search, Settings } from "lucide-react";
 import LogoMark from "@/components/LogoMark";
@@ -27,7 +27,6 @@ export const openPalette = () => window.dispatchEvent(new CustomEvent("rtct:pale
 export default function SiteHeader() {
   const { isAuthenticated, user, logout, capabilities } = useAuth();
   const pathname = usePathname();
-  const router = useRouter();
   const demo = capabilities?.demoMode;
   const links = navFor(user);
   // Read the platform after mount so the server render and first client render match.
@@ -105,7 +104,7 @@ export default function SiteHeader() {
             <>
               <span className="hidden max-w-[160px] truncate px-1 text-sm text-ink-muted sm:inline">{user?.firstName || user?.email}</span>
               {!demo && (
-                <button className="btn-quiet !min-h-[36px] !px-2.5" onClick={() => { logout(); router.push("/"); }} aria-label="Sign out" title="Sign out">
+                <button className="btn-quiet !min-h-[36px] !px-2.5" onClick={logout} aria-label="Sign out" title="Sign out">
                   <LogOut size={17} strokeWidth={1.75} aria-hidden />
                 </button>
               )}

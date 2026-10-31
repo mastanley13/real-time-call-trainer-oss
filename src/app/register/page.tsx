@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
+import { ACCOUNTS_UNAVAILABLE_COPY, accountsUnavailable } from "@/lib/authUi";
 
 export default function RegisterPage() {
   const { register, isAuthenticated, capabilities } = useAuth();
@@ -13,6 +14,7 @@ export default function RegisterPage() {
   const [f, setF] = useState({ firstName: "", lastName: "", email: "", password: "", orgName: "", orgCode: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const unavailable = accountsUnavailable(capabilities);
 
   useEffect(() => {
     if (isAuthenticated) router.replace("/trainer");
@@ -22,6 +24,7 @@ export default function RegisterPage() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (unavailable) return;
     setError("");
     setBusy(true);
     try {
@@ -42,10 +45,13 @@ export default function RegisterPage() {
 
   return (
     <AuthShell title="Create your account" subtitle="Start a team workspace or join one with a code.">
-      {capabilities && !capabilities.database && !capabilities.demoMode && (
-        <div className="banner-warn mb-4">Registration needs a database. Set <code>DATABASE_URL</code> or use <code>DEMO_MODE=true</code>.</div>
+      {unavailable && (
+        <div className="banner-warn mb-4" role="status">
+          {ACCOUNTS_UNAVAILABLE_COPY.register} <Link href="/" className="font-semibold underline">Open the demo</Link>
+        </div>
       )}
       <form onSubmit={onSubmit} className="space-y-4">
+        <fieldset disabled={unavailable} className="m-0 min-w-0 space-y-4 border-0 p-0">
         <div className="grid grid-cols-2 gap-3">
           <div><label htmlFor="fn" className="label">First name</label><input id="fn" className="input" value={f.firstName} onChange={set("firstName")} required /></div>
           <div><label htmlFor="ln" className="label">Last name</label><input id="ln" className="input" value={f.lastName} onChange={set("lastName")} required /></div>
@@ -66,7 +72,8 @@ export default function RegisterPage() {
           <div><label htmlFor="code" className="label">Team code</label><input id="code" className="input" inputMode="numeric" pattern="[0-9]{3,8}" value={f.orgCode} onChange={set("orgCode")} required /></div>
         )}
         {error && <p role="alert" className="text-sm text-alert">{error}</p>}
-        <button className="btn-primary w-full" disabled={busy}>{busy ? "Creating…" : "Create account"}</button>
+        <button className="btn-primary w-full" disabled={busy || unavailable}>{busy ? "Creating…" : "Create account"}</button>
+        </fieldset>
       </form>
       <p className="mt-5 text-center text-sm text-ink-muted">Already registered? <Link href="/login" className="font-semibold text-primary">Sign in</Link></p>
     </AuthShell>

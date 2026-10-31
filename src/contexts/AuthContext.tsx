@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import { createContext, useContext, useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { LOGIN_PATH } from "@/lib/authUi";
 
 export interface LoginCredentials {
   email: string;
@@ -94,6 +96,7 @@ const isTokenFresh = (token: string | null): boolean => {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
+  const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -235,6 +238,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       () => {},
     );
     setIsLoading(false);
+    // Replace, not push, so Back does not return to the private page that was open.
+    router.replace(LOGIN_PATH);
   };
 
   return (

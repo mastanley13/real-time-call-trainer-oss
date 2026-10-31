@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, CheckCircle2, Loader2, Printer, Quote, RefreshCw, RotateCcw, TrendingUp } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { LOGIN_PATH, canViewPrivate } from "@/lib/authUi";
 import { getLocalSession, updateLocalEvaluation, type CoachLog } from "@/lib/sessionStore";
 import { listScenarios } from "@/lib/scenarioStore";
 import type { Scenario } from "@/lib/scenarios";
@@ -88,6 +89,13 @@ export default function DebriefPage() {
 
   useEffect(() => {
     if (!capabilities || isLoading) return;
+    if (!canViewPrivate({ isAuthenticated, demoMode: capabilities.demoMode })) {
+      // Signed out: drop anything already loaded and go to sign-in.
+      setView(null);
+      setError("");
+      router.replace(LOGIN_PATH);
+      return;
+    }
     if (sessionId.startsWith("local-")) {
       const s = getLocalSession(sessionId);
       if (!s) { setError("This session isn’t stored in this browser."); return; }
