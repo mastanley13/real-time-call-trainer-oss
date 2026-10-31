@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_COOKIE, accessCode, accessToken, safeEqual } from "@/lib/access";
+import { isPublicPath } from "@/lib/publicPaths";
 
 /** Optional site-wide (cron routes authenticate with CRON_SECRET instead) access gate, active only when TRAINER_ACCESS_CODE is set. */
 export async function middleware(req: NextRequest) {
@@ -8,6 +9,7 @@ export async function middleware(req: NextRequest) {
 
   const { pathname } = req.nextUrl;
   if (pathname === "/access" || pathname === "/api/access" || pathname === "/api/health" || pathname.startsWith("/api/cron/")) return NextResponse.next();
+  if (isPublicPath(pathname)) return NextResponse.next();
 
   const cookie = req.cookies.get(ACCESS_COOKIE)?.value ?? "";
   if (cookie && safeEqual(cookie, await accessToken(code))) return NextResponse.next();
