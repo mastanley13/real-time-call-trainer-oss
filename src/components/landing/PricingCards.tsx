@@ -10,17 +10,17 @@ import {
 
 const TIERS = [
   {
-    id: "free", name: "Free", blurb: "For trying it on a tough buyer.", cta: "Start free, no card",
+    id: "free", name: "Free", blurb: "", cta: "Start free, no card",
     href: registerHref({ src: "pricing" }),
     features: [`${FREE_VOICE_MIN} voice minutes per month`, "Unlimited text sim", "Live coach channel", "Graded debriefs with transcript quotes", "Core persona library"],
   },
   {
-    id: "pro", name: "Pro", blurb: "For the rep who wants reps.", cta: "Start Pro",
+    id: "pro", name: "Pro", blurb: "", cta: "Start Pro",
     href: registerHref({ plan: "pro", src: "pricing" }),
     features: [`${PRO_VOICE_MIN} voice minutes per month`, "Everything in Free", "Full persona library across every sales role", "Reviewed persona packs (coming soon)", "Persona wizard for your own buyers", "Call history and score trends", "MFA"],
   },
   {
-    id: "team", name: "Team", blurb: `${TEAM_MIN_SEATS}-seat minimum. For managers ramping a team.`, cta: "Start with Team",
+    id: "team", name: "Team", blurb: `Built for a manager plus reps: ${TEAM_MIN_SEATS}-seat minimum.`, cta: "Start with Team",
     href: registerHref({ plan: "team", src: "pricing" }),
     features: [`${TEAM_VOICE_MIN_PER_SEAT} voice minutes per seat, pooled across the team`, "Everything in Pro", "Managed Team view: every rep's calls, scores and trends", "Assignments: give reps a persona and a due date", "Enforced MFA for the whole team", "Priority email support"],
   },
@@ -33,7 +33,7 @@ function price(id: string, b: Billing) {
   return { main: `$${p[b]}`, unit: `${seat} /${b === "month" ? "month" : "year"}` };
 }
 
-/** Billing toggle, tier cards and the Premium voice add-on. */
+/** Billing toggle, tier cards and the Premium AI voice add-on. */
 export default function PricingCards() {
   const [billing, setBilling] = useState<Billing>("month");
   return (
@@ -60,7 +60,7 @@ export default function PricingCards() {
               <p className="mt-1 min-h-[1.25rem] font-mono text-xs text-ink-muted">
                 {t.id !== "free" && billing === "year" ? "2 months free" : ""}
               </p>
-              <p className="mt-2 text-sm text-ink-soft">{t.blurb}</p>
+              {t.blurb && <p className="mt-2 text-sm text-ink-soft">{t.blurb}</p>}
               <ul className="mt-4 flex-1 space-y-2 text-sm text-ink-soft">
                 {t.features.map((f) => (
                   <li key={f} className="flex gap-2"><Check size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-ok" aria-hidden />{f}</li>
@@ -73,7 +73,7 @@ export default function PricingCards() {
       </div>
 
       <div className="panel mt-4 p-5">
-        <h3 className="text-base font-bold">Add-on: Premium voice</h3>
+        <h3 className="text-base font-bold">Add-on: Premium AI voice</h3>
         <p className="mt-2 flex items-baseline gap-1">
           <span className="font-heading text-2xl font-bold">+${PRICE.premium[billing]}</span>
           <span className="text-sm text-ink-muted">/seat /{billing === "month" ? "month" : "year"}</span>

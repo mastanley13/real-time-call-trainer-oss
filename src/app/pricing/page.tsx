@@ -8,7 +8,7 @@ import { GITHUB_URL, pageMetadata } from "@/lib/seo";
 
 export const metadata = pageMetadata({
   title: "Pricing: Free, Pro and Team Plans | Call Trainer",
-  description: "Start free with no card. Pro $29/mo for reps, Team $59/seat for managers. No overages, no API keys. Self-host free under MIT.",
+  description: "Start free with no card. Free to start. Pro is $29/mo. No overages, ever. Self-host free under MIT.",
   path: "/pricing",
 });
 
@@ -26,7 +26,7 @@ const COMPARE: { feature: string; self: string; free: string; pro: string; team:
   { feature: "Team view for managers", self: "You host it", free: "No", pro: "No", team: "Managed" },
   { feature: "Assignments", self: "You host it", free: "No", pro: "No", team: "Yes" },
   { feature: "MFA", self: "You configure it", free: "Yes", pro: "Yes", team: "Enforced for team" },
-  { feature: "Premium voice", self: "Your keys", free: "No", pro: "Add-on", team: "Add-on" },
+  { feature: "Premium AI voice", self: "Your keys", free: "No", pro: "Add-on", team: "Add-on" },
   { feature: "Updates and backups", self: "You handle them", free: "Automatic", pro: "Automatic", team: "Automatic" },
   { feature: "Support", self: "GitHub community", free: "Community", pro: "Email", team: "Priority email" },
   { feature: "Overage charges", self: "None", free: "None", pro: "None", team: "None" },
@@ -44,7 +44,7 @@ const FAQ: { q: string; a: string }[] = [
   { q: "How do Team minutes work?", a: `Each seat adds ${TEAM_VOICE_MIN_PER_SEAT} voice minutes to one shared pool. A rep who practices more can use minutes a lighter user does not. When the pool runs out, voice pauses for the team and the text sim stays on.` },
   { q: "Why a 3-seat minimum on Team?", a: "Team view and assignments are built for a manager coaching several reps. Solo reps get the best value on Pro." },
   { q: "What are reviewed persona packs?", a: "Industry buyer sets, like final expense, Medicare, P&C insurance and residential solar, with realistic objections and grading tuned to that sale. Each pack is reviewed before release. They are coming soon to Pro and Team." },
-  { q: "What does Premium voice add?", a: `The full realtime voice model for your buyers, more natural and expressive. It can use up to ${PREMIUM_VOICE_CAP_PCT}% of your plan minutes. After that, calls fall back to standard voice and never stop. It costs +$${PRICE.premium.month} per seat per month ($${PRICE.premium.year} per seat per year).` },
+  { q: "What does Premium AI voice add?", a: `The full realtime voice model for your buyers, more natural and expressive. It can use up to ${PREMIUM_VOICE_CAP_PCT}% of your plan minutes. After that, calls fall back to standard voice and never stop. It costs +$${PRICE.premium.month} per seat per month ($${PRICE.premium.year} per seat per year).` },
   { q: "How does annual billing work?", a: `Pay for 10 months, get 12. Pro is $${PRICE.pro.year} a year. Team is $${PRICE.team.year} per seat per year.` },
   { q: "Can I cancel anytime?", a: "Yes. Cancel from the billing portal and your plan stays active until the end of the period you paid for." },
   { q: "What happens to my data?", a: "Transcripts are kept until an admin sets a retention window. No call audio is stored on our servers." },
