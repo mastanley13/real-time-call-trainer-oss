@@ -6,7 +6,7 @@ Codex loads this file from the repository root before it starts work and concate
 
 ## What this is
 
-Real-Time Call Trainer is an open-source sales-call practice app. A rep picks a persona from a library of 18 sales job families, reads a pre-flight briefing, runs a voice or text call against an AI persona while a separate live coach scores each turn and cues them, then gets a quote-backed debrief. Everything degrades gracefully: with `DEMO_MODE=true` and no keys or database the app still runs end to end on a scripted caller, a rules-based coach, a template persona wizard and a heuristic grader.
+Real-Time Call Trainer is an open-source sales-call practice app. A rep picks a persona from a library of 17 sales job families, reads a pre-flight briefing, runs a voice or text call against an AI persona while a separate live coach scores each turn and cues them, then gets a quote-backed debrief. Everything degrades gracefully: with `DEMO_MODE=true` and no keys or database the app still runs end to end on a scripted caller, a rules-based coach, a template persona wizard and a heuristic grader.
 
 Stack: Next.js 15 App Router, React 19, TypeScript (strict), Tailwind 3 with CSS-variable design tokens ("Flight Deck"), zod, Prisma + Postgres (optional), Vitest. Node 22+. npm only (there is a `package-lock.json`; do not switch package managers).
 
