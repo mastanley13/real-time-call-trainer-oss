@@ -27,6 +27,7 @@ export default function PrivacyPage() {
             <li>Account data: your name, email address and a password hash. If you sign in with Google, we receive your name and email address from Google.</li>
             <li>If you turn on two-factor sign-in, we store the authenticator secret needed to check your codes.</li>
             <li>Practice call transcripts, scores, coaching notes and any scenario details you enter, including text you give the persona wizard about what you sell and your industry. We keep them until an admin sets a retention window for the organization.</li>
+            <li>Team data, if your organization uses the team view: training assignments that managers give you, your progress on them, and supervisor notes about your sessions. Managers and owners in your organization can see this data.</li>
             <li>Security logs: the IP address and browser details (user agent) for sign-in and account events.</li>
             <li>We do not record or store call audio. During a voice call, your audio streams directly to our voice provider (OpenAI or ElevenLabs) to run the call.</li>
           </ul>
