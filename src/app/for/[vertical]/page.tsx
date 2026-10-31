@@ -16,7 +16,7 @@ export async function generateMetadata({ params }: Props) {
   const { vertical } = await params;
   const l = LANDINGS[vertical as VerticalSlug];
   if (!l) return {};
-  return pageMetadata({ title: l.title, description: l.description, path: `/for/${l.slug}` });
+  return pageMetadata({ title: l.title, description: l.description, path: `/for/${l.slug}`, imagePath: `/for/${l.slug}` });
 }
 
 export default async function VerticalPage({ params }: Props) {

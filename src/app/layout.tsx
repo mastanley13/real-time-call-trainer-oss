@@ -5,7 +5,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import SiteHeader from "@/components/SiteHeader";
 import MobileTabBar from "@/components/MobileTabBar";
 import CommandPalette from "@/components/CommandPalette";
-import { siteUrl } from "@/lib/seo";
+import { shareImages, siteUrl } from "@/lib/seo";
 
 const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-inter" });
 const sora = Sora({ subsets: ["latin"], display: "swap", variable: "--font-sora" });
@@ -16,6 +16,8 @@ export const metadata: Metadata = {
   title: "Real-Time Call Trainer · Practice live calls with an AI coach",
   description:
     "Open-source voice practice for sales and service calls. A library of personas for every sales job, a live coach that whispers the next move, and rubric grading backed by transcript quotes.",
+  openGraph: { images: shareImages("/").openGraph },
+  twitter: { card: "summary_large_image", images: shareImages("/").twitter },
 };
 
 export const viewport: Viewport = {

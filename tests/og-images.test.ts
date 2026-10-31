@@ -41,6 +41,32 @@ describe("share image routes", () => {
   });
 });
 
+describe("share image URLs", () => {
+  it("stay on APP_URL even on a Vercel preview", async () => {
+    const saved = { ...process.env };
+    process.env.VERCEL_ENV = "preview";
+    process.env.VERCEL_URL = "preview-abc.vercel.app";
+    process.env.APP_URL = "https://calltrainer.tech";
+    try {
+      const { pageMetadata, shareImages } = await import("@/lib/seo");
+      type Imgs = { images: { url: string }[] };
+      const root = pageMetadata({ title: "t", description: "d", path: "/" });
+      const ins = pageMetadata({ title: "t", description: "d", path: "/for/insurance", imagePath: "/for/insurance" });
+      const urls = [
+        ...shareImages("/").openGraph,
+        ...shareImages("/for/insurance").twitter,
+        ...(root.openGraph as unknown as Imgs).images,
+        ...(ins.openGraph as unknown as Imgs).images,
+        ...(ins.twitter as unknown as Imgs).images,
+      ].map((i) => i.url);
+      for (const u of urls) expect(u.startsWith("https://calltrainer.tech/")).toBe(true);
+      expect(urls).toContain("https://calltrainer.tech/for/insurance/opengraph-image");
+    } finally {
+      process.env = saved;
+    }
+  });
+});
+
 describe("paletteFromCss", () => {
   it("reads the deck tokens from globals.css", () => {
     const css = readFileSync("src/app/globals.css", "utf8");
