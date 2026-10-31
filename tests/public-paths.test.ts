@@ -8,11 +8,16 @@ describe("isPublicPath", () => {
     "/pricing", "/register", "/login", "/robots.txt", "/sitemap.xml",
     "/for/insurance", "/for/solar", "/for/staffing", "/for/home-services", "/for/saas-sdr", "/for/coaches",
     "/api/auth/login", "/api/auth/mfa/challenge", "/opengraph-image", "/opengraph-image-1a2b3c", "/twitter-image", "/pricing/",
+    "/twitter-image-9f8e7d", "/opengraph-image?abc123", "/opengraph-image-1a2b3c?v=2#top", "/twitter-image?x=1",
+    "/for/insurance/opengraph-image", "/for/solar/twitter-image", "/for/coaches/opengraph-image-1a2b3c",
+    "/for/saas-sdr/twitter-image?abc123", "/for/home-services/opengraph-image-1a2b3c?v=2#x", "/sitemap.xml?x=1", "/robots.txt#a",
   ])("allows %s", (p) => expect(isPublicPath(p)).toBe(true));
 
   it.each([
     "/dashboard", "/trainer", "/team", "/settings/security", "/library", "/api/config", "/api/transcripts",
     "/api/auth", "/for", "/for/unknown", "/pricing-x", "/privacy/evil", "/register/x",
+    "/opengraph-imagex/evil", "/opengraph-image-evil/x", "/for/unknown/opengraph-image", "/for/solar/opengraph-image/x",
+    "/dashboard?next=/opengraph-image", "/api/config#/robots.txt", "/dashboard/opengraph-image",
   ])("keeps %s gated", (p) => expect(isPublicPath(p)).toBe(false));
 
   it("covers every vertical slug", () => expect(VERTICAL_SLUGS).toHaveLength(6));
@@ -30,7 +35,7 @@ describe("middleware with TRAINER_ACCESS_CODE set", () => {
   };
 
   it("lets public pages through without a cookie", async () => {
-    for (const p of ["/", "/pricing", "/privacy", "/terms", "/for/insurance", "/register", "/login", "/api/auth/login", "/opengraph-image"]) {
+    for (const p of ["/", "/pricing", "/privacy", "/terms", "/for/insurance", "/register", "/login", "/api/auth/login", "/opengraph-image", "/twitter-image", "/for/solar/opengraph-image", "/for/solar/twitter-image-1a2b3c", "/sitemap.xml", "/robots.txt"]) {
       const res = await run(p);
       expect(res.headers.get("location"), p).toBeNull();
       expect(res.status, p).toBe(200);
