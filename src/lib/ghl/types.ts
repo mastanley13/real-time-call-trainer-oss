@@ -46,6 +46,15 @@ export const GhlPayloadSchema = z.object({
 });
 export type GhlPayload = z.infer<typeof GhlPayloadSchema>;
 
+/**
+ * Stamped on every delivery. `eventId` is the outbox idempotency key and is also sent as the
+ * Idempotency-Key header: the receiver (the GHL inbound-webhook workflow) must dedupe on it, because
+ * delivery is at least once. `sequence` rises per user in delivery order; the receiver should ignore
+ * an event whose sequence is lower than the last one it applied for that user.
+ */
+export type GhlDeliveryMeta = { eventId: string; sequence: number };
+export type GhlWebhookBody = GhlPayload & GhlDeliveryMeta;
+
 export type GhlActions = {
   stage: string;
   addTags: string[];

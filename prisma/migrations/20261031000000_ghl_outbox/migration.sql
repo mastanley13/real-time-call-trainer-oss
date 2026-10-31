@@ -2,6 +2,7 @@
 CREATE TABLE "GhlOutbox" (
     "id" TEXT NOT NULL,
     "idempotencyKey" TEXT NOT NULL,
+    "seq" SERIAL NOT NULL,
     "event" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "payload" JSONB NOT NULL,
@@ -17,6 +18,9 @@ CREATE TABLE "GhlOutbox" (
 
 -- CreateIndex
 CREATE UNIQUE INDEX "GhlOutbox_idempotencyKey_key" ON "GhlOutbox"("idempotencyKey");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "GhlOutbox_seq_key" ON "GhlOutbox"("seq");
 
 -- CreateIndex
 CREATE INDEX "GhlOutbox_status_nextAttemptAt_idx" ON "GhlOutbox"("status", "nextAttemptAt");

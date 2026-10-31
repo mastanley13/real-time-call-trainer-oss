@@ -163,6 +163,9 @@ model TrainingAssignment {
 model GhlOutbox {
   id             String    @id @default(cuid())
   idempotencyKey String    @unique
+  /// Monotonic across the table, so it is monotonic per user. Rows of one user are
+  /// delivered in `seq` order and the number is sent to the receiver as `sequence`.
+  seq            Int       @unique @default(autoincrement())
   event          String
   userId         String
   payload        Json

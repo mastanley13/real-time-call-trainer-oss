@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
       },
     });
     // Graded and stored: tell GHL after the response. Ungraded saves do not count.
-    if (ev) emitGradedCall(dbUser.id, created.createdAt);
+    if (ev) emitGradedCall(dbUser.id, { id: created.id, createdAt: created.createdAt });
     return NextResponse.json({ id: created.id, graded: !!ev });
   } catch (error) {
     console.error("[/api/transcripts] error:", error);

@@ -1,5 +1,5 @@
 import "server-only";
-import { GHL_FIELD_KEYS, GHL_PIPELINE, actionsFor, type GhlFieldKey, type GhlPayload } from "./types";
+import { GHL_FIELD_KEYS, GHL_PIPELINE, actionsFor, type GhlDeliveryMeta, type GhlFieldKey, type GhlPayload, type GhlWebhookBody } from "./types";
 import { ghlLog } from "./log";
 
 const API_BASE = "https://services.leadconnectorhq.com";
@@ -34,7 +34,7 @@ export type GhlClientOptions = {
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-export type GhlClient = { send(payload: GhlPayload): Promise<void> };
+export type GhlClient = { send(payload: GhlPayload, meta: GhlDeliveryMeta): Promise<void> };
 
 export function createGhlClient(opts: GhlClientOptions = {}): GhlClient {
   const env = opts.env ?? process.env;
@@ -146,9 +146,12 @@ export function createGhlClient(opts: GhlClientOptions = {}): GhlClient {
   }
 
   return {
-    async send(payload) {
+    async send(payload, meta) {
       if (webhookUrl) {
-        await raw("POST", webhookUrl, payload, {});
+        // Every attempt of one event, including in-request retries after a lost response, carries
+        // the same eventId and Idempotency-Key so the receiver can drop the duplicate.
+        const body: GhlWebhookBody = { ...payload, ...meta };
+        await raw("POST", webhookUrl, body, { "Idempotency-Key": meta.eventId });
         return;
       }
       await sendViaApi(payload);

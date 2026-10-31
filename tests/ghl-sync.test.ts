@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGhlClient, ghlEnabled } from "@/lib/ghl/client";
-import { drainGhlOutbox, enqueueGhlEvent, backoffMs, MAX_ATTEMPTS, type OutboxRow, type OutboxStore } from "@/lib/ghl/outbox";
+import { drainGhlOutbox, enqueueGhlEvent, backoffMs, dueHeads, MAX_ATTEMPTS, type OutboxRow, type OutboxStore } from "@/lib/ghl/outbox";
 import { actionsFor, idempotencyKey, type GhlEvent, type GhlPayload } from "@/lib/ghl/types";
 import { classifyGradedCall, confirmedSegment, isWentQuiet } from "@/lib/ghl/events";
 
+const META = { eventId: "user_1:signup", sequence: 1 };
 const TOKEN = "pit-test-token-0123456789";
 const ENV = { GHL_SYNC_ENABLED: "true", GHL_PIT: TOKEN, GHL_LOCATION_ID: "loc_test" };
 const EMAIL = "rep@example.com";
@@ -71,7 +72,7 @@ describe("per-event GHL calls", () => {
   for (const c of cases) {
     it(`${c.event}${c.over?.plan ? ` (${c.over.plan})` : ""}: stage, tags and fields`, async () => {
       const g = fakeGhl();
-      await createGhlClient({ env: ENV, fetchImpl: g.fetchImpl, sleep }).send(payload(c.event, c.over));
+      await createGhlClient({ env: ENV, fetchImpl: g.fetchImpl, sleep }).send(payload(c.event, c.over), META);
 
       const upsert = g.calls.find((x) => x.url.endsWith("/contacts/upsert"))!;
       expect(upsert.body).toMatchObject({ locationId: "loc_test", email: EMAIL });
@@ -91,7 +92,7 @@ describe("per-event GHL calls", () => {
 
   it("moves an existing opportunity instead of creating a second one", async () => {
     const g = fakeGhl({ existingOpp: true });
-    await createGhlClient({ env: ENV, fetchImpl: g.fetchImpl, sleep }).send(payload("active_trial"));
+    await createGhlClient({ env: ENV, fetchImpl: g.fetchImpl, sleep }).send(payload("active_trial"), META);
     expect(g.calls.some((c) => c.method === "POST" && c.url.endsWith("/opportunities/"))).toBe(false);
     const move = g.calls.find((c) => c.method === "PUT" && c.url.endsWith("/opportunities/o1"))!;
     expect(move.body).toEqual({ pipelineStageId: "s_Active Trial" });
@@ -100,25 +101,26 @@ describe("per-event GHL calls", () => {
   it("resolves field and pipeline ids once and caches them", async () => {
     const g = fakeGhl();
     const client = createGhlClient({ env: ENV, fetchImpl: g.fetchImpl, sleep });
-    await client.send(payload("signup"));
-    await client.send(payload("went_quiet"));
+    await client.send(payload("signup"), META);
+    await client.send(payload("went_quiet"), META);
     expect(g.calls.filter((c) => c.url.endsWith("/customFields"))).toHaveLength(1);
     expect(g.calls.filter((c) => c.url.includes("/opportunities/pipelines"))).toHaveLength(1);
   });
 
   it("only touches contacts, tags, fields and opportunities (no email or SMS)", async () => {
     const g = fakeGhl();
-    await createGhlClient({ env: ENV, fetchImpl: g.fetchImpl, sleep }).send(payload("signup"));
+    await createGhlClient({ env: ENV, fetchImpl: g.fetchImpl, sleep }).send(payload("signup"), META);
     for (const c of g.calls) expect(c.url).not.toMatch(/conversations|messages|email|sms/i);
   });
 
   it("posts the event JSON to the webhook instead of the API when GHL_INBOUND_WEBHOOK_URL is set", async () => {
     const g = fakeGhl();
     const p = payload("signup");
-    await createGhlClient({ env: { ...ENV, GHL_INBOUND_WEBHOOK_URL: "https://hooks.example.com/in" }, fetchImpl: g.fetchImpl, sleep }).send(p);
+    await createGhlClient({ env: { ...ENV, GHL_INBOUND_WEBHOOK_URL: "https://hooks.example.com/in" }, fetchImpl: g.fetchImpl, sleep }).send(p, META);
     expect(g.calls).toHaveLength(1);
     expect(g.calls[0].url).toBe("https://hooks.example.com/in");
-    expect(g.calls[0].body).toEqual(p);
+    expect(g.calls[0].body).toEqual({ ...p, ...META });
+    expect(g.calls[0].headers["Idempotency-Key"]).toBe(META.eventId);
     expect(g.calls[0].headers.Authorization).toBeUndefined();
   });
 });
@@ -141,21 +143,21 @@ describe("actions", () => {
 describe("retry", () => {
   it("retries on 429, honouring Retry-After, then succeeds", async () => {
     const g = fakeGhl({ failFirst: { match: "/contacts/upsert", status: 429, times: 2, retryAfter: "2" } });
-    await createGhlClient({ env: ENV, fetchImpl: g.fetchImpl, sleep }).send(payload("signup"));
+    await createGhlClient({ env: ENV, fetchImpl: g.fetchImpl, sleep }).send(payload("signup"), META);
     expect(g.calls.filter((c) => c.url.endsWith("/contacts/upsert"))).toHaveLength(3);
     expect(sleeps).toEqual([2000, 2000]);
   });
 
   it("retries 5xx with exponential backoff and gives up after maxAttempts", async () => {
     const g = fakeGhl({ failFirst: { match: "/contacts/upsert", status: 503, times: 99 } });
-    await expect(createGhlClient({ env: ENV, fetchImpl: g.fetchImpl, sleep, maxAttempts: 3 }).send(payload("signup"))).rejects.toMatchObject({ status: 503 });
+    await expect(createGhlClient({ env: ENV, fetchImpl: g.fetchImpl, sleep, maxAttempts: 3 }).send(payload("signup"), META)).rejects.toMatchObject({ status: 503 });
     expect(g.calls).toHaveLength(3);
     expect(sleeps).toEqual([500, 1000]);
   });
 
   it("does not retry a 4xx other than 429", async () => {
     const g = fakeGhl({ failFirst: { match: "/contacts/upsert", status: 401, times: 99 } });
-    await expect(createGhlClient({ env: ENV, fetchImpl: g.fetchImpl, sleep }).send(payload("signup"))).rejects.toMatchObject({ status: 401 });
+    await expect(createGhlClient({ env: ENV, fetchImpl: g.fetchImpl, sleep }).send(payload("signup"), META)).rejects.toMatchObject({ status: 401 });
     expect(g.calls).toHaveLength(1);
   });
 });
@@ -277,19 +279,19 @@ describe("decisions", () => {
   const now = new Date("2026-11-05T00:00:00Z");
   const createdAt = new Date("2026-11-01T00:00:00Z");
   it("first graded call, then second within 7 days is active_trial", () => {
-    expect(classifyGradedCall({ gradedCount: 1, createdAt, now, plan: "free", wasQuiet: false })).toBe("first_graded_call");
-    expect(classifyGradedCall({ gradedCount: 2, createdAt, now, plan: "free", wasQuiet: false })).toBe("active_trial");
-    expect(classifyGradedCall({ gradedCount: 3, createdAt, now, plan: "free", wasQuiet: false })).toBeNull();
+    expect(classifyGradedCall({ ordinal:1, createdAt, now, plan: "free", wasQuiet: false })).toBe("first_graded_call");
+    expect(classifyGradedCall({ ordinal:2, createdAt, now, plan: "free", wasQuiet: false })).toBe("active_trial");
+    expect(classifyGradedCall({ ordinal:3, createdAt, now, plan: "free", wasQuiet: false })).toBeNull();
   });
   it("second call after 7 days is not active_trial", () => {
-    expect(classifyGradedCall({ gradedCount: 2, createdAt: new Date("2026-10-20T00:00:00Z"), now, plan: "free", wasQuiet: false })).toBeNull();
+    expect(classifyGradedCall({ ordinal:2, createdAt: new Date("2026-10-20T00:00:00Z"), now, plan: "free", wasQuiet: false })).toBeNull();
   });
   it("a call after went_quiet moves back to active_trial, within the trial", () => {
-    expect(classifyGradedCall({ gradedCount: 5, createdAt, now, plan: "free", wasQuiet: true })).toBe("active_trial");
-    expect(classifyGradedCall({ gradedCount: 5, createdAt: new Date("2026-09-01T00:00:00Z"), now, plan: "free", wasQuiet: true })).toBeNull();
+    expect(classifyGradedCall({ ordinal:5, createdAt, now, plan: "free", wasQuiet: true })).toBe("active_trial");
+    expect(classifyGradedCall({ ordinal:5, createdAt: new Date("2026-09-01T00:00:00Z"), now, plan: "free", wasQuiet: true })).toBeNull();
   });
   it("paid users never move back", () => {
-    expect(classifyGradedCall({ gradedCount: 1, createdAt, now, plan: "pro", wasQuiet: false })).toBeNull();
+    expect(classifyGradedCall({ ordinal:1, createdAt, now, plan: "pro", wasQuiet: false })).toBeNull();
   });
   it("went quiet after 7 days idle or when the trial ended unpaid", () => {
     const t = new Date("2026-11-30T00:00:00Z");
@@ -308,11 +310,12 @@ function memoryStore(): OutboxStore & { rows: MemRow[] } {
     rows,
     async insert(r) {
       if (rows.some((x) => x.idempotencyKey === r.idempotencyKey)) return false;
-      rows.push({ id: `r${++n}`, ...r, attempts: 0, status: "pending", nextAttemptAt: new Date(0) });
+      n++;
+      rows.push({ id: `r${n}`, seq: n, ...r, attempts: 0, status: "pending", nextAttemptAt: new Date(0) });
       return true;
     },
     async due(limit, now) {
-      return rows.filter((x) => x.status === "pending" && x.nextAttemptAt <= now).slice(0, limit);
+      return dueHeads(rows.filter((x) => x.status === "pending"), now, limit);
     },
     async claim(id, now, lease) {
       const r = rows.find((x) => x.id === id)!;

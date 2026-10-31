@@ -4,7 +4,24 @@ import { createGhlClient, ghlEnabled, GhlHttpError, isRetryable, type GhlClient 
 import { ghlLog } from "./log";
 import { GhlPayloadSchema, idempotencyKey, type GhlPayload } from "./types";
 
-export type OutboxRow = { id: string; idempotencyKey: string; event: string; userId: string; payload: unknown; attempts: number };
+export type OutboxRow = { id: string; idempotencyKey: string; seq: number; event: string; userId: string; payload: unknown; attempts: number };
+
+/** A pending row plus when it may next be tried. */
+export type PendingRow = OutboxRow & { nextAttemptAt: Date };
+
+/**
+ * Per-user ordering. `pending` is every pending row; only each user's earliest one (lowest seq) is a
+ * candidate, and only once it is due. A later event therefore waits while an earlier one is backing
+ * off or leased by another worker, and is released when the earlier one is done or dead.
+ */
+export function dueHeads<T extends PendingRow>(pending: T[], now: Date, limit: number): T[] {
+  const heads = new Map<string, T>();
+  for (const r of pending) {
+    const h = heads.get(r.userId);
+    if (!h || r.seq < h.seq) heads.set(r.userId, r);
+  }
+  return [...heads.values()].filter((r) => r.nextAttemptAt <= now).sort((a, b) => a.seq - b.seq).slice(0, limit);
+}
 
 /** Storage seam so the queue logic is testable without a database. */
 export interface OutboxStore {
@@ -20,6 +37,7 @@ export interface OutboxStore {
 
 export const MAX_ATTEMPTS = 8;
 const LEASE_MS = 5 * 60_000;
+const MAX_ROUNDS = 5;
 
 /** 1 min, 2, 4, ... capped at 6 hours. */
 export const backoffMs = (attempts: number) => Math.min(60_000 * 2 ** Math.max(0, attempts - 1), 6 * 3_600_000);
@@ -38,12 +56,15 @@ export function prismaOutboxStore(): OutboxStore {
       }
     },
     async due(limit, now) {
-      return (await db()).ghlOutbox.findMany({
-        where: { status: "pending", nextAttemptAt: { lte: now } },
-        orderBy: { createdAt: "asc" },
-        take: limit,
-        select: { id: true, idempotencyKey: true, event: true, userId: true, payload: true, attempts: true },
+      // distinct + orderBy seq keeps the first (lowest seq) pending row per user; dueHeads then drops
+      // users whose head is not due yet, so nothing skips ahead of a row that is backing off or leased.
+      const heads = await (await db()).ghlOutbox.findMany({
+        where: { status: "pending" },
+        orderBy: { seq: "asc" },
+        distinct: ["userId"],
+        select: { id: true, idempotencyKey: true, seq: true, event: true, userId: true, payload: true, attempts: true, nextAttemptAt: true },
       });
+      return dueHeads(heads, now, limit);
     },
     async claim(id, now, leaseUntil) {
       const r = await (await db()).ghlOutbox.updateMany({ where: { id, status: "pending", nextAttemptAt: { lte: now } }, data: { nextAttemptAt: leaseUntil } });
@@ -92,12 +113,22 @@ export async function drainGhlOutbox(opts: Deps & { client?: GhlClient; limit?: 
   const client = opts.client ?? createGhlClient({ env });
   const now = opts.now ?? (() => new Date());
 
-  const rows = await store.due(opts.limit ?? 25, now());
-  for (const row of rows) {
+  // A user's next event only becomes due once the previous one is done, so go round a few times to
+  // deliver a user's events back to back. Backed-off rows are not due, so this always ends.
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const rows = await store.due(opts.limit ?? 25, now());
+    if (!rows.length) break;
+    const before = result.sent + result.retried + result.dead;
+    await Promise.all(rows.map((row) => deliver(row)));
+    if (result.sent + result.retried + result.dead === before) break;
+  }
+  return result;
+
+  async function deliver(row: OutboxRow) {
     const t = now();
     if (!(await store.claim(row.id, t, new Date(t.getTime() + LEASE_MS)))) {
       result.skipped++;
-      continue;
+      return;
     }
     const attempts = row.attempts + 1;
     const parsed = GhlPayloadSchema.safeParse(row.payload);
@@ -105,10 +136,11 @@ export async function drainGhlOutbox(opts: Deps & { client?: GhlClient; limit?: 
       await store.markDead(row.id, attempts, "invalid_payload");
       ghlLog("error", "dead", { userId: row.userId, event: row.event, outcome: "invalid_payload" });
       result.dead++;
-      continue;
+      return;
     }
     try {
-      await client.send(parsed.data);
+      // The eventId is stable across every redelivery of this row (retry, crash, failed markDone).
+      await client.send(parsed.data, { eventId: row.idempotencyKey, sequence: row.seq });
       await store.markDone(row.id, now());
       ghlLog("info", "sent", { userId: row.userId, event: row.event, attempt: attempts });
       result.sent++;
@@ -126,5 +158,4 @@ export async function drainGhlOutbox(opts: Deps & { client?: GhlClient; limit?: 
       }
     }
   }
-  return result;
 }
