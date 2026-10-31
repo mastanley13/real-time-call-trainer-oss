@@ -9,7 +9,7 @@ import { VOICE_ENGINE_LABELS, averageLevel, micErrorMessage, type VoiceEngine } 
 import type { Capabilities } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
 import GettingStarted from "@/components/onboarding/GettingStarted";
-import { dismissFocusTarget } from "@/lib/onboarding";
+import { restoreDismissFocus } from "@/lib/onboarding";
 import { ModeDial, radioKeys } from "./CopilotRail";
 
 const MODE_HELP: Record<CoachMode, string> = {
@@ -148,7 +148,7 @@ export function StartBar({ goal, blocked, error, onStart, buttonRef }: {
   const text = goal.trim();
   return (
     <div role="region" aria-label="Start call bar"
-      className="fixed inset-x-0 bottom-[calc(57px+env(safe-area-inset-bottom))] z-30 border-t border-line bg-surface px-4 py-2 md:bottom-0 md:pb-[max(0.5rem,env(safe-area-inset-bottom))] lg:hidden">
+      className="sticky bottom-[calc(57px+env(safe-area-inset-bottom))] z-30 -mx-4 mt-6 border-t border-line bg-surface px-4 py-2 sm:-mx-6 sm:px-6 md:bottom-0 md:pb-[max(0.5rem,env(safe-area-inset-bottom))] lg:hidden">
       <div className="mx-auto max-w-xl">
         {error && <p role="alert" className="mb-2 rounded-lg border border-alert/40 bg-alert-soft p-2 text-xs">{error}</p>}
         {text
@@ -191,11 +191,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
   const dismissOnboarding = () => {
     onboarding?.onDismiss();
     const modeToggle = modeRef.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]:not(:disabled)') ?? null;
-    const startEl = barStartRef.current ?? startRef.current;
-    const target = dismissFocusTarget({ startDisabled: !!startEl?.disabled, hasModeToggle: !!modeToggle });
-    if (target === "start") startEl?.focus();
-    else if (target === "mode") modeToggle?.focus();
-    else headingRef.current?.focus();
+    restoreDismissFocus({ start: barStartRef.current ?? startRef.current, modeToggle, heading: headingRef.current });
   };
   const p = scenario.aiPersona;
   const steps = talkTrackSteps(scenario.callScript);
@@ -370,13 +366,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
           <Link href="/library" className="btn-ghost w-full">Change persona</Link>
         </aside>
       </div>
-      {showBar && (
-        <>
-          {/* Keeps the last content clear of the fixed bar. */}
-          <div aria-hidden className="h-[5.5rem] md:h-[calc(5.5rem+env(safe-area-inset-bottom))] lg:hidden" />
-          <StartBar goal={scenario.traineeGoal} blocked={blocked} error={error} onStart={onStart} buttonRef={barStartRef} />
-        </>
-      )}
+      {showBar && <StartBar goal={scenario.traineeGoal} blocked={blocked} error={error} onStart={onStart} buttonRef={barStartRef} />}
     </div>
   );
 }

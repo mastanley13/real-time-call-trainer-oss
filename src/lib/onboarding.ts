@@ -69,6 +69,17 @@ export function dismissFocusTarget(o: { startDisabled: boolean; hasModeToggle: b
   return o.hasModeToggle ? "mode" : "heading";
 }
 
+export type Focusable = { disabled?: boolean; focus(): void };
+
+/** Moves focus after the panel closes. `start` is the Start button currently on screen (the mobile bar's or the aside's), if any. */
+export function restoreDismissFocus(o: { start: Focusable | null; modeToggle: Focusable | null; heading: Focusable | null }): "start" | "mode" | "heading" {
+  const target = dismissFocusTarget({ startDisabled: !o.start || !!o.start.disabled, hasModeToggle: !!o.modeToggle });
+  if (target === "start") o.start?.focus();
+  else if (target === "mode") o.modeToggle?.focus();
+  else o.heading?.focus();
+  return target;
+}
+
 /** Safe handle on a Web Storage area; null when the browser blocks access outright. */
 export function safeStorage(kind: "local" | "session"): KeyValueStore | null {
   try {
