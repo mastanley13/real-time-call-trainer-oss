@@ -1,11 +1,8 @@
 import Link from "next/link";
+import { LEGAL_LINKS } from "@/lib/legalLinks";
 import { GITHUB_URL } from "@/lib/seo";
 
-const LINKS = [
-  { href: "/pricing", label: "Pricing" },
-  { href: "/privacy", label: "Privacy" },
-  { href: "/terms", label: "Terms" },
-];
+const LINKS = [{ href: "/pricing", label: "Pricing" }, ...LEGAL_LINKS];
 
 /** Footer for public pages: Pricing, Privacy, Terms, GitHub. */
 export default function PublicFooter({ children }: { children?: React.ReactNode }) {

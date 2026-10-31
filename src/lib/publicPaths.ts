@@ -3,7 +3,7 @@
 export const VERTICAL_SLUGS = ["insurance", "solar", "staffing", "home-services", "saas-sdr", "coaches"] as const;
 
 const EXACT = new Set([
-  "/pricing", "/privacy", "/terms", "/register", "/login", "/robots.txt", "/sitemap.xml",
+  "/pricing", "/register", "/login", "/robots.txt", "/sitemap.xml",
   ...VERTICAL_SLUGS.map((s) => `/for/${s}`),
 ]);
 const PREFIXES = ["/api/auth/", "/opengraph-image", "/twitter-image"];
