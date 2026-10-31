@@ -83,8 +83,8 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `RATE_LIMIT_REALTIME_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/realtime/session` (one per voice call). Default 10 per 3600 s |
 | `RATE_LIMIT_COACH_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/coach/turn`. Default 120 per 600 s |
 | `RATE_LIMIT_WIZARD_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/persona/generate` and `/api/persona/fetch-url`. Default 20 per 3600 s |
-| `PAID_FEATURES_ENABLED` | Optional | Hard spend kill switch. `false` turns off every route that calls a paid provider (voice sessions, the coach, grading, the persona wizard): they answer 503 and text calls fall back to the scripted caller. Unset means on |
-| `DAILY_REALTIME_MINUTES_CAP` | Optional | Voice minutes allowed per UTC day. Each voice call reserves 10 minutes when it starts; once the day's total is reached, the same routes answer 503 until midnight UTC. In memory per server instance, so best-effort on serverless. Unset means no cap |
+| `PAID_FEATURES_ENABLED` | Optional | Hard spend kill switch. `false` turns off every route that calls a paid provider (OpenAI Realtime and ElevenLabs voice, the coach, grading and re-grading, the persona wizard, the Models connection check): they answer 503 and text calls fall back to the scripted caller. Unset means on |
+| `DAILY_REALTIME_MINUTES_CAP` | Optional | Voice minutes allowed per UTC day. Each voice call (OpenAI Realtime or ElevenLabs) reserves 10 minutes when it starts; once the day's total is reached, the same routes refuse new work with 503 until midnight UTC, while a call that already reserved its minutes still connects. In memory per server instance, so best-effort on serverless. Unset means no cap |
 | `DEMO_MODE` | Optional | `true` skips login; sessions, assignments and notes stay in the browser and `/team` shows a sample team. Never on a public deployment |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Optional | Used by `npm run db:seed` to create a platform admin. `ADMIN_FIRST_NAME` and `ADMIN_LAST_NAME` set its name (default Platform Admin) |
 

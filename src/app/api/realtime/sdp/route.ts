@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, readJsonLimited } from "@/lib/rateLimit";
-import { paidFeaturesGuard } from "@/lib/spendGuard";
+import { paidFeaturesSwitchGuard } from "@/lib/spendGuard";
 
 const Body = z.object({
   // Only the short-lived ek_ secret minted by /api/realtime/session; printable ASCII so it cannot break the header.
@@ -20,7 +20,9 @@ const Body = z.object({
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
-  const paused = paidFeaturesGuard();
+  // Kill switch only: the secret's minutes were reserved when /api/realtime/session minted it, so a call that
+  // took the day's last minutes still connects. New calls are refused at the mint, not here.
+  const paused = paidFeaturesSwitchGuard();
   if (paused) return paused;
 
   const limit = rateLimit({ key: `realtime-sdp:${auth.id}`, limit: 10, windowMs: 60_000 });

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/apiAuth";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 import { llmBaseUrl, llmKey, llmModel } from "@/lib/serverConfig";
+import { paidFeaturesGuard } from "@/lib/spendGuard";
 import { CHECK_TIMEOUT_MS, checkHint, type CheckFailure, type LlmCheckResult } from "../hints";
 
 const CHECK_LIMIT = 6;
@@ -31,6 +32,9 @@ function result(r: Omit<LlmCheckResult, "hint">, failure?: CheckFailure) {
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
+  // Even one token is a paid completion, so the check is off with the rest.
+  const paused = paidFeaturesGuard();
+  if (paused) return paused;
 
   const ipLimit = rateLimit({ key: `llmcheck:${clientIp(req)}`, limit: CHECK_LIMIT, windowMs: CHECK_WINDOW_MS });
   if (!ipLimit.allowed) return limited(ipLimit.retryAfterMs, `${CHECK_LIMIT} times in 10 minutes`);
