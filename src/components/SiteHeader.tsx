@@ -30,6 +30,7 @@ export default function SiteHeader() {
   const router = useRouter();
   const demo = capabilities?.demoMode;
   const links = navFor(user);
+  const orgName = user?.organization?.name;
   // Read the platform after mount so the server render and first client render match.
   const [mac, setMac] = useState(false);
   useEffect(() => {
@@ -103,7 +104,11 @@ export default function SiteHeader() {
           <ThemeToggle />
           {isAuthenticated ? (
             <>
-              <span className="hidden max-w-[160px] truncate px-1 text-sm text-ink-muted sm:inline">{user?.firstName || user?.email}</span>
+              <span className="hidden min-w-0 items-baseline gap-1.5 px-1 text-sm text-ink-muted sm:flex" title={orgName ? `${user?.firstName || user?.email}, team ${orgName}` : undefined}>
+                <span className="max-w-[160px] truncate">{user?.firstName || user?.email}</span>
+                {orgName && <span className="max-w-[140px] truncate text-ink-soft">· {orgName}</span>}
+              </span>
+              {orgName && <span className="sr-only sm:hidden">Team {orgName}</span>}
               {!demo && (
                 <button className="btn-quiet !min-h-[36px] !px-2.5" onClick={() => { logout(); router.push("/"); }} aria-label="Sign out" title="Sign out">
                   <LogOut size={17} strokeWidth={1.75} aria-hidden />

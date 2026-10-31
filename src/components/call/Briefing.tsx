@@ -8,6 +8,8 @@ import { CALL_TYPE_LABELS, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps, typ
 import { VOICE_ENGINE_LABELS, averageLevel, micErrorMessage, type VoiceEngine } from "@/lib/realtime";
 import type { Capabilities } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
+import GettingStarted from "@/components/onboarding/GettingStarted";
+import { dismissFocusTarget } from "@/lib/onboarding";
 import { ModeDial, radioKeys } from "./CopilotRail";
 
 const MODE_HELP: Record<CoachMode, string> = {
@@ -120,7 +122,7 @@ function MicCheck({ onResult }: { onResult: (r: MicResult) => void }) {
   );
 }
 
-export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice }: {
+export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, onboarding }: {
   scenario: Scenario;
   capabilities: Capabilities;
   mode: "voice" | "text";
@@ -135,7 +137,21 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
   error?: string;
   /** Shown when the link named a persona this browser doesn't have and another one opened instead. */
   notice?: string;
+  /** First-run panel state, owned by TrainerClient so it survives a persona switch. Omit to show no panel and no link. */
+  onboarding?: { open: boolean; welcome: string; onDismiss: () => void; onReopen: () => void };
 }) {
+  const startRef = useRef<HTMLButtonElement>(null);
+  const modeRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  // "Got it" and Escape both land here. Start is disabled when voice is unavailable, and a disabled button can't take focus.
+  const dismissOnboarding = () => {
+    onboarding?.onDismiss();
+    const modeToggle = modeRef.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]:not(:disabled)') ?? null;
+    const target = dismissFocusTarget({ startDisabled: !!startRef.current?.disabled, hasModeToggle: !!modeToggle });
+    if (target === "start") startRef.current?.focus();
+    else if (target === "mode") modeToggle?.focus();
+    else headingRef.current?.focus();
+  };
   const p = scenario.aiPersona;
   const steps = talkTrackSteps(scenario.callScript);
   const total = scenario.rubric.reduce((a, c) => a + c.weight, 0) || 1;
@@ -153,7 +169,13 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
 
   return (
     <div className="page enter">
-      <Link href="/library" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink"><ArrowLeft size={15} aria-hidden /> Library</Link>
+      {onboarding?.open && <GettingStarted welcome={onboarding.welcome} onDismiss={dismissOnboarding} />}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Link href="/library" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink"><ArrowLeft size={15} aria-hidden /> Library</Link>
+        {onboarding && !onboarding.open && (
+          <button type="button" className="text-sm font-medium text-primary underline underline-offset-2" onClick={onboarding.onReopen}>How it works</button>
+        )}
+      </div>
 
       <div className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
         <div className="space-y-6">
@@ -161,7 +183,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
             <PersonaAvatar scenario={scenario} size={72} />
             <div className="min-w-0 flex-1">
               <p className="eyebrow">Pre-flight briefing</p>
-              <h1 className="mt-1 text-2xl font-bold sm:text-3xl">{p.name}</h1>
+              <h1 ref={headingRef} tabIndex={-1} className="mt-1 text-2xl font-bold outline-none sm:text-3xl">{p.name}</h1>
               <p className="mt-0.5 text-sm text-ink-soft">{p.role}</p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <span className="chip">{jobFamilyLabel(scenario.role)}</span>
@@ -260,7 +282,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
 
             <div>
               <p className="label">Call mode</p>
-              <div className="grid grid-cols-2 gap-1 rounded-lg bg-sunken p-1" role="radiogroup" aria-label="Call mode" onKeyDown={radioKeys(CALL_MODES, mode, onModeChange, (m) => !!retryFrom && m === "voice")}>
+              <div ref={modeRef} className="grid grid-cols-2 gap-1 rounded-lg bg-sunken p-1" role="radiogroup" aria-label="Call mode" onKeyDown={radioKeys(CALL_MODES, mode, onModeChange, (m) => !!retryFrom && m === "voice")}>
                 {CALL_MODES.map((m) => (
                   <button key={m} type="button" role="radio" aria-checked={mode === m} tabIndex={mode === m ? 0 : -1} disabled={!!retryFrom && m === "voice"} onClick={() => onModeChange(m)}
                     className={`flex min-h-[38px] items-center justify-center gap-2 rounded-md text-sm font-semibold transition disabled:opacity-40 ${mode === m ? "bg-surface text-ink shadow-card ring-1 ring-line" : "text-ink-muted hover:text-ink"}`}>
@@ -293,7 +315,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
 
             {error && <p role="alert" className="rounded-lg border border-alert/40 bg-alert-soft p-3 text-sm">{error}</p>}
 
-            <button className="btn-primary btn-xl w-full" onClick={onStart} disabled={blocked}>
+            <button ref={startRef} className="btn-primary btn-xl w-full" onClick={onStart} disabled={blocked}>
               <PhoneCall size={18} aria-hidden /> Start call
             </button>
             <p className="text-center text-xs text-ink-muted">The coach only talks to you. {p.name} never hears it.</p>

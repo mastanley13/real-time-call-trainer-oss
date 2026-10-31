@@ -36,7 +36,7 @@ function CheckResult({ check, keySet }: { check: Check; keySet: boolean }) {
 }
 
 export default function ModelsClient() {
-  const { isAuthenticated, isLoading, capabilities } = useAuth();
+  const { isAuthenticated, isLoading, capabilities, user } = useAuth();
   const router = useRouter();
   const [check, setCheck] = useState<Check>({ state: "idle" });
 
@@ -73,6 +73,7 @@ export default function ModelsClient() {
       <header>
         <p className="eyebrow">Settings</p>
         <h1 className="mt-1 text-3xl font-bold">Models</h1>
+        {user?.organization?.name && <p className="mt-1 text-sm text-ink-soft">Team: {user.organization.name}</p>}
         <p className="mt-2 max-w-2xl text-ink-soft">Each AI job in the app, the model that runs it, and what takes over without a working key. Keys and endpoint URLs stay on the server and never appear here.</p>
       </header>
 
