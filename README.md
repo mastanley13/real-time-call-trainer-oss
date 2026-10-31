@@ -1,10 +1,55 @@
 # Real-Time Call Trainer
 
-Practice live sales and service calls against AI personas from 18 sales jobs. A live coach scores every turn and cues you when an objection lands, and the debrief backs every score with quotes from your own transcript.
+[![CI](https://github.com/mastanley13/real-time-call-trainer-oss/actions/workflows/ci.yml/badge.svg)](https://github.com/mastanley13/real-time-call-trainer-oss/actions/workflows/ci.yml)
+<!-- LICENSE BADGE: uncomment only after GitHub shows "MIT" in the repo sidebar (currently detected as Other / NOASSERTION; LICENSE PR pending)
+[![License: MIT](https://img.shields.io/github/license/mastanley13/real-time-call-trainer-oss)](LICENSE)
+-->
+
+Practice sales calls against AI buyers, get cues from a live coach, and read a debrief that quotes your own transcript.
 
 By Mykel Stanley · MIT licensed
 
+## Quickstart (text sim, no keys)
+
+Needs Node 22+.
+
+```bash
+git clone https://github.com/mastanley13/real-time-call-trainer-oss.git
+cd real-time-call-trainer-oss
+npm ci
+DEMO_MODE=true npm run dev
+```
+
+Open http://localhost:3000/trainer?scenario=home-services-inbound-lead, choose **Text**, and start the call. With no keys you get a scripted caller, a rules-based coach and heuristic grading. Add `LLM_API_KEY` (any OpenAI-compatible API) for the AI caller, coach and grading; add an OpenAI or ElevenLabs key for voice. See [TESTING.md](TESTING.md) for every mode.
+
+`DEMO_MODE` is for local use only. Never enable it on a public deployment.
+
+## Hosted or self-host
+
+Free to start. Pro is $29/mo. No overages, ever.
+
+| | Self-host (this repo) | Hosted Free | Hosted Pro | Hosted Team |
+|---|---|---|---|---|
+| Price | $0, you bring your own API keys | $0 | $29/mo or $290/yr | $59/seat/mo or $590/seat/yr, 3-seat minimum |
+| Voice minutes | Your own keys | 20 per month | 200 per month | 300 per seat per month, pooled |
+| Text sim | Yes | Yes | Yes | Yes |
+| API keys and database | You set them up | Managed | Managed | Managed |
+| Team view and assignments | Yes, with Postgres | No | No | Yes |
+| Premium voices add-on | Your keys | No | +$30/seat/mo | +$30/seat/mo |
+| Overage charges | None | None | None | None |
+
+Hosted plans are at [calltrainer.tech](https://calltrainer.tech).
+
+## Screenshots
+
 ![Real-Time Call Trainer](public/screenshot.png)
+
+<!-- Captures still to add, see docs/screenshots/README.md:
+- docs/screenshots/live-coach.png
+- docs/screenshots/debrief.png
+- docs/screenshots/library.png
+- docs/screenshots/team.png
+-->
 
 ## Features
 - **Persona library**: 54 personas across 18 sales job families (SDR cold calls, AE discovery, customer success, insurance, mortgage, real estate, solar, auto, medical devices, B2B procurement, recruiting, collections, financial advising and more), filterable by role, industry, difficulty, objection type and call type. Each persona is a plain pack in `src/lib/personas/`, validated against `ScenarioSchema` on load. Library personas start as **drafts** until a maintainer reviews them; the three original scenarios are marked reviewed.
