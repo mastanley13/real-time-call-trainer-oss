@@ -27,7 +27,14 @@ export interface User {
   role?: "trainee" | "manager" | "owner" | "admin";
   /** Set by the login, MFA and register routes. Display only; the server checks it again on every request. */
   isPlatformAdmin?: boolean;
+  /** The user's team. The auth routes return it beside `user`; it is merged in here so the header and settings can show the name. */
+  organization?: { id: string; name: string; code?: string | null };
 }
+
+type OrgPayload = { id: string; name: string; code?: string | null } | null | undefined;
+
+const withOrganization = (u: User, org: OrgPayload): User =>
+  org && typeof org.name === "string" ? { ...u, organization: { id: org.id, name: org.name, code: org.code ?? null } } : u;
 
 export interface Capabilities {
   demoMode: boolean;
@@ -119,6 +126,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         const parsedUser: User = JSON.parse(storedUser);
         setUser(parsedUser);
         setIsAuthenticated(true);
+        // Sessions stored before the team name was kept have no organization: fetch it once.
+        if (!parsedUser.organization) {
+          fetch("/api/me", { credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((me: { organization?: OrgPayload } | null) => {
+              if (!me?.organization) return;
+              const next = withOrganization(parsedUser, me.organization);
+              try { localStorage.setItem("userData", JSON.stringify(next)); } catch { /* storage unavailable */ }
+              setUser(next);
+            })
+            .catch(() => {});
+        }
       } else {
         localStorage.removeItem("authToken");
         localStorage.removeItem("userData");
@@ -169,7 +188,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       if (data.mfaRequired && data.challengeToken) {
         return { challengeToken: data.challengeToken, email: credentials.email };
       }
-      persistSession(data.user, data.token);
+      persistSession(withOrganization(data.user, data.organization), data.token);
       return null;
     } catch (error) {
       clearSession();
@@ -195,8 +214,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         const err = await response.json().catch(() => ({}));
         throw new Error(err.error || "MFA challenge failed");
       }
-      const { user: sessionUser, token } = await response.json();
-      persistSession(sessionUser, token);
+      const { user: sessionUser, organization, token } = await response.json();
+      persistSession(withOrganization(sessionUser, organization), token);
     } catch (error) {
       clearSession();
       throw error;
@@ -218,8 +237,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         const err = await response.json().catch(() => ({}));
         throw new Error(err.error || "Registration failed");
       }
-      const { user: sessionUser, token } = await response.json();
-      persistSession(sessionUser, token);
+      const { user: sessionUser, organization, token } = await response.json();
+      persistSession(withOrganization(sessionUser, organization), token);
     } catch (error) {
       clearSession();
       throw error;

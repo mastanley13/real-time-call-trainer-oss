@@ -8,6 +8,7 @@ import { CALL_TYPE_LABELS, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps, typ
 import { VOICE_ENGINE_LABELS, averageLevel, micErrorMessage, type VoiceEngine } from "@/lib/realtime";
 import type { Capabilities } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
+import GettingStarted from "@/components/onboarding/GettingStarted";
 import { ModeDial, radioKeys } from "./CopilotRail";
 
 const MODE_HELP: Record<CoachMode, string> = {
@@ -120,7 +121,7 @@ function MicCheck({ onResult }: { onResult: (r: MicResult) => void }) {
   );
 }
 
-export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice }: {
+export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, onboarding }: {
   scenario: Scenario;
   capabilities: Capabilities;
   mode: "voice" | "text";
@@ -135,7 +136,14 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
   error?: string;
   /** Shown when the link named a persona this browser doesn't have and another one opened instead. */
   notice?: string;
+  /** First-run panel state, owned by TrainerClient so it survives a persona switch. Omit to show no panel and no link. */
+  onboarding?: { open: boolean; welcome: string; onDismiss: () => void; onReopen: () => void };
 }) {
+  const startRef = useRef<HTMLButtonElement>(null);
+  const dismissOnboarding = () => {
+    onboarding?.onDismiss();
+    startRef.current?.focus();
+  };
   const p = scenario.aiPersona;
   const steps = talkTrackSteps(scenario.callScript);
   const total = scenario.rubric.reduce((a, c) => a + c.weight, 0) || 1;
@@ -153,7 +161,13 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
 
   return (
     <div className="page enter">
-      <Link href="/library" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink"><ArrowLeft size={15} aria-hidden /> Library</Link>
+      {onboarding?.open && <GettingStarted welcome={onboarding.welcome} onDismiss={dismissOnboarding} />}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Link href="/library" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink"><ArrowLeft size={15} aria-hidden /> Library</Link>
+        {onboarding && !onboarding.open && (
+          <button type="button" className="text-sm font-medium text-primary underline underline-offset-2" onClick={onboarding.onReopen}>How it works</button>
+        )}
+      </div>
 
       <div className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
         <div className="space-y-6">
@@ -293,7 +307,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
 
             {error && <p role="alert" className="rounded-lg border border-alert/40 bg-alert-soft p-3 text-sm">{error}</p>}
 
-            <button className="btn-primary btn-xl w-full" onClick={onStart} disabled={blocked}>
+            <button ref={startRef} className="btn-primary btn-xl w-full" onClick={onStart} disabled={blocked}>
               <PhoneCall size={18} aria-hidden /> Start call
             </button>
             <p className="text-center text-xs text-ink-muted">The coach only talks to you. {p.name} never hears it.</p>

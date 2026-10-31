@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
+import { safeStorage, setWelcome } from "@/lib/onboarding";
 
 export default function RegisterPage() {
   const { register, isAuthenticated, capabilities } = useAuth();
@@ -32,6 +33,8 @@ export default function RegisterPage() {
         password: f.password,
         ...(mode === "create" ? { newOrgName: f.orgName } : { joinOrgCode: f.orgCode }),
       });
+      // One-time flag so /trainer can say the team is ready; it is read once and cleared there.
+      setWelcome(safeStorage("session"), mode);
       router.push("/trainer");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");

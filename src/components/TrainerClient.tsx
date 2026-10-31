@@ -6,7 +6,7 @@ import { ConversationProvider, useConversation } from "@elevenlabs/react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Scenario, ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { listScenarios } from "@/lib/scenarioStore";
-import { getLocalSession, saveSession, type CoachLog, type StoredTurn } from "@/lib/sessionStore";
+import { getLocalSession, listLocalSessions, saveSession, type CoachLog, type StoredTurn } from "@/lib/sessionStore";
 import type { Evaluation } from "@/lib/grader-types";
 import type { CoachMode } from "@/lib/coach-types";
 import type { AgentState } from "@/components/CallOrb";
@@ -16,6 +16,7 @@ import Deck from "@/components/call/Deck";
 import RealtimeVoiceSession, { type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
+import { markOnboardingSeen, readOnboarding, safeStorage, takeWelcome, welcomeCopy, type WelcomeMode } from "@/lib/onboarding";
 
 type Mode = "voice" | "text";
 type Phase = "idle" | "live" | "grading";
@@ -89,7 +90,7 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, reg
 }
 
 export default function TrainerClient() {
-  const { capabilities, isAuthenticated, isLoading } = useAuth();
+  const { capabilities, isAuthenticated, isLoading, user } = useAuth();
   const router = useRouter();
   const [scenario, setScenario] = useState<Scenario | null>(null);
   const [mode, setMode] = useState<Mode>("voice");
@@ -114,6 +115,11 @@ export default function TrainerClient() {
   const turnsRef = useRef<StoredTurn[]>([]);
   const [replyTalking, setReplyTalking] = useState(false);
   const talkTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  /** First-run panel: "pending" until the flag and history are read, so nothing shifts when it appears. */
+  const [onboard, setOnboard] = useState<"pending" | "open" | "closed">("pending");
+  const [welcomeMode, setWelcomeMode] = useState<WelcomeMode | null>(null);
+  const welcomeTaken = useRef<{ mode: WelcomeMode | null } | null>(null);
 
   const live = phase === "live";
   const grading = phase === "grading";
@@ -185,6 +191,42 @@ export default function TrainerClient() {
   useEffect(() => {
     if (!isLoading && capabilities && !isAuthenticated) router.replace("/login");
   }, [isLoading, capabilities, isAuthenticated, router]);
+
+  // First-run panel: skip it once dismissed, or for anyone who already has calls. Runs once per page load.
+  useEffect(() => {
+    if (isLoading || !capabilities || !isAuthenticated) return;
+    // Strict mode runs effects twice; the welcome flag is cleared on read, so keep what the first run took.
+    if (!welcomeTaken.current) welcomeTaken.current = { mode: takeWelcome(safeStorage("session")) };
+    const welcome = welcomeTaken.current.mode;
+    const local = safeStorage("local");
+    if (readOnboarding(local) !== "open") { setOnboard("closed"); return; }
+    let alive = true;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2500);
+    const hasCalls = async () => {
+      if (capabilities.demoMode) return listLocalSessions().length > 0;
+      if (!capabilities.database) return false;
+      try {
+        const r = await fetch("/api/transcripts", { credentials: "include", signal: ctrl.signal });
+        if (!r.ok) return false;
+        const data = await r.json();
+        return Array.isArray(data.sessions) && data.sessions.length > 0;
+      } catch { return false; }
+    };
+    hasCalls().then((returning) => {
+      clearTimeout(timer);
+      if (!alive) return;
+      if (returning) { markOnboardingSeen(local); setOnboard("closed"); return; }
+      setWelcomeMode(welcome);
+      setOnboard("open");
+    });
+    return () => { alive = false; clearTimeout(timer); ctrl.abort(); };
+  }, [isLoading, capabilities, isAuthenticated]);
+
+  const dismissOnboarding = useCallback(() => {
+    markOnboardingSeen(safeStorage("local"));
+    setOnboard("closed");
+  }, []);
 
   // Voice engine: the viewer's last pick if the server still offers it, else the server's first (OpenAI when a key is set).
   useEffect(() => {
@@ -272,6 +314,8 @@ export default function TrainerClient() {
 
   function begin() {
     if (!scenario) return;
+    markOnboardingSeen(safeStorage("local"));
+    setOnboard("closed");
     try { localStorage.setItem(LAST_SCENARIO, scenario.id); } catch { /* ignore */ }
     setError("");
     coach.reset();
@@ -358,12 +402,13 @@ export default function TrainerClient() {
     return `Coach: ${model ?? "AI"}${latency}`;
   }, [coachMode, coach.result, coach.p50, capabilities]);
 
-  if (!scenario || !capabilities) return <PageSkeleton rows={2} />;
+  if (!scenario || !capabilities || onboard === "pending") return <PageSkeleton rows={2} />;
 
   if (phase === "idle") {
     return (
       // Keyed by persona: revealed prep answers, "Got it" and the mic test belong to one buyer.
       <Briefing key={scenario.id} scenario={scenario} capabilities={capabilities} mode={mode} onModeChange={setMode} engine={engine} onEngineChange={setEngine} coachMode={coachMode} onCoachModeChange={setCoachMode}
+        onboarding={{ open: onboard === "open", welcome: welcomeCopy(user?.firstName, user?.organization?.name, welcomeMode), onDismiss: dismissOnboarding, onReopen: () => setOnboard("open") }}
         onStart={begin} retryFrom={retry ? { turn: retry.turn, line: retry.line } : null} error={error} notice={notice} />
     );
   }
