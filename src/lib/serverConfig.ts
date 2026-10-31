@@ -7,7 +7,8 @@ export function getCapabilities() {
   const elevenlabs = Boolean(process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_AGENT_ID);
   const realtime = Boolean(realtimeKey());
   return {
-    demoMode: process.env.DEMO_MODE === "true",
+    /** Fails closed: false whenever the production guard blocks demo mode, so requireAuth never yields DEMO_USER. */
+    demoMode: process.env.DEMO_MODE === "true" && !productionGuard(process.env).problems.includes("demo_in_production"),
     elevenlabs,
     /** OpenAI Realtime voice (WebRTC). On whenever an OpenAI key is available. */
     realtime,
@@ -36,6 +37,32 @@ export function resolveLlmKey(env: Env): string | undefined {
   const own = env.LLM_API_KEY?.trim();
   if (own) return own;
   return isOpenAiBaseUrl(env.LLM_BASE_URL || "https://api.openai.com/v1") ? env.OPENAI_API_KEY?.trim() || undefined : undefined;
+}
+
+/**
+ * Production guard. DEMO_MODE disables authentication, so it must not reach a production
+ * deployment by accident. `ALLOW_PUBLIC_DEMO=true` is the explicit opt-in for a public demo.
+ * `demo_in_production` blocks boot; `database_missing` only makes /api/health unhealthy.
+ */
+export type ProductionGuardProblem = "demo_in_production" | "database_missing";
+
+export function productionGuard(env: Env): { ok: boolean; problems: ProductionGuardProblem[] } {
+  const problems: ProductionGuardProblem[] = [];
+  if (env.NODE_ENV === "production") {
+    const demo = env.DEMO_MODE === "true";
+    if (demo && env.ALLOW_PUBLIC_DEMO !== "true") problems.push("demo_in_production");
+    if (!demo && !env.DATABASE_URL?.trim()) problems.push("database_missing");
+  }
+  return { ok: problems.length === 0, problems };
+}
+
+/** Throws when the environment must not boot. Called from `register()` in src/instrumentation.ts. */
+export function assertBootAllowed(env: Env = process.env): void {
+  if (productionGuard(env).problems.includes("demo_in_production")) {
+    throw new Error(
+      "DEMO_MODE=true is not allowed when NODE_ENV=production because it disables authentication. Unset DEMO_MODE, or set ALLOW_PUBLIC_DEMO=true to run a public demo on purpose.",
+    );
+  }
 }
 
 export function llmKey(): string | undefined {

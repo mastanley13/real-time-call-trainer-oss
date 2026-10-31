@@ -7,11 +7,30 @@ Any Node 22+ host works (Vercel, Fly, Render, a VPS). You need a Postgres databa
 2. **Secrets**: `JWT_SECRET` (`node generate-jwt-secret.js`; it also keys the grade seal and the access-code cookie, so rotating it signs everyone out), `CRON_SECRET`.
 3. **Voice**: OpenAI Realtime needs only an OpenAI key (`OPENAI_REALTIME_API_KEY`, or `OPENAI_API_KEY`). ElevenLabs is optional: `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`, with overrides enabled on the agent (see README). With both, `VOICE_ENGINE` picks the default.
 4. **Coach, grading and wizard** (optional): `LLM_API_KEY` (+ `LLM_BASE_URL`, `LLM_MODEL`). Check it from Settings, Models after deploying. `OPENAI_API_KEY` stands in for `LLM_API_KEY` only while `LLM_BASE_URL` points at OpenAI; a custom base URL needs its own `LLM_API_KEY`.
-5. **Do not set `DEMO_MODE`**. It disables authentication.
+5. **Do not set `DEMO_MODE`**. It disables authentication. With `NODE_ENV=production`, `DEMO_MODE=true` is ignored and login stays required unless `ALLOW_PUBLIC_DEMO=true` is also set for a deliberate public demo. As extra layers, the app refuses to boot in that state, and `/api/health` falls back to returning 503 if it does run. `/api/health` also returns 503 in production without demo when `DATABASE_URL` is missing.
 6. Build and start: `npm run build && npm start`.
 7. **Retention**: `vercel.json` schedules `/api/cron/purge-expired` daily on Vercel, and Vercel Cron sends `Authorization: Bearer $CRON_SECRET` when the variable is set. Elsewhere, call it with that header. The route accepts nothing else (the `x-vercel-cron` header is ignored) and returns 401 when `CRON_SECRET` is unset. Per-org retention is set in the database (`Organization.sessionRetentionDays`).
 8. **Health**: `GET /api/health` reports DB, secrets and provider configuration (`elevenlabs`, `realtime`, `llm`).
 9. **Proxies**: run the app behind at least one proxy that sets or appends `X-Forwarded-For`. If more than one sits in front of the app, set `TRUSTED_PROXY_HOPS` (see below).
+
+## Neon Postgres
+1. In the Neon console, copy two connection strings for your project: the pooled one (host contains `-pooler`) and the direct one.
+2. Set `DATABASE_URL` on the host to the **pooled** string, with `sslmode=require`:
+   `postgresql://<user>:<password>@<endpoint>-pooler.<region>.aws.neon.tech/<db>?sslmode=require`
+3. `prisma/schema.prisma` reads only `DATABASE_URL` (there is no `directUrl`), so `DIRECT_URL` is not used. Migrations go through pooled connections poorly, so run them with `DATABASE_URL` set to the **direct** string for that one command:
+   ```bash
+   DATABASE_URL='postgresql://<user>:<password>@<endpoint>.<region>.aws.neon.tech/<db>?sslmode=require' npm run db:migrate
+   ```
+4. Seed a platform admin with `npm run db:seed`. It is idempotent and reads these variables:
+   - `ADMIN_EMAIL` and `ADMIN_PASSWORD` (at least 10 characters). If either is missing the seed does nothing.
+   - `ADMIN_FIRST_NAME` and `ADMIN_LAST_NAME` (optional, default `Platform` and `Admin`).
+   - `DATABASE_URL` (the direct string is fine here too).
+
+   ```bash
+   DATABASE_URL='<direct-connection-string>' ADMIN_EMAIL='<admin-email>' ADMIN_PASSWORD='<strong-password>' npm run db:seed
+   ```
+   Remove the admin variables from your shell history and host settings afterwards.
+5. Check `GET /api/health`: `checks.db` should read `ok`.
 
 ## Client IP behind proxies
 Rate limits and audit rows use the client IP from `X-Forwarded-For` (`clientIp` in `src/lib/rateLimit.ts`). Each proxy appends the address it saw to that header, so only the entries your own proxies added can be trusted; anything to their left is whatever the client sent. `TRUSTED_PROXY_HOPS` is the number of proxies that append, and the app reads the entry that many places from the right.
