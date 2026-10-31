@@ -19,7 +19,7 @@ const Query = z.object({ days: z.enum(["7", "30", "90"]).default("30") });
 const titles = new Map(LIBRARY.map((s) => [s.id, s.title]));
 
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 
   const parsed = Query.safeParse({ days: req.nextUrl.searchParams.get("days") ?? undefined });

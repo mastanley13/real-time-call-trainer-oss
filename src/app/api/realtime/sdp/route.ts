@@ -17,7 +17,7 @@ const Body = z.object({
  * browser <-> OpenAI directly; only this one signalling request passes through here.
  */
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 
   const limit = rateLimit({ key: `realtime-sdp:${auth.id}`, limit: 10, windowMs: 60_000 });

@@ -17,7 +17,7 @@ import { forbidden, limitFor, loadActor, noOrganization, serverError, teamIsLoca
 const Body = z.object({ userId: z.string().trim().min(1).max(64) });
 
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   if (teamIsLocal()) {
     return NextResponse.json({ error: "local_only", message: "Demo mode has no stored accounts to reset." }, { status: 400 });

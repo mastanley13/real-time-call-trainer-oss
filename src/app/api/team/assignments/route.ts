@@ -25,7 +25,7 @@ const localOnly = () =>
 const writeLimit = (userId: string) => limitFor(`team:assign:${userId}`, 20, 60_000);
 
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   if (teamIsLocal()) return NextResponse.json({ assignments: [], local: true });
 
@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   if (teamIsLocal()) return localOnly();
   const limited = writeLimit(auth.id);
@@ -123,7 +123,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   if (teamIsLocal()) return localOnly();
   const limited = writeLimit(auth.id);

@@ -27,7 +27,7 @@ type EnrollResponse = {
 
 export default function SecuritySettingsPage() {
   const router = useRouter();
-  const { isAuthenticated, isLoading, capabilities, applySession, user: sessionUser } = useAuth();
+  const { isAuthenticated, isLoading, capabilities, setMfaEnrollment, user: sessionUser } = useAuth();
   // Demo mode and database-free installs have no stored account, so there is nothing to protect with MFA.
   const noAccount = !!capabilities && (capabilities.demoMode || !capabilities.database);
   const [me, setMe] = useState<MeResponse["user"] | null>(null);
@@ -98,8 +98,8 @@ export default function SecuritySettingsPage() {
       });
       const result = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(result.error || "Invalid code");
-      // Enrollment-only sessions get a full one back; keep it so the rest of the app opens up.
-      if (result.user && result.token) applySession(result.user, result.token);
+      // Lift the client-side restriction now; the server already did.
+      setMfaEnrollment(false);
       setEnroll(null);
       setCode("");
       setNotice("MFA is now enabled on this account.");

@@ -12,7 +12,7 @@ const BodySchema = z.object({ code: z.string().regex(/^[0-9]{6}$/) });
  * possession of the device.
  */
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   const user = auth;
 

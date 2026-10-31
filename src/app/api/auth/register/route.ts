@@ -5,8 +5,6 @@ import { hashPassword, signSessionToken } from "@/lib/auth";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { generateOrgCode, isValidOrgCode } from "@/lib/orgCodes";
-import { mfaStateFor } from "@/lib/mfaPolicy";
-
 const RegisterSchema = z
   .object({
     firstName: z.string().trim().min(1).max(80),
@@ -127,14 +125,7 @@ export async function POST(request: NextRequest) {
       email: user.email,
       firstName: user.firstName ?? undefined,
       lastName: user.lastName ?? undefined,
-      role: user.role as "trainee" | "manager" | "owner",
-      // Joining an org that requires MFA starts in enrollment-only mode.
-      ...(mfaStateFor({
-        requireMfa: organization?.requireMfa ?? false,
-        mfaGraceEndsAt: organization?.mfaGraceEndsAt ?? null,
-        mfaEnabled: false,
-      }) === "enroll_required" ? { mfaEnrollment: true } : {}),
-    };
+      role: user.role as "trainee" | "manager" | "owner",    };
     const token = signSessionToken(sessionUser);
 
     const res = NextResponse.json({

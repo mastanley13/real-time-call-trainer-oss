@@ -11,7 +11,7 @@ import { generatePersona } from "@/lib/personaWizard";
  * configured and a template otherwise, so it always returns a usable scenario.
  */
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   const ipLimited = ipLimitResponse(req, "wizard");
   if (ipLimited) return ipLimited;

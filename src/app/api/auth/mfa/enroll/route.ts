@@ -10,8 +10,8 @@ import { rateLimit } from "@/lib/rateLimit";
  * stays false until the user proves possession via /api/auth/mfa/activate.
  */
 export async function POST(req: NextRequest) {
-  // Open to enrollment-only sessions: this is how a forced member gets out of that state.
-  const auth = requireAuth(req, { allowMfaEnrollment: true });
+  // Open to members who must still enrol: this is how they get out of that state.
+  const auth = await requireAuth(req, { allowMfaEnrollment: true });
   if (auth instanceof NextResponse) return auth;
   const user = auth;
 

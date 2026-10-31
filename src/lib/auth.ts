@@ -11,11 +11,6 @@ export interface SessionUser {
   firstName?: string;
   lastName?: string;
   role?: SessionRole;
-  /**
-   * Limited session: the org requires MFA and this user has not enrolled.
-   * requireAuth rejects it everywhere except the enrollment routes.
-   */
-  mfaEnrollment?: boolean;
 }
 
 export function getJwtSecret(): string {
@@ -43,9 +38,7 @@ export function verifySessionToken(token: string): SessionUser | null {
       email: String(payload.email),
       firstName: payload.firstName as string | undefined,
       lastName: payload.lastName as string | undefined,
-      role: (payload.role as SessionRole) || "trainee",
-      ...(payload.mfaEnrollment === true ? { mfaEnrollment: true } : {}),
-    };
+      role: (payload.role as SessionRole) || "trainee",    };
   } catch {
     return null;
   }

@@ -26,7 +26,7 @@ const localOnly = () =>
   NextResponse.json({ error: "local_only", message: "Demo mode has no stored accounts, so there is no MFA to require. Connect a database to use this." }, { status: 400 });
 
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   if (teamIsLocal()) return localOnly();
   const limited = limitFor(`team:mfa:${auth.id}`, 60, 60_000);
@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   if (teamIsLocal()) return localOnly();
   const limited = limitFor(`team:mfa-policy:${auth.id}`, 10, 60_000);

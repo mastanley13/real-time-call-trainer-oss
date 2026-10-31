@@ -160,26 +160,24 @@ describe("GET /api/me", () => {
   const withOrg = (org: object) => mocks.prisma.user.findUnique.mockResolvedValue({ ...user, organization: { id: "o-1", name: "Harbor", code: "123", planTier: "team", sessionRetentionDays: null, requireMfa: false, mfaGraceEndsAt: null, ...org } });
   const call = () => me(new NextRequest("http://localhost/api/me"));
 
-  it("drops a full session to enrollment-only once the org requires MFA", async () => {
+  it("reports enroll_required as it happens, and never sets a cookie", async () => {
     withOrg({ requireMfa: true });
     const res = await call();
     expect((await res.json()).mfa).toMatchObject({ state: "enroll_required", requiredByOrg: true });
-    expect(res.headers.get("set-cookie")).toContain("authToken=");
+    expect(res.headers.get("set-cookie")).toBeNull();
   });
 
-  it("only reports a grace period and keeps the session full", async () => {
+  it("reports a grace period", async () => {
     withOrg({ requireMfa: true, mfaGraceEndsAt: new Date(Date.now() + 86_400_000) });
-    const res = await call();
-    const body = await res.json();
+    const body = await (await call()).json();
     expect(body.mfa.state).toBe("grace");
     expect(body.mfa.graceEndsAt).toBeTruthy();
-    expect(res.headers.get("set-cookie")).toBeNull();
   });
 
-  it("touches nothing when the org does not require MFA", async () => {
-    withOrg({});
-    const res = await call();
-    expect((await res.json()).mfa.state).toBe("not_required");
-    expect(res.headers.get("set-cookie")).toBeNull();
+  it("reports not_required as soon as the manager turns the rule off", async () => {
+    withOrg({ requireMfa: true });
+    expect((await (await call()).json()).mfa.state).toBe("enroll_required");
+    withOrg({ requireMfa: false });
+    expect((await (await call()).json()).mfa.state).toBe("not_required");
   });
 });

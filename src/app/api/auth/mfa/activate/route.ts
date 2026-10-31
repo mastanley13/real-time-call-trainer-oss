@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
-import { signSessionToken, type SessionRole } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { verifyTotp } from "@/lib/mfa";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
@@ -13,8 +12,8 @@ const BodySchema = z.object({ code: z.string().regex(/^[0-9]{6}$/) });
  * `mfaEnabled` flips to true and subsequent logins will require TOTP.
  */
 export async function POST(req: NextRequest) {
-  // Open to enrollment-only sessions; success swaps them for a full one below.
-  const auth = requireAuth(req, { allowMfaEnrollment: true });
+  // Open to members who must still enrol: activating is what lifts the restriction.
+  const auth = await requireAuth(req, { allowMfaEnrollment: true });
   if (auth instanceof NextResponse) return auth;
   const user = auth;
 
@@ -65,26 +64,5 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  // Enrollment done: replace a limited session with a full one.
-  const sessionUser = {
-    id: dbUser.id,
-    email: dbUser.email,
-    firstName: dbUser.firstName ?? undefined,
-    lastName: dbUser.lastName ?? undefined,
-    role: dbUser.role as SessionRole,
-  };
-  const token = signSessionToken(sessionUser);
-  const res = NextResponse.json({
-    mfaEnabled: true,
-    user: { ...sessionUser, isPlatformAdmin: dbUser.isPlatformAdmin },
-    token,
-  });
-  res.cookies.set("authToken", token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 12,
-  });
-  return res;
+  return NextResponse.json({ mfaEnabled: true });
 }
