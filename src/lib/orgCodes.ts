@@ -18,6 +18,12 @@ export async function generateOrgCode(): Promise<string> {
   throw new Error("Failed to allocate a unique org code — code space exhausted.");
 }
 
+/** Name for a personal workspace: the person's name, else the part of their email before the @. */
+export function personalOrgName(p: { firstName?: string | null; lastName?: string | null; email: string }): string {
+  const full = [p.firstName, p.lastName].map((x) => x?.trim()).filter(Boolean).join(" ");
+  return (full || p.email.split("@")[0].trim() || "Personal").slice(0, 120);
+}
+
 export function isValidOrgCode(code: unknown): code is string {
   return typeof code === "string" && /^[0-9]{3,8}$/.test(code);
 }

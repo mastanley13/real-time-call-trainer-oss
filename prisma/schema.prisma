@@ -31,6 +31,9 @@ model Organization {
   name      String
   /// Subscription tier; "free" until billing/webhook sets otherwise.
   planTier  String   @default("free")
+  /// True for the one-person workspace made when someone signs up without a
+  /// team. Its code is never shown and nobody can join it with the code.
+  isPersonal Boolean @default(false)
   /// Nullable = keep training records indefinitely. When set, the nightly
   /// purge job deletes TrainerSession rows older than this many days.
   sessionRetentionDays Int?

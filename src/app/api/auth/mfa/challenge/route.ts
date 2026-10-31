@@ -6,7 +6,7 @@ import {
   type SessionRole,
 } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { needsOnboarding } from "@/lib/session";
+import { needsOnboarding, orgView } from "@/lib/session";
 import { verifyTotp } from "@/lib/mfa";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 
@@ -97,7 +97,8 @@ export async function POST(req: NextRequest) {
       ? {
           id: user.organization.id,
           name: user.organization.name,
-          code: user.organization.code,
+          code: orgView(user.organization).code,
+          isPersonal: user.organization.isPersonal,
         }
       : null,
     token,

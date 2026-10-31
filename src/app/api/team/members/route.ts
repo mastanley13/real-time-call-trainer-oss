@@ -39,10 +39,10 @@ export async function GET(req: NextRequest) {
         orderBy: { createdAt: "asc" },
         take: 1000,
       }),
-      prisma.organization.findUnique({ where: { id: actor.organizationId }, select: { name: true, code: true } }),
+      prisma.organization.findUnique({ where: { id: actor.organizationId }, select: { name: true, code: true, isPersonal: true } }),
     ]);
     return NextResponse.json({
-      organization: org,
+      organization: org && { name: org.name, code: org.isPersonal ? null : org.code },
       canEditRoles: whole,
       members: rows.map((u) => ({
         id: u.id,

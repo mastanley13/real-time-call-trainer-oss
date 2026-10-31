@@ -58,6 +58,17 @@ npm run dev               # http://localhost:3000
 ```
 Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login, keeps sessions, assignments and supervisor notes in your browser, and shows a sample team on `/team`. See [TESTING.md](TESTING.md).
 
+### Signing up and signing in
+Sign in with email and password (or Google). There is no team code at login. At sign-up there are three paths:
+
+- **Just me** (the default): name, email and password. You get a personal workspace on the Free plan. It has no team code, and nobody can join it.
+- **Start a team**: add a team name. You become the owner and can invite managers and reps.
+- **Join a team (I have a code)**: add the code from your manager, or use their invite link.
+
+Google sign-up follows the same rule: with no team chosen, a new Google user gets a personal workspace.
+
+For open sign-up, leave `TRAINER_ACCESS_CODE` unset. Set it only for a private beta, where it gates every page, including `/register`.
+
 ### Environment variables
 | Variable | Required | Purpose |
 |---|---|---|

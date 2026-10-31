@@ -12,6 +12,7 @@ const Query = z.object({
   next: z.string().max(200).optional(),
   code: z.string().regex(/^[0-9]{3,8}$/).optional(),
   manager: z.string().trim().min(1).max(64).optional(),
+  intent: z.enum(["solo", "team"]).optional(),
 });
 
 export async function GET(req: NextRequest) {
@@ -28,6 +29,7 @@ export async function GET(req: NextRequest) {
     next: sp.get("next") ?? undefined,
     code: sp.get("code") || undefined,
     manager: sp.get("manager") || undefined,
+    intent: sp.get("intent") || undefined,
   });
   if (!parsed.success) {
     return NextResponse.json({ error: "invalid_query", message: "The sign-in link is malformed. Go back and try again." }, { status: 400 });
@@ -39,6 +41,7 @@ export async function GET(req: NextRequest) {
     nonce: randomToken(),
     next: safeNextPath(parsed.data.next),
     ...(parsed.data.code ? { joinCode: parsed.data.code } : {}),
+    ...(parsed.data.intent ? { intent: parsed.data.intent } : {}),
     ...(parsed.data.code && parsed.data.manager ? { managerId: parsed.data.manager } : {}),
   };
   const res = NextResponse.redirect(authorizeUrl(cfg, flow));

@@ -5,14 +5,20 @@
  * Google; nothing about the flow runs in the browser. Shown only when the
  * server has Google sign-in set up.
  */
-export default function GoogleButton({ next, code, manager, label = "Continue with Google" }: { next?: string; code?: string; manager?: string; label?: string }) {
+export default function GoogleButton({ next, code, manager, intent, label = "Continue with Google", disabled = false }: { next?: string; code?: string; manager?: string; intent?: "solo" | "team"; label?: string; disabled?: boolean }) {
   const params = new URLSearchParams();
+  if (intent) params.set("intent", intent);
   if (next) params.set("next", next);
   if (code) params.set("code", code);
   if (code && manager) params.set("manager", manager);
   const qs = params.toString();
   return (
-    <a href={`/api/auth/google/start${qs ? `?${qs}` : ""}`} className="btn-ghost w-full justify-center">
+    <a
+      href={disabled ? undefined : `/api/auth/google/start${qs ? `?${qs}` : ""}`}
+      role={disabled ? "link" : undefined}
+      aria-disabled={disabled || undefined}
+      className={`btn-ghost w-full justify-center ${disabled ? "pointer-events-none opacity-50" : ""}`}
+    >
       <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
         <path fill="rgb(var(--ink))" d="M21.6 12.23c0-.71-.06-1.4-.18-2.05H12v3.88h5.38a4.6 4.6 0 0 1-2 3.02v2.5h3.24c1.9-1.75 2.98-4.32 2.98-7.35Z" />
         <path fill="rgb(var(--ink-soft))" d="M12 22c2.7 0 4.96-.9 6.62-2.42l-3.24-2.5c-.9.6-2.04.95-3.38.95-2.6 0-4.8-1.75-5.59-4.1H3.07v2.58A10 10 0 0 0 12 22Z" />
@@ -40,5 +46,6 @@ export const GOOGLE_ERRORS: Record<string, string> = {
   google_failed: "Google sign-in didn't work. Try again, or use your email and password.",
   google_unverified: "Your Google account's email isn't verified. Verify it with Google, or sign up with email.",
   google_not_configured: "Google sign-in isn't set up on this server. Use your email and password.",
+  invalid_join_code: "That team code isn't valid. Check it with your manager, then sign up again.",
   locked: "This account is temporarily locked after too many attempts. Try again in 15 minutes.",
 };

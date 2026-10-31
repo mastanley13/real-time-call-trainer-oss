@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { safeEqual } from "@/lib/access";
 import { clientIp, ipLimitResponse } from "@/lib/rateLimit";
 import { checkIdTokenClaims, decodeIdToken, exchangeCode, flowCookieOptions, GOOGLE_FLOW_COOKIE, googleConfig, verifyFlowState, type FlowState, type GoogleProfile } from "@/lib/googleAuth";
+import { generateOrgCode, personalOrgName } from "@/lib/orgCodes";
 import { needsOnboarding, startSession, toSessionUser } from "@/lib/session";
 
 /**
@@ -14,8 +15,9 @@ import { needsOnboarding, startSession, toSessionUser } from "@/lib/session";
  *
  * - Known Google account: sign in.
  * - Same verified email as a password account: link Google to it.
- * - Otherwise: create an account with no password and no org; onboarding
- *   picks or creates the org. An invite (join code + manager) joins it now.
+ * - Otherwise: create an account with no password. It gets a personal org
+ *   (solo) unless the sign-up asked to start a team; onboarding then
+ *   creates the org. An invite (join code + manager) joins it now.
  * Accounts with MFA still need their authenticator code.
  */
 
@@ -64,7 +66,9 @@ export async function GET(req: NextRequest) {
   try {
     const ip = clientIp(req);
     const userAgent = req.headers.get("user-agent") ?? undefined;
-    const { user, created, linked } = await findOrCreateUser(profile, flow);
+    const found = await findOrCreateUser(profile, flow);
+    if ("invalidJoinCode" in found) return fail(req, "invalid_join_code");
+    const { user, created, linked, solo } = found;
 
     if (user.lockedUntil && user.lockedUntil > new Date()) return fail(req, "locked");
 
@@ -81,7 +85,7 @@ export async function GET(req: NextRequest) {
         action: created ? "user.registered" : "user.login_success",
         ip,
         userAgent,
-        metadata: { via: "google", linked, joinedOrg: Boolean(created && user.organizationId) } satisfies Prisma.InputJsonValue,
+        metadata: { via: "google", linked, joinedOrg: Boolean(created && user.organizationId && !solo), ...(solo ? { joinOrCreate: "solo" } : {}) } satisfies Prisma.InputJsonValue,
       },
     });
 
@@ -97,43 +101,59 @@ export async function GET(req: NextRequest) {
 
 async function findOrCreateUser(profile: GoogleProfile, flow: FlowState) {
   const bySub = await prisma.user.findUnique({ where: { googleSub: profile.sub } });
-  if (bySub) return { user: bySub, created: false, linked: false };
+  if (bySub) return { user: bySub, created: false, linked: false, solo: false };
 
   const byEmail = await prisma.user.findUnique({ where: { email: profile.email } });
   if (byEmail) {
     // Google verified this address, so it's the same person. Link only if the account has no Google id yet.
     if (byEmail.googleSub) throw new Error("GOOGLE_ACCOUNT_MISMATCH");
     const user = await prisma.user.update({ where: { id: byEmail.id }, data: { googleSub: profile.sub } });
-    return { user, created: false, linked: true };
+    return { user, created: false, linked: true, solo: false };
   }
 
   let organizationId: string | null = null;
   let managerId: string | null = null;
   if (flow.joinCode) {
-    const org = await prisma.organization.findUnique({ where: { code: flow.joinCode }, select: { id: true } });
-    if (org) {
-      organizationId = org.id;
-      if (flow.managerId) {
-        const lead = await prisma.user.findFirst({
-          where: { id: flow.managerId, organizationId: org.id, role: { in: ["manager", "owner"] } },
-          select: { id: true },
-        });
-        managerId = lead?.id ?? null;
-      }
+    const org = await prisma.organization.findUnique({ where: { code: flow.joinCode }, select: { id: true, isPersonal: true } });
+    // The person chose to join a team, so a code that isn't a real team is an error, not a solo signup.
+    if (!org || org.isPersonal) return { invalidJoinCode: true as const };
+    organizationId = org.id;
+    if (flow.managerId) {
+      const lead = await prisma.user.findFirst({
+        where: { id: flow.managerId, organizationId: org.id, role: { in: ["manager", "owner"] } },
+        select: { id: true },
+      });
+      managerId = lead?.id ?? null;
     }
   }
 
-  const user = await prisma.user.create({
-    data: {
-      email: profile.email,
-      googleSub: profile.sub,
-      passwordHash: null,
-      firstName: profile.firstName,
-      lastName: profile.lastName,
-      role: "trainee",
-      organizationId,
-      managerId,
-    },
+  // No team chosen: solo is the default. Only an explicit "start a team" leaves the org for onboarding.
+  const solo = !organizationId && flow.intent !== "team";
+  const user = await prisma.$transaction(async (tx) => {
+    if (solo) {
+      const org = await tx.organization.create({
+        data: {
+          name: personalOrgName({ firstName: profile.firstName, lastName: profile.lastName, email: profile.email }),
+          code: await generateOrgCode(),
+          planTier: "free",
+          isPersonal: true,
+        },
+      });
+      organizationId = org.id;
+    }
+    return tx.user.create({
+      data: {
+        email: profile.email,
+        googleSub: profile.sub,
+        passwordHash: null,
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        role: "trainee",
+        organizationId,
+        managerId,
+        ...(solo ? { onboardedAt: new Date() } : {}),
+      },
+    });
   });
-  return { user, created: true, linked: false };
+  return { user, created: true, linked: false, solo };
 }

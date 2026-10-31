@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
+import { orgView } from "@/lib/session";
 
 export async function GET(req: NextRequest) {
   const auth = requireAuth(req);
@@ -28,7 +29,8 @@ export async function GET(req: NextRequest) {
       ? {
           id: user.organization.id,
           name: user.organization.name,
-          code: user.organization.code,
+          code: orgView(user.organization).code,
+          isPersonal: user.organization.isPersonal,
           planTier: user.organization.planTier,
           sessionRetentionDays: user.organization.sessionRetentionDays,
         }

@@ -3,16 +3,17 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
-import { generateOrgCode } from "@/lib/orgCodes";
+import { generateOrgCode, personalOrgName } from "@/lib/orgCodes";
 import { clientIp, readJsonLimited, userLimitResponse } from "@/lib/rateLimit";
-import { needsOnboarding, startSession, toSessionUser } from "@/lib/session";
+import { needsOnboarding, orgView, startSession, toSessionUser } from "@/lib/session";
 import { teamIsLocal } from "../team/_lib/server";
 
 /**
  * Onboarding for a signed-in user.
  *
  * GET   where they are: org, role, manager, whether onboarding is done
- * POST  { action: "create_org", name } -> new org, they become its owner
+ * POST  { action: "solo" } -> a personal workspace on the Free tier, nothing else to set up
+ *       { action: "create_org", name } -> new org, they become its owner
  *       { action: "join_org", code, managerId? } -> join as a rep (optionally on a manager's team)
  *       { action: "finish" } -> mark onboarding done
  * Creating or joining is only for users with no org yet. A role change
@@ -20,6 +21,7 @@ import { teamIsLocal } from "../team/_lib/server";
  */
 
 const Body = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("solo") }),
   z.object({ action: z.literal("create_org"), name: z.string().trim().min(2).max(120) }),
   z.object({ action: z.literal("join_org"), code: z.string().regex(/^[0-9]{3,8}$/), managerId: z.string().trim().min(1).max(64).optional() }),
   z.object({ action: z.literal("finish") }),
@@ -32,7 +34,7 @@ async function loadMe(id: string) {
   return prisma.user.findUnique({
     where: { id },
     include: {
-      organization: { select: { id: true, name: true, code: true, industries: true } },
+      organization: { select: { id: true, name: true, code: true, industries: true, isPersonal: true } },
       manager: { select: { id: true, firstName: true, lastName: true, email: true } },
     },
   });
@@ -42,7 +44,7 @@ type Me = NonNullable<Awaited<ReturnType<typeof loadMe>>>;
 function view(me: Me) {
   return {
     user: { id: me.id, role: me.role, firstName: me.firstName, lastName: me.lastName, isPlatformAdmin: me.isPlatformAdmin },
-    organization: me.organization,
+    organization: me.organization && orgView(me.organization),
     manager: me.manager ? { id: me.manager.id, name: [me.manager.firstName, me.manager.lastName].filter(Boolean).join(" ") || me.manager.email.split("@")[0] } : null,
     needsOnboarding: needsOnboarding(me),
   };
@@ -91,7 +93,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "already_in_org", message: "You're already on a team. Ask an owner if you need to move." }, { status: 409 });
     }
 
-    if (body.action === "create_org") {
+    if (body.action === "solo") {
+      const code = await generateOrgCode();
+      await prisma.$transaction(async (tx) => {
+        const org = await tx.organization.create({
+          data: { name: personalOrgName(me), code, planTier: "free", isPersonal: true },
+        });
+        await tx.user.update({ where: { id: me.id }, data: { organizationId: org.id, role: "trainee", managerId: null, onboardedAt: me.onboardedAt ?? new Date() } });
+        await tx.auditEvent.create({
+          data: { userId: me.id, action: "org.created", resource: org.id, ip: clientIp(req), metadata: { via: "onboarding", joinOrCreate: "solo" } satisfies Prisma.InputJsonValue },
+        });
+      });
+    } else if (body.action === "create_org") {
       const code = await generateOrgCode();
       await prisma.$transaction(async (tx) => {
         const org = await tx.organization.create({ data: { name: body.name, code } });
@@ -101,8 +114,8 @@ export async function POST(req: NextRequest) {
         });
       });
     } else {
-      const org = await prisma.organization.findUnique({ where: { code: body.code }, select: { id: true } });
-      if (!org) return NextResponse.json({ error: "invalid_org_code", message: "No team has that code. Check it with your manager." }, { status: 400 });
+      const org = await prisma.organization.findUnique({ where: { code: body.code }, select: { id: true, isPersonal: true } });
+      if (!org || org.isPersonal) return NextResponse.json({ error: "invalid_org_code", message: "No team has that code. Check it with your manager." }, { status: 400 });
       const lead = body.managerId
         ? await prisma.user.findFirst({ where: { id: body.managerId, organizationId: org.id, role: { in: ["manager", "owner"] } }, select: { id: true } })
         : null;
