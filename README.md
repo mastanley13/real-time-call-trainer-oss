@@ -75,6 +75,7 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `DATABASE_URL` | For accounts | Postgres connection string |
 | `JWT_SECRET` | For accounts | 32+ random bytes (`node generate-jwt-secret.js`). Also keys the grade seal and the access-code cookie |
 | `CRON_SECRET` | Optional | Bearer secret for `/api/cron/purge-expired`. The route accepts only `Authorization: Bearer $CRON_SECRET` (Vercel Cron sends it when the variable is set) and returns 401 without it |
+| `APP_URL` | Optional | Public origin for canonical URLs, Open Graph images and the sitemap. Defaults to `https://calltrainer.tech`; `VERCEL_URL` and preview hosts are never used |
 | `TRAINER_ACCESS_CODE` | Optional | When set, every page and API route (except `/api/health` and `/api/cron/*`, which needs the `CRON_SECRET` bearer) requires this code via `/access`. Cookie is an HMAC keyed by `JWT_SECRET`, valid 30 days. Unset = no gate |
 | `TRUSTED_PROXY_HOPS` | Optional | Number of proxies in front of the app that append to `X-Forwarded-For`. The client IP for rate limits and audit rows is read that many entries from the right. Default 1, which fits Vercel and a single proxy that appends. The app needs at least one proxy that sets or appends the header, or clients can pick their own address; see [DEPLOY.md](DEPLOY.md#client-ip-behind-proxies) |
 | `RATE_LIMIT_CALLER_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/simulate/turn`. Default 30 per 300 s |
