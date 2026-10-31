@@ -6,6 +6,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
 import GoogleButton, { OrDivider } from "@/components/GoogleButton";
+import { googleSignupParams } from "@/lib/googleSignup";
 
 type Mode = "solo" | "create" | "join";
 const MODES: { id: Mode; label: string }[] = [
@@ -76,9 +77,7 @@ export default function RegisterPage() {
           <GoogleButton
             label="Sign up with Google"
             next={mode === "solo" ? "/dashboard" : "/onboarding"}
-            intent={mode === "create" ? "team" : "solo"}
-            code={mode === "join" ? invite?.code : undefined}
-            manager={mode === "join" ? invite?.manager : undefined}
+            {...googleSignupParams(mode, f.orgCode, invite)}
           />
           <OrDivider />
         </>

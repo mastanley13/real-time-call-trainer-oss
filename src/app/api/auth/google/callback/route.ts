@@ -66,7 +66,9 @@ export async function GET(req: NextRequest) {
   try {
     const ip = clientIp(req);
     const userAgent = req.headers.get("user-agent") ?? undefined;
-    const { user, created, linked, solo } = await findOrCreateUser(profile, flow);
+    const found = await findOrCreateUser(profile, flow);
+    if ("invalidJoinCode" in found) return fail(req, "invalid_join_code");
+    const { user, created, linked, solo } = found;
 
     if (user.lockedUntil && user.lockedUntil > new Date()) return fail(req, "locked");
 
@@ -113,15 +115,15 @@ async function findOrCreateUser(profile: GoogleProfile, flow: FlowState) {
   let managerId: string | null = null;
   if (flow.joinCode) {
     const org = await prisma.organization.findUnique({ where: { code: flow.joinCode }, select: { id: true, isPersonal: true } });
-    if (org && !org.isPersonal) {
-      organizationId = org.id;
-      if (flow.managerId) {
-        const lead = await prisma.user.findFirst({
-          where: { id: flow.managerId, organizationId: org.id, role: { in: ["manager", "owner"] } },
-          select: { id: true },
-        });
-        managerId = lead?.id ?? null;
-      }
+    // The person chose to join a team, so a code that isn't a real team is an error, not a solo signup.
+    if (!org || org.isPersonal) return { invalidJoinCode: true as const };
+    organizationId = org.id;
+    if (flow.managerId) {
+      const lead = await prisma.user.findFirst({
+        where: { id: flow.managerId, organizationId: org.id, role: { in: ["manager", "owner"] } },
+        select: { id: true },
+      });
+      managerId = lead?.id ?? null;
     }
   }
 

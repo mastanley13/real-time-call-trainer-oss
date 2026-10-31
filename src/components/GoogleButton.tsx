@@ -41,5 +41,6 @@ export const GOOGLE_ERRORS: Record<string, string> = {
   google_failed: "Google sign-in didn't work. Try again, or use your email and password.",
   google_unverified: "Your Google account's email isn't verified. Verify it with Google, or sign up with email.",
   google_not_configured: "Google sign-in isn't set up on this server. Use your email and password.",
+  invalid_join_code: "That team code isn't valid. Check it with your manager, then sign up again.",
   locked: "This account is temporarily locked after too many attempts. Try again in 15 minutes.",
 };
