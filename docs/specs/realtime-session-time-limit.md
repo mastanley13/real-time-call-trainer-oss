@@ -9,6 +9,7 @@ Status: proposed, not built. Owner: STR-715 follow-up.
 What we have (`usage.ts`, `usagePlan.ts`):
 
 - `beginCall` reserves minutes at mint and returns `maxSeconds` (reserved minutes, up to `MAX_RESERVE_MINUTES` = 60, never over `MAX_CALL_SECONDS`).
+- **Free is the exception.** Free is 10 voice minutes a month and the cap is checked only when a call starts. A Free call returns `maxSeconds = MAX_CALL_SECONDS`, gets no `stop: true` from the plan cap, is billed for every minute it runs, and is never flagged as an overrun (`TrainerSession.capEnforced` is false, stored at mint). Everything below that derives a provider limit, a `providerDeadlineAt`, a sweep or a reconcile tolerance from `maxSeconds` therefore uses the 24 hour call length limit for a Free call, never the plan cap. Do not add a provider-side Free cutoff. The spend kill switch and the call length limit stay.
 - The browser sends heartbeats. The server answers `stop: true` when the reservation is used up, and settles the call. The client then hangs up.
 - A call with no heartbeat for `HEARTBEAT_TIMEOUT_SECONDS` (30) is reaped and settled.
 - The OpenAI client secret `expires_after` limits only session setup. It does not end a running session (see the comment in `realtime/session/route.ts`).

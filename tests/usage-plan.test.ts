@@ -10,8 +10,8 @@ const settle = (sec: number, reason: CallEndReasonId, remainingMinutes = 100, co
   settleCall({ connectedAt: connected ? T : null, endedAt: after(sec), reason, remainingMinutes });
 
 describe("caps", () => {
-  it("Free 20, Pro 200, Team 300 per seat with a floor of 3 seats", () => {
-    expect(capFor("free")).toBe(20);
+  it("Free 10, Pro 200, Team 300 per seat with a floor of 3 seats", () => {
+    expect(capFor("free")).toBe(10);
     expect(capFor("pro")).toBe(200);
     expect(capFor("team", 3)).toBe(900);
     expect(capFor("team", 4)).toBe(1200);

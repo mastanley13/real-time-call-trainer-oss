@@ -36,7 +36,10 @@ export async function POST(req: NextRequest) {
   const r = await heartbeat(auth.id, body.callId, body.state);
   if (!r.found) return NextResponse.json({ error: "not_found", message: "That call was not found." }, { status: 404 });
   if (r.stop) {
-    return NextResponse.json({ stop: true, reason: r.reason, message: r.reason === "cap_reached" ? "You have used all your voice minutes for this period." : undefined });
+    const message = r.reason === "cap_reached" ? "You have used all your voice minutes for this period."
+      : r.reason === "max_duration" ? "This call reached the maximum call length."
+      : undefined;
+    return NextResponse.json({ stop: true, reason: r.reason, message });
   }
   return NextResponse.json({ stop: false, secondsLeft: r.secondsLeft });
 }

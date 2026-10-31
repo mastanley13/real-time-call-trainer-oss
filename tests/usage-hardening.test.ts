@@ -13,6 +13,7 @@ vi.mock("@/lib/apiAuth", async () => ({
 import { beginCall, chooseEngine, endCall, ensureAllowance, heartbeat, usageSummary } from "@/lib/usage";
 import { elevenLabsAgentFor, realtimeModelFor } from "@/lib/serverConfig";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
+import { MAX_CALL_SECONDS } from "@/lib/usagePlan";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
 import { GET as elevenLabsToken } from "@/app/api/elevenlabs/token/route";
 
@@ -251,11 +252,19 @@ describe("heartbeat trust: usage is settled from the server's mint time", () => 
   });
 
   it("a call with no heartbeat at all is settled after the connect window and billed from the cutoff", async () => {
-    addUser("u-1");
+    addUser("u-1", { planTier: "pro" });
     const c = await begin("u-1");
     await usageSummary("u-1", at(16 * 60));
     expect(session(c.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 15 });
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 15, minutesReserved: 0 });
+  });
+
+  it("a silent Free call is still bounded by its reservation: a closed tab is not billed for a day", async () => {
+    addUser("u-1");
+    const c = await begin("u-1");
+    await usageSummary("u-1", at(3 * 3600));
+    expect(session(c.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 10, abuseFlagged: false });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
   });
 
   it("the maximum length is the minutes left at mint time, capped at 60", async () => {
@@ -309,10 +318,18 @@ describe("heartbeat trust: usage is settled from the server's mint time", () => 
     });
 
     it("never asks for longer than the 10 minute default", async () => {
+      addUser("u-1", { planTier: "pro" });
+      const body = await (await mint()).json();
+      expect(body.maxSeconds).toBe(3600);
+      expect(bodies[0].expires_after.seconds).toBe(600);
+    });
+
+    it("a Free call is not limited by the plan cap: only the call length limit, and the secret lifetime stays 10 minutes", async () => {
       addUser("u-1");
       const body = await (await mint()).json();
-      expect(body.maxSeconds).toBe(1200);
+      expect(body.maxSeconds).toBe(MAX_CALL_SECONDS);
       expect(bodies[0].expires_after.seconds).toBe(600);
+      expect(allowanceOf("u-1").minutesReserved).toBe(10);
     });
   });
 });
@@ -323,14 +340,15 @@ describe("reservations", () => {
   it("a second call cannot take minutes the first call holds, and gets them back when it ends", async () => {
     addUser("u-1");
     const a = await begin("u-1");
-    expect(a.maxSeconds).toBe(1200);
-    expect(allowanceOf("u-1").minutesReserved).toBe(20);
+    expect(a.maxSeconds).toBe(MAX_CALL_SECONDS); // Free: the reservation gates starts, it does not limit the running call
+    expect(allowanceOf("u-1").minutesReserved).toBe(10);
     expect(await beginCall("u-1", scn, at(1))).toEqual({ ok: false, error: "minutes_reserved" });
 
     await heartbeat("u-1", a.callId, "connected", at(0));
     await endCall("u-1", a.callId, "user_hangup", at(100)); // 2 minutes
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 2, minutesReserved: 0 });
-    expect((await begin("u-1", 110)).maxSeconds).toBe(18 * 60);
+    await begin("u-1", 110);
+    expect(allowanceOf("u-1").minutesReserved).toBe(8);
   });
 
   it("the realtime route answers 409 minutes_reserved, not cap_reached, while another call holds the minutes", async () => {
@@ -393,7 +411,7 @@ describe("reservations", () => {
     const r = await beginCall("u-1", scn, at(0));
     expect(r.ok).toBe(true);
     expect(table.updateMany).toHaveBeenCalledTimes(2);
-    expect(allowanceOf("u-1").minutesReserved).toBe(20);
+    expect(allowanceOf("u-1").minutesReserved).toBe(10);
   });
 
   it("a reservation that keeps losing gives up with minutes_reserved and leaves no call row behind", async () => {
@@ -433,13 +451,13 @@ describe("a call is charged to the allowance and period it started in", () => {
     if (!a.ok) throw new Error(a.error);
     await heartbeat("u-1", a.callId, "connected", utc("10-10T11:59:00"));
     await heartbeat("u-1", a.callId, "ok", utc("10-10T12:00:50"));
-    // The rollover reserves what the open call can still use in the new period (19 of its 20 minutes), so
+    // The rollover reserves what the open call can still use in the new period (9 of its 10 minutes), so
     // the new call can only take the 1 minute that is left.
     const b = await beginCall("u-1", scn, utc("10-10T12:01:00"));
     if (!b.ok) throw new Error(b.error);
-    expect(session(a.callId).carriedMinutes).toBe(19);
-    expect(allowanceOf("u-1")).toMatchObject({ minutesReserved: 20 });
-    expect(b.maxSeconds).toBe(60);
+    expect(session(a.callId).carriedMinutes).toBe(9);
+    expect(allowanceOf("u-1")).toMatchObject({ minutesReserved: 10 });
+    expect(session(b.callId).reservedMinutes).toBe(1);
     await endCall("u-1", a.callId, "user_hangup", utc("10-10T12:01:30"));
     // 150 s: 1 minute before the reset, 2 after. The old call gives back its carry and the new call keeps its own.
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 2, minutesReserved: 1 });

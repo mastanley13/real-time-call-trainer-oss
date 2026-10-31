@@ -1,12 +1,15 @@
 /**
  * Plans, caps and voice-minute rules. Pure and client-safe: no database, no env.
- * Pricing locked Oct 30, 2026: Free 20 min, Pro 200 min, Team 300 pooled min per seat (minimum 3 seats).
- * There are no overages. A call hard-stops when the cap is reached.
+ * Pricing locked: Free 10 min per month, Pro 200 min, Team 300 pooled min per seat (minimum 3 seats).
+ * There are no overages and nothing is ever charged for going past a cap.
+ * Pro and Team calls hard-stop when their reserved minutes run out. Free is checked only when a call starts:
+ * a Free call that began under the cap runs to its normal end and its minutes count toward the month.
+ * Text practice is never metered on any plan.
  */
 
 export type PlanTier = "free" | "pro" | "team";
 
-export const FREE_MINUTES = 20;
+export const FREE_MINUTES = 10;
 export const PRO_MINUTES = 200;
 export const TEAM_MINUTES_PER_SEAT = 300;
 export const TEAM_MIN_SEATS = 3;
@@ -50,6 +53,14 @@ export function isTeamPlan(org: { planTier?: string | null } | null | undefined)
 export function capFor(plan: PlanTier, seats = 1): number {
   if (plan === "team") return Math.max(TEAM_MIN_SEATS, Math.floor(seats)) * TEAM_MINUTES_PER_SEAT;
   return plan === "pro" ? PRO_MINUTES : FREE_MINUTES;
+}
+
+/**
+ * Whether the plan's minutes also stop a call that is already running. Free does not: its cap is a start gate
+ * only. The 24 hour call length limit and the spend kill switch are separate safety limits and still apply.
+ */
+export function midCallCapApplies(plan: PlanTier): boolean {
+  return plan !== "free";
 }
 
 export function premiumVoiceCap(planCap: number): number {

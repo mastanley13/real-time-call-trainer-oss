@@ -206,7 +206,7 @@ describe("caps", () => {
   it("12: a Free user with 0 minutes left is blocked before a call row exists", async () => {
     addUser("u-1");
     await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
-    allowanceOf("u-1").minutesUsed = 20;
+    allowanceOf("u-1").minutesUsed = 10;
     const r = await beginCall("u-1", scn, at(0));
     expect(r).toEqual({ ok: false, error: "cap_reached" });
     expect(fake.rows("trainerSession")).toHaveLength(0);
@@ -215,7 +215,7 @@ describe("caps", () => {
   it("12: the realtime session route answers 402 cap_reached and never calls OpenAI", async () => {
     addUser("u-1");
     await ensureAllowance(fake.db as never, { userId: "u-1" }, new Date());
-    allowanceOf("u-1").minutesUsed = 20;
+    allowanceOf("u-1").minutesUsed = 10;
     const upstream = vi.fn();
     vi.stubGlobal("fetch", upstream);
     vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
@@ -233,7 +233,7 @@ describe("caps", () => {
     const ok = await (await mint()).json();
     expect(typeof ok.callId).toBe("string");
     expect(session(ok.callId).userId).toBe("u-1");
-    await endCall("u-1", ok.callId, "user_hangup"); // the first call holds all 20 minutes until it ends
+    await endCall("u-1", ok.callId, "user_hangup"); // the first call holds all 10 minutes until it ends
 
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 500 })));
     const bad = await mint();
@@ -326,14 +326,14 @@ describe("period reset", () => {
     expect(entries(callId)).toHaveLength(1);
   });
 
-  it("21: signed up Mar 10 with 5 minutes left; when Apr 10 arrives the allowance is 20, not 25", async () => {
+  it("21: signed up Mar 10 with 5 minutes left; when Apr 10 arrives the allowance is 10, not 15", async () => {
     addUser("u-1");
     await ensureAllowance(fake.db as never, { userId: "u-1" }, new Date("2026-04-05T00:00:00Z"));
-    allowanceOf("u-1").minutesUsed = 15;
+    allowanceOf("u-1").minutesUsed = 5;
     const before = await resolveAllowance(fake.db as never, "u-1", new Date("2026-04-09T00:00:00Z"));
     expect(before?.remaining).toBe(5);
     const after = await resolveAllowance(fake.db as never, "u-1", new Date("2026-04-10T12:00:00Z"));
-    expect(after?.remaining).toBe(20);
+    expect(after?.remaining).toBe(10);
   });
 
   it("22: a Jan 31 signup resets on Feb 28, then Mar 31", async () => {
@@ -398,7 +398,7 @@ describe("support credit and display", () => {
     const s = await usageSummary("u-1", at(2100));
     const ledger = fake.rows("usageEntry").reduce((n, e) => n + (e.minutes as number), 0);
     expect(s?.minutesUsed).toBe(ledger);
-    expect(s?.remaining).toBe(20 - ledger);
+    expect(s?.remaining).toBe(10 - ledger);
   });
 });
 

@@ -135,7 +135,8 @@ describe("a call that crosses the monthly reset", () => {
   });
 
   it("concurrent old-period calls cannot spend more than the new period's cap", async () => {
-    // A Team pool of 900 minutes is downgraded to the 20 minute Free cap while three 60 minute calls are open.
+    // A Team pool of 900 minutes is downgraded to the 10 minute Free cap while three 60 minute calls are open.
+    // The calls were started under Team, so they keep the Team rule (clamped to what they can use in the new period).
     fake.seed("organization", { id: "org-1", code: "123", createdAt: MAR10, planTier: "team", seatCount: 3 });
     for (const id of ["u-1", "u-2", "u-3"]) addUser(id);
     const calls = [];
@@ -146,11 +147,11 @@ describe("a call that crosses the monthly reset", () => {
     const cap = () => (orgAllowance().minutesUsed as number) + (orgAllowance().minutesReserved as number);
     for (const [i, c] of calls.entries()) {
       await endCall(`u-${i + 1}`, c.callId, "user_hangup", utc("10-10T12:30:00"));
-      expect(cap()).toBeLessThanOrEqual(20);
+      expect(cap()).toBeLessThanOrEqual(10);
     }
-    // The first call held the 20 minutes; the others were not charged anything in the new period.
-    expect(orgAllowance()).toMatchObject({ minutesCap: 20, minutesUsed: 20, minutesReserved: 0 });
-    expect(session(calls[0].callId).carriedMinutes).toBe(20);
+    // The first call held the 10 minutes; the others were not charged anything in the new period.
+    expect(orgAllowance()).toMatchObject({ minutesCap: 10, minutesUsed: 10, minutesReserved: 0 });
+    expect(session(calls[0].callId).carriedMinutes).toBe(10);
     expect(session(calls[1].callId).carriedMinutes).toBe(0);
   });
 

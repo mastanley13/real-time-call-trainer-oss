@@ -28,6 +28,20 @@ Needs confirming in the Stripe test dashboard: the Pro product must carry `metad
 `plan=team`), or Pro purchases will be ignored. The Premium product's metadata was not in the ticket; if the lookup key
 ever moves off an archived Premium price, set `addon=premium_voice` on its product so the flag keeps syncing.
 
+## Free cap: 10 voice minutes a month, checked at call start only
+
+- `FREE_MINUTES` is 10. The month resets on the user's existing usage anchor (signup day), not the calendar month.
+- Only the start of a voice call checks the cap. A Free call runs to its normal end, is billed for every minute, and may
+  leave `minutesUsed` above 10. The next voice start answers 402 `cap_reached` (use Text or upgrade), before any charge.
+- New column `TrainerSession.capEnforced` (migration `20261031040000_free_cap_start_only`, run `prisma migrate deploy`
+  and `prisma generate`). It is stored at mint, so a plan change mid-call does not change the rule that call started under.
+  For a Free call it makes `maxSeconds` the 24 hour call length limit, removes the heartbeat `cap_reached` stop and the
+  billing clamp, and exempts the call from overrun flagging. Pro and Team behave as before.
+- Kept on purpose: the 24 hour call length limit, the 15 minute connect window, and the clamp on a call reaped as silent
+  (it is billed up to its reservation, so a closed tab is not billed for a day).
+- Minutes are whole numbers and every started minute counts, so "9.5 of 10 used" is tested as 9 of 10 used.
+- Text practice is not metered on any plan.
+
 ## Prices
 
 Prices are resolved by lookup key with `stripe.prices.list({ lookup_keys })` (`resolvePriceIds` in `src/lib/billing.ts`).

@@ -28,7 +28,7 @@ const priceRow = (key: string, id: string, extra: Record<string, unknown> = {}) 
 const PRICE_LIST = {
   data: [
     priceRow(LOOKUP_KEYS.pro.month, PRICES.pro.month!, { product: { metadata: { plan: "pro" } } }),
-    priceRow(LOOKUP_KEYS.pro.year, PRICES.pro.year!),
+    priceRow(LOOKUP_KEYS.pro.year, PRICES.pro.year!, { product: { metadata: { plan: "pro" } } }),
     priceRow(LOOKUP_KEYS.team.month, PRICES.team.month!, { product: { metadata: { plan: "team", min_seats: "3", pooled_minutes_per_seat: "300" } } }),
     priceRow(LOOKUP_KEYS.team.year, PRICES.team.year!, { product: { metadata: { plan: "team" } } }),
     priceRow(LOOKUP_KEYS.premium.month, PRICES.premium.month!),
@@ -217,6 +217,36 @@ describe("checkout params per plan", () => {
     const none = { month: undefined, year: undefined };
     expect(await resolvePriceIds()).toEqual({ pro: none, team: none, premium: none });
   });
+
+  it("a Pro or Team product with no plan metadata, or a different plan, is not resolved", async () => {
+    const mk = (product: unknown) => ({
+      data: [
+        priceRow(LOOKUP_KEYS.pro.month, "price_test_pro_m", { product }),
+        priceRow(LOOKUP_KEYS.pro.year, "price_test_pro_y", { product }),
+        priceRow(LOOKUP_KEYS.team.month, "price_test_team_m", { product }),
+        priceRow(LOOKUP_KEYS.team.year, "price_test_team_y", { product }),
+      ],
+    });
+    const none = { month: undefined, year: undefined };
+    for (const product of [undefined, null, "prod_not_expanded", { metadata: null }, { metadata: {} }, { metadata: { plan: "" } }, { metadata: { plan: "enterprise" } }, { metadata: { min_seats: "3" } }]) {
+      resetPriceCache();
+      vi.mocked(stripeApi.listPricesByLookupKeys).mockResolvedValue(mk(product));
+      expect(await resolvePriceIds(), JSON.stringify(product)).toEqual({ pro: none, team: none, premium: none });
+    }
+    // Each key needs its own plan: a Team product behind a Pro key (and the reverse) is refused.
+    resetPriceCache();
+    vi.mocked(stripeApi.listPricesByLookupKeys).mockResolvedValue({
+      data: [
+        priceRow(LOOKUP_KEYS.pro.month, "price_test_pro_m", { product: { metadata: { plan: "team" } } }),
+        priceRow(LOOKUP_KEYS.team.month, "price_test_team_m", { product: { metadata: { plan: "pro" } } }),
+      ],
+    });
+    expect(await resolvePriceIds()).toEqual({ pro: none, team: none, premium: none });
+  });
+
+  it("Premium Voice is an add-on: it resolves without plan metadata and never sets a tier", async () => {
+    expect((await resolvePriceIds()).premium).toEqual({ month: "price_test_prem_m", year: "price_test_prem_y" });
+  });
 });
 
 describe("isTeamPlan", () => {
@@ -244,6 +274,34 @@ describe("no secrets or price ids in src", () => {
 
 describe("checkout route", () => {
   const post = (body: unknown) => checkout(new NextRequest("http://localhost/api/billing/checkout", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } }));
+
+  it("a misconfigured product blocks checkout before any Stripe session or charge exists", async () => {
+    const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_x", url: "https://checkout.example/x" });
+    const missing = (key: string, id: string) => priceRow(key, id); // product not expanded, so no plan metadata
+    const cases: { body: Record<string, unknown>; data: unknown[] }[] = [
+      { body: { plan: "pro", interval: "month" }, data: [missing(LOOKUP_KEYS.pro.month, "price_test_pro_m")] },
+      { body: { plan: "pro", interval: "month" }, data: [priceRow(LOOKUP_KEYS.pro.month, "price_test_pro_m", { product: { metadata: { plan: "team" } } })] },
+      { body: { plan: "team", interval: "year", seats: 3 }, data: [priceRow(LOOKUP_KEYS.team.year, "price_test_team_y", { product: { metadata: {} } })] },
+      { body: { plan: "team", interval: "year", seats: 3 }, data: [priceRow(LOOKUP_KEYS.team.year, "price_test_team_y", { product: { metadata: { plan: "pro" } } })] },
+    ];
+    for (const c of cases) {
+      resetPriceCache();
+      vi.mocked(stripeApi.listPricesByLookupKeys).mockResolvedValue({ data: c.data });
+      const res = await post(c.body);
+      expect(res.status).toBe(503);
+      expect((await res.json()).error).toBe("price_not_configured");
+    }
+    expect(create).not.toHaveBeenCalled();
+    // Nothing was recorded for a checkout that never existed.
+    expect(user().stripeCheckoutSessionId ?? null).toBeNull();
+    expect(org().stripeCheckoutSessionId ?? null).toBeNull();
+  });
+
+  it("the same prices with the right product metadata check out", async () => {
+    const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_ok", url: "https://checkout.example/ok" });
+    expect((await post({ plan: "pro", interval: "month" })).status).toBe(200);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
 
   it("creates a Team session with the requested seats and the Premium add-on at the same quantity", async () => {
     const spy = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_1", url: "https://checkout.example/test" });
@@ -479,7 +537,7 @@ describe("customer.subscription.updated", () => {
   it("falls back to Free for unpaid, canceled and incomplete_expired subscriptions", async () => {
     await update({ team: 5, status: "unpaid" });
     expect(org()).toMatchObject({ planTier: "free", seatCount: 1, subscriptionStatus: "unpaid", premiumVoice: false });
-    expect(allowance("organizationId", "org-1")).toMatchObject({ planTier: "free", minutesCap: 20 });
+    expect(allowance("organizationId", "org-1")).toMatchObject({ planTier: "free", minutesCap: 10 });
   });
 
   it("moves a user from Team seats to Pro prices and the cap follows", async () => {
@@ -513,7 +571,7 @@ describe("customer.subscription.updated", () => {
   it("unpaid revokes access even when the items carry no plan metadata at all", async () => {
     await withItems([{ quantity: 3, price: itemPrice("price_unknown", null, {}) }], "unpaid");
     expect(org()).toMatchObject({ planTier: "free", subscriptionStatus: "unpaid" });
-    expect(allowance("organizationId", "org-1")).toMatchObject({ planTier: "free", minutesCap: 20 });
+    expect(allowance("organizationId", "org-1")).toMatchObject({ planTier: "free", minutesCap: 10 });
   });
 
   it("a product without plan metadata, or with an invalid one, never grants Team", async () => {
@@ -563,20 +621,47 @@ describe("customer.subscription.updated", () => {
 });
 
 describe("customer.subscription.deleted", () => {
-  it("downgrades a Pro user to Free, cap 20, and keeps the usage anchor", async () => {
+  it("downgrades a Pro user to Free, cap 10, and keeps the usage anchor", async () => {
     await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata: { plan: "pro", userId: "owner-1", premium: "true" } }));
     expect(allowance("userId", "owner-1")?.minutesCap).toBe(200);
     await deliver(event("customer.subscription.deleted", sub({ pro: true })));
     expect(user()).toMatchObject({ planTier: "free", premiumVoice: false, stripeSubscriptionId: null, subscriptionStatus: "canceled", stripeCustomerId: "cus_test_1" });
-    expect(allowance("userId", "owner-1")).toMatchObject({ planTier: "free", minutesCap: 20 });
+    expect(allowance("userId", "owner-1")).toMatchObject({ planTier: "free", minutesCap: 10 });
     expect((allowance("userId", "owner-1")!.anchorAt as Date).getTime()).toBe(ANCHOR.getTime());
+  });
+
+  it("cancel to Free applies the 10 minute cap to this month's usage: 150 used is over it, 7 used leaves 3", async () => {
+    const { beginCall, resolveAllowance } = await import("@/lib/usage");
+    await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata: { plan: "pro", userId: "owner-1" } }));
+    allowance("userId", "owner-1")!.minutesUsed = 150;
+    await deliver(event("customer.subscription.deleted", sub({ pro: true })));
+    // Usage is kept, the cap drops to 10, and the next voice call is refused before anything is charged.
+    expect(allowance("userId", "owner-1")).toMatchObject({ planTier: "free", minutesCap: 10, minutesUsed: 150 });
+    expect(await beginCall("owner-1", { id: "quote-follow-up" })).toEqual({ ok: false, error: "cap_reached" });
+    expect(fake.rows("trainerSession")).toHaveLength(0);
+    expect(fake.rows("usageEntry")).toHaveLength(0);
+
+    // A user with usage under the Free cap keeps the rest of it.
+    allowance("userId", "owner-1")!.minutesUsed = 7;
+    const r = await resolveAllowance(fake.db as never, "owner-1", new Date());
+    expect(r).toMatchObject({ plan: "free", remaining: 3 });
+    expect((await beginCall("owner-1", { id: "quote-follow-up" })).ok).toBe(true);
+  });
+
+  it("unpaid also drops to the Free cap on this month's usage", async () => {
+    const { beginCall } = await import("@/lib/usage");
+    await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata: { plan: "pro", userId: "owner-1" } }));
+    allowance("userId", "owner-1")!.minutesUsed = 40;
+    await deliver(event("customer.subscription.updated", sub({ id: "sub_test_1", pro: true, status: "unpaid" })));
+    expect(allowance("userId", "owner-1")).toMatchObject({ planTier: "free", minutesCap: 10, minutesUsed: 40 });
+    expect(await beginCall("owner-1", { id: "quote-follow-up" })).toEqual({ ok: false, error: "cap_reached" });
   });
 
   it("downgrades a Team organization to Free and its members fall back to their own allowance", async () => {
     await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_team", subscription: "sub_test_team", metadata: { plan: "team", organizationId: "org-1", seats: "5", premium: "true" } }));
     await deliver(event("customer.subscription.deleted", sub({ id: "sub_test_team", customer: "cus_test_team", metadata: {}, team: 5 })));
     expect(org()).toMatchObject({ planTier: "free", seatCount: 1, premiumVoice: false, subscriptionStatus: "canceled" });
-    expect(allowance("organizationId", "org-1")).toMatchObject({ planTier: "free", minutesCap: 20 });
+    expect(allowance("organizationId", "org-1")).toMatchObject({ planTier: "free", minutesCap: 10 });
     const { resolveAllowance } = await import("@/lib/usage");
     const r = await resolveAllowance(fake.db as never, "owner-1", NOW);
     expect(r).toMatchObject({ pooled: false, plan: "free" });
@@ -665,7 +750,7 @@ describe("out-of-order events are reconciled against Stripe's current state", ()
     const late = event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", payment_status: "paid", metadata: { plan: "pro", userId: "owner-1" } });
     await deliverRaw(late);
     expect(user()).toMatchObject({ planTier: "free", stripeSubscriptionId: null });
-    expect(allowance("userId", "owner-1")?.minutesCap).toBe(20);
+    expect(allowance("userId", "owner-1")?.minutesCap).toBe(10);
   });
 
   it("a delayed 'active' update cannot restore a subscription Stripe now reports canceled", async () => {
@@ -896,7 +981,7 @@ describe("checkout completion does not grant access to an unpaid subscription", 
     const res = await deliverRaw(completed({ payment_status: "unpaid" }));
     expect((await res.json()).result).toBe("ignored");
     expect(user()).toMatchObject({ planTier: "free", stripeSubscriptionId: null });
-    expect(allowance("userId", "owner-1")?.minutesCap ?? 20).toBe(20);
+    expect(allowance("userId", "owner-1")?.minutesCap ?? 10).toBe(10);
   });
 
   it("then the subscription turning active grants it", async () => {

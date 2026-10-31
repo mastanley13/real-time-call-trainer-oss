@@ -157,6 +157,9 @@ model TrainerSession {
   carriedPremiumMinutes Int   @default(0)
   /// Set when the server saw the call run past its reservation (see usage.ts, flagOverrun).
   abuseFlagged       Boolean  @default(false)
+  /// False for a Free call: the plan cap was checked when it started and never stops or clamps it afterwards.
+  /// Recorded at mint so a plan change mid-call cannot change the rule the call was started under.
+  capEnforced        Boolean  @default(true)
   usageEntries       UsageEntry[]
   /// Raw transcript turns.
   transcript         Json

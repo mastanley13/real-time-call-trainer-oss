@@ -70,7 +70,9 @@ export async function resolvePriceIds(api: Pick<typeof stripeApi, "listPricesByL
     if (price.type && price.type !== "recurring") continue;
     if (price.recurring?.usage_type && price.recurring.usage_type !== "licensed") continue;
     const productPlan = typeof price.product === "object" && price.product ? price.product.metadata?.plan : undefined;
-    if (w.plan !== "premium" && productPlan && productPlan !== w.plan) continue;
+    // Pro and Team products must declare the plan they are sold as. Reconciliation grants nothing without it,
+    // so a price that would charge a customer and leave them on Free is refused before checkout exists.
+    if (w.plan !== "premium" && productPlan !== w.plan) continue;
     ids[w.plan][w.interval] = price.id;
   }
   priceCache = { at: nowMs, ids };
