@@ -27,3 +27,12 @@ CREATE INDEX "GhlOutbox_status_nextAttemptAt_idx" ON "GhlOutbox"("status", "next
 
 -- CreateIndex
 CREATE INDEX "GhlOutbox_userId_event_idx" ON "GhlOutbox"("userId", "event");
+
+-- CreateTable
+CREATE TABLE "GhlScanCursor" (
+    "name" TEXT NOT NULL,
+    "lastId" TEXT NOT NULL,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "GhlScanCursor_pkey" PRIMARY KEY ("name")
+);

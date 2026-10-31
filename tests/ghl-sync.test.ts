@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGhlClient, ghlEnabled } from "@/lib/ghl/client";
 import { drainGhlOutbox, enqueueGhlEvent, backoffMs, dueHeads, MAX_ATTEMPTS, type OutboxRow, type OutboxStore } from "@/lib/ghl/outbox";
 import { actionsFor, idempotencyKey, type GhlEvent, type GhlPayload } from "@/lib/ghl/types";
-import { classifyGradedCall, confirmedSegment, isWentQuiet } from "@/lib/ghl/events";
+import { nextMilestone, confirmedSegment, isWentQuiet } from "@/lib/ghl/events";
 
 const META = { eventId: "user_1:signup", sequence: 1 };
 const TOKEN = "pit-test-token-0123456789";
@@ -278,20 +278,28 @@ describe("logs", () => {
 describe("decisions", () => {
   const now = new Date("2026-11-05T00:00:00Z");
   const createdAt = new Date("2026-11-01T00:00:00Z");
-  it("first graded call, then second within 7 days is active_trial", () => {
-    expect(classifyGradedCall({ ordinal:1, createdAt, now, plan: "free", wasQuiet: false })).toBe("first_graded_call");
-    expect(classifyGradedCall({ ordinal:2, createdAt, now, plan: "free", wasQuiet: false })).toBe("active_trial");
-    expect(classifyGradedCall({ ordinal:3, createdAt, now, plan: "free", wasQuiet: false })).toBeNull();
+  const base = { createdAt, now, plan: "free", issued: new Set<string>(["signup"]), lastEvent: "signup" as string | null, gradedCount: 1 };
+  it("hands out first_graded_call, then active_trial, then nothing, by what was already issued", () => {
+    expect(nextMilestone({ ...base })).toBe("first_graded_call");
+    expect(nextMilestone({ ...base, gradedCount: 2, issued: new Set(["signup", "first_graded_call"]), lastEvent: "first_graded_call" })).toBe("active_trial");
+    expect(nextMilestone({ ...base, gradedCount: 3, issued: new Set(["signup", "first_graded_call", "active_trial"]), lastEvent: "active_trial" })).toBeNull();
+  });
+  it("needs a second committed graded call for active_trial", () => {
+    expect(nextMilestone({ ...base, gradedCount: 1, issued: new Set(["signup", "first_graded_call"]), lastEvent: "first_graded_call" })).toBeNull();
   });
   it("second call after 7 days is not active_trial", () => {
-    expect(classifyGradedCall({ ordinal:2, createdAt: new Date("2026-10-20T00:00:00Z"), now, plan: "free", wasQuiet: false })).toBeNull();
+    expect(nextMilestone({ ...base, createdAt: new Date("2026-10-20T00:00:00Z"), gradedCount: 2, issued: new Set(["signup", "first_graded_call"]), lastEvent: "first_graded_call" })).toBeNull();
   });
   it("a call after went_quiet moves back to active_trial, within the trial", () => {
-    expect(classifyGradedCall({ ordinal:5, createdAt, now, plan: "free", wasQuiet: true })).toBe("active_trial");
-    expect(classifyGradedCall({ ordinal:5, createdAt: new Date("2026-09-01T00:00:00Z"), now, plan: "free", wasQuiet: true })).toBeNull();
+    const quiet = { ...base, gradedCount: 5, issued: new Set(["signup", "first_graded_call", "active_trial", "went_quiet"]), lastEvent: "went_quiet" };
+    expect(nextMilestone(quiet)).toBe("active_trial");
+    expect(nextMilestone({ ...quiet, createdAt: new Date("2026-09-01T00:00:00Z") })).toBeNull();
   });
   it("paid users never move back", () => {
-    expect(classifyGradedCall({ ordinal:1, createdAt, now, plan: "pro", wasQuiet: false })).toBeNull();
+    expect(nextMilestone({ ...base, plan: "pro" })).toBeNull();
+  });
+  it("nothing without a committed graded call", () => {
+    expect(nextMilestone({ ...base, gradedCount: 0 })).toBeNull();
   });
   it("went quiet after 7 days idle or when the trial ended unpaid", () => {
     const t = new Date("2026-11-30T00:00:00Z");

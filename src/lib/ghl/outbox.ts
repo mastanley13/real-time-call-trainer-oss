@@ -42,18 +42,17 @@ const MAX_ROUNDS = 5;
 /** 1 min, 2, 4, ... capped at 6 hours. */
 export const backoffMs = (attempts: number) => Math.min(60_000 * 2 ** Math.max(0, attempts - 1), 6 * 3_600_000);
 
-export function prismaOutboxStore(): OutboxStore {
-  // Loaded lazily so demo mode and tests never construct a Prisma client.
-  const db = async () => (await import("@/lib/db")).prisma;
+/**
+ * Pass a transaction client to insert inside the caller's per-user locked section (see events.ts).
+ * Without one, the shared client is loaded lazily so demo mode and tests never construct it.
+ */
+export function prismaOutboxStore(client?: Prisma.TransactionClient): OutboxStore {
+  const db = async () => client ?? (await import("@/lib/db")).prisma;
   return {
     async insert(row) {
-      try {
-        await (await db()).ghlOutbox.create({ data: { ...row, payload: row.payload as unknown as Prisma.InputJsonValue } });
-        return true;
-      } catch (e) {
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return false;
-        throw e;
-      }
+      // skipDuplicates: a duplicate key is a no-op, not an error, so it cannot abort an open Postgres transaction.
+      const r = await (await db()).ghlOutbox.createMany({ data: [{ ...row, payload: row.payload as unknown as Prisma.InputJsonValue }], skipDuplicates: true });
+      return r.count === 1;
     },
     async due(limit, now) {
       // distinct + orderBy seq keeps the first (lowest seq) pending row per user; dueHeads then drops

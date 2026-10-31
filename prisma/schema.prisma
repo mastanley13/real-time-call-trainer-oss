@@ -182,6 +182,14 @@ model GhlOutbox {
   @@index([userId, event])
 }
 
+/// Where the daily went-quiet scan stopped, so a backlog bigger than one run's page budget
+/// advances across runs instead of restarting at the same users. lastId "" means start over.
+model GhlScanCursor {
+  name      String   @id
+  lastId    String
+  updatedAt DateTime @updatedAt
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 //  Audit log
 // ─────────────────────────────────────────────────────────────────────────

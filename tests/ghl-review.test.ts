@@ -1,28 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createGhlClient, GhlHttpError } from "@/lib/ghl/client";
 import { drainGhlOutbox, enqueueGhlEvent, dueHeads, type OutboxRow, type OutboxStore } from "@/lib/ghl/outbox";
-import { enqueueGradedCall, scanWentQuiet, SCAN_PAGE_SIZE } from "@/lib/ghl/events";
+import { enqueueGradedCall, enqueueSignup, enqueueUpgrade, scanWentQuiet } from "@/lib/ghl/events";
 import type { GhlDeliveryMeta, GhlPayload, GhlWebhookBody } from "@/lib/ghl/types";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// ---- A small in-memory Prisma, just enough for the scan and milestone code ----
+// ---- A small in-memory Prisma: models, transactions, and per-key advisory locks ----
 const h = vi.hoisted(() => ({
-  state: { now: new Date(), users: [] as any[], sessions: [] as any[], outbox: [] as any[], seq: 0 },
+  state: { now: new Date(), users: [] as any[], sessions: [] as any[], outbox: [] as any[], cursors: new Map<string, string>(), seq: 0, slow: false },
 }));
 
-vi.mock("@/lib/db", async () => {
-  const { Prisma } = await import("@prisma/client");
+vi.mock("@/lib/db", () => {
   const s = h.state;
-  const sessionMatches = (x: any, w: any): boolean => {
-    if (w.userId !== undefined) {
-      if (typeof w.userId === "string" ? x.userId !== w.userId : !w.userId.in.includes(x.userId)) return false;
-    }
+  // Opt-in (state.slow): widens race windows so interleaving really happens, without slowing the big scan tests.
+  const tick = () => (s.slow ? new Promise((r) => setTimeout(r, 1)) : Promise.resolve());
+  const matches = (x: any, w: any): boolean => {
+    if (w.userId !== undefined && (typeof w.userId === "string" ? x.userId !== w.userId : !w.userId.in.includes(x.userId))) return false;
     if (w.overallScore && x.overallScore === null) return false;
-    if (w.OR && !w.OR.some((c: any) => (c.createdAt?.lt ? x.createdAt < c.createdAt.lt : x.createdAt.getTime() === c.createdAt.getTime() && x.id < c.id.lt))) return false;
     return true;
   };
-  const prisma = {
+  const models = {
     user: {
       findMany: async ({ where, take, cursor, skip }: any) => {
         let rows = s.users.filter((u) => u.createdAt < where.createdAt.lt && u.createdAt > where.createdAt.gt).sort((a, b) => (a.id < b.id ? -1 : 1));
@@ -30,27 +28,46 @@ vi.mock("@/lib/db", async () => {
         return rows.slice(0, take);
       },
       findUnique: async ({ where }: any) => {
+        await tick();
         const u = s.users.find((x) => x.id === where.id);
-        return u ? { ...u, organization: { planTier: "free" } } : null;
+        return u ? { ...u, organization: { planTier: u.planTier ?? "free" } } : null;
       },
     },
     trainerSession: {
-      count: async ({ where }: any) => s.sessions.filter((x) => sessionMatches(x, where)).length,
-      findFirst: async ({ where }: any) => s.sessions.filter((x) => sessionMatches(x, where)).sort((a, b) => b.createdAt - a.createdAt)[0] ?? null,
-      aggregate: async ({ where }: any) => ({ _sum: { durationSeconds: s.sessions.filter((x) => sessionMatches(x, where)).reduce((n, x) => n + x.durationSeconds, 0) } }),
+      count: async ({ where }: any) => {
+        await tick();
+        return s.sessions.filter((x) => matches(x, where)).length;
+      },
+      findFirst: async ({ where, orderBy }: any) => {
+        const dir = orderBy?.createdAt === "asc" ? 1 : -1;
+        return s.sessions.filter((x) => matches(x, where)).sort((a, b) => dir * (a.createdAt - b.createdAt))[0] ?? null;
+      },
+      aggregate: async ({ where }: any) => {
+        const mine = s.sessions.filter((x) => matches(x, where));
+        return { _sum: { durationSeconds: mine.reduce((n, x) => n + x.durationSeconds, 0) }, _max: { createdAt: mine.length ? new Date(Math.max(...mine.map((x) => x.createdAt.getTime()))) : null } };
+      },
       groupBy: async ({ where }: any) => {
         const ids: string[] = where.userId.in;
         return ids.flatMap((userId) => {
           const mine = s.sessions.filter((x) => x.userId === userId);
-          if (!mine.length) return [];
-          return [{ userId, _max: { createdAt: new Date(Math.max(...mine.map((x) => x.createdAt.getTime()))) }, _sum: { durationSeconds: mine.reduce((n, x) => n + x.durationSeconds, 0) } }];
+          return mine.length ? [{ userId, _max: { createdAt: new Date(Math.max(...mine.map((x) => x.createdAt.getTime()))) } }] : [];
         });
       },
     },
     ghlOutbox: {
-      create: async ({ data }: any) => {
-        if (s.outbox.some((r) => r.idempotencyKey === data.idempotencyKey)) throw new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "test" });
-        s.outbox.push({ ...data, seq: ++s.seq, status: "pending", attempts: 0, createdAt: new Date(s.now) });
+      createMany: async ({ data }: any) => {
+        await tick();
+        let count = 0;
+        for (const d of data) {
+          if (s.outbox.some((r) => r.idempotencyKey === d.idempotencyKey)) continue;
+          s.outbox.push({ ...d, seq: ++s.seq, status: "pending", attempts: 0, createdAt: new Date(s.now) });
+          count++;
+        }
+        return { count };
+      },
+      findMany: async ({ where }: any) => {
+        await tick();
+        return s.outbox.filter((r) => r.userId === where.userId).sort((a, b) => a.seq - b.seq);
       },
       findFirst: async ({ where }: any) => s.outbox.filter((r) => r.userId === where.userId && r.event === where.event).sort((a, b) => b.createdAt - a.createdAt)[0] ?? null,
       groupBy: async ({ where }: any) => {
@@ -60,6 +77,34 @@ vi.mock("@/lib/db", async () => {
           return mine.length ? [{ userId, _max: { createdAt: new Date(Math.max(...mine.map((r) => r.createdAt.getTime()))) } }] : [];
         });
       },
+    },
+    ghlScanCursor: {
+      findUnique: async ({ where }: any) => (s.cursors.has(where.name) ? { name: where.name, lastId: s.cursors.get(where.name) } : null),
+      upsert: async ({ where, create }: any) => void s.cursors.set(where.name, create.lastId),
+    },
+  };
+  // pg_advisory_xact_lock(hashtext(key)): FIFO mutex per key, released when the transaction ends.
+  const locks = new Map<string, Promise<void>>();
+  const prisma = {
+    ...models,
+    $transaction: async (fn: any) => {
+      const held: Array<() => void> = [];
+      const tx = {
+        ...models,
+        $executeRaw: async (_strings: any, key: string) => {
+          const prev = locks.get(key) ?? Promise.resolve();
+          let release!: () => void;
+          locks.set(key, prev.then(() => new Promise<void>((r) => (release = r))));
+          await prev;
+          held.push(release);
+          return 1;
+        },
+      };
+      try {
+        return await fn(tx);
+      } finally {
+        held.forEach((r) => r());
+      }
     },
   };
   return { prisma };
@@ -203,17 +248,31 @@ describe("per-user ordering", () => {
   });
 });
 
-describe("quiet scan pagination", () => {
+function resetDb(now: Date) {
+  h.state.now = now;
+  h.state.users = [];
+  h.state.sessions = [];
+  h.state.outbox = [];
+  h.state.cursors = new Map();
+  h.state.seq = 0;
+  h.state.slow = false;
+}
+const enableSync = () => {
+  vi.stubEnv("GHL_SYNC_ENABLED", "true");
+  vi.stubEnv("GHL_INBOUND_WEBHOOK_URL", HOOK);
+  vi.spyOn(console, "log").mockImplementation(() => {});
+};
+const quietUsers = (n: number, created = new Date("2026-11-10T00:00:00Z")) =>
+  Array.from({ length: n }, (_, i) => ({ id: `u${String(i).padStart(5, "0")}`, email: `u${i}@example.com`, firstName: "Sam", createdAt: created }));
+/** Events for a user in seq (delivery) order. */
+const eventsOf = (userId: string) => h.state.outbox.filter((r) => r.userId === userId).sort((a, b) => a.seq - b.seq).map((r) => r.event);
+const wentQuietRows = () => h.state.outbox.filter((r) => r.event === "went_quiet");
+
+describe("quiet scan advances across runs", () => {
   const now = new Date("2026-11-30T00:00:00Z");
   beforeEach(() => {
-    vi.stubEnv("GHL_SYNC_ENABLED", "true");
-    vi.stubEnv("GHL_INBOUND_WEBHOOK_URL", HOOK);
-    h.state.now = now;
-    h.state.users = [];
-    h.state.sessions = [];
-    h.state.outbox = [];
-    h.state.seq = 0;
-    vi.spyOn(console, "log").mockImplementation(() => {});
+    resetDb(now);
+    enableSync();
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -221,71 +280,130 @@ describe("quiet scan pagination", () => {
   });
 
   it("queues every candidate past one page, and a rerun queues nobody twice", async () => {
-    const total = SCAN_PAGE_SIZE * 2 + 200;
-    const created = new Date("2026-11-10T00:00:00Z"); // trial over by 11-24, so all are quiet
-    h.state.users = Array.from({ length: total }, (_, i) => ({ id: `u${String(i).padStart(5, "0")}`, email: `u${i}@example.com`, firstName: "Sam", createdAt: created }));
-
-    expect(await scanWentQuiet(now)).toBe(total);
-    expect(h.state.outbox).toHaveLength(total);
-    expect(new Set(h.state.outbox.map((r) => r.userId)).size).toBe(total);
-
+    h.state.users = quietUsers(1200);
+    expect(await scanWentQuiet(now)).toBe(1200);
+    expect(wentQuietRows()).toHaveLength(1200);
+    expect(new Set(wentQuietRows().map((r) => r.userId)).size).toBe(1200);
     expect(await scanWentQuiet(now)).toBe(0);
-    expect(h.state.outbox).toHaveLength(total);
+    expect(wentQuietRows()).toHaveLength(1200);
   });
 
-  it("keeps going when an earlier page was already processed", async () => {
-    const created = new Date("2026-11-10T00:00:00Z");
-    const total = SCAN_PAGE_SIZE + 50;
-    h.state.users = Array.from({ length: total }, (_, i) => ({ id: `u${String(i).padStart(5, "0")}`, email: `u${i}@example.com`, firstName: "Sam", createdAt: created }));
-    // The first page is already queued from an earlier run.
-    for (const u of h.state.users.slice(0, SCAN_PAGE_SIZE)) {
+  it("with a per-run page budget smaller than the backlog, successive runs cover everyone exactly once", async () => {
+    // 95 candidates, 10 per page, 3 pages per run: a run reads 30 users, so it takes 4 runs.
+    h.state.users = quietUsers(95);
+    const opts = { pageSize: 10, maxPages: 3 };
+    const perRun: number[] = [];
+    for (let run = 0; run < 4; run++) perRun.push(await scanWentQuiet(now, opts));
+    expect(perRun).toEqual([30, 30, 30, 5]);
+    expect(new Set(wentQuietRows().map((r) => r.userId)).size).toBe(95);
+    expect(wentQuietRows()).toHaveLength(95);
+    // The pass finished, so the cursor reset; a further run starts over and finds nothing new.
+    expect(h.state.cursors.get("went_quiet")).toBe("");
+    expect(await scanWentQuiet(now, opts)).toBe(0);
+  });
+
+  it("does not stall when the backlog is an exact multiple of the run budget", async () => {
+    h.state.users = quietUsers(60);
+    const opts = { pageSize: 10, maxPages: 3 };
+    expect(await scanWentQuiet(now, opts)).toBe(30);
+    expect(await scanWentQuiet(now, opts)).toBe(30);
+    expect(await scanWentQuiet(now, opts)).toBe(0);
+    // A user who goes quiet later is picked up within the next runs: the cursor wrapped, and the wrap-around
+    // pass spends part of one run's budget re-reading users that are already queued.
+    h.state.users.push(...quietUsers(61).slice(60));
+    const later = (await scanWentQuiet(now, opts)) + (await scanWentQuiet(now, opts));
+    expect(later).toBe(1);
+    expect(wentQuietRows()).toHaveLength(61);
+  });
+
+  it("keeps going past users that an earlier run already queued", async () => {
+    h.state.users = quietUsers(25);
+    for (const u of h.state.users.slice(0, 20)) {
       h.state.outbox.push({ idempotencyKey: `${u.id}:went_quiet:old`, event: "went_quiet", userId: u.id, seq: ++h.state.seq, createdAt: new Date("2026-11-29T00:00:00Z") });
     }
-    expect(await scanWentQuiet(now)).toBe(50);
+    expect(await scanWentQuiet(now, { pageSize: 10, maxPages: 5 })).toBe(5);
+  });
+
+  it("puts signup ahead of went_quiet for a user who has no signup row yet", async () => {
+    h.state.users = quietUsers(1);
+    await scanWentQuiet(now);
+    expect(eventsOf("u00000")).toEqual(["signup", "went_quiet"]);
   });
 });
 
-describe("race-safe milestones", () => {
+describe("lifecycle-ordered milestones", () => {
   const now = new Date("2026-11-05T00:00:00Z");
   beforeEach(() => {
-    vi.stubEnv("GHL_SYNC_ENABLED", "true");
-    vi.stubEnv("GHL_INBOUND_WEBHOOK_URL", HOOK);
-    h.state.now = now;
+    resetDb(now);
+    h.state.slow = true;
+    enableSync();
     h.state.users = [{ id: "u1", email: "rep@example.com", firstName: "Sam", createdAt: new Date("2026-11-04T00:00:00Z") }];
-    h.state.outbox = [];
-    h.state.seq = 0;
-    vi.spyOn(console, "log").mockImplementation(() => {});
   });
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
   const session = (id: string, at: string) => ({ id, userId: "u1", createdAt: new Date(at), overallScore: 80, durationSeconds: 300 });
-  const keys = () => h.state.outbox.map((r) => r.idempotencyKey).sort();
+  const A = session("a", "2026-11-04T10:00:00Z");
+  const B = session("b", "2026-11-04T10:00:05Z");
+  const LIFECYCLE = ["signup", "first_graded_call", "active_trial"];
 
-  it("two graded sessions saved before either callback runs still yield first_graded_call and active_trial", async () => {
-    const a = session("a", "2026-11-04T10:00:00Z");
-    const b = session("b", "2026-11-04T10:00:05Z");
-    h.state.sessions = [a, b]; // both are stored; neither callback has run yet
-    // Callbacks run in the "wrong" order, and each sees a total of 2 graded calls.
-    expect(await enqueueGradedCall("u1", b)).toBe("active_trial");
-    expect(await enqueueGradedCall("u1", a)).toBe("first_graded_call");
-    expect(keys()).toEqual(["u1:active_trial:2026-11-04", "u1:first_graded_call"]);
+  it("out-of-order callbacks still deliver signup, first_graded_call, active_trial in that order", async () => {
+    h.state.sessions = [A, B];
+    // The second call's callback runs first.
+    await enqueueGradedCall("u1", B);
+    await enqueueGradedCall("u1", A);
+    expect(eventsOf("u1")).toEqual(LIFECYCLE);
+    const first = h.state.outbox.find((r) => r.event === "first_graded_call");
+    expect(first.payload.occurredAt).toBe(A.createdAt.toISOString()); // dated by the earliest committed graded call
   });
 
-  it("breaks a createdAt tie by id", async () => {
-    const a = session("a", "2026-11-04T10:00:00Z");
-    const b = session("b", "2026-11-04T10:00:00Z");
-    h.state.sessions = [a, b];
-    expect(await enqueueGradedCall("u1", a)).toBe("first_graded_call");
-    expect(await enqueueGradedCall("u1", b)).toBe("active_trial");
+  it("concurrent first calls each get exactly one milestone, in lifecycle order", async () => {
+    h.state.sessions = [A, B];
+    const [x, y] = await Promise.all([enqueueGradedCall("u1", B), enqueueGradedCall("u1", A)]);
+    expect([x, y].sort()).toEqual(["active_trial", "first_graded_call"]);
+    expect(eventsOf("u1")).toEqual(LIFECYCLE);
+    expect(new Set(h.state.outbox.map((r) => r.idempotencyKey)).size).toBe(3);
   });
 
-  it("ungraded earlier sessions do not count", async () => {
-    const ungraded = { ...session("a", "2026-11-04T09:00:00Z"), overallScore: null };
-    const graded = session("b", "2026-11-04T10:00:00Z");
-    h.state.sessions = [ungraded, graded];
-    expect(await enqueueGradedCall("u1", graded)).toBe("first_graded_call");
+  it("an earlier session that is still uncommitted when a later one's callback runs does not lose active_trial", async () => {
+    h.state.sessions = [B]; // A has not committed yet, so B's callback cannot see it
+    expect(await enqueueGradedCall("u1", B)).toBe("first_graded_call");
+    h.state.sessions = [A, B]; // A commits; its callback runs
+    expect(await enqueueGradedCall("u1", A)).toBe("active_trial");
+    expect(eventsOf("u1")).toEqual(LIFECYCLE);
+  });
+
+  it("a third call adds nothing", async () => {
+    h.state.sessions = [A, B, session("c", "2026-11-04T11:00:00Z")];
+    await enqueueGradedCall("u1", A);
+    await enqueueGradedCall("u1", B);
+    expect(await enqueueGradedCall("u1", h.state.sessions[2])).toBeNull();
+    expect(eventsOf("u1")).toEqual(LIFECYCLE);
+  });
+
+  it("ungraded sessions do not count", async () => {
+    h.state.sessions = [{ ...session("a", "2026-11-04T09:00:00Z"), overallScore: null }, B];
+    expect(await enqueueGradedCall("u1", B)).toBe("first_graded_call");
+    expect(await enqueueGradedCall("u1", B)).toBeNull(); // only one graded call so far, so no active_trial
+  });
+
+  it("a delayed signup callback neither duplicates signup nor jumps ahead of later events", async () => {
+    h.state.sessions = [A];
+    expect(await enqueueGradedCall("u1", A)).toBe("first_graded_call"); // signup was never queued; it is created first
+    await enqueueSignup("u1"); // the late signup callback
+    expect(eventsOf("u1")).toEqual(["signup", "first_graded_call"]);
+  });
+
+  it("signup, graded callbacks and a late signup racing each other still produce one ordered lifecycle", async () => {
+    h.state.sessions = [A, B];
+    await Promise.all([enqueueGradedCall("u1", B), enqueueGradedCall("u1", A), enqueueSignup("u1")]);
+    expect(eventsOf("u1")).toEqual(LIFECYCLE);
+  });
+
+  it("upgrade after no signup row still goes out after signup", async () => {
+    await enqueueUpgrade({ userId: "u1", plan: "pro", stripeCustomerId: "cus_test" });
+    expect(eventsOf("u1")).toEqual(["signup", "upgrade"]);
   });
 });
 
