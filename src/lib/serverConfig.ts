@@ -3,9 +3,14 @@ import { safeEqual } from "./access";
 import { orderVoiceEngines, realtimeKey, realtimeModel } from "./realtime";
 import { stripeStatus } from "./stripe";
 
-/** Voice minutes are metered only for stored accounts: not in demo mode and not without a database. */
+/**
+ * Voice minutes are metered only for stored accounts (not demo mode, with a database) and only when billing
+ * is on, meaning STRIPE_SECRET_KEY is set. Without it, self-hosters are not held to the Free cap: calls mint
+ * with no reservation or limit. A key that is set but refused (a live key) still meters, so a misconfigured
+ * paid deployment fails closed instead of open.
+ */
 export function meteringEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return env.DEMO_MODE !== "true" && Boolean(env.DATABASE_URL);
+  return env.DEMO_MODE !== "true" && Boolean(env.DATABASE_URL) && stripeStatus(env) !== "disabled";
 }
 
 type Env = Record<string, string | undefined>;

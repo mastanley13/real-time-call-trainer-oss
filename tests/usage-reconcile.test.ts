@@ -48,6 +48,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(base);
   vi.stubEnv("DATABASE_URL", "postgresql://ci:ci@localhost:5432/ci");
+  vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
   vi.stubEnv("DEMO_MODE", "");
 });
 afterEach(() => {
