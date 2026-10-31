@@ -47,7 +47,8 @@ export async function POST(req: NextRequest) {
 
   // Cap check before minting (rule 11). The returned callId keys every later metering write for this call.
   // The engine is chosen here, per session: Premium until its 60% share of the minutes is used, then standard
-  // for the next session. A call already running is never switched or ended.
+  // for the next session. A running call is never switched to another engine, but a Premium call may use only the
+  // Premium minutes it reserved, so it ends when those run out (maxSeconds) and the next call starts on standard.
   let callId: string | undefined;
   let engine: VoiceEngine = "premium";
   let maxSeconds = SECRET_TTL_SEC;
