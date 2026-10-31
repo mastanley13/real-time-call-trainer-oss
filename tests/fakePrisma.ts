@@ -21,11 +21,11 @@ const UNIQUE: Record<string, string[][]> = {
 const NO_CHECKOUT = { stripeCheckoutSessionId: null, stripeCheckoutFingerprint: null, stripeCheckoutUrl: null, stripeCheckoutExpiresAt: null };
 
 const DEFAULTS: Record<string, () => Record<string, unknown>> = {
-  user: () => ({ planTier: "free", premiumVoice: false, stripeCustomerId: null, stripeSubscriptionId: null, subscriptionStatus: null, ...NO_CHECKOUT, organizationId: null, role: "trainee", isPlatformAdmin: false, createdAt: new Date(), usageAnchorAt: new Date() }),
+  user: () => ({ voiceBlockedUntil: null, planTier: "free", premiumVoice: false, stripeCustomerId: null, stripeSubscriptionId: null, subscriptionStatus: null, ...NO_CHECKOUT, organizationId: null, role: "trainee", isPlatformAdmin: false, createdAt: new Date(), usageAnchorAt: new Date() }),
   organization: () => ({ planTier: "free", seatCount: 1, premiumVoice: false, stripeCustomerId: null, stripeSubscriptionId: null, subscriptionStatus: null, ...NO_CHECKOUT, createdAt: new Date() }),
-  usageAllowance: () => ({ userId: null, organizationId: null, minutesUsed: 0, minutesReserved: 0, premiumMinutesUsed: 0, version: 0 }),
+  usageAllowance: () => ({ userId: null, organizationId: null, minutesUsed: 0, minutesReserved: 0, premiumMinutesUsed: 0, premiumMinutesReserved: 0, version: 0 }),
   usageEntry: () => ({ trainerSessionId: null, createdAt: new Date() }),
-  trainerSession: () => ({ connectedAt: null, endedAt: null, endReason: null, lastHeartbeatAt: null, degradedAt: null, billableSeconds: 0, billedMinutes: 0, durationSeconds: 0, allowanceId: null, allowancePeriodStart: null, reservedMinutes: 0, engineTier: "standard", createdAt: new Date() }),
+  trainerSession: () => ({ connectedAt: null, endedAt: null, endReason: null, lastHeartbeatAt: null, degradedAt: null, billableSeconds: 0, billedMinutes: 0, durationSeconds: 0, allowanceId: null, allowancePeriodStart: null, reservedMinutes: 0, engineTier: "standard", premiumReservedMinutes: 0, carriedMinutes: 0, carriedPremiumMinutes: 0, abuseFlagged: false, createdAt: new Date() }),
   stripeEvent: () => ({ processedAt: new Date() }),
   auditEvent: () => ({}),
 };

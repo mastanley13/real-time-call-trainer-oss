@@ -74,6 +74,9 @@ export async function POST(req: NextRequest) {
       fingerprint: checkoutFingerprint({ plan: body.plan, interval: body.interval, seats: body.seats ?? 1, premium: body.premium }),
       params,
     });
+    if (!outcome.ok && outcome.error === "checkout_completed") {
+      return NextResponse.json({ error: "checkout_completed", message: "Your earlier checkout just finished. Reload the page to see your plan before choosing another." }, { status: 409 });
+    }
     if (!outcome.ok) {
       return NextResponse.json({ error: "checkout_in_progress", message: "Another checkout for this account is being set up. Wait a moment, then try again." }, { status: 409 });
     }

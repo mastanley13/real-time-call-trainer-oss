@@ -124,9 +124,32 @@ interface PendingDelegate {
 }
 const pendingTable = (kind: CheckoutSubject["kind"]) => (kind === "user" ? prisma.user : prisma.organization) as unknown as PendingDelegate;
 
-type CheckoutApi = Pick<typeof stripeApi, "createCheckoutSession" | "expireCheckoutSession">;
+type CheckoutApi = Pick<typeof stripeApi, "createCheckoutSession" | "expireCheckoutSession" | "retrieveCheckoutSession">;
 
-export type CheckoutOutcome = { ok: true; url: string; reused: boolean } | { ok: false; error: "checkout_in_progress" };
+export type CheckoutOutcome =
+  | { ok: true; url: string; reused: boolean }
+  | { ok: false; error: "checkout_in_progress" | "checkout_completed" };
+
+/**
+ * Makes sure the previous Checkout Session can no longer be paid before a replacement exists. Expiring it
+ * is attempted first; if Stripe refuses (it is already complete, already expired, or the call failed) the
+ * session is read back. Only a confirmed "expired" lets the caller go on. A completed session is applied
+ * from its subscription right away instead of waiting for the webhook. A session that is still open, or
+ * whose state cannot be read, throws: no replacement is created while the old one might still be paid.
+ */
+async function closePrevious(id: string, api: CheckoutApi, now: Date, deps: StripeDeps): Promise<"closed" | "completed"> {
+  try {
+    await api.expireCheckoutSession(id);
+    return "closed";
+  } catch {
+    // Fall through: the session may be complete or expired already.
+  }
+  const s = SessionObject.extend({ status: z.string().nullish() }).parse(await api.retrieveCheckoutSession(id));
+  if (s.status === "expired") return "closed";
+  if (s.status !== "complete") throw new StripeApiError(502);
+  await applyCompletedCheckout(s, now, deps);
+  return "completed";
+}
 
 /**
  * One outstanding Checkout Session per billing subject. A repeat request for the same purchase gets the
@@ -137,6 +160,7 @@ export type CheckoutOutcome = { ok: true; url: string; reused: boolean } | { ok:
 export async function createOrReuseCheckout(
   input: { subject: CheckoutSubject; fingerprint: string; params: StripeParams; now?: Date },
   api: CheckoutApi = stripeApi,
+  deps: StripeDeps = liveDeps,
 ): Promise<CheckoutOutcome> {
   const now = input.now ?? new Date();
   const table = pendingTable(input.subject.kind);
@@ -146,7 +170,11 @@ export async function createOrReuseCheckout(
 
   const hasLive = !!(row.stripeCheckoutSessionId && row.stripeCheckoutUrl && row.stripeCheckoutExpiresAt && row.stripeCheckoutExpiresAt.getTime() > now.getTime());
   if (hasLive && row.stripeCheckoutFingerprint === input.fingerprint) return { ok: true, url: row.stripeCheckoutUrl!, reused: true };
-  if (hasLive) await api.expireCheckoutSession(row.stripeCheckoutSessionId!).catch(() => undefined);
+  // Any stored session may still be payable (Stripe keeps it open a little longer than we reuse it), so it
+  // is confirmed closed before a replacement is made, whatever our own expiry says.
+  if (row.stripeCheckoutSessionId && (await closePrevious(row.stripeCheckoutSessionId, api, now, deps)) === "completed") {
+    return { ok: false, error: "checkout_completed" };
+  }
 
   const expected = row.stripeCheckoutSessionId;
   const key = `checkout:${input.subject.kind}:${input.subject.id}:${input.fingerprint}:${expected ?? "none"}`;
@@ -416,8 +444,9 @@ export async function handleStripeEvent(event: StripeEventLike, now = new Date()
         case "checkout.session.async_payment_succeeded": return onCheckoutPaid(tx, event.data.object, live, now, prices, false);
         case "customer.subscription.updated": return onSubscriptionChanged(tx, event.data.object, live, now, prices);
         case "customer.subscription.deleted": return onSubscriptionDeleted(tx, event.data.object, now);
+        // A failed delayed payment grants nothing; the session is cleared so the account can start a new checkout.
+        case "checkout.session.async_payment_failed":
         case "checkout.session.expired": return onCheckoutExpired(tx, event.data.object);
-        // async_payment_failed grants nothing and there is nothing to undo: the subscription never became active.
         default: return null;
       }
     });
@@ -426,9 +455,24 @@ export async function handleStripeEvent(event: StripeEventLike, now = new Date()
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return "duplicate";
     throw e;
   }
+  await afterApplied(applied, deps);
+  return applied ? "processed" : "ignored";
+}
+
+/** The work that must wait until the transaction has committed: dropping a duplicate subscription, then the lifecycle event. */
+async function afterApplied(applied: Applied | null, deps: StripeDeps): Promise<void> {
   if (applied?.cancelSubscriptionId) {
     await deps.cancelSubscription(applied.cancelSubscriptionId).catch((e) => console.error("[stripe] duplicate subscription cancel failed", e instanceof StripeApiError ? `status ${e.status}` : "error"));
   }
   if (applied?.event) await emitBillingLifecycle(applied.event);
-  return applied ? "processed" : "ignored";
+}
+
+/**
+ * Applies a completed Checkout Session without waiting for its webhook. Reconciliation depends only on the
+ * subscription as Stripe has it now, so running it again when the webhook arrives changes nothing.
+ */
+async function applyCompletedCheckout(session: z.infer<typeof SessionObject>, now: Date, deps: StripeDeps, prices: PriceIds = priceIds()): Promise<void> {
+  const live = await fetchLive(session.subscription ?? null, deps);
+  const applied = await prisma.$transaction((tx) => onCheckoutPaid(tx, session, live, now, prices, true));
+  await afterApplied(applied, deps);
 }

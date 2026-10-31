@@ -672,6 +672,76 @@ describe("one outstanding Checkout Session per billing subject", () => {
     expect(expired).not.toContain(recorded);
   });
 
+  describe("replacing a session needs the old one confirmed closed", () => {
+    const failExpire = (status = 400) => vi.spyOn(stripeApi, "expireCheckoutSession").mockImplementation(async (id) => { expired.push(id); throw new StripeApiError(status); });
+    const doc = (o: Record<string, unknown>) => ({ id: "cs_test_1", mode: "subscription", customer: "cus_test_1", metadata: { plan: "pro", userId: "owner-1" }, ...o });
+
+    it("an old session that is still open after a failed expire blocks the replacement", async () => {
+      await post({ plan: "pro", interval: "month" });
+      failExpire(500);
+      vi.spyOn(stripeApi, "retrieveCheckoutSession").mockResolvedValue(doc({ status: "open" }));
+      const res = await post({ plan: "pro", interval: "year" });
+      expect(res.status).toBe(502);
+      expect(created).toHaveLength(1);
+      expect(user().stripeCheckoutSessionId).toBe("cs_test_1");
+    });
+
+    it("an old session whose state cannot be read blocks the replacement", async () => {
+      await post({ plan: "pro", interval: "month" });
+      failExpire(500);
+      vi.spyOn(stripeApi, "retrieveCheckoutSession").mockRejectedValue(new StripeApiError(503));
+      expect((await post({ plan: "pro", interval: "year" })).status).toBe(502);
+      expect(created).toHaveLength(1);
+    });
+
+    it("a session Stripe reports as expired (so expiring it again fails) is replaced", async () => {
+      await post({ plan: "pro", interval: "month" });
+      failExpire(400);
+      vi.spyOn(stripeApi, "retrieveCheckoutSession").mockResolvedValue(doc({ status: "expired" }));
+      const res = await post({ plan: "pro", interval: "year" });
+      expect(res.status).toBe(200);
+      expect(created).toHaveLength(2);
+      expect(user().stripeCheckoutSessionId).toBe("cs_test_2");
+    });
+
+    it("a session that completed before its webhook arrived is applied, and no replacement is created", async () => {
+      await post({ plan: "pro", interval: "month" });
+      failExpire(400);
+      vi.spyOn(stripeApi, "retrieveCheckoutSession").mockResolvedValue(doc({ status: "complete", payment_status: "paid", subscription: "sub_test_9" }));
+      liveSub({ id: "sub_test_9", pro: true, metadata: { userId: "owner-1" } });
+      const res = await post({ plan: "pro", interval: "year" });
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toBe("checkout_completed");
+      expect(created).toHaveLength(1);
+      expect(user()).toMatchObject({ planTier: "pro", stripeSubscriptionId: "sub_test_9", stripeCheckoutSessionId: null });
+      // The webhook for the same checkout arrives later and changes nothing.
+      await deliverRaw(event("checkout.session.completed", doc({ subscription: "sub_test_9", payment_status: "paid" })));
+      expect(user()).toMatchObject({ planTier: "pro", stripeSubscriptionId: "sub_test_9" });
+      expect(cancelSpy).not.toHaveBeenCalled();
+    });
+
+    it("a completed session whose payment is still pending keeps blocking, and a failed payment frees the account", async () => {
+      await post({ plan: "pro", interval: "month" });
+      failExpire(400);
+      vi.spyOn(stripeApi, "retrieveCheckoutSession").mockResolvedValue(doc({ status: "complete", payment_status: "unpaid", subscription: "sub_test_9" }));
+      liveSub({ id: "sub_test_9", status: "incomplete", pro: true, metadata: { userId: "owner-1" } });
+      expect((await post({ plan: "pro", interval: "year" })).status).toBe(409);
+      expect(created).toHaveLength(1);
+      expect(user()).toMatchObject({ planTier: "free", stripeCheckoutSessionId: "cs_test_1" });
+      await deliverRaw(event("checkout.session.async_payment_failed", { id: "cs_test_1", mode: "subscription" }));
+      expect(user().stripeCheckoutSessionId).toBeNull();
+    });
+
+    it("a stored session past our own 23 hour window is still confirmed closed first", async () => {
+      await post({ plan: "pro", interval: "month" });
+      user().stripeCheckoutExpiresAt = new Date(Date.now() - 1000);
+      failExpire(500);
+      vi.spyOn(stripeApi, "retrieveCheckoutSession").mockResolvedValue(doc({ status: "open" }));
+      expect((await post({ plan: "pro", interval: "month" })).status).toBe(502);
+      expect(created).toHaveLength(1);
+    });
+  });
+
   it("Team is tracked on the organization, separately from the owner's own Pro checkout", async () => {
     await post({ plan: "pro", interval: "month" });
     await post({ plan: "team", interval: "month", seats: 3 });

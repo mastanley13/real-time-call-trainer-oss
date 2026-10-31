@@ -167,3 +167,26 @@ export function nextAnchorUnix(anchorAt: Date, now: Date): number | null {
   const secs = Math.floor(end.getTime() / 1000);
   return secs - Math.floor(now.getTime() / 1000) >= 3600 ? secs : null;
 }
+
+// ---- Period boundary and overrun ----------------------------------------------------------
+
+/** A client still reporting this long after its reservation ran out is flagged (the provider session is not ours to end). */
+export const OVERRUN_GRACE_SECONDS = 60;
+/** How long a flagged user cannot mint a new voice call. */
+export const VOICE_BLOCK_SECONDS = 10 * 60;
+
+/**
+ * Splits a call's billed minutes between the period it started in and the next one. The part before the
+ * boundary is rounded up on its own and the rest takes what is left, so the total never changes.
+ */
+export function splitAcrossBoundary(input: { startMs: number; billableSeconds: number; boundaryMs: number; grossMinutes: number }): { oldMinutes: number; newMinutes: number; oldSeconds: number } {
+  const oldSeconds = Math.min(input.billableSeconds, Math.max(0, Math.floor((input.boundaryMs - input.startMs) / 1000)));
+  const oldMinutes = Math.min(input.grossMinutes, billedMinutes(oldSeconds));
+  return { oldMinutes, newMinutes: input.grossMinutes - oldMinutes, oldSeconds };
+}
+
+/** The most minutes a call that is still open can use after `boundaryMs`: it may run until its start plus its reservation. */
+export function maxMinutesAfter(input: { startMs: number; reservedMinutes: number; boundaryMs: number }): number {
+  const endMs = input.startMs + Math.min(input.reservedMinutes * 60, MAX_CALL_SECONDS) * 1000;
+  return Math.min(input.reservedMinutes, billedMinutes(Math.max(0, Math.ceil((endMs - input.boundaryMs) / 1000))));
+}

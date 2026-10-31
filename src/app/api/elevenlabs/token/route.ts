@@ -3,7 +3,7 @@ import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, ipLimitResponse } from "@/lib/rateLimit";
 import { elevenLabsAgentFor, meteringEnabled } from "@/lib/serverConfig";
 import { beginCall, endCall } from "@/lib/usage";
-import { capReached, minutesReserved } from "@/lib/usageResponses";
+import { capReached, minutesReserved, standardVoiceUnavailable, voiceBlocked } from "@/lib/usageResponses";
 
 /**
  * Mints a short-lived WebRTC conversation token for the configured
@@ -45,6 +45,8 @@ export async function GET(req: NextRequest) {
     );
     if (!begun.ok && begun.error === "cap_reached") return capReached();
     if (!begun.ok && begun.error === "minutes_reserved") return minutesReserved();
+    if (!begun.ok && begun.error === "voice_blocked") return voiceBlocked(begun.retryAfterSeconds);
+    if (!begun.ok && begun.error === "standard_unavailable") return standardVoiceUnavailable();
     if (begun.ok) {
       callId = begun.callId;
       maxSeconds = begun.maxSeconds;

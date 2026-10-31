@@ -59,12 +59,18 @@ afterEach(() => {
 
 describe("Premium voice limit", () => {
   it("chooseEngine: premium needs the add-on and stays premium below 60% of the plan's minutes", () => {
-    const a = (used: number, cap = 200) => ({ minutesCap: cap, premiumMinutesUsed: used });
-    expect(chooseEngine({ premiumVoice: true, allowance: a(0) })).toBe("premium");
-    expect(chooseEngine({ premiumVoice: true, allowance: a(119) })).toBe("premium");
-    expect(chooseEngine({ premiumVoice: true, allowance: a(120) })).toBe("standard");
-    expect(chooseEngine({ premiumVoice: true, allowance: a(900, 900) })).toBe("standard");
-    expect(chooseEngine({ premiumVoice: false, allowance: a(0) })).toBe("standard");
+    const a = (used: number, cap = 200, reserved = 0) => ({ minutesCap: cap, premiumMinutesUsed: used, premiumMinutesReserved: reserved });
+    expect(chooseEngine({ premiumVoice: true, allowance: a(0) }, 60)).toEqual({ engine: "premium", premiumMinutes: 60 });
+    expect(chooseEngine({ premiumVoice: true, allowance: a(119) }, 60)).toEqual({ engine: "premium", premiumMinutes: 1 });
+    expect(chooseEngine({ premiumVoice: true, allowance: a(120) }, 60).engine).toBe("standard");
+    expect(chooseEngine({ premiumVoice: true, allowance: a(900, 900) }, 60).engine).toBe("standard");
+    expect(chooseEngine({ premiumVoice: false, allowance: a(0) }, 60).engine).toBe("standard");
+  });
+
+  it("chooseEngine: Premium minutes held by open calls count against the limit", () => {
+    const a = (used: number, reserved: number) => ({ minutesCap: 200, premiumMinutesUsed: used, premiumMinutesReserved: reserved });
+    expect(chooseEngine({ premiumVoice: true, allowance: a(50, 60) }, 60)).toEqual({ engine: "premium", premiumMinutes: 10 });
+    expect(chooseEngine({ premiumVoice: true, allowance: a(60, 60) }, 60).engine).toBe("standard");
   });
 
   it("the model and agent each engine maps to", () => {
@@ -106,7 +112,8 @@ describe("Premium voice limit", () => {
         expect(r).toMatchObject({ found: true, stop: false }); // never ended for crossing the Premium limit
       }
       await endCall("u-1", first.callId, "user_hangup", at(300));
-      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 5, premiumMinutesUsed: 124, minutesReserved: 0 });
+      // The call held 1 Premium minute, so only that one books as Premium; the other 4 book as standard.
+      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 5, premiumMinutesUsed: 120, premiumMinutesReserved: 0, minutesReserved: 0 });
 
       vi.setSystemTime(at(310));
       const second = await (await mint()).json();
@@ -115,7 +122,7 @@ describe("Premium voice limit", () => {
       await heartbeat("u-1", second.callId, "connected", at(310));
       await endCall("u-1", second.callId, "user_hangup", at(310 + 180));
       // Standard minutes count against the plan but not against the Premium share.
-      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 8, premiumMinutesUsed: 124 });
+      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 8, premiumMinutesUsed: 120 });
       expect(session(first.callId).engineTier).toBe("premium");
       expect(session(second.callId).engineTier).toBe("standard");
     });
@@ -174,11 +181,29 @@ describe("Premium voice limit", () => {
       expect(session(b.callId).engineTier).toBe("standard");
     });
 
-    it("with no standard agent configured the call runs on the main agent and is counted as premium", async () => {
-      addUser("u-1", { planTier: "pro", premiumVoice: false });
+    it("with no standard agent configured, a Premium-entitled call runs on the main agent as premium", async () => {
+      addUser("u-1", { planTier: "pro", premiumVoice: true });
       const a = await (await mint()).json();
       expect(urls[0]).toContain("agent_id=agent-main");
       expect(session(a.callId).engineTier).toBe("premium");
+    });
+
+    it("with no standard agent configured, a user without Premium is refused instead of getting the Premium agent", async () => {
+      addUser("u-1", { planTier: "pro", premiumVoice: false });
+      const res = await mint();
+      expect(res.status).toBe(503);
+      expect((await res.json()).error).toBe("standard_voice_not_configured");
+      expect(urls).toHaveLength(0);
+      expect(fake.rows("trainerSession")).toHaveLength(0);
+      expect(allowanceOf("u-1")).toMatchObject({ minutesReserved: 0, premiumMinutesReserved: 0 });
+    });
+
+    it("with no standard agent configured, an exhausted Premium share is refused too, not overridden", async () => {
+      addUser("u-1", { planTier: "pro", premiumVoice: true });
+      await ensureAllowance(fake.db as never, { userId: "u-1" }, base);
+      allowanceOf("u-1").premiumMinutesUsed = 120;
+      expect((await mint()).status).toBe(503);
+      expect(urls).toHaveLength(0);
     });
   });
 });
@@ -395,9 +420,12 @@ describe("a call is charged to the allowance and period it started in", () => {
     if (!c.ok) throw new Error(c.error);
     await heartbeat("u-1", c.callId, "connected", utc("10-10T11:59:00"));
     const result = await endCall("u-1", c.callId, "user_hangup", utc("10-10T12:03:00"));
-    // 4 minutes on the clock: 1 before the reset (not charged now), 3 after.
-    expect(result).toMatchObject({ billableSeconds: 180, billedMinutes: 3 });
+    // 4 minutes on the clock: 1 before the reset (ledger only, that period's counters are gone), 3 after.
+    expect(result).toMatchObject({ billableSeconds: 240, billedMinutes: 4 });
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 3, minutesReserved: 0 });
+    const entries = fake.rows("usageEntry").map((e) => `${e.kind}:${e.minutes}`).sort();
+    expect(entries).toEqual(["voice_call:3", "voice_call_prior:1"]);
+    expect((fake.rows("usageEntry").find((e) => e.kind === "voice_call_prior")!.createdAt as Date).getTime()).toBeLessThan(utc("10-10T12:00:00").getTime());
     expect((allowanceOf("u-1").periodStart as Date).toISOString()).toBe("2026-10-10T12:00:00.000Z");
   });
 
@@ -407,14 +435,16 @@ describe("a call is charged to the allowance and period it started in", () => {
     if (!a.ok) throw new Error(a.error);
     await heartbeat("u-1", a.callId, "connected", utc("10-10T11:59:00"));
     await heartbeat("u-1", a.callId, "ok", utc("10-10T12:00:50"));
-    // After the reset a new call reserves the whole new allowance.
+    // The rollover reserves what the open call can still use in the new period (19 of its 20 minutes), so
+    // the new call can only take the 1 minute that is left.
     const b = await beginCall("u-1", scn, utc("10-10T12:01:00"));
     if (!b.ok) throw new Error(b.error);
-    expect(allowanceOf("u-1").minutesReserved).toBe(20);
+    expect(session(a.callId).carriedMinutes).toBe(19);
+    expect(allowanceOf("u-1")).toMatchObject({ minutesReserved: 20 });
+    expect(b.maxSeconds).toBe(60);
     await endCall("u-1", a.callId, "user_hangup", utc("10-10T12:01:30"));
-    // The old call's reservation belonged to the old period, so the new call's 20 are still held, and the
-    // old call is not charged minutes the new period has already handed to someone else.
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 20 });
+    // 150 s: 1 minute before the reset, 2 after. The old call gives back its carry and the new call keeps its own.
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 2, minutesReserved: 1 });
     expect(allowanceOf("u-1").minutesUsed as number + (allowanceOf("u-1").minutesReserved as number)).toBeLessThanOrEqual(allowanceOf("u-1").minutesCap as number);
   });
 

@@ -5,7 +5,7 @@ import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { meteringEnabled, realtimeModelFor } from "@/lib/serverConfig";
 import { beginCall, endCall, type VoiceEngine } from "@/lib/usage";
-import { capReached, minutesReserved } from "@/lib/usageResponses";
+import { capReached, minutesReserved, voiceBlocked } from "@/lib/usageResponses";
 import { realtimeKey, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
 
 const Body = z.object({ scenario: ScenarioSchema });
@@ -55,6 +55,7 @@ export async function POST(req: NextRequest) {
     const begun = await beginCall(auth.id, scenario);
     if (!begun.ok && begun.error === "cap_reached") return capReached();
     if (!begun.ok && begun.error === "minutes_reserved") return minutesReserved();
+    if (!begun.ok && begun.error === "voice_blocked") return voiceBlocked(begun.retryAfterSeconds);
     if (begun.ok) {
       callId = begun.callId;
       engine = begun.engine;

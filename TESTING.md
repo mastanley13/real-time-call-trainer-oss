@@ -212,3 +212,21 @@ done                              # 200, 200, 429
 node -e 'process.stdout.write(JSON.stringify({ url: "x".repeat(250000) }))' |
   curl -s -i -X POST localhost:3000/api/persona/fetch-url -H "content-type: application/json" --data-binary @-
 ```
+
+## Voice minute metering: limits and residual risk
+
+Full mode with `DATABASE_URL` only. `npx vitest run tests/usage-hardening.test.ts tests/usage-reconcile.test.ts` covers everything below without a database.
+
+- **Reservations.** A call reserves its minutes (up to 60) when it is minted, and that is its maximum billable length. Open calls reserve Premium minutes too, so concurrent calls cannot all pick Premium. A Premium call is never ended at the 60% limit; minutes past the Premium share it holds are booked as standard.
+- **A period reset mid-call.** The call's length is shared out between the old and the new period. The old part goes to the ledger as `voice_call_prior` and the new part to the current period, which holds the minutes for it from the moment of the reset.
+- **No standard engine.** With `ELEVENLABS_AGENT_ID_STANDARD` unset, only accounts with Premium Voice and Premium minutes left can start an ElevenLabs call. Everyone else gets 503 `standard_voice_not_configured`. Set the standard agent to serve them.
+
+**Residual risk: a running provider session is not ended by the server.** Neither OpenAI Realtime nor ElevenLabs is asked to end a live session from here. Both connect straight from the browser, and the ephemeral secret and token are only checked while the session is set up. I did not find a server-side termination call in either integration, and I did not confirm against the providers' current docs whether one exists. A modified client can therefore keep a session open after the server has stopped billing it, and the provider's own usage (not ours) is what grows. What is in place:
+
+1. Billing is clamped to the reservation, so the user is never charged for more than they reserved.
+2. A call is marked `abuseFlagged` and an `usage.abuse_flagged` audit event is written when the server sees it outlive its reservation: the client keeps sending heartbeats more than 60 seconds after a `cap_reached` or `max_duration` stop, or reports the end more than 60 seconds after the reservation ran out.
+3. A flagged user gets 429 `voice_blocked` with `Retry-After` from both mint routes for 10 minutes.
+
+What this does not cover: a client that goes silent (no heartbeats, no end event) while the provider session stays open looks the same as a closed tab, so it is billed to the reservation but not flagged. Compare the provider's usage dashboard with the ledger if you see unexplained spend, and treat a provider-side session limit or sideband hang-up as the real fix.
+
+To check by hand: start a call, stop it from the server side by waiting out the reservation (lower `MAX_RESERVE_MINUTES` locally), keep heartbeating for more than a minute, and the next `/api/realtime/session` answers 429 `voice_blocked`.

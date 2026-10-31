@@ -97,6 +97,8 @@ model User {
   stripeCheckoutFingerprint String?
   stripeCheckoutUrl         String?
   stripeCheckoutExpiresAt   DateTime?
+  /// Set when a call ran past its reservation; no voice call is minted for this user until then.
+  voiceBlockedUntil         DateTime?
   /// Monthly usage reset anchor for all plans. Defaults to signup time and never moves.
   usageAnchorAt    DateTime @default(now())
   createdAt        DateTime @default(now())
@@ -148,6 +150,13 @@ model TrainerSession {
   reservedMinutes    Int      @default(0)
   /// Voice engine the session was minted for: "premium" or "standard".
   engineTier         String   @default("standard")
+  /// Of reservedMinutes, how many were also held against the Premium limit. Minutes beyond this book as standard.
+  premiumReservedMinutes Int  @default(0)
+  /// What this open call holds in the NEXT period when the period rolled over mid-call (set by the rollover).
+  carriedMinutes     Int      @default(0)
+  carriedPremiumMinutes Int   @default(0)
+  /// Set when the server saw the call run past its reservation (see usage.ts, flagOverrun).
+  abuseFlagged       Boolean  @default(false)
   usageEntries       UsageEntry[]
   /// Raw transcript turns.
   transcript         Json
@@ -197,6 +206,8 @@ model UsageAllowance {
   minutesReserved Int     @default(0)
   /// Net minutes this period that ran on the premium voice engine (the 60% Premium limit counts these).
   premiumMinutesUsed Int  @default(0)
+  /// Premium minutes held by open calls. Premium is only chosen for a call while used + reserved is under the limit.
+  premiumMinutesReserved Int @default(0)
   /// Compare-and-swap counter: a reservation only lands if nobody changed the row since it was read.
   version        Int      @default(0)
   updatedAt      DateTime @updatedAt
@@ -222,6 +233,8 @@ model UsageEntry {
 
 enum UsageKind {
   voice_call
+  /// The part of a call that ran in a period that has since ended (net of any drop credit).
+  voice_call_prior
   credit_drop
   credit_manual
 }

@@ -99,6 +99,8 @@ export const stripeApi = {
   /** The idempotency key makes two identical in-flight requests return the same Checkout Session. */
   createCheckoutSession: (params: StripeParams, idempotencyKey?: string) => request<{ id: string; url: string | null }>("POST", "checkout/sessions", params, idempotencyKey),
   expireCheckoutSession: (id: string) => request<{ id: string }>("POST", `checkout/sessions/${seg(id)}/expire`),
+  /** The session as Stripe has it now: status is open, complete or expired. */
+  retrieveCheckoutSession: (id: string) => request<unknown>("GET", `checkout/sessions/${seg(id)}`),
   createPortalSession: (params: StripeParams) => request<{ url: string }>("POST", "billing_portal/sessions", params),
   /** The subscription as Stripe has it now. Webhook payloads are snapshots and can arrive out of order. */
   retrieveSubscription: (id: string) => request<unknown>("GET", `subscriptions/${seg(id)}`),
