@@ -15,6 +15,7 @@ type MeResponse = {
     mfaEnabled: boolean;
     mfaEnrolledAt: string | null;
   };
+  mfa?: { state: string; requiredByOrg: boolean; graceEndsAt: string | null };
 };
 
 type EnrollResponse = {
@@ -26,10 +27,11 @@ type EnrollResponse = {
 
 export default function SecuritySettingsPage() {
   const router = useRouter();
-  const { isAuthenticated, isLoading, capabilities } = useAuth();
+  const { isAuthenticated, isLoading, capabilities, applySession, user: sessionUser } = useAuth();
   // Demo mode and database-free installs have no stored account, so there is nothing to protect with MFA.
   const noAccount = !!capabilities && (capabilities.demoMode || !capabilities.database);
   const [me, setMe] = useState<MeResponse["user"] | null>(null);
+  const [orgRequires, setOrgRequires] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [enroll, setEnroll] = useState<EnrollResponse | null>(null);
   const [qrDataUri, setQrDataUri] = useState<string | null>(null);
@@ -45,6 +47,7 @@ export default function SecuritySettingsPage() {
       if (!r.ok) throw new Error(String(r.status));
       const data: MeResponse = await r.json();
       setMe(data.user);
+      setOrgRequires(!!data.mfa?.requiredByOrg);
     } catch {
       setLoadFailed(true);
     }
@@ -93,7 +96,10 @@ export default function SecuritySettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
       });
-      if (!r.ok) throw new Error((await r.json()).error || "Invalid code");
+      const result = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(result.error || "Invalid code");
+      // Enrollment-only sessions get a full one back; keep it so the rest of the app opens up.
+      if (result.user && result.token) applySession(result.user, result.token);
       setEnroll(null);
       setCode("");
       setNotice("MFA is now enabled on this account.");
@@ -115,7 +121,10 @@ export default function SecuritySettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
       });
-      if (!r.ok) throw new Error((await r.json()).error || "Invalid code");
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.message || err.error || "Invalid code");
+      }
       setCode("");
       setNotice("MFA disabled.");
       await loadMe();
@@ -177,6 +186,11 @@ export default function SecuritySettingsPage() {
           </p>
         </header>
 
+        {sessionUser?.mfaEnrollment && (
+          <div role="status" className="banner-warn mb-4">
+            Your organization requires multi-factor authentication. Set it up below to keep practising. Until then you can only use this page or sign out.
+          </div>
+        )}
         {error && (
           // Ink text on alert-soft: alert-colored text measures under 4.5:1 here.
           <div role="alert" className="mb-4 rounded-lg border border-alert/40 bg-alert-soft text-ink px-3 py-2 text-sm flex items-start gap-2">
@@ -205,9 +219,9 @@ export default function SecuritySettingsPage() {
                 {me.mfaEnrolledAt
                   ? new Date(me.mfaEnrolledAt).toLocaleString()
                   : ""}
-                . To disable MFA, enter a current authenticator code below.
+                {orgRequires ? ". Your organization requires MFA, so it can't be turned off here. Ask a manager if you lose your device." : ". To disable MFA, enter a current authenticator code below."}
               </p>
-              <div className="flex items-end gap-2">
+              {!orgRequires && <div className="flex items-end gap-2">
                 <div className="flex-1">
                   <label htmlFor="mfa-disable-code" className="label">
                     Authenticator code
@@ -234,7 +248,7 @@ export default function SecuritySettingsPage() {
                 >
                   <ShieldOff size={16} strokeWidth={1.75} aria-hidden /> Disable MFA
                 </button>
-              </div>
+              </div>}
             </>
           ) : enroll ? (
             <>

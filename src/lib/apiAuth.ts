@@ -11,11 +11,12 @@ function extractToken(req: NextRequest): string | null {
 }
 
 /**
- * Returns the authenticated user, or a 401 response. With DEMO_MODE=true the
+ * Returns the authenticated user, or a 401 response (403 for a limited
+ * enrollment-only session unless the route passes allowMfaEnrollment). With DEMO_MODE=true the
  * login requirement is skipped and a fixed demo user is returned (local UI
  * testing only; never enable on a public deployment).
  */
-export function requireAuth(req: NextRequest): SessionUser | NextResponse {
+export function requireAuth(req: NextRequest, opts: { allowMfaEnrollment?: boolean } = {}): SessionUser | NextResponse {
   if (getCapabilities().demoMode) return { ...DEMO_USER };
   const token = extractToken(req);
   if (!token) {
@@ -24,6 +25,13 @@ export function requireAuth(req: NextRequest): SessionUser | NextResponse {
   const user = verifySessionToken(token);
   if (!user) {
     return NextResponse.json({ error: "Invalid or expired session" }, { status: 401 });
+  }
+  // The org requires MFA and this user has not enrolled: only the enrollment routes accept the session.
+  if (user.mfaEnrollment && !opts.allowMfaEnrollment) {
+    return NextResponse.json(
+      { error: "mfa_enrollment_required", message: "Your organization requires multi-factor authentication. Set it up in Settings, Security to continue." },
+      { status: 403 },
+    );
   }
   return user;
 }

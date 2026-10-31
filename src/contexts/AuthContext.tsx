@@ -27,6 +27,8 @@ export interface User {
   role?: "trainee" | "manager" | "owner" | "admin";
   /** Set by the login, MFA and register routes. Display only; the server checks it again on every request. */
   isPlatformAdmin?: boolean;
+  /** The org requires MFA and this user has not enrolled: the server only accepts enrollment requests. */
+  mfaEnrollment?: boolean;
 }
 
 export interface Capabilities {
@@ -59,6 +61,10 @@ interface AuthContextType {
   ) => Promise<void>;
   register: (formData: RegisterFormData) => Promise<void>;
   logout: () => void;
+  /** Swap in a fresh session, e.g. the full one returned when enrollment completes. */
+  applySession: (user: User, token: string) => void;
+  /** Flip the enrollment-only flag when the server reports a change (enforcement turned on, or a reset). */
+  setMfaEnrollment: (on: boolean) => void;
   isLoading: boolean;
   isAuthenticated: boolean;
   capabilities: Capabilities | null;
@@ -237,10 +243,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     setIsLoading(false);
   };
 
+  const setMfaEnrollment = (on: boolean) => {
+    setUser((u) => {
+      if (!u || !!u.mfaEnrollment === on) return u;
+      const next = { ...u, mfaEnrollment: on || undefined };
+      try { localStorage.setItem("userData", JSON.stringify(next)); } catch { /* storage blocked */ }
+      return next;
+    });
+  };
+
   return (
     <AuthContext.Provider
       value={{
         user,
+        applySession: persistSession,
+        setMfaEnrollment,
         login,
         completeMfaChallenge,
         register,

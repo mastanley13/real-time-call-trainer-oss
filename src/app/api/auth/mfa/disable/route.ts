@@ -32,11 +32,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid code" }, { status: 400 });
   }
 
-  const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
+  const dbUser = await prisma.user.findUnique({
+    where: { id: user.id },
+    include: { organization: { select: { requireMfa: true } } },
+  });
   if (!dbUser?.mfaEnabled || !dbUser.mfaSecret) {
     return NextResponse.json(
       { error: "MFA is not enabled on this account." },
       { status: 400 },
+    );
+  }
+  if (dbUser.organization?.requireMfa) {
+    return NextResponse.json(
+      {
+        error: "mfa_required_by_org",
+        message: "Your organization requires MFA, so it can't be turned off. Ask a manager if you need a reset.",
+      },
+      { status: 403 },
     );
   }
   if (!verifyTotp(dbUser.mfaSecret, body.code)) {

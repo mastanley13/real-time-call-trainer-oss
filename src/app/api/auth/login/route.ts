@@ -8,6 +8,7 @@ import {
 } from "@/lib/auth";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
+import { mfaStateFor } from "@/lib/mfaPolicy";
 
 const LoginSchema = z.object({
   email: z.string().email().max(254),
@@ -139,6 +140,12 @@ export async function POST(request: NextRequest) {
     firstName: user.firstName ?? undefined,
     lastName: user.lastName ?? undefined,
     role: user.role as "trainee" | "manager" | "owner",
+    // The org requires MFA and this user has none (grace over): a session that only reaches enrollment.
+    ...(mfaStateFor({
+      requireMfa: user.organization?.requireMfa ?? false,
+      mfaGraceEndsAt: user.organization?.mfaGraceEndsAt ?? null,
+      mfaEnabled: user.mfaEnabled,
+    }) === "enroll_required" ? { mfaEnrollment: true } : {}),
   };
 
   const token = signSessionToken(sessionUser);

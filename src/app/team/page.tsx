@@ -12,6 +12,7 @@ import CriterionHeatmap from "@/components/team/CriterionHeatmap";
 import RosterTable from "@/components/team/RosterTable";
 import AssignmentsPanel from "@/components/team/AssignmentsPanel";
 import AssignSheet from "@/components/team/AssignSheet";
+import MfaPanel from "@/components/team/MfaPanel";
 import { localTeamViews } from "@/components/team/localAssignments";
 import { useAuth } from "@/contexts/AuthContext";
 import { archiveLocalAssignment, ASSIGNMENTS_CHANGED, localNoteIds } from "@/lib/assignmentStore";
@@ -230,6 +231,8 @@ export default function TeamPage() {
         </div>
         <RosterTable rows={data.roster} days={data.days} viewerId={viewer.id} onAssign={(id) => setSheet({ assigneeId: id })} />
       </section>
+
+      {!local && !data.sample && <MfaPanel viewerId={viewer.id} />}
 
       {sheet && (
         <AssignSheet members={data.members} viewer={viewer} defaultAssigneeId={sheet.assigneeId} local={local}
