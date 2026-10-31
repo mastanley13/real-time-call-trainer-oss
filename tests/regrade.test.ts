@@ -47,7 +47,7 @@ const llmReply = () =>
   });
 const promptOf = (call = 0) => mocks.chat.mock.calls[call][0][1].content as string;
 
-const ENV_KEYS = ["LLM_API_KEY", "OPENAI_API_KEY", "LLM_MODEL", "LLM_BASE_URL", "DATABASE_URL", "DEMO_MODE", "JWT_SECRET", "RATE_LIMIT_GRADING_MAX"] as const;
+const ENV_KEYS = ["LLM_API_KEY", "OPENAI_API_KEY", "LLM_MODEL", "LLM_BASE_URL", "DATABASE_URL", "DEMO_MODE", "JWT_SECRET", "RATE_LIMIT_GRADING_MAX", "PAID_FEATURES_ENABLED", "DAILY_REALTIME_MINUTES_CAP"] as const;
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 let n = 0;
 /** Signs in a fresh user per call so the per-user limits never leak between tests. */
@@ -147,6 +147,20 @@ describe("PATCH /api/transcripts/[id] (server re-grade)", () => {
     expect(promptOf()).toContain("Turn 240.");
     expect(promptOf()).not.toContain("Turn 241.");
     expect(row.evaluation).toMatchObject({ note });
+  });
+
+  it.each([
+    ["PAID_FEATURES_ENABLED", "false", "paid_features_off"],
+    ["DAILY_REALTIME_MINUTES_CAP", "0", "daily_cap_reached"],
+  ])("answers 503 with %s=%s before reading the session or calling the model", async (name, value, error) => {
+    actAs("manager", "org-1");
+    process.env[name] = value;
+    const res = await patch();
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toBe(error);
+    expect(mocks.chat).not.toHaveBeenCalled();
+    expect(mocks.prisma.trainerSession.findUnique).not.toHaveBeenCalled();
+    expect(row.evaluation).toEqual(AI_GRADE);
   });
 
   it("grades a 300-turn call that fits the limits whole, with no cap note", async () => {

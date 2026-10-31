@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/apiAuth";
 import { ipLimitResponse, readJsonLimited, userLimitResponse } from "@/lib/rateLimit";
 import { WizardInputSchema } from "@/lib/wizard-types";
 import { generatePersona } from "@/lib/personaWizard";
+import { paidFeaturesGuard } from "@/lib/spendGuard";
 
 /**
  * AI persona wizard: WizardInput (chips, product line, up to 5 contexts) ->
@@ -13,6 +14,8 @@ import { generatePersona } from "@/lib/personaWizard";
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
+  const paused = paidFeaturesGuard();
+  if (paused) return paused;
   const ipLimited = ipLimitResponse(req, "wizard");
   if (ipLimited) return ipLimited;
   const userLimited = userLimitResponse(auth.id, "wizard");

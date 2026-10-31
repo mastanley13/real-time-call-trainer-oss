@@ -6,6 +6,7 @@ import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { chatFull } from "@/lib/llm";
 import { scriptedReply } from "@/lib/scriptedCaller";
 import { llmKey } from "@/lib/serverConfig";
+import { paidFeaturesAvailable } from "@/lib/spendGuard";
 
 const Body = z.object({
   scenario: ScenarioSchema,
@@ -36,7 +37,7 @@ function mergeTurns(h: { role: "user" | "assistant"; text: string }[]) {
 
 /**
  * Text-only simulated caller. Uses the configured LLM when available;
- * otherwise answers from the scenario's scripted replies by matching the trainee's intent.
+ * otherwise (or while paid features are off) answers from the scenario's scripted replies by matching the trainee's intent.
  */
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
@@ -54,7 +55,8 @@ export async function POST(req: NextRequest) {
   }
   const { scenario, history } = body;
 
-  if (llmKey()) {
+  // With paid features off or today's cap used up, text calls keep going on the scripted caller.
+  if (llmKey() && paidFeaturesAvailable()) {
     try {
       const { text, truncated } = await chatFull(
         [

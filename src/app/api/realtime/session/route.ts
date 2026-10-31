@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
+import { paidFeaturesOffResponse, paidFeaturesGuard, releaseRealtimeCall, reserveRealtimeCall } from "@/lib/spendGuard";
 import { realtimeKey, realtimeModel, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
 
 const Body = z.object({ scenario: ScenarioSchema });
@@ -18,6 +19,8 @@ const SECRET_TTL_SEC = 600;
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
+  const paused = paidFeaturesGuard();
+  if (paused) return paused;
 
   const ipLimited = ipLimitResponse(req, "realtime");
   if (ipLimited) return ipLimited;
@@ -62,6 +65,10 @@ export async function POST(req: NextRequest) {
     },
   };
 
+  // Reserved only once the request is valid, and given back if OpenAI never mints the secret.
+  const reservation = reserveRealtimeCall();
+  if (!reservation) return paidFeaturesOffResponse();
+
   try {
     const res = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
@@ -73,6 +80,7 @@ export async function POST(req: NextRequest) {
     if (!res.ok) {
       // Status only: the upstream body can echo request details and is never forwarded or logged.
       console.error("[realtime/session] upstream status", res.status);
+      releaseRealtimeCall(reservation);
       return NextResponse.json(
         { error: "realtime_upstream_error", message: realtimeUpstreamMessage(res.status, model) },
         { status: res.status === 429 ? 429 : 502 },
@@ -83,6 +91,7 @@ export async function POST(req: NextRequest) {
     const expiresAt = typeof data.expires_at === "number" ? data.expires_at : Math.floor(Date.now() / 1000) + SECRET_TTL_SEC;
     return NextResponse.json({ clientSecret: data.value, expiresAt, model, voice }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
+    releaseRealtimeCall(reservation);
     console.error("[realtime/session]", e instanceof Error ? e.message : "unknown error");
     return NextResponse.json({ error: "realtime_upstream_error", message: "Could not reach OpenAI to start the voice call. Check the server's network, then try again." }, { status: 502 });
   }

@@ -250,7 +250,7 @@ export default function TrainerClient() {
         body: JSON.stringify({ scenario, transcript }),
       });
       if (res.ok) evaluation = await res.json();
-      else if (res.status === 429) setError((await res.json().catch(() => ({}))).message || "Grading limit reached. The transcript was saved without a score; try again later.");
+      else if (res.status === 429 || res.status === 503) setError((await res.json().catch(() => ({}))).message || "Grading limit reached. The transcript was saved without a score; try again later.");
       else setError("Grading failed; the transcript was saved without a score.");
     } catch {
       setError("Grading failed; the transcript was saved without a score.");

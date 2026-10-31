@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, ipLimitResponse } from "@/lib/rateLimit";
+import { paidFeaturesGuard, paidFeaturesOffResponse, releaseRealtimeCall, reserveRealtimeCall } from "@/lib/spendGuard";
 
 /**
  * Mints a short-lived WebRTC conversation token for the configured
  * ElevenLabs agent. The API key never leaves the server.
+ * Each token is one voice call, so it reserves minutes against the daily voice cap like a Realtime session.
  */
 export async function GET(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
+  const paused = paidFeaturesGuard();
+  if (paused) return paused;
 
   const ipLimited = ipLimitResponse(req, "token");
   if (ipLimited) return ipLimited;
@@ -27,6 +31,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
   }
 
+  // Given back if ElevenLabs never mints the token.
+  const reservation = reserveRealtimeCall();
+  if (!reservation) return paidFeaturesOffResponse();
+
   try {
     const res = await fetch(
       `https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=${encodeURIComponent(agentId)}`,
@@ -34,6 +42,7 @@ export async function GET(req: NextRequest) {
     );
     if (!res.ok) {
       console.error("[elevenlabs/token] upstream status", res.status);
+      releaseRealtimeCall(reservation);
       return NextResponse.json(
         { error: "elevenlabs_upstream_error", message: `ElevenLabs returned ${res.status}. Check your API key and agent id.` },
         { status: 502 },
@@ -43,7 +52,8 @@ export async function GET(req: NextRequest) {
     if (!token) throw new Error("no token in response");
     return NextResponse.json({ token });
   } catch (e) {
-    console.error("[elevenlabs/token]", e);
+    releaseRealtimeCall(reservation);
+    console.error("[elevenlabs/token]", e instanceof Error ? e.message : "unknown error");
     return NextResponse.json({ error: "elevenlabs_upstream_error", message: "Could not reach ElevenLabs." }, { status: 502 });
   }
 }
