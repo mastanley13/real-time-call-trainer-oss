@@ -3,8 +3,8 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { ipLimitResponse, userLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
-import { billingGate, stripeApi, StripeApiError } from "@/lib/stripe";
-import { appBaseUrl, buildCheckoutParams, CheckoutConfigError } from "@/lib/billing";
+import { billingGate, StripeApiError } from "@/lib/stripe";
+import { appBaseUrl, buildCheckoutParams, checkoutFingerprint, createOrReuseCheckout, CheckoutConfigError } from "@/lib/billing";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "@/lib/usagePlan";
 
 const Body = z.object({
@@ -68,9 +68,16 @@ export async function POST(req: NextRequest) {
       anchorAt: body.plan === "team" && org ? org.createdAt : user.usageAnchorAt,
       baseUrl: appBaseUrl(req),
     });
-    const session = await stripeApi.createCheckoutSession(params);
-    if (!session.url) throw new StripeApiError(502);
-    return NextResponse.json({ url: session.url });
+    // One outstanding Checkout Session per billing subject: a repeat click reuses it, a different plan replaces it.
+    const outcome = await createOrReuseCheckout({
+      subject: { kind: subject === org ? "organization" : "user", id: subject.id },
+      fingerprint: checkoutFingerprint({ plan: body.plan, interval: body.interval, seats: body.seats ?? 1, premium: body.premium }),
+      params,
+    });
+    if (!outcome.ok) {
+      return NextResponse.json({ error: "checkout_in_progress", message: "Another checkout for this account is being set up. Wait a moment, then try again." }, { status: 409 });
+    }
+    return NextResponse.json({ url: outcome.url });
   } catch (e) {
     if (e instanceof CheckoutConfigError) {
       return NextResponse.json({ error: e.code, message: e.message }, { status: e.code === "invalid_seats" ? 400 : 503 });

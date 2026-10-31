@@ -8,6 +8,31 @@ export function meteringEnabled(env: Record<string, string | undefined> = proces
   return env.DEMO_MODE !== "true" && Boolean(env.DATABASE_URL);
 }
 
+type Env = Record<string, string | undefined>;
+
+export const DEFAULT_STANDARD_REALTIME_MODEL = "gpt-realtime-mini";
+
+/**
+ * The Realtime model for a session. Premium is the configured REALTIME_MODEL; standard is
+ * REALTIME_MODEL_STANDARD (default gpt-realtime-mini). Without metering there is no entitlement to
+ * check, so the configured model runs as before.
+ */
+export function realtimeModelFor(engine: "premium" | "standard", env: Env = process.env): string {
+  if (engine === "premium") return realtimeModel();
+  return env.REALTIME_MODEL_STANDARD?.trim() || DEFAULT_STANDARD_REALTIME_MODEL;
+}
+
+/**
+ * The ElevenLabs agent for a session. Premium is ELEVENLABS_AGENT_ID. Standard is
+ * ELEVENLABS_AGENT_ID_STANDARD; when that is unset there is nothing to switch to, so `standardAvailable`
+ * is false and the call runs on the main agent and counts as premium.
+ */
+export function elevenLabsAgentFor(engine: "premium" | "standard", env: Env = process.env): { agentId: string | undefined; standardAvailable: boolean } {
+  const main = env.ELEVENLABS_AGENT_ID?.trim() || undefined;
+  const standard = env.ELEVENLABS_AGENT_ID_STANDARD?.trim() || undefined;
+  return { agentId: engine === "standard" && standard ? standard : main, standardAvailable: Boolean(standard) };
+}
+
 /** Runtime capability flags. Everything is optional; the UI degrades gracefully. */
 export function getCapabilities() {
   const elevenlabs = Boolean(process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_AGENT_ID);
@@ -33,8 +58,6 @@ export function getCapabilities() {
 
 /** Exact host match: \b alone would also accept api.openai.com.attacker.example. */
 const isOpenAiBaseUrl = (url: string) => /^https:\/\/api\.openai\.com(?::443)?(?:\/|$)/i.test(url.trim());
-
-type Env = Record<string, string | undefined>;
 
 /**
  * LLM_API_KEY, else OPENAI_API_KEY only while LLM_BASE_URL points at OpenAI. An OpenAI key

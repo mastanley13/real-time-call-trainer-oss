@@ -149,26 +149,27 @@ describe("billing a call", () => {
     expect((await runCall("u-1", { endAt: 25, reason: "server_error" })).result).toMatchObject({ outcome: "dropped_credited", billedMinutes: 0 });
   });
 
-  it("a silent client ends at its last heartbeat plus 30 seconds (rule 3)", async () => {
+  it("a client that stops heartbeating is not billed less for it: the call runs to the server's end time", async () => {
     addUser("u-1");
     const begun = await beginCall("u-1", scn, at(0));
     if (!begun.ok) throw new Error();
     await heartbeat("u-1", begun.callId, "connected", at(0));
     await heartbeat("u-1", begun.callId, "ok", at(10));
-    // Nothing for 10 minutes, then a late hang-up: billed for 40 seconds, not 10 minutes.
+    // Nothing for 10 minutes, then a hang-up: the provider connection may have been open the whole time.
     const result = await endCall("u-1", begun.callId, "user_hangup", at(600));
-    expect(session(begun.callId).billableSeconds).toBe(40);
-    expect(result?.billedMinutes).toBe(1);
+    expect(session(begun.callId).billableSeconds).toBe(600);
+    expect(result?.billedMinutes).toBe(10);
   });
 
-  it("an abandoned call is settled the next time its owner asks for usage", async () => {
+  it("an abandoned call is settled the next time its owner asks for usage, billed until then", async () => {
     addUser("u-1");
     const begun = await beginCall("u-1", scn, at(0));
     if (!begun.ok) throw new Error();
     await heartbeat("u-1", begun.callId, "connected", at(0));
     await heartbeat("u-1", begun.callId, "ok", at(70));
     await usageSummary("u-1", at(500));
-    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 2 });
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 9 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 9, minutesReserved: 0 });
   });
 });
 
@@ -231,6 +232,7 @@ describe("caps", () => {
     const ok = await (await mint()).json();
     expect(typeof ok.callId).toBe("string");
     expect(session(ok.callId).userId).toBe("u-1");
+    await endCall("u-1", ok.callId, "user_hangup"); // the first call holds all 20 minutes until it ends
 
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 500 })));
     const bad = await mint();

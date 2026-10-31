@@ -3,10 +3,10 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
-import { meteringEnabled } from "@/lib/serverConfig";
-import { beginCall, endCall } from "@/lib/usage";
-import { capReached } from "@/lib/usageResponses";
-import { realtimeKey, realtimeModel, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
+import { meteringEnabled, realtimeModelFor } from "@/lib/serverConfig";
+import { beginCall, endCall, type VoiceEngine } from "@/lib/usage";
+import { capReached, minutesReserved } from "@/lib/usageResponses";
+import { realtimeKey, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
 
 const Body = z.object({ scenario: ScenarioSchema });
 
@@ -46,14 +46,23 @@ export async function POST(req: NextRequest) {
   }
 
   // Cap check before minting (rule 11). The returned callId keys every later metering write for this call.
+  // The engine is chosen here, per session: Premium until its 60% share of the minutes is used, then standard
+  // for the next session. A call already running is never switched or ended.
   let callId: string | undefined;
+  let engine: VoiceEngine = "premium";
+  let maxSeconds = SECRET_TTL_SEC;
   if (meteringEnabled()) {
     const begun = await beginCall(auth.id, scenario);
     if (!begun.ok && begun.error === "cap_reached") return capReached();
-    if (begun.ok) callId = begun.callId;
+    if (!begun.ok && begun.error === "minutes_reserved") return minutesReserved();
+    if (begun.ok) {
+      callId = begun.callId;
+      engine = begun.engine;
+      maxSeconds = begun.maxSeconds;
+    }
   }
 
-  const model = realtimeModel();
+  const model = realtimeModelFor(engine);
   const voice = realtimeVoice(scenario.aiPersona.realtimeVoice);
   const session = {
     type: "realtime",
@@ -77,7 +86,9 @@ export async function POST(req: NextRequest) {
     const res = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ expires_after: { anchor: "created_at", seconds: SECRET_TTL_SEC }, session }),
+      // The secret never outlives the call's reserved minutes. OpenAI only checks it while the session is
+      // being set up, so this limits starting a late call, not a running one; billing is settled on the server.
+      body: JSON.stringify({ expires_after: { anchor: "created_at", seconds: Math.max(10, Math.min(SECRET_TTL_SEC, maxSeconds)) }, session }),
       cache: "no-store",
       signal: AbortSignal.timeout(15_000),
     });
@@ -93,7 +104,7 @@ export async function POST(req: NextRequest) {
     const data = (await res.json().catch(() => null)) as { value?: unknown; expires_at?: unknown } | null;
     if (!data || typeof data.value !== "string" || !data.value) throw new Error("no client secret in response");
     const expiresAt = typeof data.expires_at === "number" ? data.expires_at : Math.floor(Date.now() / 1000) + SECRET_TTL_SEC;
-    return NextResponse.json({ clientSecret: data.value, expiresAt, model, voice, ...(callId ? { callId } : {}) }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ clientSecret: data.value, expiresAt, model, voice, ...(callId ? { callId, maxSeconds } : {}) }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     console.error("[realtime/session]", e instanceof Error ? e.message : "unknown error");
     if (callId) await endCall(auth.id, callId, "failed_connect").catch(() => null);

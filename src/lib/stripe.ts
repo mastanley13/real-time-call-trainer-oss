@@ -72,12 +72,16 @@ export function encodeForm(params: StripeParams, prefix = ""): string[] {
   return out;
 }
 
-async function post<T>(path: string, params: StripeParams): Promise<T> {
+async function request<T>(method: "GET" | "POST" | "DELETE", path: string, params: StripeParams = {}, idempotencyKey?: string): Promise<T> {
   const key = stripeSecretKey();
   const res = await fetch(`https://api.stripe.com/v1/${path}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/x-www-form-urlencoded" },
-    body: encodeForm(params).join("&"),
+    method,
+    headers: {
+      Authorization: `Bearer ${key}`,
+      ...(method === "POST" ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+    },
+    ...(method === "POST" ? { body: encodeForm(params).join("&") } : {}),
     cache: "no-store",
     signal: AbortSignal.timeout(15_000),
   });
@@ -89,9 +93,17 @@ async function post<T>(path: string, params: StripeParams): Promise<T> {
   return (await res.json()) as T;
 }
 
+const seg = encodeURIComponent;
+
 export const stripeApi = {
-  createCheckoutSession: (params: StripeParams) => post<{ id: string; url: string | null }>("checkout/sessions", params),
-  createPortalSession: (params: StripeParams) => post<{ url: string }>("billing_portal/sessions", params),
+  /** The idempotency key makes two identical in-flight requests return the same Checkout Session. */
+  createCheckoutSession: (params: StripeParams, idempotencyKey?: string) => request<{ id: string; url: string | null }>("POST", "checkout/sessions", params, idempotencyKey),
+  expireCheckoutSession: (id: string) => request<{ id: string }>("POST", `checkout/sessions/${seg(id)}/expire`),
+  createPortalSession: (params: StripeParams) => request<{ url: string }>("POST", "billing_portal/sessions", params),
+  /** The subscription as Stripe has it now. Webhook payloads are snapshots and can arrive out of order. */
+  retrieveSubscription: (id: string) => request<unknown>("GET", `subscriptions/${seg(id)}`),
+  /** Cancels immediately. Used only to drop a duplicate subscription for a subject that already has one. */
+  cancelSubscription: (id: string) => request<{ id: string }>("DELETE", `subscriptions/${seg(id)}`),
 };
 
 // ---- Webhook signatures -----------------------------------------------------------------------

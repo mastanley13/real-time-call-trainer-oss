@@ -23,6 +23,17 @@ export const HEARTBEAT_TIMEOUT_SECONDS = 30;
 /** How long a client has to open the data channel after the server minted the session. */
 export const CONNECT_WINDOW_SECONDS = 15 * 60;
 
+/**
+ * The billing clock starts at the server's mint time plus at most this long, however late (or never) the
+ * client reports "connected". A client cannot move its start further out by withholding the heartbeat.
+ */
+export const MAX_CONNECT_LAG_SECONDS = 60;
+/**
+ * The most minutes one call can hold. A call's server-side maximum length is the minutes left at mint
+ * time, up to this, so one long call cannot lock a whole Team pool away from everyone else.
+ */
+export const MAX_RESERVE_MINUTES = 60;
+
 export function isPlanTier(v: unknown): v is PlanTier {
   return v === "free" || v === "pro" || v === "team";
 }

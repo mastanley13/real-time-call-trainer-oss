@@ -11,7 +11,8 @@ const MAX_WEBHOOK_BYTES = 1_000_000;
  * Stripe webhook. There is no session here: the Stripe-Signature header over the raw body is the
  * authentication, so this route skips requireAuth and the per-IP limit (a throttled delivery would
  * only be retried later). Bypasses the access-code gate in src/middleware.ts for the same reason.
- * Handles checkout.session.completed, customer.subscription.updated and customer.subscription.deleted.
+ * Handles checkout.session.completed, .async_payment_succeeded and .expired, customer.subscription.updated and
+ * customer.subscription.deleted. Events only name a subscription; access follows its current state at Stripe.
  */
 export async function POST(req: NextRequest) {
   const gate = billingGate();

@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { NextRequest } from "next/server";
 import { createFakePrisma } from "./fakePrisma";
 
@@ -8,7 +8,7 @@ vi.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get: (_t, k) => (mocks.fake
 vi.mock("@/lib/apiAuth", () => ({ requireAuth: () => ({ id: mocks.authId, email: `${mocks.authId}@example.test` }), isDemoUser: () => false }));
 
 import { buildCheckoutParams, CheckoutConfigError, entitlementFromItems, priceIds, type PriceIds } from "@/lib/billing";
-import { billingGate, encodeForm, stripeApi, stripeSecretKey, stripeStatus, StripeConfigError, verifyWebhookSignature } from "@/lib/stripe";
+import { billingGate, encodeForm, stripeApi, StripeApiError, stripeSecretKey, stripeStatus, StripeConfigError, verifyWebhookSignature } from "@/lib/stripe";
 import { classifyPlanChange, setBillingEventSink, type BillingLifecycleEvent } from "@/lib/billingEvents";
 import { POST as webhook } from "@/app/api/stripe/webhook/route";
 import { POST as checkout } from "@/app/api/billing/checkout/route";
@@ -259,12 +259,46 @@ const sign = (raw: string, t = Math.floor(Date.now() / 1000), secret = WHSEC) =>
 
 let eventSeq = 0;
 const event = (type: string, object: Record<string, unknown>, id = `evt_test_${++eventSeq}`) => ({ id, type, data: { object } });
-const deliver = (e: unknown, header?: string | null) => {
+const deliverRaw = (e: unknown, header?: string | null) => {
   const raw = JSON.stringify(e);
   return webhook(new NextRequest("http://localhost/api/stripe/webhook", {
     method: "POST", body: raw,
     headers: header === null ? {} : { "stripe-signature": header ?? sign(raw) },
   }));
+};
+
+/** Stripe's current state by subscription id. A missing id answers 404, like a subscription Stripe no longer has. */
+const liveStripe = new Map<string, unknown>();
+let retrieveSpy: MockInstance<typeof stripeApi.retrieveSubscription>;
+let cancelSpy: MockInstance<typeof stripeApi.cancelSubscription>;
+beforeEach(() => {
+  liveStripe.clear();
+  retrieveSpy = vi.spyOn(stripeApi, "retrieveSubscription").mockImplementation(async (id: string) => {
+    if (!liveStripe.has(id)) throw new StripeApiError(404);
+    return liveStripe.get(id);
+  });
+  cancelSpy = vi.spyOn(stripeApi, "cancelSubscription").mockResolvedValue({ id: "" });
+});
+
+/** For tests about one event at a time: the event's own snapshot is what Stripe currently reports. */
+function mirrorSnapshot(e: { type: string; data: { object: Record<string, unknown> } }) {
+  const o = e.data.object;
+  if (e.type === "customer.subscription.updated") liveStripe.set(o.id as string, o);
+  if (e.type === "checkout.session.completed" && typeof o.subscription === "string") {
+    const m = (o.metadata ?? {}) as Record<string, string>;
+    const seats = Number.parseInt(m.seats ?? "", 10) || 3;
+    liveStripe.set(o.subscription, {
+      id: o.subscription, customer: o.customer ?? "cus_test_1", status: "active", metadata: m,
+      items: { data: [
+        m.plan === "team" ? { quantity: seats, price: { id: "price_test_team_m" } } : { quantity: 1, price: { id: "price_test_pro_m" } },
+        ...(m.premium === "true" ? [{ quantity: seats, price: { id: "price_test_prem_m" } }] : []),
+      ] },
+    });
+  }
+}
+const deliver = (e: unknown, header?: string | null) => {
+  mirrorSnapshot(e as Parameters<typeof mirrorSnapshot>[0]);
+  return deliverRaw(e, header);
 };
 
 const sub = (o: { id?: string; customer?: string; status?: string; team?: number; pro?: boolean; premium?: number; metadata?: Record<string, string> }) => ({
@@ -486,5 +520,232 @@ describe("CRM lifecycle hook (off by default)", () => {
     expect(classifyPlanChange("team", "pro")).toBe("downgrade");
     expect(classifyPlanChange("team", "free")).toBe("churn");
     expect(classifyPlanChange("pro", "pro")).toBeNull();
+  });
+});
+
+// ---- Codex review: webhook ordering, ownership, duplicate checkout, unpaid checkout ------------------
+
+const liveSub = (o: { id: string; status?: string; customer?: string; metadata?: Record<string, string> } & Parameters<typeof sub>[0]) => {
+  const s = { ...sub(o), id: o.id };
+  liveStripe.set(o.id, s);
+  return s;
+};
+
+describe("out-of-order events are reconciled against Stripe's current state", () => {
+  beforeEach(async () => {
+    await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata: { plan: "pro", userId: "owner-1" } }));
+    expect(user().planTier).toBe("pro");
+  });
+
+  it("a delayed checkout.session.completed cannot restore a plan that was canceled since", async () => {
+    await deliver(event("customer.subscription.deleted", sub({ pro: true })));
+    expect(user().planTier).toBe("free");
+    liveStripe.delete("sub_test_1"); // Stripe: gone
+    const late = event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", payment_status: "paid", metadata: { plan: "pro", userId: "owner-1" } });
+    await deliverRaw(late);
+    expect(user()).toMatchObject({ planTier: "free", stripeSubscriptionId: null });
+    expect(allowance("userId", "owner-1")?.minutesCap).toBe(20);
+  });
+
+  it("a delayed 'active' update cannot restore a subscription Stripe now reports canceled", async () => {
+    await deliver(event("customer.subscription.deleted", sub({ pro: true })));
+    liveSub({ id: "sub_test_1", pro: true, status: "canceled" });
+    await deliverRaw(event("customer.subscription.updated", sub({ pro: true, status: "active" })));
+    expect(user()).toMatchObject({ planTier: "free", stripeSubscriptionId: null });
+  });
+
+  it("a delayed seat update cannot overwrite a newer seat or Premium change", async () => {
+    await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_team", subscription: "sub_test_team", metadata: { plan: "team", organizationId: "org-1", seats: "3" } }));
+    liveSub({ id: "sub_test_team", customer: "cus_test_team", metadata: { organizationId: "org-1" }, team: 5, premium: 5 });
+    // The older event says 3 seats and no Premium; Stripe says 5 and Premium.
+    await deliverRaw(event("customer.subscription.updated", sub({ id: "sub_test_team", customer: "cus_test_team", metadata: { organizationId: "org-1" }, team: 3 })));
+    expect(org()).toMatchObject({ planTier: "team", seatCount: 5, premiumVoice: true });
+    expect(allowance("organizationId", "org-1")?.minutesCap).toBe(1500);
+  });
+
+  it("answers 500 without recording the event when Stripe cannot be read, so Stripe retries", async () => {
+    retrieveSpy.mockRejectedValueOnce(new StripeApiError(503));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const e = event("customer.subscription.updated", sub({ pro: true, premium: 1 }), "evt_test_unreadable");
+    expect((await deliverRaw(e)).status).toBe(500);
+    expect(fake.rows("stripeEvent").some((r) => r.id === "evt_test_unreadable")).toBe(false);
+    expect(user().premiumVoice).toBe(false);
+    liveSub({ id: "sub_test_1", pro: true, premium: 1 });
+    expect((await (await deliverRaw(e)).json()).result).toBe("processed");
+    expect(user().premiumVoice).toBe(true);
+  });
+});
+
+describe("a deleted older subscription cannot revoke a newer one", () => {
+  it("ignores customer.subscription.deleted for a subscription the subject no longer holds", async () => {
+    await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_new", metadata: { plan: "pro", userId: "owner-1" } }));
+    // Same customer and same userId metadata as the new subscription, but a different subscription id.
+    const res = await deliverRaw(event("customer.subscription.deleted", sub({ id: "sub_test_old", customer: "cus_test_1", pro: true, metadata: { userId: "owner-1" } })));
+    expect((await res.json()).result).toBe("ignored");
+    expect(user()).toMatchObject({ planTier: "pro", stripeSubscriptionId: "sub_test_new", subscriptionStatus: "active" });
+    expect(allowance("userId", "owner-1")?.minutesCap).toBe(200);
+  });
+
+  it("still revokes when the deleted subscription is the one the subject holds", async () => {
+    await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_new", metadata: { plan: "pro", userId: "owner-1" } }));
+    await deliverRaw(event("customer.subscription.deleted", sub({ id: "sub_test_new", customer: "cus_test_1", pro: true })));
+    expect(user()).toMatchObject({ planTier: "free", stripeSubscriptionId: null });
+  });
+
+  it("does not let a late update from an old subscription replace the current one", async () => {
+    await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_new", metadata: { plan: "pro", userId: "owner-1", premium: "true" } }));
+    liveSub({ id: "sub_test_old", customer: "cus_test_1", pro: true, status: "past_due", metadata: { userId: "owner-1" } });
+    await deliverRaw(event("customer.subscription.updated", sub({ id: "sub_test_old", customer: "cus_test_1", pro: true, status: "past_due", metadata: { userId: "owner-1" } })));
+    expect(user()).toMatchObject({ stripeSubscriptionId: "sub_test_new", premiumVoice: true, subscriptionStatus: "active" });
+  });
+
+  it("cancels a second ACTIVE subscription at Stripe instead of letting it replace or double the first", async () => {
+    await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_first", metadata: { plan: "pro", userId: "owner-1" } }));
+    liveSub({ id: "sub_test_dupe", customer: "cus_test_1", pro: true, metadata: { userId: "owner-1" } });
+    const res = await deliverRaw(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_dupe", payment_status: "paid", metadata: { plan: "pro", userId: "owner-1" } }));
+    expect((await res.json()).result).toBe("processed");
+    expect(cancelSpy).toHaveBeenCalledWith("sub_test_dupe");
+    expect(user().stripeSubscriptionId).toBe("sub_test_first");
+  });
+});
+
+describe("one outstanding Checkout Session per billing subject", () => {
+  const post = (body: unknown) => checkout(new NextRequest("http://localhost/api/billing/checkout", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } }));
+  let created: { id: string; key?: string; params: Record<string, unknown> }[];
+  let expired: string[];
+  let shift = 0;
+
+  beforeEach(() => {
+    // The billing limits are fixed (20 an hour per account), so give each test its own window rather than raising them.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + ++shift * 2 * 3_600_000);
+    created = [];
+    expired = [];
+    // Like Stripe: the same idempotency key returns the same session.
+    vi.spyOn(stripeApi, "createCheckoutSession").mockImplementation(async (params, key) => {
+      const hit = key ? created.find((c) => c.key === key) : undefined;
+      if (hit) return { id: hit.id, url: `https://checkout.example/${hit.id}` };
+      const id = `cs_test_${created.length + 1}`;
+      created.push({ id, key, params: params as Record<string, unknown> });
+      return { id, url: `https://checkout.example/${id}` };
+    });
+    vi.spyOn(stripeApi, "expireCheckoutSession").mockImplementation(async (id) => { expired.push(id); return { id }; });
+  });
+
+  it("a second click for the same purchase returns the first session instead of opening another", async () => {
+    const a = await (await post({ plan: "pro", interval: "month" })).json();
+    const b = await (await post({ plan: "pro", interval: "month" })).json();
+    expect(b.url).toBe(a.url);
+    expect(created).toHaveLength(1);
+    expect(user()).toMatchObject({ stripeCheckoutSessionId: "cs_test_1", stripeCheckoutUrl: a.url });
+  });
+
+  it("choosing a different plan expires the outstanding session and records the new one", async () => {
+    await post({ plan: "pro", interval: "month" });
+    const res = await post({ plan: "pro", interval: "year" });
+    expect(res.status).toBe(200);
+    expect(expired).toEqual(["cs_test_1"]);
+    expect(created).toHaveLength(2);
+    expect(user().stripeCheckoutSessionId).toBe("cs_test_2");
+  });
+
+  it("an expired session is not reused", async () => {
+    await post({ plan: "pro", interval: "month" });
+    user().stripeCheckoutExpiresAt = new Date(Date.now() - 1000);
+    await post({ plan: "pro", interval: "month" });
+    expect(created).toHaveLength(2);
+  });
+
+  it("two identical requests at the same moment end up with one session recorded", async () => {
+    const [a, b] = await Promise.all([post({ plan: "pro", interval: "month" }), post({ plan: "pro", interval: "month" })]);
+    expect((await a.json()).url).toBe((await b.json()).url);
+    expect(new Set(created.map((c) => c.id)).size).toBe(1);
+    expect(user().stripeCheckoutSessionId).toBe("cs_test_1");
+  });
+
+  it("two different requests at the same moment: one wins, the other is expired and told to retry", async () => {
+    const [a, b] = await Promise.all([post({ plan: "pro", interval: "month" }), post({ plan: "pro", interval: "year" })]);
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    const recorded = user().stripeCheckoutSessionId as string;
+    const loser = created.find((c) => c.id !== recorded)!;
+    expect(expired).toContain(loser.id);
+    expect(expired).not.toContain(recorded);
+  });
+
+  it("Team is tracked on the organization, separately from the owner's own Pro checkout", async () => {
+    await post({ plan: "pro", interval: "month" });
+    await post({ plan: "team", interval: "month", seats: 3 });
+    expect(user().stripeCheckoutSessionId).toBe("cs_test_1");
+    expect(org().stripeCheckoutSessionId).toBe("cs_test_2");
+  });
+
+  it("clears the stored session once the subscription lands, and when Stripe expires the session", async () => {
+    await post({ plan: "pro", interval: "month" });
+    await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", payment_status: "paid", metadata: { plan: "pro", userId: "owner-1" } }));
+    expect(user()).toMatchObject({ stripeCheckoutSessionId: null, stripeCheckoutUrl: null });
+
+    fake.rows("user")[0].planTier = "free";
+    fake.rows("user")[0].stripeSubscriptionId = null;
+    await post({ plan: "pro", interval: "month" });
+    const id = user().stripeCheckoutSessionId as string;
+    expect(id).toBeTruthy();
+    expect((await (await deliverRaw(event("checkout.session.expired", { id, mode: "subscription" }))).json()).result).toBe("processed");
+    expect(user().stripeCheckoutSessionId).toBeNull();
+  });
+});
+
+afterEach(() => { vi.useRealTimers(); });
+
+describe("checkout completion does not grant access to an unpaid subscription", () => {
+  const completed = (o: Record<string, unknown> = {}) =>
+    event("checkout.session.completed", { id: "cs_test_x", mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", payment_status: "paid", metadata: { plan: "pro", userId: "owner-1" }, ...o });
+
+  it("payment_status unpaid (delayed payment method): nothing is granted yet", async () => {
+    liveSub({ id: "sub_test_1", pro: true, status: "incomplete" });
+    const res = await deliverRaw(completed({ payment_status: "unpaid" }));
+    expect((await res.json()).result).toBe("ignored");
+    expect(user()).toMatchObject({ planTier: "free", stripeSubscriptionId: null });
+    expect(allowance("userId", "owner-1")?.minutesCap ?? 20).toBe(20);
+  });
+
+  it("then the subscription turning active grants it", async () => {
+    liveSub({ id: "sub_test_1", pro: true, status: "incomplete" });
+    await deliverRaw(completed({ payment_status: "unpaid" }));
+    liveSub({ id: "sub_test_1", pro: true, status: "active" });
+    await deliverRaw(event("customer.subscription.updated", sub({ pro: true, status: "active" })));
+    expect(user()).toMatchObject({ planTier: "pro", stripeSubscriptionId: "sub_test_1" });
+  });
+
+  it("async_payment_succeeded grants it once Stripe reports the subscription active", async () => {
+    liveSub({ id: "sub_test_1", pro: true, status: "active" });
+    const res = await deliverRaw(event("checkout.session.async_payment_succeeded", { id: "cs_test_x", mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", payment_status: "paid", metadata: { plan: "pro", userId: "owner-1" } }));
+    expect((await res.json()).result).toBe("processed");
+    expect(user().planTier).toBe("pro");
+  });
+
+  it("async_payment_succeeded still grants nothing if the subscription is not active", async () => {
+    liveSub({ id: "sub_test_1", pro: true, status: "incomplete" });
+    await deliverRaw(event("checkout.session.async_payment_succeeded", { id: "cs_test_x", mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", payment_status: "paid", metadata: { plan: "pro", userId: "owner-1" } }));
+    expect(user().planTier).toBe("free");
+  });
+
+  it("async_payment_failed grants nothing", async () => {
+    liveSub({ id: "sub_test_1", pro: true, status: "incomplete" });
+    await deliverRaw(event("checkout.session.async_payment_failed", { id: "cs_test_x", mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", payment_status: "unpaid", metadata: { plan: "pro", userId: "owner-1" } }));
+    expect(user().planTier).toBe("free");
+  });
+
+  it("a 'paid' checkout whose subscription Stripe reports unpaid or canceled is Free, whatever the metadata says", async () => {
+    for (const status of ["unpaid", "canceled", "incomplete_expired"]) {
+      liveSub({ id: "sub_test_1", pro: true, status });
+      await deliverRaw(completed());
+      expect(user().planTier).toBe("free");
+    }
+  });
+
+  it("plan and seats come from the subscription's prices, not from checkout metadata", async () => {
+    liveSub({ id: "sub_test_team", customer: "cus_test_team", team: 4, metadata: { organizationId: "org-1" } });
+    await deliverRaw(completed({ customer: "cus_test_team", subscription: "sub_test_team", metadata: { plan: "team", organizationId: "org-1", seats: "99" } }));
+    expect(org()).toMatchObject({ planTier: "team", seatCount: 4 });
   });
 });

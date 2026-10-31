@@ -46,7 +46,7 @@ Server routes (src/app/api)
   ├─ llm/check         one-token connection check for the Models page
   ├─ usage, usage/heartbeat, usage/end, usage/credit   voice minute metering: the ledger is the source of truth
   ├─ billing/checkout, billing/portal   Stripe Checkout (subscription) and Billing Portal, test mode only
-  ├─ stripe/webhook    signature-verified, idempotent plan sync (checkout completed, subscription updated and deleted)
+  ├─ stripe/webhook    signature-verified, idempotent plan sync from Stripe's current subscription state (checkout completed, async payment succeeded and expired, subscription updated and deleted)
   └─ auth/*, access, me, health, config, cron/purge-expired
 ```
 Design tokens (daylight, dark and the call "deck") live in `src/app/globals.css`; the coach contract is `src/lib/coach-types.ts`; the wizard contract is `src/lib/wizard-types.ts`.
@@ -67,11 +67,13 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `OPENAI_REALTIME_API_KEY` | For voice | OpenAI key for Realtime voice calls. Falls back to `OPENAI_API_KEY`, then to `LLM_API_KEY` when `LLM_BASE_URL` is api.openai.com |
 | `OPENAI_API_KEY` | Optional | Voice key when `OPENAI_REALTIME_API_KEY` is unset. Also stands in for `LLM_API_KEY`, but only while `LLM_BASE_URL` is unset or points at api.openai.com, so an OpenAI key is never sent to another provider |
 | `REALTIME_MODEL` | Optional | Default `gpt-realtime-1.5` |
+| `REALTIME_MODEL_STANDARD` | Optional | Model for accounts without Premium Voice, and for the next call once Premium has used 60% of the plan's minutes. Default `gpt-realtime-mini`. A running call is never switched or ended |
 | `REALTIME_VOICE` | Optional | Default `marin`. A persona's own `realtimeVoice` wins |
 | `REALTIME_TRANSCRIBE_MODEL` | Optional | Transcribes your side of a voice call. Default `gpt-4o-mini-transcribe` |
 | `VOICE_ENGINE` | Optional | `openai` (default) or `elevenlabs`: which engine the briefing picks first when both are set up |
 | `ELEVENLABS_API_KEY` | For ElevenLabs voice | Server-side key used to mint conversation tokens |
-| `ELEVENLABS_AGENT_ID` | For ElevenLabs voice | The agent to call |
+| `ELEVENLABS_AGENT_ID` | For ElevenLabs voice | The agent to call (the Premium tier) |
+| `ELEVENLABS_AGENT_ID_STANDARD` | Optional | Agent for the standard tier. Unset means the main agent serves every call and counts as Premium |
 | `LLM_API_KEY` | Optional | Live coach, post-call grading, persona wizard and text simulation (any OpenAI-compatible API). With a custom `LLM_BASE_URL`, this is the only key sent. Without a key: rules-based coach and grader, template wizard, scripted caller |
 | `LLM_BASE_URL` | Optional | Default `https://api.openai.com/v1` |
 | `LLM_MODEL` | Optional | Default `gpt-4.1-mini` |
@@ -89,7 +91,7 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `RATE_LIMIT_USAGE_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on the voice metering routes (`/api/usage/*`: a heartbeat every 10 s per call, plus end events). Default 1200 per 600 s |
 | `RATE_LIMIT_BILLING_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/billing/checkout` and `/api/billing/portal`. Default 20 per 3600 s |
 | `STRIPE_SECRET_KEY` | For billing | Stripe **test mode** key. Must start with `sk_test_`; any other key makes every Stripe call fail with `stripe_live_key_refused`. Unset, or `DEMO_MODE=true`: billing is off and the Billing tab is hidden |
-| `STRIPE_WEBHOOK_SECRET` | For billing | Signing secret (`whsec_...`) for `/api/stripe/webhook`. From `stripe listen` locally, or the endpoint's page in the Stripe dashboard |
+| `STRIPE_WEBHOOK_SECRET` | For billing | Signing secret (`whsec_...`) for `/api/stripe/webhook`. From `stripe listen` locally, or the endpoint's page in the Stripe dashboard. Subscribe it to `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `customer.subscription.updated` and `customer.subscription.deleted` |
 | `STRIPE_PRICE_PRO_MONTHLY`, `STRIPE_PRICE_PRO_ANNUAL` | For billing | Price ids for Pro ($29 per user per month, annual is 2 months free). Flat licensed prices only |
 | `STRIPE_PRICE_TEAM_MONTHLY`, `STRIPE_PRICE_TEAM_ANNUAL` | For billing | Price ids for Team ($59 per seat per month, 3 seats minimum), quantity = seats |
 | `STRIPE_PRICE_PREMIUM_MONTHLY`, `STRIPE_PRICE_PREMIUM_ANNUAL` | For billing | Price ids for the Premium Voice add-on (+$30 per seat per month), quantity = seats |

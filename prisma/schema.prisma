@@ -39,6 +39,12 @@ model Organization {
   stripeCustomerId     String? @unique
   stripeSubscriptionId String? @unique
   subscriptionStatus   String?
+  /// The one outstanding Checkout Session for this billing subject, so a second click reuses it instead of
+  /// opening another. Cleared when the subscription lands or the session expires.
+  stripeCheckoutSessionId   String?
+  stripeCheckoutFingerprint String?
+  stripeCheckoutUrl         String?
+  stripeCheckoutExpiresAt   DateTime?
   /// Nullable = keep training records indefinitely. When set, the nightly
   /// purge job deletes TrainerSession rows older than this many days.
   sessionRetentionDays Int?
@@ -86,6 +92,11 @@ model User {
   stripeCustomerId     String? @unique
   stripeSubscriptionId String? @unique
   subscriptionStatus   String?
+  /// See Organization: the one outstanding Checkout Session for this subject.
+  stripeCheckoutSessionId   String?
+  stripeCheckoutFingerprint String?
+  stripeCheckoutUrl         String?
+  stripeCheckoutExpiresAt   DateTime?
   /// Monthly usage reset anchor for all plans. Defaults to signup time and never moves.
   usageAnchorAt    DateTime @default(now())
   createdAt        DateTime @default(now())
@@ -129,6 +140,14 @@ model TrainerSession {
   degradedAt         DateTime?
   billableSeconds    Int      @default(0)
   billedMinutes      Int      @default(0)
+  /// The allowance and period this call was started against. Settlement charges these, not whatever
+  /// allowance the user resolves to later (a Team join or a month rollover mid-call).
+  allowanceId        String?
+  allowancePeriodStart DateTime?
+  /// Minutes held for this call at mint time. Also the server-side maximum length of the call.
+  reservedMinutes    Int      @default(0)
+  /// Voice engine the session was minted for: "premium" or "standard".
+  engineTier         String   @default("standard")
   usageEntries       UsageEntry[]
   /// Raw transcript turns.
   transcript         Json
@@ -173,6 +192,13 @@ model UsageAllowance {
   periodEnd      DateTime
   /// Cached net sum of this period's ledger entries, updated in the same transaction as each entry.
   minutesUsed    Int      @default(0)
+  /// Minutes held by calls that have started and not settled. A new call can only take what is left after
+  /// used and reserved, which is what stops two calls from spending the same minutes.
+  minutesReserved Int     @default(0)
+  /// Net minutes this period that ran on the premium voice engine (the 60% Premium limit counts these).
+  premiumMinutesUsed Int  @default(0)
+  /// Compare-and-swap counter: a reservation only lands if nobody changed the row since it was read.
+  version        Int      @default(0)
   updatedAt      DateTime @updatedAt
 }
 
