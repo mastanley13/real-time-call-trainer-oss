@@ -70,6 +70,26 @@ ever moves off an archived Premium price, set `addon=premium_voice` on its produ
 - The Free reset is the signup anchor (the existing usage anchor), not the calendar month, and the billing page copy says
   "each month on your signup date". Switching Free to calendar-month resets would change `ensureAllowance`; not done.
 
+## Round 7 UX fixes (Prism browser pass)
+
+- Briefing: `MinutesLeft` shows "X of Y voice minutes left" near Start call in Voice mode when metering is on, from
+  `/api/usage`, and shows it even when voice keys are missing. With none left it shows "Out of voice minutes this month."
+  with an Upgrade link, or "Ask your team admin for more minutes." for a Team pool member. Text mode shows "Text practice
+  is unlimited." A server refusal replaces the out-of-minutes panel instead of repeating it.
+- Checkout failure: any 5xx or config error, or an answer with no checkout address, reads "Checkout is unavailable right
+  now. Your plan has not changed." with a link to the GitHub issues page (no support email until billing is live). "Try
+  again in a moment." is kept only for a request that got no answer (network error or timeout). A 4xx keeps the server's
+  sentence. The banner stays an alert. The checkout route's 502 message is the same sentence.
+- Seats: "Team starts at 3 seats." is always under the field. Leaving the box below 3 keeps the clamp and shows "Set to 3,
+  the Team minimum." in an always-present status region, linked by aria-describedby while it has text.
+- Pro and Team intros add "Calls are counted in whole minutes, rounded up." The Free intro only changes to "Your minutes
+  reset monthly from your signup date".
+- Focus rings: primary is over 3:1 against bg, surface, sunken and primary-soft in light and dark (tested from the tokens).
+  Two real gaps were fixed: the hidden billing period radio now draws its ring on its chip (`has-[:focus-visible]`), and
+  the seats field has an explicit 2px outline because `.input` removes the outline. The Premium Voice checkbox already
+  had the global ring.
+- Not done: browser screenshots and a real-browser focus walk (no browser in this environment), and `npm run build`.
+
 ## Billing page and call screens
 
 - Header copy is plan-aware (`usageHeaderCopy` in `src/lib/billingUi.ts`): Free says calls are checked only at start.

@@ -5,8 +5,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CreditCard, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageSkeleton } from "@/components/ui/Skeleton";
-import { clampSeats, formatMinutes, freeOverCapNotice, planPriceLine, premiumLabel, proButtonLabel, teamButtonLabel, usageHeaderCopy } from "@/lib/billingUi";
-import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "@/lib/usagePlan";
+import { checkoutFailure, formatMinutes, freeOverCapNotice, planPriceLine, premiumLabel, proButtonLabel, seatsOnBlur, teamButtonLabel, usageHeaderCopy } from "@/lib/billingUi";
+import { TEAM_MIN_SEATS } from "@/lib/usagePlan";
+import BillingAlert from "./BillingAlert";
+import SeatsField from "./SeatsField";
 import SettingsNav from "./SettingsNav";
 
 interface Usage {
@@ -30,12 +32,15 @@ export default function BillingClient() {
   const router = useRouter();
   const params = useSearchParams();
   const [usage, setUsage] = useState<Usage | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  /** `help` adds the issues link to the banner, for a checkout that could not start because of a server or config problem. */
+  const [error, setError] = useState<{ message: string; help: boolean } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [interval, setInterval] = useState<"month" | "year">("month");
   // The seat box holds what is typed. It is clamped on blur and on submit, not on each keystroke, so it can be
   // cleared and "10" can be typed without the box jumping back to 3 after the "1".
   const [seatsText, setSeatsText] = useState(String(TEAM_MIN_SEATS));
+  /** "Set to 3, the Team minimum." after the box was left below 3. Cleared as soon as the box is edited again. */
+  const [seatsNote, setSeatsNote] = useState<string | null>(null);
   const [premium, setPremium] = useState(false);
   // State updates are not instant, so two fast clicks could both pass a check on `busy`. The ref closes that gap.
   const busyRef = useRef<string | null>(null);
@@ -50,7 +55,7 @@ export default function BillingClient() {
       if (!res.ok) throw new Error();
       setUsage(await res.json());
     } catch {
-      setError("Could not load your usage. Reload the page to try again.");
+      setError({ message: "Could not load your usage. Reload the page to try again.", help: false });
     }
   }, []);
   useEffect(() => { if (isAuthenticated) void load(); }, [isAuthenticated, load]);
@@ -68,23 +73,30 @@ export default function BillingClient() {
     setBusy(kind);
     setError(null);
     // Team seats are clamped here too, so a box that was never blurred still sends 3 or more.
-    const seats = clampSeats(seatsText);
-    if (kind === "team") setSeatsText(String(seats));
+    const left = seatsOnBlur(seatsText);
+    const seats = Number(left.value);
+    if (kind === "team") { setSeatsText(left.value); setSeatsNote(left.note); }
+    const fail = (e: { message: string; help: boolean }) => { setError(e); busyRef.current = null; setBusy(null); };
+
+    let res: Response;
     try {
-      const res = await fetch(kind === "portal" ? "/api/billing/portal" : "/api/billing/checkout", {
+      res = await fetch(kind === "portal" ? "/api/billing/portal" : "/api/billing/checkout", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(kind === "portal" ? {} : { plan: kind, interval, premium, ...(kind === "team" ? { seats } : {}) }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.url) throw new Error(data.message || "Could not open billing. Try again in a moment.");
-      window.location.assign(data.url);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not open billing.");
-      busyRef.current = null;
-      setBusy(null);
+    } catch {
+      // The request never got an answer (offline or timed out): the only case where trying again is the advice.
+      return fail(kind === "portal" ? { message: "Could not open billing. Try again in a moment.", help: false } : checkoutFailure({ networkError: true }));
     }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.url) {
+      return fail(kind === "portal"
+        ? { message: data.message || "Could not open billing. Try again in a moment.", help: false }
+        : checkoutFailure({ status: res.ok ? undefined : res.status, message: data.message }));
+    }
+    window.location.assign(data.url);
   }
 
   if (!capabilities || !isAuthenticated || (!usage && !error)) return <PageSkeleton rows={3} />;
@@ -105,7 +117,7 @@ export default function BillingClient() {
       </header>
 
       {checkout === "success" && <p className="banner-ok" role="status">Thanks. Your plan updates as soon as the payment is confirmed. Reload in a few seconds if it still shows the old plan.</p>}
-      {error && <p className="banner-warn" role="alert">{error}</p>}
+      {error && <BillingAlert message={error.message} help={error.help} />}
 
       {u?.metered ? (
         <section className="panel p-4 sm:p-5" aria-labelledby="usage-h">
@@ -141,7 +153,8 @@ export default function BillingClient() {
           <div className="mt-3 flex flex-wrap items-center gap-4">
             <fieldset className="flex gap-2" aria-label="Billing period">
               {(["month", "year"] as const).map((v) => (
-                <label key={v} className={`chip cursor-pointer ${interval === v ? "bg-primary-soft text-primary" : ""}`}>
+                // The radio is visually hidden, so its own outline would be clipped away: the chip shows the focus ring instead.
+                <label key={v} className={`chip cursor-pointer has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary ${interval === v ? "bg-primary-soft text-primary" : ""}`}>
                   <input type="radio" name="interval" className="sr-only" checked={interval === v} onChange={() => setInterval(v)} />
                   {v === "month" ? "Monthly" : "Annual, 2 months free"}
                 </label>
@@ -167,13 +180,11 @@ export default function BillingClient() {
               <h3 className="font-heading font-semibold">Team</h3>
               <p className="text-sm text-ink-soft">{planPriceLine("team", interval)}</p>
               {u.billing.canBuyTeam ? (
-                <div className="mt-3 flex flex-wrap items-end gap-3">
-                  <div>
-                    <label className="label" htmlFor="seats">Seats</label>
-                    <input id="seats" className="input w-24" type="number" inputMode="numeric" min={TEAM_MIN_SEATS} max={TEAM_MAX_SEATS} value={seatsText} disabled={!!busy}
-                      onChange={(e) => setSeatsText(e.target.value)} onBlur={() => setSeatsText(String(clampSeats(seatsText)))} />
-                  </div>
-                  <button type="button" className="btn-primary" onClick={() => go("team")} disabled={!!busy || u.plan === "team"}>
+                <div className="mt-3 flex flex-wrap items-start gap-3">
+                  <SeatsField value={seatsText} note={seatsNote} disabled={!!busy}
+                    onChange={(text) => { setSeatsText(text); setSeatsNote(null); }}
+                    onBlur={() => { const left = seatsOnBlur(seatsText); setSeatsText(left.value); setSeatsNote(left.note); }} />
+                  <button type="button" className="btn-primary mt-6" onClick={() => go("team")} disabled={!!busy || u.plan === "team"}>
                     {busy === "team" && <Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden />}
                     {teamButtonLabel(u.plan)}
                   </button>

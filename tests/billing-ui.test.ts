@@ -27,7 +27,7 @@ describe("billing page header copy (item 4)", () => {
     expect(t).toMatch(/10 voice minutes a month/);
     expect(t).toMatch(/checked only when they start/);
     expect(t).toMatch(/runs to its end/);
-    expect(t).toMatch(/reset each month/);
+    expect(t).toMatch(/reset monthly from your signup date/);
     expect(t).not.toMatch(/stops when its minutes run out/);
   });
 
@@ -118,9 +118,10 @@ describe("seats input (item 7)", () => {
 
   it("the component only clamps on blur and on submit, never in onChange", () => {
     const src = readFileSync(join(process.cwd(), "src/components/settings/BillingClient.tsx"), "utf8");
-    expect(src).toMatch(/onChange=\{\(e\) => setSeatsText\(e\.target\.value\)\}/);
-    expect(src).toMatch(/onBlur=\{\(\) => setSeatsText\(String\(clampSeats\(seatsText\)\)\)\}/);
-    expect(src).toMatch(/const seats = clampSeats\(seatsText\)/);
+    // Typing only stores the text (and clears the note); leaving the box and submitting are what clamp.
+    expect(src).toMatch(/onChange=\{\(text\) => \{ setSeatsText\(text\); setSeatsNote\(null\); \}\}/);
+    expect(src).toMatch(/onBlur=\{\(\) => \{ const left = seatsOnBlur\(seatsText\);/);
+    expect(src).toMatch(/const left = seatsOnBlur\(seatsText\);\s+const seats = Number\(left\.value\)/);
   });
 });
 
@@ -270,7 +271,7 @@ describe("Team pool members who cannot buy minutes (Prism 2)", () => {
     expect(capCopy(CAP_REACHED_MESSAGE, false).text).not.toMatch(new RegExp("[\\u2013\\u2014]"));
     const read = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
     expect(read("src/components/call/Briefing.tsx")).toMatch(/<CallError message=\{error\} canUpgrade=\{canUpgrade\} \/>/);
-    expect(read("src/components/call/Briefing.tsx")).toMatch(/message=\{CAP_REACHED_MESSAGE\} role="status" canUpgrade=\{canUpgrade\}/);
+    expect(read("src/components/call/Briefing.tsx")).toMatch(/<MinutesLeft usage=\{usage \?\? null\} mode=\{mode\} canUpgrade=\{canUpgrade\} \/>/);
     expect(read("src/components/call/Deck.tsx")).toMatch(/<CallError message=\{error\} className="mb-3" canUpgrade=\{canUpgrade\} \/>/);
     expect(read("src/components/TrainerClient.tsx")).toMatch(/canUpgrade=\{canUpgrade\}/);
     expect(read("src/components/TrainerClient.tsx")).toMatch(/error, canUpgrade \};/);

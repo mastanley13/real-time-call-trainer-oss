@@ -42,11 +42,33 @@ export const formatMinutes = (n: number): string => String(Math.round(n * 100) /
 /** "10 voice minutes left", "1 voice minute left", "0.5 voice minutes left". */
 export const minutesLeftLabel = (remaining: number): string => `${formatMinutes(remaining)} voice ${remaining === 1 ? "minute" : "minutes"} left`;
 
+/** The count the briefing shows: minutes left and the plan's minutes for the period. */
+export interface UsageSnapshot { remaining: number; cap: number }
+
+/** Shown near Start call in Voice mode when no minutes are left. The Upgrade link, or the ask-your-admin line, goes with it. */
+export const OUT_OF_MINUTES_MESSAGE = "Out of voice minutes this month.";
+/** Shown near Start call in Text mode when minutes are metered: text is never counted. */
+export const TEXT_UNLIMITED_MESSAGE = "Text practice is unlimited.";
+
+/** "10 of 10 voice minutes left", "0.5 of 10 voice minutes left". */
+export const voiceMinutesLeftLabel = (u: UsageSnapshot): string => `${formatMinutes(u.remaining)} of ${formatMinutes(u.cap)} voice minutes left`;
+
+/** Remaining and plan minutes from a /api/usage response; null when minutes are not metered or the answer is unusable. */
+export function usageSnapshotFromUsage(data: unknown): UsageSnapshot | null {
+  const d = data as { metered?: unknown; remaining?: unknown; minutesCap?: unknown } | null;
+  if (d?.metered !== true || typeof d.remaining !== "number" || typeof d.minutesCap !== "number") return null;
+  if (!Number.isFinite(d.remaining) || !Number.isFinite(d.minutesCap)) return null;
+  return { remaining: Math.max(0, d.remaining), cap: Math.max(0, d.minutesCap) };
+}
+
 /** Minutes left from a /api/usage response, or null when minutes are not metered or the answer is unusable. */
 export function minutesLeftFromUsage(data: unknown): number | null {
   const d = data as { metered?: unknown; remaining?: unknown } | null;
   return d?.metered === true && typeof d.remaining === "number" && Number.isFinite(d.remaining) ? Math.max(0, d.remaining) : null;
 }
+
+/** On the Pro and Team intro: a call can end up to half a minute past the plan's minutes, because the last minute counts in full. */
+export const ROUND_UP_NOTE = "Calls are counted in whole minutes, rounded up.";
 
 // ---- Billing page header ---------------------------------------------------------------------------
 
@@ -56,12 +78,12 @@ export function minutesLeftFromUsage(data: unknown): number | null {
  */
 export function usageHeaderCopy(plan: PlanTier | undefined, pooled = false): string {
   if (plan === "free") {
-    return `Free includes ${FREE_MINUTES} voice minutes a month. Voice calls are checked only when they start, so a call that begins with minutes left runs to its end and counts toward the month. Minutes reset each month on your signup date and do not roll over. Text practice is never limited, and there are no overage charges.`;
+    return `Free includes ${FREE_MINUTES} voice minutes a month. Voice calls are checked only when they start, so a call that begins with minutes left runs to its end and counts toward the month. Your minutes reset monthly from your signup date and do not roll over. Text practice is never limited, and there are no overage charges.`;
   }
   if (plan === "pro" || plan === "team") {
     const when = plan === "team" || pooled ? "your organization's start date" : "your signup date";
     const pool = plan === "team" || pooled ? "Your team shares one pool of voice minutes. " : "";
-    return `${pool}Voice minutes reset every month on ${when}. Unused minutes do not roll over, and a call stops when its minutes run out. Text practice is never limited, and there are no overage charges.`;
+    return `${pool}Voice minutes reset every month on ${when}. Unused minutes do not roll over, and a call stops when its minutes run out. ${ROUND_UP_NOTE} Text practice is never limited, and there are no overage charges.`;
   }
   return "Your plan and billing in one place.";
 }
@@ -119,4 +141,40 @@ export function clampSeats(text: string): number {
   const n = Math.floor(Number(text.trim()));
   if (!Number.isFinite(n)) return TEAM_MIN_SEATS;
   return Math.min(TEAM_MAX_SEATS, Math.max(TEAM_MIN_SEATS, n));
+}
+
+/** Always shown under the seats field. */
+export const SEATS_HELP = `Team starts at ${TEAM_MIN_SEATS} seats.`;
+/** Shown, and announced, when the box is set to the minimum because it was left below it. */
+export const SEATS_CLAMPED_NOTE = `Set to ${TEAM_MIN_SEATS}, the Team minimum.`;
+
+/**
+ * What leaving the seats box does: the text it ends up with, and the note to show when that changed the number because
+ * it was below the minimum (empty and non-numbers count as below).
+ */
+export function seatsOnBlur(text: string): { value: string; note: string | null } {
+  const typed = Math.floor(Number(text.trim()));
+  const below = !Number.isFinite(typed) || typed < TEAM_MIN_SEATS;
+  return { value: String(clampSeats(text)), note: below ? SEATS_CLAMPED_NOTE : null };
+}
+
+// ---- Checkout failures -------------------------------------------------------------------------------
+
+/** For any server or configuration failure starting checkout. No charge was made. */
+export const CHECKOUT_UNAVAILABLE_MESSAGE = "Checkout is unavailable right now. Your plan has not changed.";
+/** Only for a request that never got an answer (network error or timeout). */
+export const CHECKOUT_NETWORK_MESSAGE = "Could not start checkout. Try again in a moment.";
+/** Where to report a checkout problem. There is no support email until billing is live. */
+export const SUPPORT_URL = "https://github.com/mastanley13/real-time-call-trainer-oss/issues";
+
+/**
+ * The message for a failed checkout start. A failed request (network error or timeout) says to try again; a server or
+ * config error (5xx, or an answer with no checkout address) says checkout is unavailable and points to the issues page;
+ * a 4xx keeps the server's own sentence, because it says what to fix (seats, an existing plan).
+ */
+export function checkoutFailure(input: { status?: number; networkError?: boolean; message?: string }): { message: string; help: boolean } {
+  if (input.networkError) return { message: CHECKOUT_NETWORK_MESSAGE, help: false };
+  const { status } = input;
+  if (typeof status === "number" && status >= 400 && status < 500 && input.message) return { message: input.message, help: false };
+  return { message: CHECKOUT_UNAVAILABLE_MESSAGE, help: true };
 }

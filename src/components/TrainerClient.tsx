@@ -17,7 +17,7 @@ import { CallMeter } from "@/lib/callMeter";
 import RealtimeVoiceSession, { type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
-import { canUpgradeFromUsage, minutesLeftFromUsage } from "@/lib/billingUi";
+import { canUpgradeFromUsage, usageSnapshotFromUsage, type UsageSnapshot } from "@/lib/billingUi";
 
 type Mode = "voice" | "text";
 type Phase = "idle" | "live" | "grading";
@@ -120,7 +120,7 @@ export default function TrainerClient() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   /** Voice minutes left this period, shown on the briefing. Null when minutes are not metered. */
-  const [minutesLeft, setMinutesLeft] = useState<number | null>(null);
+  const [usage, setUsage] = useState<UsageSnapshot | null>(null);
   /** False for a Team pool member who is not an owner or manager, who is sent to their admin instead of the billing page. */
   const [canUpgrade, setCanUpgrade] = useState(true);
   /** Who wrote the latest text-call reply: the configured model, or the scripted fallback. */
@@ -211,12 +211,12 @@ export default function TrainerClient() {
   // Read the minutes left each time the briefing shows, so it is right after a call and after an upgrade.
   const stored = !!capabilities?.database && !capabilities?.demoMode;
   useEffect(() => {
-    if (phase !== "idle" || !isAuthenticated || !stored) { setMinutesLeft(null); return; }
+    if (phase !== "idle" || !isAuthenticated || !stored) { setUsage(null); return; }
     let live = true;
     fetch("/api/usage", { credentials: "include" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (live) { setMinutesLeft(minutesLeftFromUsage(d)); setCanUpgrade(canUpgradeFromUsage(d)); } })
-      .catch(() => { if (live) setMinutesLeft(null); });
+      .then((d) => { if (live) { setUsage(usageSnapshotFromUsage(d)); setCanUpgrade(canUpgradeFromUsage(d)); } })
+      .catch(() => { if (live) setUsage(null); });
     return () => { live = false; };
   }, [phase, isAuthenticated, stored]);
 
@@ -398,7 +398,7 @@ export default function TrainerClient() {
     return (
       // Keyed by persona: revealed prep answers, "Got it" and the mic test belong to one buyer.
       <Briefing key={scenario.id} scenario={scenario} capabilities={capabilities} mode={mode} onModeChange={setMode} engine={engine} onEngineChange={setEngine} coachMode={coachMode} onCoachModeChange={setCoachMode}
-        onStart={begin} retryFrom={retry ? { turn: retry.turn, line: retry.line } : null} error={error} notice={notice} minutesLeft={minutesLeft} canUpgrade={canUpgrade} />
+        onStart={begin} retryFrom={retry ? { turn: retry.turn, line: retry.line } : null} error={error} notice={notice} usage={usage} canUpgrade={canUpgrade} />
     );
   }
 

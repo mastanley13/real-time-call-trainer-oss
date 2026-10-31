@@ -8,8 +8,9 @@ import { CALL_TYPE_LABELS, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps, typ
 import { VOICE_ENGINE_LABELS, averageLevel, micErrorMessage, type VoiceEngine } from "@/lib/realtime";
 import type { Capabilities } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
-import { CAP_REACHED_MESSAGE, minutesLeftLabel } from "@/lib/billingUi";
+import { isCapMessage, type UsageSnapshot } from "@/lib/billingUi";
 import CallError from "./CallError";
+import MinutesLeft from "./MinutesLeft";
 import { ModeDial, radioKeys } from "./CopilotRail";
 
 const MODE_HELP: Record<CoachMode, string> = {
@@ -122,7 +123,7 @@ function MicCheck({ onResult }: { onResult: (r: MicResult) => void }) {
   );
 }
 
-export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, minutesLeft, canUpgrade = true }: {
+export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, usage, canUpgrade = true }: {
   scenario: Scenario;
   capabilities: Capabilities;
   mode: "voice" | "text";
@@ -137,8 +138,8 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
   error?: string;
   /** Shown when the link named a persona this browser doesn't have and another one opened instead. */
   notice?: string;
-  /** Voice minutes left this period; null or undefined when minutes are not metered (demo mode, no billing). */
-  minutesLeft?: number | null;
+  /** Voice minutes left and the plan's minutes this period; null or undefined when minutes are not metered (demo mode, no billing). */
+  usage?: UsageSnapshot | null;
   /** False for a Team pool member who is not an owner or manager: they are told to ask their admin, with no Upgrade link. */
   canUpgrade?: boolean;
 }) {
@@ -299,12 +300,8 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
 
             {error && <CallError message={error} canUpgrade={canUpgrade} />}
 
-            {/* Voice minutes left, before Start. With none left the refusal and Upgrade link show now, not after a failed start. */}
-            {mode === "voice" && !blocked && minutesLeft != null && (
-              minutesLeft > 0
-                ? <p className="mono text-sm text-ink-soft" role="status">{minutesLeftLabel(minutesLeft)}</p>
-                : !error && <CallError message={CAP_REACHED_MESSAGE} role="status" canUpgrade={canUpgrade} />
-            )}
+            {/* Minutes near Start, in every state: voice keys set up or not. A refusal from the server already says the same, so it replaces the out-of-minutes panel instead of repeating it. */}
+            {!(mode === "voice" && usage && usage.remaining <= 0 && isCapMessage(error)) && <MinutesLeft usage={usage ?? null} mode={mode} canUpgrade={canUpgrade} />}
 
             <button className="btn-primary btn-xl w-full" onClick={onStart} disabled={blocked}>
               <PhoneCall size={18} aria-hidden /> Start call

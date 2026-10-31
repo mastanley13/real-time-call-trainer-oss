@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { billingGate, StripeApiError } from "@/lib/stripe";
 import { appBaseUrl, buildCheckoutParams, checkoutFingerprint, createOrReuseCheckout, CheckoutConfigError, resolvePriceIds } from "@/lib/billing";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "@/lib/usagePlan";
+import { CHECKOUT_UNAVAILABLE_MESSAGE } from "@/lib/billingUi";
 
 const Body = z.object({
   plan: z.enum(["pro", "team"]),
@@ -87,6 +88,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: e.code, message: e.message }, { status: e.code === "invalid_seats" ? 400 : 503 });
     }
     console.error("[billing/checkout]", e instanceof StripeApiError ? `stripe status ${e.status}` : "unexpected error");
-    return NextResponse.json({ error: "stripe_error", message: "Could not start checkout. Try again in a moment." }, { status: 502 });
+    return NextResponse.json({ error: "stripe_error", message: CHECKOUT_UNAVAILABLE_MESSAGE }, { status: 502 });
   }
 }
