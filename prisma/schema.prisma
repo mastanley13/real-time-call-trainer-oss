@@ -153,6 +153,33 @@ model TrainingAssignment {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  GoHighLevel outbox
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Durable queue of lifecycle events bound for GoHighLevel. `idempotencyKey` is
+/// unique, so the same event is never queued twice. Rows are drained after the
+/// response and by /api/cron/ghl-sync. Not tied to User by a relation on purpose:
+/// a GHL failure or a deleted user must never block anything.
+model GhlOutbox {
+  id             String    @id @default(cuid())
+  idempotencyKey String    @unique
+  event          String
+  userId         String
+  payload        Json
+  /// pending | done | dead
+  status         String    @default("pending")
+  attempts       Int       @default(0)
+  nextAttemptAt  DateTime  @default(now())
+  /// HTTP status code or short error code only, never a provider body.
+  lastError      String?
+  createdAt      DateTime  @default(now())
+  sentAt         DateTime?
+
+  @@index([status, nextAttemptAt])
+  @@index([userId, event])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 //  Audit log
 // ─────────────────────────────────────────────────────────────────────────
 

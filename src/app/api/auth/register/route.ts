@@ -5,6 +5,7 @@ import { hashPassword, signSessionToken } from "@/lib/auth";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { generateOrgCode, isValidOrgCode } from "@/lib/orgCodes";
+import { emitSignup } from "@/lib/ghl/events";
 
 const RegisterSchema = z
   .object({
@@ -120,6 +121,9 @@ export async function POST(request: NextRequest) {
 
       return { user: created, organization: created.organization };
     });
+
+    // Fire and forget: queued after the response, and a GHL failure never touches sign-up.
+    emitSignup(user.id);
 
     const sessionUser = {
       id: user.id,
