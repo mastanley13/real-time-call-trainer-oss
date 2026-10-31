@@ -116,7 +116,11 @@ DEMO_MODE=true npm run dev`}</pre>
       </section>
 
       <footer className="border-t border-line py-8 text-center text-sm text-ink-muted">
-        MIT licensed · by Mykel Stanley · originally based on OpenAI&rsquo;s openai-realtime-agents demo
+        <p>MIT licensed · by Mykel Stanley · originally based on OpenAI&rsquo;s openai-realtime-agents demo</p>
+        <nav aria-label="Legal" className="mt-2 flex justify-center gap-4">
+          <Link href="/privacy" className="underline underline-offset-2 hover:text-ink">Privacy</Link>
+          <Link href="/terms" className="underline underline-offset-2 hover:text-ink">Terms</Link>
+        </nav>
       </footer>
     </div>
   );
