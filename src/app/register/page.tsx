@@ -66,6 +66,8 @@ export default function RegisterPage() {
     }
   }
 
+  const google = googleSignupParams(mode, f.orgCode, invite);
+
   return (
     <AuthShell title="Create your account" subtitle="Practise on your own, start a team or join one with a code.">
       {capabilities && !capabilities.database && !capabilities.demoMode && (
@@ -77,8 +79,10 @@ export default function RegisterPage() {
           <GoogleButton
             label="Sign up with Google"
             next={mode === "solo" ? "/dashboard" : "/onboarding"}
-            {...googleSignupParams(mode, f.orgCode, invite)}
+            disabled={!google}
+            {...(google ?? {})}
           />
+          {!google && <p className="mt-2 text-xs text-ink-muted">Enter your team code to sign up with Google.</p>}
           <OrDivider />
         </>
       )}

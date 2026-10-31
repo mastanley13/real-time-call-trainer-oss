@@ -51,6 +51,11 @@ describe("Google signup button params", () => {
     expect(googleSignupParams("join", "111111", invite)).toEqual({ intent: "solo", code: "111111", manager: "mgr-1" });
   });
 
+  it("returns null for an empty or blank code in join mode, never solo", () => {
+    expect(googleSignupParams("join", "", null)).toBeNull();
+    expect(googleSignupParams("join", "   ", { code: "111111", manager: "mgr-1" })).toBeNull();
+  });
+
   it("sends no code in solo or create mode", () => {
     const invite = { code: "111111", manager: "mgr-1" };
     expect(googleSignupParams("solo", "111111", invite)).toEqual({ intent: "solo" });
