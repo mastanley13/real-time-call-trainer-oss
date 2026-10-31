@@ -83,7 +83,8 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `RATE_LIMIT_REALTIME_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/realtime/session` (one per voice call). Default 10 per 3600 s |
 | `RATE_LIMIT_COACH_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/coach/turn`. Default 120 per 600 s |
 | `RATE_LIMIT_WIZARD_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/persona/generate` and `/api/persona/fetch-url`. Default 20 per 3600 s |
-| `DEMO_MODE` | Optional | `true` skips login; sessions, assignments and notes stay in the browser and `/team` shows a sample team. Never on a public deployment |
+| `DEMO_MODE` | Optional | `true` skips login; sessions, assignments and notes stay in the browser and `/team` shows a sample team. Never on a public deployment. With `NODE_ENV=production` it is ignored (login stays required, the app refuses to boot, `/api/health` returns 503) unless `ALLOW_PUBLIC_DEMO=true` |
+| `ALLOW_PUBLIC_DEMO` | Optional | `true` lets `DEMO_MODE=true` take effect in production, for a deliberate public demo only. Any other value keeps the production guard on |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Optional | Used by `npm run db:seed` to create a platform admin. `ADMIN_FIRST_NAME` and `ADMIN_LAST_NAME` set its name (default Platform Admin) |
 
 ### Voice engines
