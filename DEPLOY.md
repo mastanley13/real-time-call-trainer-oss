@@ -34,7 +34,7 @@ Too low, and every visitor shares the CDN's address and its rate-limit bucket. T
 
 ## Access code and rate limits (Vercel)
 
-1. Project → Settings → Environment Variables: add `TRAINER_ACCESS_CODE` (a long random string) to gate the whole site. Visitors see `/access` and enter it once; the cookie lasts 30 days. Leave it unset for a public deployment. `/api/health` stays open for uptime checks.
+1. Project → Settings → Environment Variables: add `TRAINER_ACCESS_CODE` (a long random string) to gate the whole site. Visitors see `/access` and enter it once; the cookie lasts 30 days. For open sign-up, leave it unset: visitors can then reach `/register`, `/login` and `/api/auth/register` without a code. Keep it set only for private betas. `/api/health` stays open for uptime checks.
 2. Keep `JWT_SECRET` set: it keys the access cookie HMAC. Rotating it signs everyone out of the gate.
 3. Optional: tune `RATE_LIMIT_CALLER_MAX`, `RATE_LIMIT_GRADING_MAX`, `RATE_LIMIT_TOKEN_MAX`, `RATE_LIMIT_REALTIME_MAX`, `RATE_LIMIT_COACH_MAX`, `RATE_LIMIT_WIZARD_MAX` (and the `_WINDOW_SEC` variants). Defaults per IP: 30/5 min, 10/hour (grading and re-grades together), 10/hour, 10/hour, 120/10 min, 20/hour. The per-account limits are fixed in code; [TESTING.md](TESTING.md#rate-limits) lists them. Leave `TRUSTED_PROXY_HOPS` unset on Vercel.
 4. Redeploy after changing env vars. Limits are in-memory per instance (best-effort on serverless); see README.

@@ -131,7 +131,7 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 3. Without keys, `GET /api/elevenlabs/token` returns 503 `elevenlabs_not_configured`.
 
 ### 14. Accounts (full mode only)
-1. Register a new team and land in the app. Sign out and back in. A wrong password shows an error.
+1. Register with **Just me** (the default; no team name or code field) and land on `/dashboard`. The navbar and Team page show no team code. Then register another account with **Start a team** and one with **Join a team**. Sign out and back in. Sign out and back in. A wrong password shows an error.
 2. `/settings/security`: enrol TOTP MFA, sign out, and sign in with the code. A wrong code is rejected.
 3. Signed out, `/dashboard` redirects to `/login`. Sessions persist across devices.
 
