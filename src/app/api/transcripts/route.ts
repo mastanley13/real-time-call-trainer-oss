@@ -5,9 +5,12 @@ import { requireAuth, isDemoUser } from "@/lib/apiAuth";
 import { rateLimit, readJsonLimited } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { verifySeal } from "@/lib/gradeSeal";
+import { HAS_TRANSCRIPT } from "@/lib/usage";
 
 const Body = z.object({
   sessionId: z.string().min(1).max(128),
+  /** Id from /api/realtime/session or /api/elevenlabs/token. Fills that call's row instead of adding a second one. */
+  callId: z.string().max(64).optional(),
   transcript: z.array(z.object({ role: z.enum(["user", "assistant", "system"]), text: z.string().max(8000), timestamp: z.string().max(40).optional() })).min(1).max(2000),
   durationSeconds: z.number().int().nonnegative().max(10 * 60 * 60).optional(),
   scenario: z.object({
@@ -58,23 +61,26 @@ export async function POST(req: NextRequest) {
   const grade = sealed ? GradeFields.safeParse(body.evaluation) : null;
   const ev = grade?.success ? grade.data : undefined;
   try {
-    const created = await prisma.trainerSession.create({
-      data: {
-        userId: dbUser.id,
-        organizationId: dbUser.organizationId,
-        realtimeSessionId: body.sessionId,
-        scenarioId: body.scenario.id,
-        scenarioCategory: body.scenario.industry,
-        scenarioDifficulty: body.scenario.difficulty,
-        scenarioTitle: body.scenario.title,
-        durationSeconds: body.durationSeconds ?? 0,
-        transcript: body.transcript as unknown as Prisma.InputJsonValue,
-        evaluation: ev ? (body.evaluation as Prisma.InputJsonValue) : Prisma.JsonNull,
-        overallScore: ev ? Math.round(ev.overallScore) : null,
-        grade: ev?.grade ?? null,
-        goalAchieved: ev?.goalAchievement.achieved ?? null,
-      },
-    });
+    // A metered voice call already has its row (created when the call started, empty transcript). Fill it so the
+    // call has one row. durationSeconds is display only: billing never reads it, so a client cannot change what it is charged.
+    const metered = body.callId ? await prisma.trainerSession.findUnique({ where: { id: body.callId }, select: { userId: true, transcript: true } }) : null;
+    const fillExisting = !!body.callId && !!metered && metered.userId === dbUser.id && Array.isArray(metered.transcript) && metered.transcript.length === 0;
+    const fields = {
+      realtimeSessionId: body.sessionId,
+      scenarioId: body.scenario.id,
+      scenarioCategory: body.scenario.industry,
+      scenarioDifficulty: body.scenario.difficulty,
+      scenarioTitle: body.scenario.title,
+      durationSeconds: body.durationSeconds ?? 0,
+      transcript: body.transcript as unknown as Prisma.InputJsonValue,
+      evaluation: ev ? (body.evaluation as Prisma.InputJsonValue) : Prisma.JsonNull,
+      overallScore: ev ? Math.round(ev.overallScore) : null,
+      grade: ev?.grade ?? null,
+      goalAchieved: ev?.goalAchievement.achieved ?? null,
+    };
+    const created = fillExisting
+      ? await prisma.trainerSession.update({ where: { id: body.callId }, data: fields })
+      : await prisma.trainerSession.create({ data: { userId: dbUser.id, organizationId: dbUser.organizationId, ...fields } });
     await prisma.auditEvent.create({
       data: {
         userId: dbUser.id, action: "session.saved", resource: created.id,
@@ -93,7 +99,7 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   const rows = await prisma.trainerSession.findMany({
-    where: { userId: auth.id },
+    where: { userId: auth.id, ...HAS_TRANSCRIPT },
     orderBy: { createdAt: "desc" },
     take: 100,
     select: { id: true, scenarioId: true, scenarioTitle: true, scenarioCategory: true, durationSeconds: true, overallScore: true, grade: true, goalAchieved: true, createdAt: true, evaluation: true },

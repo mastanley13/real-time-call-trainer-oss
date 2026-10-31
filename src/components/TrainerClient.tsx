@@ -13,6 +13,7 @@ import type { AgentState } from "@/components/CallOrb";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import Briefing from "@/components/call/Briefing";
 import Deck from "@/components/call/Deck";
+import { CallMeter } from "@/lib/callMeter";
 import RealtimeVoiceSession, { type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
@@ -40,24 +41,40 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, reg
   registerEnd: (fn: () => void) => void;
   render: (v: { orbState: AgentState; status: { label: string; tone: "ok" | "signal" | "caution" }; muted: boolean; toggleMute: () => void; end: () => void; getInputVolume: () => number; getOutputVolume: () => number }) => React.ReactNode;
 }) {
+  // Server-side voice metering (see lib/callMeter.ts). Replaced per call once the token route returns a callId.
+  const meterRef = useRef<CallMeter>(new CallMeter(undefined, { onStop: () => {}, onGiveUp: () => {} }));
+  const userEndedRef = useRef(false);
+  const endRef = useRef<() => void>(() => {});
   const conv = useConversation({
-    onMessage: ({ message, role }) => onTurn({ role: role === "user" ? "user" : "assistant", text: message }),
-    onError: (m: unknown) => onError(typeof m === "string" ? m : "Voice connection error"),
-    onDisconnect: () => onEnded(),
+    onConnect: () => meterRef.current.open(),
+    onMessage: ({ message, role }) => {
+      // ElevenLabs has no packet-level event; the first agent message is the first remote audio.
+      if (role !== "user") meterRef.current.audio();
+      onTurn({ role: role === "user" ? "user" : "assistant", text: message });
+    },
+    onError: (m: unknown) => { meterRef.current.end("provider_error"); onError(typeof m === "string" ? m : "Voice connection error"); },
+    onDisconnect: () => { meterRef.current.end(userEndedRef.current ? "user_hangup" : "network_drop"); onEnded(); },
   });
   const { startSession, endSession, status, isSpeaking, isMuted, setMuted, getInputVolume, getOutputVolume } = conv;
   const startedRef = useRef(false);
+  useEffect(() => { endRef.current = () => { void endSession(); }; }, [endSession]);
 
-  useEffect(() => registerEnd(() => endSession()), [endSession, registerEnd]);
+  useEffect(() => registerEnd(() => { userEndedRef.current = true; endSession(); }), [endSession, registerEnd]);
 
   useEffect(() => {
     if (!active || startedRef.current) return;
     startedRef.current = true;
     (async () => {
       try {
-        const res = await fetch("/api/elevenlabs/token");
+        userEndedRef.current = false;
+        const res = await fetch(`/api/elevenlabs/token?${new URLSearchParams({ scenarioId: scenario.id, title: scenario.title })}`);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.message || "Could not get a voice token.");
+        meterRef.current = new CallMeter(data.callId, {
+          // The server has already stopped and billed the call.
+          onStop: (m) => { userEndedRef.current = true; endRef.current(); onError(m); },
+          onGiveUp: () => endRef.current(),
+        });
         startSession({
           conversationToken: data.token,
           connectionType: "webrtc",
