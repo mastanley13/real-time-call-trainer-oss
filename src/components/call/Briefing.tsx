@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type Ref } from "react";
 import { ArrowLeft, Keyboard, Mic, PhoneCall, RotateCcw } from "lucide-react";
 import { COACH_MODE_LABELS, type CoachMode } from "@/lib/coach-types";
 import { CALL_TYPE_LABELS, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps, type Scenario } from "@/lib/scenarios";
@@ -9,7 +9,7 @@ import { VOICE_ENGINE_LABELS, averageLevel, micErrorMessage, type VoiceEngine } 
 import type { Capabilities } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
 import GettingStarted from "@/components/onboarding/GettingStarted";
-import { dismissFocusTarget } from "@/lib/onboarding";
+import { restoreDismissFocus } from "@/lib/onboarding";
 import { ModeDial, radioKeys } from "./CopilotRail";
 
 const MODE_HELP: Record<CoachMode, string> = {
@@ -122,6 +122,46 @@ function MicCheck({ onResult }: { onResult: (r: MicResult) => void }) {
   );
 }
 
+const DESKTOP_QUERY = "(min-width: 1024px)";
+
+/** true at lg and up, false below. null before hydration, when the server can't know: both Start buttons render then and CSS shows one. */
+function useIsDesktop(): boolean | null {
+  return useSyncExternalStore(
+    (notify) => {
+      const mq = window.matchMedia(DESKTOP_QUERY);
+      mq.addEventListener("change", notify);
+      return () => mq.removeEventListener("change", notify);
+    },
+    () => window.matchMedia(DESKTOP_QUERY).matches,
+    () => null,
+  );
+}
+
+/** Mobile-only sticky bar: a one-line goal, then Start. The goal line is aria-hidden because the "Your goal" section already says it. */
+export function StartBar({ goal, blocked, error, onStart, buttonRef }: {
+  goal: string;
+  blocked: boolean;
+  error?: string;
+  onStart: () => void;
+  buttonRef?: Ref<HTMLButtonElement>;
+}) {
+  const text = goal.trim();
+  return (
+    <div role="region" aria-label="Start call bar"
+      className="sticky bottom-[calc(57px+env(safe-area-inset-bottom))] z-30 -mx-4 mt-6 border-t border-line bg-surface px-4 py-2 sm:-mx-6 sm:px-6 md:bottom-0 md:pb-[max(0.5rem,env(safe-area-inset-bottom))] lg:hidden">
+      <div className="mx-auto max-w-xl">
+        {error && <p role="alert" className="mb-2 rounded-lg border border-alert/40 bg-alert-soft p-2 text-xs">{error}</p>}
+        {text
+          ? <p aria-hidden className="truncate text-xs text-ink-soft">Goal: {text}</p>
+          : <p aria-hidden className="truncate text-xs text-ink-muted">No goal set</p>}
+        <button ref={buttonRef} type="button" className="btn-primary mt-1 min-h-[48px] w-full" onClick={onStart} disabled={blocked}>
+          <PhoneCall size={18} aria-hidden /> Start call
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, onboarding }: {
   scenario: Scenario;
   capabilities: Capabilities;
@@ -141,16 +181,17 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
   onboarding?: { open: boolean; welcome: string; onDismiss: () => void; onReopen: () => void };
 }) {
   const startRef = useRef<HTMLButtonElement>(null);
+  const barStartRef = useRef<HTMLButtonElement>(null);
+  const isDesktop = useIsDesktop();
+  const showBar = isDesktop !== true;
+  const showAsideStart = isDesktop !== false;
   const modeRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   // "Got it" and Escape both land here. Start is disabled when voice is unavailable, and a disabled button can't take focus.
   const dismissOnboarding = () => {
     onboarding?.onDismiss();
     const modeToggle = modeRef.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]:not(:disabled)') ?? null;
-    const target = dismissFocusTarget({ startDisabled: !!startRef.current?.disabled, hasModeToggle: !!modeToggle });
-    if (target === "start") startRef.current?.focus();
-    else if (target === "mode") modeToggle?.focus();
-    else headingRef.current?.focus();
+    restoreDismissFocus({ start: barStartRef.current ?? startRef.current, modeToggle, heading: headingRef.current });
   };
   const p = scenario.aiPersona;
   const steps = talkTrackSteps(scenario.callScript);
@@ -313,16 +354,19 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
               <p className="mt-2 text-xs text-ink-muted">{MODE_HELP[coachMode]}</p>
             </div>
 
-            {error && <p role="alert" className="rounded-lg border border-alert/40 bg-alert-soft p-3 text-sm">{error}</p>}
+            {showAsideStart && error && <p role="alert" className={`rounded-lg border border-alert/40 bg-alert-soft p-3 text-sm ${isDesktop === null ? "max-lg:hidden" : ""}`}>{error}</p>}
 
-            <button ref={startRef} className="btn-primary btn-xl w-full" onClick={onStart} disabled={blocked}>
-              <PhoneCall size={18} aria-hidden /> Start call
-            </button>
+            {showAsideStart && (
+              <button ref={startRef} className={`btn-primary btn-xl w-full ${isDesktop === null ? "max-lg:hidden" : ""}`} onClick={onStart} disabled={blocked}>
+                <PhoneCall size={18} aria-hidden /> Start call
+              </button>
+            )}
             <p className="text-center text-xs text-ink-muted">The coach only talks to you. {p.name} never hears it.</p>
           </div>
           <Link href="/library" className="btn-ghost w-full">Change persona</Link>
         </aside>
       </div>
+      {showBar && <StartBar goal={scenario.traineeGoal} blocked={blocked} error={error} onStart={onStart} buttonRef={barStartRef} />}
     </div>
   );
 }
