@@ -4,18 +4,18 @@ import Link from "next/link";
 import { useState } from "react";
 import { Check } from "lucide-react";
 import {
-  FREE_VOICE_MIN, PREMIUM_VOICE_CAP_PCT, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT,
+  FREE_SUMMARY, PREMIUM_VOICE_CAP_PCT, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT,
   registerHref, type Billing,
 } from "@/lib/pricing";
 
 const TIERS = [
   {
-    id: "free", name: "Free", blurb: "", cta: "Start free, no card",
+    id: "free", name: "Free", blurb: "Try it solo, no card.", cta: "Start free, no card",
     href: registerHref({ src: "pricing" }),
-    features: [`${FREE_VOICE_MIN} voice minutes per month`, "Unlimited text sim", "Live coach channel", "Graded debriefs with transcript quotes", "Core persona library"],
+    features: [FREE_SUMMARY, "Unlimited text sim", "Live coach channel", "Graded debriefs with transcript quotes", "Core persona library"],
   },
   {
-    id: "pro", name: "Pro", blurb: "", cta: "Start Pro",
+    id: "pro", name: "Pro", blurb: "For individual reps who practice weekly.", cta: "Start Pro",
     href: registerHref({ plan: "pro", src: "pricing" }),
     features: [`${PRO_VOICE_MIN} voice minutes per month`, "Everything in Free", "Full persona library across every sales role", "Reviewed persona packs (coming soon)", "Persona wizard for your own buyers", "Call history and score trends", "MFA"],
   },
@@ -62,7 +62,9 @@ export default function PricingCards() {
               </p>
               {t.blurb && <p className="mt-2 text-sm text-ink-soft">{t.blurb}</p>}
               <ul className="mt-4 flex-1 space-y-2 text-sm text-ink-soft">
-                {t.features.map((f) => (
+                {t.features.map((f) => f.endsWith("(coming soon)") ? (
+                  <li key={f} className="flex gap-2 text-ink-muted"><span className="w-4 shrink-0" aria-hidden />{f}</li>
+                ) : (
                   <li key={f} className="flex gap-2"><Check size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-ok" aria-hidden />{f}</li>
                 ))}
               </ul>

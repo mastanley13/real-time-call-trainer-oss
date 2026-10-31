@@ -2,19 +2,19 @@ import Link from "next/link";
 import PricingCards from "@/components/landing/PricingCards";
 import PublicFooter from "@/components/landing/PublicFooter";
 import {
-  FREE_VOICE_MIN, PREMIUM_VOICE_CAP_PCT, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT, registerHref,
+  FREE_SUMMARY, FREE_VOICE_MIN, MINUTES_ROUNDED_NOTE, PREMIUM_VOICE_CAP_PCT, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT, registerHref,
 } from "@/lib/pricing";
 import { GITHUB_URL, pageMetadata } from "@/lib/seo";
 
 export const metadata = pageMetadata({
   title: "Pricing: Free, Pro and Team Plans | Call Trainer",
-  description: "Start free with no card. Free to start. Pro is $29/mo. No overages, ever. Self-host free under MIT.",
+  description: "Sales roleplay with an AI buyer and a coach in your ear. Free, no card. Pro $29/mo. Team $59/seat for managers. No overages.",
   path: "/pricing",
 });
 
 const COMPARE: { feature: string; self: string; free: string; pro: string; team: string }[] = [
   { feature: "Price", self: "$0, you pay your own API bill", free: "$0", pro: `$${PRICE.pro.month}/mo`, team: `$${PRICE.team.month}/seat/mo, ${TEAM_MIN_SEATS}-seat min` },
-  { feature: "Voice minutes", self: "Unlimited (your keys)", free: `${FREE_VOICE_MIN} a month`, pro: `${PRO_VOICE_MIN} a month`, team: `${TEAM_VOICE_MIN_PER_SEAT} per seat, pooled` },
+  { feature: "Voice minutes", self: "Unlimited (your keys)", free: `${FREE_VOICE_MIN} a month`, pro: `${PRO_VOICE_MIN} a month. ${MINUTES_ROUNDED_NOTE}`, team: `${TEAM_VOICE_MIN_PER_SEAT} per seat, pooled. ${MINUTES_ROUNDED_NOTE}` },
   { feature: "Text sim", self: "Yes", free: "Unlimited", pro: "Unlimited", team: "Unlimited" },
   { feature: "Bring your own OpenAI or ElevenLabs keys", self: "Required", free: "Not needed", pro: "Not needed", team: "Not needed" },
   { feature: "Postgres database", self: "You run it", free: "Managed", pro: "Managed", team: "Managed" },
@@ -33,6 +33,7 @@ const COMPARE: { feature: string; self: string; free: string; pro: string; team:
 ];
 
 const FAQ: { q: string; a: string }[] = [
+  { q: "What do I get on Free?", a: FREE_SUMMARY },
   { q: "What happens when I hit my voice minute cap?", a: "Voice calls pause until your next billing cycle. We never charge overages, ever. The text sim stays fully available, so you can keep practicing, get coached and get graded. You can upgrade anytime if you want more voice minutes now." },
   { q: "Will I ever get a surprise bill?", a: "No. There are no overage charges on any plan. Your price is your price, whatever you use." },
   { q: "Do unused minutes roll over?", a: "No. Paid plans reset at the start of each billing cycle. Free resets monthly from your signup date." },
@@ -76,7 +77,9 @@ export default function PricingPage() {
       <section className="border-y border-line bg-surface" aria-labelledby="compare-h">
         <div className="page py-12">
           <h2 id="compare-h" className="text-2xl font-bold">Compare plans</h2>
-          <div className="mt-6 overflow-x-auto rounded-panel border border-line">
+          <p className="mt-4 text-xs text-ink-muted sm:hidden">Swipe to compare</p>
+          <div className="relative mt-2 sm:mt-6">
+          <div className="overflow-x-auto rounded-panel border border-line">
             <table className="w-full min-w-[640px] text-left text-sm">
               <thead className="bg-sunken text-ink-muted">
                 <tr>
@@ -99,6 +102,8 @@ export default function PricingPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+          <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-10 rounded-r-panel bg-gradient-to-l from-surface to-transparent sm:hidden" />
           </div>
         </div>
       </section>

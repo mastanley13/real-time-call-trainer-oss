@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { LANDINGS } from "@/lib/landing";
 import { LIBRARY } from "@/lib/personas";
-import { registerHref } from "@/lib/pricing";
+import { PRICING_NAV } from "@/components/SiteHeader";
+import { FREE_SUMMARY, FREE_VOICE_MIN, MINUTES_ROUNDED_NOTE, registerHref } from "@/lib/pricing";
 import { VERTICAL_SLUGS } from "@/lib/publicPaths";
 import { pageMetadata, siteUrl } from "@/lib/seo";
 
@@ -33,6 +34,27 @@ describe("page metadata", () => {
     expect(m.openGraph?.url).toBe("https://calltrainer.tech/pricing");
     expect((m.twitter as { card?: string }).card).toBe("summary_large_image");
     expect(pageMetadata({ title: "T", description: "D", path: "/" }).alternates?.canonical).toBe("https://calltrainer.tech");
+  });
+});
+
+describe("pricing copy", () => {
+  it("states the Free 10 minute line exactly", () => {
+    expect(FREE_VOICE_MIN).toBe(10);
+    expect(FREE_SUMMARY).toBe("Free: 10 voice minutes a month, enough for a full graded call, plus unlimited text practice. No card.");
+  });
+
+  it("says calls are rounded up on Pro and Team only", () => {
+    const src = readFileSync("src/app/pricing/page.tsx", "utf8");
+    expect(MINUTES_ROUNDED_NOTE).toBe("Calls are counted in whole minutes, rounded up.");
+    expect(src).toContain("pro: `${PRO_VOICE_MIN} a month. ${MINUTES_ROUNDED_NOTE}`");
+    expect(src).toContain("team: `${TEAM_VOICE_MIN_PER_SEAT} per seat, pooled. ${MINUTES_ROUNDED_NOTE}`");
+    expect(src).not.toMatch(/free: `[^`]*MINUTES_ROUNDED_NOTE/);
+  });
+
+  it("links Pricing from the header", () => {
+    expect(PRICING_NAV.href).toBe("/pricing");
+    expect(PRICING_NAV.label).toBe("Pricing");
+    expect(PRICING_NAV.match("/pricing")).toBe(true);
   });
 });
 
