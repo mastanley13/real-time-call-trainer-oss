@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useContext, useState, useEffect, useRef } from "react";
+import { backfillOrganization } from "@/lib/userOrg";
 
 export interface LoginCredentials {
   email: string;
@@ -28,13 +29,16 @@ export interface User {
   /** Set by the login, MFA and register routes. Display only; the server checks it again on every request. */
   isPlatformAdmin?: boolean;
   /** The user's team. The auth routes return it beside `user`; it is merged in here so the header and settings can show the name. */
-  organization?: { id: string; name: string; code?: string | null };
+  organization?: { id: string; name: string; code?: string | null } | null;
 }
 
 type OrgPayload = { id: string; name: string; code?: string | null } | null | undefined;
 
+/** `null` from the server means "no team" and is kept, so the /api/me backfill is not repeated for this user. */
 const withOrganization = (u: User, org: OrgPayload): User =>
-  org && typeof org.name === "string" ? { ...u, organization: { id: org.id, name: org.name, code: org.code ?? null } } : u;
+  org === null ? { ...u, organization: null }
+  : org && typeof org.name === "string" ? { ...u, organization: { id: org.id, name: org.name, code: org.code ?? null } }
+  : u;
 
 export interface Capabilities {
   demoMode: boolean;
@@ -106,6 +110,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
 
+  /** In-flight /api/me team lookup; any login, logout or unmount cancels it. */
+  const backfillAbort = useRef<AbortController | null>(null);
+
   useEffect(() => {
     setIsLoading(true);
     fetch("/api/config")
@@ -126,14 +133,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         const parsedUser: User = JSON.parse(storedUser);
         setUser(parsedUser);
         setIsAuthenticated(true);
-        // Sessions stored before the team name was kept have no organization: fetch it once.
-        if (!parsedUser.organization) {
-          fetch("/api/me", { credentials: "include" })
+        // Sessions stored before the team name was kept have no organization key: look it up once.
+        // A stored `null` means the lookup already ran and the user has no team.
+        if (parsedUser.organization === undefined) {
+          const ctrl = new AbortController();
+          backfillAbort.current = ctrl;
+          fetch("/api/me", { credentials: "include", signal: ctrl.signal })
             .then((r) => (r.ok ? r.json() : null))
             .then((me: { organization?: OrgPayload } | null) => {
-              if (!me?.organization) return;
-              const next = withOrganization(parsedUser, me.organization);
-              try { localStorage.setItem("userData", JSON.stringify(next)); } catch { /* storage unavailable */ }
+              if (ctrl.signal.aborted || !me || me.organization === undefined) return;
+              // The stored copy is the session of record: apply only if it is still this user's and still unfilled.
+              const stored: User | null = JSON.parse(localStorage.getItem("userData") || "null");
+              const next = backfillOrganization(stored, parsedUser.id, me.organization);
+              if (!next || next === stored) return;
+              localStorage.setItem("userData", JSON.stringify(next));
               setUser(next);
             })
             .catch(() => {});
@@ -153,9 +166,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     } finally {
       setIsLoading(false);
     }
+    return () => backfillAbort.current?.abort();
   }, []);
 
   const persistSession = (sessionUser: User, token: string) => {
+    backfillAbort.current?.abort();
     localStorage.setItem("authToken", token);
     localStorage.setItem("userData", JSON.stringify(sessionUser));
     setUser(sessionUser);
@@ -163,6 +178,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const clearSession = () => {
+    backfillAbort.current?.abort();
     localStorage.removeItem("authToken");
     localStorage.removeItem("userData");
     setUser(null);

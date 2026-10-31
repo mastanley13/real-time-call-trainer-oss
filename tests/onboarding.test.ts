@@ -4,6 +4,7 @@ import {
   ONBOARDING_KEY,
   ONBOARDING_STEPS,
   WELCOME_KEY,
+  dismissFocusTarget,
   markOnboardingSeen,
   readOnboarding,
   setWelcome,
@@ -83,6 +84,18 @@ describe("welcomeCopy", () => {
   it("handles a missing first name", () => {
     expect(welcomeCopy(undefined, undefined, null)).toBe("Welcome.");
     expect(welcomeCopy("  ", "Acme Test", "create")).toBe("Welcome. Your team Acme Test is ready.");
+  });
+});
+
+describe("dismissFocusTarget", () => {
+  it("focuses Start when it is enabled", () => {
+    expect(dismissFocusTarget({ startDisabled: false, hasModeToggle: true })).toBe("start");
+  });
+  it("falls back to the mode toggle when Start is disabled (voice unavailable), for Got it and Escape alike", () => {
+    expect(dismissFocusTarget({ startDisabled: true, hasModeToggle: true })).toBe("mode");
+  });
+  it("falls back to the heading when nothing else can take focus", () => {
+    expect(dismissFocusTarget({ startDisabled: true, hasModeToggle: false })).toBe("heading");
   });
 });
 

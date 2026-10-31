@@ -60,6 +60,15 @@ export function welcomeCopy(firstName: string | undefined, orgName: string | und
   return mode === "create" ? `${hello} Your team ${team} is ready.` : `${hello} You joined ${team}.`;
 }
 
+/**
+ * Where focus goes when the panel closes. A disabled button cannot take focus (voice mode with
+ * voice unconfigured disables Start), so fall back to the call-mode toggle, then the page heading.
+ */
+export function dismissFocusTarget(o: { startDisabled: boolean; hasModeToggle: boolean }): "start" | "mode" | "heading" {
+  if (!o.startDisabled) return "start";
+  return o.hasModeToggle ? "mode" : "heading";
+}
+
 /** Safe handle on a Web Storage area; null when the browser blocks access outright. */
 export function safeStorage(kind: "local" | "session"): KeyValueStore | null {
   try {

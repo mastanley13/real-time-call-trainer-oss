@@ -9,6 +9,7 @@ import { VOICE_ENGINE_LABELS, averageLevel, micErrorMessage, type VoiceEngine } 
 import type { Capabilities } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
 import GettingStarted from "@/components/onboarding/GettingStarted";
+import { dismissFocusTarget } from "@/lib/onboarding";
 import { ModeDial, radioKeys } from "./CopilotRail";
 
 const MODE_HELP: Record<CoachMode, string> = {
@@ -140,9 +141,16 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
   onboarding?: { open: boolean; welcome: string; onDismiss: () => void; onReopen: () => void };
 }) {
   const startRef = useRef<HTMLButtonElement>(null);
+  const modeRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  // "Got it" and Escape both land here. Start is disabled when voice is unavailable, and a disabled button can't take focus.
   const dismissOnboarding = () => {
     onboarding?.onDismiss();
-    startRef.current?.focus();
+    const modeToggle = modeRef.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]:not(:disabled)') ?? null;
+    const target = dismissFocusTarget({ startDisabled: !!startRef.current?.disabled, hasModeToggle: !!modeToggle });
+    if (target === "start") startRef.current?.focus();
+    else if (target === "mode") modeToggle?.focus();
+    else headingRef.current?.focus();
   };
   const p = scenario.aiPersona;
   const steps = talkTrackSteps(scenario.callScript);
@@ -175,7 +183,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
             <PersonaAvatar scenario={scenario} size={72} />
             <div className="min-w-0 flex-1">
               <p className="eyebrow">Pre-flight briefing</p>
-              <h1 className="mt-1 text-2xl font-bold sm:text-3xl">{p.name}</h1>
+              <h1 ref={headingRef} tabIndex={-1} className="mt-1 text-2xl font-bold outline-none sm:text-3xl">{p.name}</h1>
               <p className="mt-0.5 text-sm text-ink-soft">{p.role}</p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <span className="chip">{jobFamilyLabel(scenario.role)}</span>
@@ -274,7 +282,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
 
             <div>
               <p className="label">Call mode</p>
-              <div className="grid grid-cols-2 gap-1 rounded-lg bg-sunken p-1" role="radiogroup" aria-label="Call mode" onKeyDown={radioKeys(CALL_MODES, mode, onModeChange, (m) => !!retryFrom && m === "voice")}>
+              <div ref={modeRef} className="grid grid-cols-2 gap-1 rounded-lg bg-sunken p-1" role="radiogroup" aria-label="Call mode" onKeyDown={radioKeys(CALL_MODES, mode, onModeChange, (m) => !!retryFrom && m === "voice")}>
                 {CALL_MODES.map((m) => (
                   <button key={m} type="button" role="radio" aria-checked={mode === m} tabIndex={mode === m ? 0 : -1} disabled={!!retryFrom && m === "voice"} onClick={() => onModeChange(m)}
                     className={`flex min-h-[38px] items-center justify-center gap-2 rounded-md text-sm font-semibold transition disabled:opacity-40 ${mode === m ? "bg-surface text-ink shadow-card ring-1 ring-line" : "text-ink-muted hover:text-ink"}`}>
