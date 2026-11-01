@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { LEGAL_LINKS } from "@/lib/legalLinks";
 import { GITHUB_URL } from "@/lib/seo";
 
-const LINKS = [{ href: "/pricing", label: "Pricing" }, ...LEGAL_LINKS];
+// TODO: Restore /privacy and /terms links when #17 merges.
+// To undo: import LEGAL_LINKS from "@/lib/legalLinks" and spread it after the Pricing entry.
+const LINKS = [{ href: "/pricing", label: "Pricing" }];
 
-/** Footer for public pages: Pricing, Privacy, Terms, GitHub. */
+/** Footer for public pages: Pricing, GitHub. */
 export default function PublicFooter({ children }: { children?: React.ReactNode }) {
   return (
     <footer className="border-t border-line py-8 text-sm text-ink-muted">
