@@ -27,7 +27,7 @@ The script needs provider keys, so it never runs in CI or in `npm test`. Run it 
 
 - `role` follows the app: `assistant` is the AI caller, `user` is the trainee.
 - `kind` decides how a fixture counts:
-  - `weak_no_contact`: the trainee never asked for contact details. Rule (c) requires that no run of a candidate gives these information-capture credit (more than 10 out of 100).
+  - `weak_no_contact`: the trainee never asked for contact details. Rule (c) requires that no run of a candidate gives these information-capture credit (any information-capture score above 0).
   - `name_only`: the trainee asked only for a name. Partial credit is correct, so these are not part of rule (c).
   - `contact_captured`: the trainee asked for contact details and the caller gave them.
 - `scenarioId` must be a built-in or library persona id. The criterion ids in `recorded.criteria` are that persona's rubric ids.

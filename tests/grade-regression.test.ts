@@ -17,7 +17,7 @@ const fixtures: FixtureRef[] = [
 ];
 
 const run = (fixtureId: string, score: number, over: Partial<RunResult> = {}): RunResult => ({
-  fixtureId, run: 1, parsed: true, score, infoCapture: 0, quotesTotal: 4, quotesVerbatim: 4, latencyMs: 1000, ...over,
+  fixtureId, run: 1, parsed: true, score, infoCapture: 0, quotesTotal: 4, quotesVerbatim: 4, evidenceChecked: true, latencyMs: 1000, ...over,
 });
 /** Three runs per fixture at the given scores. */
 const runs = (scores: Record<string, number>, over: Partial<RunResult> = {}) =>
@@ -76,9 +76,17 @@ describe("evaluateCandidate pass rules", () => {
     expect(evaluateCandidate(fixtures, baseline, nameOnly).rules.find((x) => x.id === "c")?.pass).toBe(true);
   });
 
-  it("c) allows the small credit the baseline itself gave (2) and cannot pass with no weak runs", () => {
-    const small = runs(BASE).map((r) => ({ ...r, infoCapture: 2 }));
-    expect(evaluateCandidate(fixtures, baseline, small).rules.find((x) => x.id === "c")?.pass).toBe(true);
+  it("c) any positive capture credit on a weak run fails, even 1, and zero passes", () => {
+    expect(INFO_CREDIT_THRESHOLD).toBe(0);
+    for (const credit of [1, 2, 10]) {
+      const c = runs(BASE);
+      c.find((r) => r.fixtureId === "w1" && r.run === 3)!.infoCapture = credit;
+      expect(failedRule(evaluateCandidate(fixtures, baseline, c)), `credit ${credit}`).toEqual(["c"]);
+    }
+    expect(evaluateCandidate(fixtures, baseline, runs(BASE)).rules.find((x) => x.id === "c")?.pass).toBe(true);
+  });
+
+  it("c) cannot pass with no weak runs", () => {
     const noWeak = evaluateCandidate([{ id: "s1", kind: "contact_captured" }], runs({ s1: 60 }), runs({ s1: 60 }));
     expect(noWeak.rules.find((x) => x.id === "c")?.pass).toBe(false);
   });
@@ -87,6 +95,14 @@ describe("evaluateCandidate pass rules", () => {
     const candidate = runs(BASE);
     candidate[0].quotesVerbatim = 3;
     expect(failedRule(evaluateCandidate(fixtures, baseline, candidate))).toEqual(["d"]);
+  });
+
+  it("d) fails closed when a parsed run's raw evidence could not be inspected", () => {
+    const candidate = runs(BASE);
+    candidate[2] = { ...candidate[2], evidenceChecked: false, quotesTotal: 0, quotesVerbatim: 0 };
+    const r = evaluateCandidate(fixtures, baseline, candidate);
+    expect(failedRule(r)).toEqual(["d"]);
+    expect(r.rules.find((x) => x.id === "d")?.detail).toContain("could not have their raw evidence inspected");
   });
 
   it("e) fails when any run does not parse", () => {

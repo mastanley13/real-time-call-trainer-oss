@@ -19,8 +19,8 @@ export function letterFor(score: number): Letter {
   return score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
 }
 
-/** An information-capture score above this counts as crediting the trainee. Recorded no-contact runs scored 0 to 2. */
-export const INFO_CREDIT_THRESHOLD = 10;
+/** An information-capture score above this counts as crediting the trainee. Zero: a weak run that never asked for contact details gets no credit at all. */
+export const INFO_CREDIT_THRESHOLD = 0;
 
 export const MIN_LETTER_MATCH = 0.9;
 export const MAX_MEAN_ABS_DIFF = 5;
@@ -42,6 +42,8 @@ export interface RunResult {
   /** Evidence quotes the model returned, and how many of them are contiguous substrings of the transcript. */
   quotesTotal: number;
   quotesVerbatim: number;
+  /** False when the successful completion's raw evidence could not be read. Rule d then fails closed. */
+  evidenceChecked: boolean;
   latencyMs: number;
 }
 
@@ -134,6 +136,7 @@ export function evaluateCandidate(fixtures: FixtureRef[], baseline: RunResult[],
   const quotesTotal = candidate.reduce((a, r) => a + r.quotesTotal, 0);
   const quotesVerbatim = candidate.reduce((a, r) => a + r.quotesVerbatim, 0);
   const parsedRuns = candidate.filter((r) => r.parsed).length;
+  const uninspected = candidate.filter((r) => r.parsed && !r.evidenceChecked).length;
 
   const baseP95 = percentile(baseline.map((r) => r.latencyMs), 95);
   const candP95 = percentile(candidate.map((r) => r.latencyMs), 95);
@@ -174,8 +177,10 @@ export function evaluateCandidate(fixtures: FixtureRef[], baseline: RunResult[],
     {
       id: "d",
       name: "Evidence quotes verbatim",
-      pass: quotesTotal > 0 && quotesVerbatim === quotesTotal,
-      detail: quotesTotal ? `${quotesVerbatim} of ${quotesTotal} quotes (${pct(quotesVerbatim, quotesTotal)}), needs 100%` : "the model returned no quotes, so this cannot pass",
+      pass: quotesTotal > 0 && quotesVerbatim === quotesTotal && uninspected === 0,
+      detail: uninspected
+        ? `${uninspected} runs could not have their raw evidence inspected, so this cannot pass`
+        : quotesTotal ? `${quotesVerbatim} of ${quotesTotal} quotes (${pct(quotesVerbatim, quotesTotal)}), needs 100%` : "the model returned no quotes, so this cannot pass",
     },
     {
       id: "e",

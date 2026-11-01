@@ -56,16 +56,20 @@ for (const spec of flagAll("provider")) {
   providers.set(m[1], { base: m[2], keyEnv: m[3] });
 }
 
-// Capture the model's raw JSON so evidence quotes can be checked before the grader filters them. Nothing is logged.
-const captured: string[] = [];
+// Capture the raw text of each SUCCESSFUL completion so evidence quotes can be checked before the grader filters
+// them. Failed requests (the 400s that trigger a parameter retry) are not captured, so the body inspected is the
+// one evaluateCall used. Reads are awaited per run, never raced with a timer. Nothing is logged.
+const pending: Promise<string | null>[] = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
   const res = await realFetch(input, init);
-  if (String(input).endsWith("/chat/completions")) {
-    res.clone().json().then((d) => {
-      const raw = d?.choices?.[0]?.message?.content;
-      captured.push(Array.isArray(raw) ? raw.map((p: { text?: string }) => p?.text ?? "").join("") : String(raw ?? ""));
-    }).catch(() => {});
+  if (res.ok && String(input).endsWith("/chat/completions")) {
+    pending.push(
+      res.clone().json().then((d) => {
+        const raw = d?.choices?.[0]?.message?.content;
+        return Array.isArray(raw) ? raw.map((p: { text?: string }) => p?.text ?? "").join("") : typeof raw === "string" ? raw : null;
+      }).catch(() => null),
+    );
   }
   return res;
 }) as typeof fetch;
@@ -98,15 +102,17 @@ async function gradeAll(model: string, fixtures: Fixture[], runs: number): Promi
     const scenario: Scenario | undefined = [...BUILT_IN_SCENARIOS, ...LIBRARY].find((s) => s.id === f.scenarioId);
     if (!scenario) throw new Error(`Fixture ${f.id}: unknown scenario ${f.scenarioId}`);
     for (let run = 1; run <= runs; run++) {
-      captured.length = 0;
+      pending.length = 0;
       const t0 = Date.now();
       const ev = await evaluateCall(scenario, f.transcript);
       const latencyMs = Date.now() - t0;
-      await new Promise((r) => setTimeout(r, 50)); // let the response clone finish reading
+      const bodies = (await Promise.all(pending)).filter((b): b is string => b !== null);
       let quotesTotal = 0;
       let quotesVerbatim = 0;
+      // Fail closed: if the successful completion's evidence cannot be read, the run does not count as checked.
+      let evidenceChecked = false;
       try {
-        const json = extractJson(captured[0] ?? "") as { criteria?: { evidence?: { quote?: unknown }[] }[] };
+        const json = extractJson(bodies[bodies.length - 1] ?? "") as { criteria?: { evidence?: { quote?: unknown }[] }[] };
         for (const c of json.criteria ?? []) {
           for (const e of c.evidence ?? []) {
             if (typeof e.quote !== "string" || !e.quote.trim()) continue;
@@ -114,8 +120,9 @@ async function gradeAll(model: string, fixtures: Fixture[], runs: number): Promi
             if (isVerbatim(e.quote, f.transcript.filter((t) => t.role !== "system"))) quotesVerbatim++;
           }
         }
+        evidenceChecked = true;
       } catch {
-        /* an unparseable body is reported through `parsed` */
+        /* left unchecked */
       }
       out.push({
         fixtureId: f.id,
@@ -125,6 +132,7 @@ async function gradeAll(model: string, fixtures: Fixture[], runs: number): Promi
         infoCapture: ev.criteria.find((c) => c.id === "capture")?.score ?? 0,
         quotesTotal,
         quotesVerbatim,
+        evidenceChecked,
         latencyMs,
       });
       console.log(`${model}  ${f.id}  run ${run}  ${ev.method === "llm" ? `${ev.overallScore} ${ev.grade}` : "FALLBACK"}  ${latencyMs} ms`);
