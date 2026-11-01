@@ -1356,12 +1356,68 @@ describe("a new purchase that fails item validation", () => {
     expect(org()).toMatchObject({ planTier: "team", seatCount: 3, stripeSubscriptionId: "sub_test_bad" });
   });
 
-  it("an unpaid or unknown-owner failed subscription links nothing", async () => {
+  it("an ended or unknown-owner failed subscription links nothing", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    liveStripe.set("sub_test_unpaid", { ...sub({ id: "sub_test_unpaid", customer: "cus_test_new", metadata: { organizationId: "org-1" }, status: "unpaid" }), items: { data: teamItems(2) } });
-    await deliverRaw(event("customer.subscription.updated", { id: "sub_test_unpaid", customer: "cus_test_new", status: "unpaid", metadata: { organizationId: "org-1" } }));
+    liveStripe.set("sub_test_ended", { ...sub({ id: "sub_test_ended", customer: "cus_test_new", metadata: { organizationId: "org-1" }, status: "incomplete_expired" }), items: { data: teamItems(2) } });
+    await deliverRaw(event("customer.subscription.updated", { id: "sub_test_ended", customer: "cus_test_new", status: "incomplete_expired", metadata: { organizationId: "org-1" } }));
     liveStripe.set("sub_test_nobody", { ...sub({ id: "sub_test_nobody", customer: "cus_nobody", metadata: {} }), items: { data: teamItems(2) } });
     await deliverRaw(event("customer.subscription.updated", { id: "sub_test_nobody", customer: "cus_nobody", status: "active", metadata: {} }));
     expect(org().stripeSubscriptionId ?? null).toBeNull();
+  });
+
+  describe("webhook to checkout transitions keep the link while the status blocks checkout", () => {
+    const setStatus = (status: string, items = teamItems(3)) => {
+      liveStripe.set("sub_test_live", { ...sub({ id: "sub_test_live", customer: "cus_test_new", metadata: { organizationId: "org-1" }, status }), items: { data: items } });
+      return deliverRaw(event("customer.subscription.updated", { id: "sub_test_live", customer: "cus_test_new", status, metadata: { organizationId: "org-1" } }));
+    };
+    const tryCheckout = async () => {
+      const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_next", url: "https://checkout.example/next" });
+      const res = await post();
+      return { status: res.status, created: create.mock.calls.length };
+    };
+
+    for (const status of ["unpaid", "paused"]) {
+      it(`a paid Team that goes ${status} drops to Free, keeps the link, and cannot buy another subscription`, async () => {
+        await setStatus("active");
+        expect(org()).toMatchObject({ planTier: "team", stripeSubscriptionId: "sub_test_live" });
+        await setStatus(status);
+        expect(org()).toMatchObject({ planTier: "free", subscriptionStatus: status, stripeSubscriptionId: "sub_test_live" });
+        expect(await tryCheckout()).toEqual({ status: 409, created: 0 });
+      });
+
+      it(`an invalid-items subscription that is ${status} keeps the link too`, async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        await setStatus("active");
+        await setStatus(status, teamItems(2));
+        expect(org()).toMatchObject({ planTier: "free", subscriptionStatus: status, stripeSubscriptionId: "sub_test_live" });
+        expect(await tryCheckout()).toEqual({ status: 409, created: 0 });
+      });
+    }
+
+    it("past_due keeps Team and blocks checkout; canceled and a deleted subscription unlink and allow it", async () => {
+      await setStatus("active");
+      await setStatus("past_due");
+      expect(org()).toMatchObject({ planTier: "team", stripeSubscriptionId: "sub_test_live" });
+      expect((await tryCheckout()).status).toBe(409);
+      await setStatus("canceled");
+      expect(org()).toMatchObject({ planTier: "free", subscriptionStatus: "canceled" });
+      expect(org().stripeSubscriptionId ?? null).toBeNull();
+      expect((await tryCheckout()).status).toBe(200);
+    });
+
+    it("a deleted subscription event unlinks and allows checkout again", async () => {
+      await setStatus("unpaid");
+      expect(org().stripeSubscriptionId).toBe("sub_test_live");
+      await deliverRaw(event("customer.subscription.deleted", { id: "sub_test_live", customer: "cus_test_new" }));
+      expect(org().stripeSubscriptionId ?? null).toBeNull();
+      expect((await tryCheckout()).status).toBe(200);
+    });
+
+    it("a new purchase that fails validation and is unpaid links the subscription and blocks checkout", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      await setStatus("unpaid", teamItems(2));
+      expect(org()).toMatchObject({ planTier: "free", stripeSubscriptionId: "sub_test_live" });
+      expect((await tryCheckout()).status).toBe(409);
+    });
   });
 });

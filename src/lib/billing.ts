@@ -445,13 +445,14 @@ interface Applied {
 /** Writes plan, seats, premium and Stripe ids onto the subject, then re-derives its UsageAllowance cap and period. */
 async function applyEntitlement(
   tx: Tx, subject: Subject, next: Entitlement,
-  stripe: { customerId?: string | null; subscriptionId?: string | null; status: string; retainSubscription?: boolean }, now: Date,
+  stripe: { customerId?: string | null; subscriptionId?: string | null; status: string }, now: Date,
 ): Promise<Applied> {
   const keepIds = {
     ...(stripe.customerId ? { stripeCustomerId: stripe.customerId } : {}),
-    // Free normally unlinks the subscription. `retainSubscription` keeps the link for a subscription that is
-    // still billing but failed validation, so no second one can be bought and the duplicate check still works.
-    stripeSubscriptionId: next.plan === "free" && !stripe.retainSubscription ? null : (stripe.subscriptionId ?? undefined),
+    // Free unlinks the subscription only once it is over (canceled, incomplete_expired, gone). While its status
+    // still blocks checkout (active, trialing, past_due, unpaid, paused) the link stays, whether access was
+    // revoked for failed validation or for non-payment, so no second subscription can be bought.
+    stripeSubscriptionId: next.plan === "free" && !(stripe.subscriptionId && blocksCheckout(stripe.status)) ? null : (stripe.subscriptionId ?? undefined),
     subscriptionStatus: stripe.status,
     // A paid subscription is in place, so the checkout that produced it is no longer outstanding.
     ...(next.plan === "free" ? {} : { stripeCheckoutSessionId: null, stripeCheckoutFingerprint: null, stripeCheckoutUrl: null, stripeCheckoutExpiresAt: null }),
@@ -515,15 +516,15 @@ async function reconcile(
     // or an old one a newer subscription replaced, finds no holder and changes nothing. While Stripe is still
     // billing it (entitled status) the link is kept, so the account cannot start a second subscription.
     const holder = await subjectOfSubscription(tx, live.id);
-    if (holder) return applyEntitlement(tx, holder, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status, retainSubscription: ENTITLED.has(live.status) }, now);
+    if (holder) return applyEntitlement(tx, holder, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status }, now);
     // Nobody holds it yet: a new purchase that failed validation. If Stripe is billing it, record the link
     // (without granting anything) so checkout is blocked and a duplicate is detected, as for a valid purchase.
-    if (!ENTITLED.has(live.status)) return null;
+    if (!blocksCheckout(live.status)) return null;
     const owner = await findSubject(tx, { subscriptionId: live.id, customerId: live.customer, metadata: { ...(hint.metadata ?? {}), ...(live.metadata ?? {}) } });
     if (!owner) return null;
     const heldByOwner = await currentSubscriptionId(tx, owner);
     if (heldByOwner && heldByOwner !== live.id) return { event: null, cancelSubscriptionId: live.id };
-    return applyEntitlement(tx, owner, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status, retainSubscription: true }, now);
+    return applyEntitlement(tx, owner, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status }, now);
   }
   const subject = await findSubject(tx, { subscriptionId: live.id, customerId: live.customer, metadata: { ...(hint.metadata ?? {}), ...(live.metadata ?? {}) } });
   if (!subject) return null;
