@@ -38,11 +38,15 @@ export interface Capabilities {
   voiceEngines?: ("openai" | "elevenlabs")[];
   /** Realtime model id for the voice provenance chip, when realtime is on. */
   realtimeModel?: string;
+  /** Model the standard voice engine runs, when realtime is on. */
+  realtimeModelStandard?: string;
   llm: boolean;
+  /** Model per text role, for the roles that have a key. */
+  llmModels?: Partial<Record<"coach" | "grade" | "persona" | "wizard", string>>;
   database: boolean;
   /** Stripe test-mode billing is on. Absent or false hides the Billing tab. */
   billing?: boolean;
-  /** Model id for coach, grading and wizard (e.g. "gpt-4.1-mini"). */
+  /** The general text model id (LLM_MODEL). Per-role ids are in llmModels. */
   model?: string;
   provider?: "openai" | "custom";
 }

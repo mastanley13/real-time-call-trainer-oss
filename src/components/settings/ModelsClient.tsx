@@ -87,7 +87,7 @@ export default function ModelsClient() {
             <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-6 gap-y-2 text-sm">
               <dt className="text-ink-muted">API key</dt>
               <dd className="flex items-center gap-2"><span className={`lamp ${keySet ? "lamp-ok" : "lamp-off"}`} aria-hidden />{keySet ? "Set on the server" : "Not set"}</dd>
-              <dt className="text-ink-muted">Model</dt>
+              <dt className="text-ink-muted">Default model</dt>
               <dd><span className="chip-model">{capabilities.model ?? "not reported"}</span></dd>
             </dl>
           </div>
@@ -147,7 +147,8 @@ export default function ModelsClient() {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-[15px] font-semibold">{v.label}</h3>
-                  {v.model && <span className="chip-model">{v.model}</span>}
+                  {v.model && <span className="chip-model">{v.standardModel && v.standardModel !== v.model ? `Premium ${v.model}` : v.model}</span>}
+                  {v.standardModel && v.standardModel !== v.model && <span className="chip-model">Standard {v.standardModel}</span>}
                   {v.preferred && voices.filter((x) => x.available).length > 1 && <span className="chip">Used first</span>}
                 </div>
                 <p className="mt-1 flex items-center gap-2 text-sm"><span className={`lamp ${v.available ? "lamp-ok" : "lamp-off"}`} aria-hidden />{v.available ? "Ready for voice calls" : "Not set up"}</p>
@@ -164,7 +165,7 @@ export default function ModelsClient() {
       <section className="panel p-4 sm:p-5" aria-labelledby="nokey-h">
         <h2 id="nokey-h" className="label">When there&rsquo;s no working key</h2>
         <p className="text-sm text-ink-soft">Practice keeps working. With no key, every job above uses its fallback. With a key that fails, only the failed request falls back, and the next one tries the model again. Rules-based grades show as estimates on the debrief, and you can re-grade them with AI once the key works.</p>
-        <p className="mt-3 text-sm text-ink-soft">To turn AI on, set <code className="kbd">LLM_API_KEY</code> on the server and restart it. <code className="kbd">LLM_MODEL</code> picks the model and <code className="kbd">LLM_BASE_URL</code> points at any OpenAI-compatible endpoint. The README has the details.</p>
+        <p className="mt-3 text-sm text-ink-soft">To turn AI on, set <code className="kbd">LLM_API_KEY</code> on the server and restart it. <code className="kbd">LLM_MODEL</code> picks the model, <code className="kbd">LLM_MODEL_COACH</code>, <code className="kbd">_GRADE</code>, <code className="kbd">_PERSONA</code> and <code className="kbd">_WIZARD</code> override it per job, and <code className="kbd">LLM_BASE_URL</code> points at any OpenAI-compatible endpoint. The README has the details.</p>
       </section>
     </div>
   );

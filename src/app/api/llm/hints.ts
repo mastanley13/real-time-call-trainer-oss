@@ -14,6 +14,8 @@ export interface LlmCheckResult {
   /** Provider HTTP status; null when there was no response. */
   status: number | null;
   hint: string;
+  /** One entry per distinct endpoint, model and key. Roles that share all three are listed together. */
+  checks?: { roles: ("coach" | "grade" | "persona" | "wizard")[]; model: string; ok: boolean; latencyMs: number | null; status: number | null }[];
 }
 
 export const CHECK_TIMEOUT_MS = 15_000;

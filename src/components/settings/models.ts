@@ -30,17 +30,26 @@ type CapsLike = Record<string, unknown> | null | undefined;
 
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
 
+/** Which text role runs each job. */
+const JOB_ROLE: Record<JobId, string> = { coach: "coach", grading: "grade", wizard: "wizard", caller: "persona" };
+
 export function jobRows(caps: CapsLike): JobRow[] {
-  const ai = caps?.llm === true;
-  const model = str(caps?.model) ?? "AI model";
-  return JOBS.map((j) => ({ ...j, ai, engine: ai ? model : j.fallbackName }));
+  const roles = caps?.llmModels && typeof caps.llmModels === "object" ? (caps.llmModels as Record<string, unknown>) : null;
+  const general = caps?.llm === true ? str(caps?.model) ?? "AI model" : undefined;
+  return JOBS.map((j) => {
+    // Per-role models when the server reports them (a role without a key is absent); else the one general model.
+    const model = roles ? str(roles[JOB_ROLE[j.id]]) : general;
+    return { ...j, ai: !!model, engine: model ?? j.fallbackName };
+  });
 }
 
 export interface VoiceEngineRow {
   id: string;
   label: string;
-  /** Model id when the engine reports one (the realtime model). */
+  /** Model id when the engine reports one (the premium realtime model). */
   model?: string;
+  /** The standard-tier model, when the engine has one. */
+  standardModel?: string;
   available: boolean;
   /** The engine a new voice call uses first. */
   preferred: boolean;
@@ -118,6 +127,7 @@ export function voiceEngines(caps: CapsLike): VoiceEngineRow[] {
     id: e.id,
     label: e.label ?? VOICE_LABELS[e.id] ?? e.id,
     model: e.model ?? (e.id === "realtime" ? realtimeModel : undefined),
+    standardModel: e.id === "realtime" ? str(caps?.realtimeModelStandard) : undefined,
     available: e.available,
     preferred: e.id === firstAvailable,
     setup: VOICE_SETUP[e.id] ?? "Not set up on this server.",

@@ -14,6 +14,7 @@ import { beginCall, chooseEngine, endCall, ensureAllowance, heartbeat, usageSumm
 import { elevenLabsAgentFor, realtimeModelFor } from "@/lib/serverConfig";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { MAX_CALL_SECONDS } from "@/lib/usagePlan";
+import { voiceModelFromCaps } from "@/lib/voiceModel";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
 import { GET as elevenLabsToken } from "@/app/api/elevenlabs/token/route";
 
@@ -79,7 +80,7 @@ describe("Premium voice limit", () => {
     vi.stubEnv("REALTIME_MODEL", "model-premium-test");
     vi.stubEnv("REALTIME_MODEL_STANDARD", "");
     expect(realtimeModelFor("premium")).toBe("model-premium-test");
-    expect(realtimeModelFor("standard")).toBe("gpt-realtime-mini");
+    expect(realtimeModelFor("standard")).toBe("gpt-realtime-2.1-mini");
     vi.stubEnv("REALTIME_MODEL_STANDARD", "model-standard-test");
     expect(realtimeModelFor("standard")).toBe("model-standard-test");
     expect(elevenLabsAgentFor("standard", { ELEVENLABS_AGENT_ID: "main" })).toEqual({ agentId: "main", standardAvailable: false });
@@ -106,6 +107,12 @@ describe("Premium voice limit", () => {
       await ensureAllowance(fake.db as never, { userId: "u-1" }, base);
       allowanceOf("u-1").premiumMinutesUsed = 119; // 120 of 200 minutes is the Premium limit
 
+      // What the briefing is told before the call: the engine and model the session route is about to use.
+      const caps = { realtimeModel: realtimeModelFor("premium"), realtimeModelStandard: realtimeModelFor("standard") };
+      const before = await usageSummary("u-1", at(0));
+      expect(before?.voiceEngine).toBe("premium");
+      expect(voiceModelFromCaps(caps, before?.voiceEngine)).toBe("model-premium-test");
+
       const first = await (await mint()).json();
       expect(bodies[0].session.model).toBe("model-premium-test");
       expect(first.maxSeconds).toBe(60); // the whole call is the one Premium minute it holds
@@ -115,7 +122,12 @@ describe("Premium voice limit", () => {
       expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 1, premiumMinutesUsed: 120, premiumMinutesReserved: 0, minutesReserved: 0 });
 
       vi.setSystemTime(at(310));
+      // Past its Premium share the account is shown the standard model, and that is what the next session runs.
+      const after = await usageSummary("u-1", at(310));
+      expect(after?.voiceEngine).toBe("standard");
+      expect(voiceModelFromCaps(caps, after?.voiceEngine)).toBe("model-standard-test");
       const second = await (await mint()).json();
+      expect(bodies[1].session.model).toBe(voiceModelFromCaps(caps, after?.voiceEngine));
       expect(bodies[1].session.model).toBe("model-standard-test");
       expect(second.model).toBe("model-standard-test");
       await heartbeat("u-1", second.callId, "connected", at(310));

@@ -14,7 +14,7 @@ import type { LiveCue, RubricChip, useCoach } from "./useCoach";
 
 export interface DeckText {
   value: string; onChange: (v: string) => void; onSend: () => void; hungUp: boolean; typing: boolean;
-  /** Who plays the persona, e.g. "Text · gpt-4.1-mini" or "Text · scripted". */
+  /** Who plays the persona, e.g. "Text · <model id>" or "Text · scripted". */
   caller?: string;
 }
 export interface DeckVoice { muted: boolean; onToggleMute: () => void; getInputVolume: () => number; getOutputVolume: () => number; engine?: "openai" | "elevenlabs" }

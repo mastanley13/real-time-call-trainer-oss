@@ -193,7 +193,7 @@ export default function PersonaWizard() {
           <p className="eyebrow">AI persona wizard</p>
           <h1 className="mt-1 text-3xl font-bold">New persona</h1>
         </div>
-        <span className="chip-model"><Sparkles size={12} aria-hidden /> {out ? (out.method === "llm" ? `Generated with ${out.model ?? capabilities.model}` : "Template draft (AI unavailable)") : capabilities.llm ? `Drafts with ${capabilities.model ?? "your model"}` : "Template drafts (no AI key on this server)"}</span>
+        <span className="chip-model"><Sparkles size={12} aria-hidden /> {out ? (out.method === "llm" ? `Generated with ${out.model ?? capabilities.llmModels?.wizard ?? capabilities.model}` : "Template draft (AI unavailable)") : capabilities.llm ? `Drafts with ${capabilities.llmModels?.wizard ?? capabilities.model ?? "your model"}` : "Template drafts (no AI key on this server)"}</span>
       </div>
 
       {/* minmax(0,1fr) and min-w-0: the step list scrolls sideways on phones instead of widening the page. */}

@@ -9,7 +9,7 @@ import { LIBRARY } from "@/lib/personas";
 import { evaluateCall } from "@/lib/grader";
 import type { Evaluation } from "@/lib/grader-types";
 import { canRegrade, gradable, gradedNote, isAiGrade } from "@/lib/gradable";
-import { getCapabilities, llmKey } from "@/lib/serverConfig";
+import { getCapabilities, llmKeyFor } from "@/lib/serverConfig";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -65,7 +65,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (isDemoUser(auth) || !getCapabilities().database) {
     return fail(400, "server_sessions_unavailable", "This server keeps sessions in the browser, so it has no stored session to re-grade.");
   }
-  if (!llmKey()) {
+  if (!llmKeyFor("grade")) {
     return fail(503, "llm_not_configured", "AI grading isn't set up on this server. Add LLM_API_KEY to the server environment, then try again.");
   }
 

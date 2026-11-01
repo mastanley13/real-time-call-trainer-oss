@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { APOLOGY_STEP_RE, isApology } from "./apology";
 import { chat, extractJson } from "./llm";
-import { llmKey, llmModel } from "./serverConfig";
+import { llmKeyFor, llmModelFor } from "./serverConfig";
 import { Scenario, normalizeWeights } from "./scenarios";
 
 export interface Turn {
@@ -86,8 +86,8 @@ async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluati
   ].join("\n\n");
 
   // Read the model before the call so the stored provenance names what actually graded this transcript.
-  const model = llmModel();
-  const out = LlmOutput.parse(extractJson(await chat([{ role: "system", content: system }, { role: "user", content: user }], { json: true })));
+  const model = llmModelFor("grade");
+  const out = LlmOutput.parse(extractJson(await chat([{ role: "system", content: system }, { role: "user", content: user }], { role: "grade", json: true })));
   // Line numbers/speakers come from the transcript itself, not from the model.
   const haystack = turns.map((t) => norm(t.text));
 
@@ -284,7 +284,7 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
 }
 
 export async function evaluateCall(scenario: Scenario, turns: Turn[]): Promise<Evaluation> {
-  if (!llmKey()) return gradeHeuristically(scenario, turns);
+  if (!llmKeyFor("grade")) return gradeHeuristically(scenario, turns);
   try {
     return await gradeWithLlm(scenario, turns);
   } catch (e) {

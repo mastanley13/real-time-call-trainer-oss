@@ -388,7 +388,7 @@ export default function TrainerClient() {
   const coachLabel = useMemo(() => {
     if (coachMode === "blind") return "Coach off";
     const src = coach.result?.source;
-    const model = coach.result?.model ?? capabilities?.model;
+    const model = coach.result?.model ?? capabilities?.llmModels?.coach ?? capabilities?.model;
     const latency = coach.p50 != null ? ` · p50 ${coach.p50 < 100 ? "<0.1" : (coach.p50 / 1000).toFixed(1)}s` : "";
     if (src === "heuristic" || (!src && !capabilities?.llm)) return `Coach: rules-based${latency}`;
     return `Coach: ${model ?? "AI"}${latency}`;
@@ -404,7 +404,7 @@ export default function TrainerClient() {
     );
   }
 
-  const gradingLabel = capabilities.llm ? `Graded by ${capabilities.model ?? "your model"} after the call` : "Rules-based estimate (no AI key)";
+  const gradingLabel = capabilities.llm ? `Graded by ${capabilities.llmModels?.grade ?? capabilities.model ?? "your model"} after the call` : "Rules-based estimate (no AI key)";
   const shared = { scenario, turns, startedAt: startedAt.current, elapsed, grading, gradingLabel, coach, coachMode, onCoachModeChange: setCoachMode, coachLabel, inserted, onInsert: insertCue, error, canUpgrade };
 
   if (mode === "voice" && engine) {
@@ -434,7 +434,7 @@ export default function TrainerClient() {
     : busy ? { label: `${name} is typing…`, tone: "signal" as const }
     : { label: "Your turn", tone: "ok" as const };
   // Name what is playing the persona: the configured model, or the scripted fallback (no key, or the model call failed).
-  const caller = (callerSource ?? (capabilities.llm ? "llm" : "scripted")) === "llm" ? `Text · ${capabilities.model ?? "AI model"}` : "Text · scripted";
+  const caller = (callerSource ?? (capabilities.llm ? "llm" : "scripted")) === "llm" ? `Text · ${capabilities.llmModels?.persona ?? capabilities.model ?? "AI model"}` : "Text · scripted";
   return (
     <Deck {...shared} orbState={textOrb} status={status} onEnd={hangUp}
       text={{ value: input, onChange: (v) => { setInput(v); if (!v) setInserted(false); }, onSend: sendText, hungUp, typing: busy && !hungUp, caller }} />
