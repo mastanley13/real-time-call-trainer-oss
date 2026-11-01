@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { LogOut, Search, Settings } from "lucide-react";
 import LogoMark from "@/components/LogoMark";
+import MobileMenu from "@/components/MobileMenu";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useAuth, type User } from "@/contexts/AuthContext";
 import { canManageTeam } from "@/lib/team";
@@ -102,7 +103,7 @@ export default function SiteHeader() {
           <ThemeToggle />
           {isAuthenticated ? (
             <>
-              <span className="hidden max-w-[160px] truncate px-1 text-sm text-ink-muted sm:inline">{user?.firstName || user?.email}</span>
+              <span className="hidden max-w-[160px] truncate px-1 text-sm text-ink-muted md:inline">{user?.firstName || user?.email}</span>
               {!demo && (
                 <button className="btn-quiet !min-h-[36px] !px-2.5" onClick={() => { logout(); router.push("/"); }} aria-label="Sign out" title="Sign out">
                   <LogOut size={17} strokeWidth={1.75} aria-hidden />
@@ -111,10 +112,12 @@ export default function SiteHeader() {
             </>
           ) : (
             <>
-              <Link href="/login" className="btn-quiet !min-h-[36px]">Sign in</Link>
-              <Link href="/register" className="btn-primary !min-h-[36px]">Get started</Link>
+              <Link href="/login" className="btn-quiet !min-h-[36px] max-sm:hidden">Sign in</Link>
+              <Link href="/register" className="btn-primary !min-h-[36px] max-sm:hidden">Get started</Link>
             </>
           )}
+          <MobileMenu pathname={pathname} guest={!isAuthenticated}
+            items={[...(isAuthenticated ? links : []), PRICING_NAV].map((l) => ({ href: l.href, label: l.label, active: l.match(pathname) }))} />
         </div>
       </div>
     </header>
