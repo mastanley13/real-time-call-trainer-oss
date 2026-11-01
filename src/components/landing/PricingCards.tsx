@@ -47,11 +47,11 @@ export default function PricingCards() {
         ))}
       </div>
 
-      <div className="mt-6 grid gap-4 md:grid-cols-3">
+      <div className="mt-6 grid gap-4 md:grid-cols-3 md:gap-y-0">
         {TIERS.map((t) => {
           const p = price(t.id, billing);
           return (
-            <section key={t.id} className="card flex flex-col" aria-labelledby={`tier-${t.id}`}>
+            <section key={t.id} className="card flex flex-col md:row-span-6 md:grid md:grid-rows-[subgrid]" aria-labelledby={`tier-${t.id}`}>
               <h3 id={`tier-${t.id}`} className="text-lg font-bold">{t.name}</h3>
               <p className="mt-3 flex items-baseline gap-1">
                 <span className="font-heading text-4xl font-bold">{p.main}</span>
@@ -60,7 +60,7 @@ export default function PricingCards() {
               <p className="mt-1 min-h-[1.25rem] font-mono text-xs text-ink-muted">
                 {t.id !== "free" && billing === "year" ? "2 months free" : ""}
               </p>
-              {t.blurb && <p className="mt-2 text-sm text-ink-soft">{t.blurb}</p>}
+              <p className="mt-2 text-sm text-ink-soft">{t.blurb}</p>
               <ul className="mt-4 flex-1 space-y-2 text-sm text-ink-soft">
                 {t.features.map((f) => f.endsWith("(coming soon)") ? (
                   <li key={f} className="flex gap-2 text-ink-muted"><span className="w-4 shrink-0" aria-hidden />{f}</li>

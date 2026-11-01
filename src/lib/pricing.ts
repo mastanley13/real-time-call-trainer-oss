@@ -1,5 +1,6 @@
 /** Locked plan numbers. Pricing and landing pages render from here so they never drift. */
 
+/** Must equal FREE_MINUTES in usagePlan (PR #20). Import it here once #20 merges. */
 export const FREE_VOICE_MIN = 10;
 /** One-line Free plan summary, used on the Free card and in the FAQ. */
 export const FREE_SUMMARY = `Free: ${FREE_VOICE_MIN} voice minutes a month, enough for a full graded call, plus unlimited text practice. No card.`;
