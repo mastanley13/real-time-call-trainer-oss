@@ -739,7 +739,6 @@ describe("customer.subscription.updated", () => {
       const bad: Record<string, string>[] = [
         { ct_plan: "premium", ct_version: "1" },
         { ct_plan: "premium", ct_addon: "premium_voice", ct_version: "1" },
-        { ct_plan: "addon", ct_version: "1" },
         { ct_plan: "addon", ct_addon: "none", ct_version: "1" },
         { ct_addon: "premium_voice", ct_version: "1" },
         { ct_plan: "enterprise", plan: "premium", ct_version: "1" },
@@ -750,11 +749,18 @@ describe("customer.subscription.updated", () => {
         expect(entitlementFromItems([team, item(L.premium.month!, meta, 3)], L), JSON.stringify(meta)).toBeNull();
       }
       expect(entitlementFromItems([team, item("price_test_archived", PREMIUM_META, 3)], L)).toMatchObject({ plan: "team", premium: true });
-      // Mixed migrated metadata: ct_plan=addon with only the older addon key still counts; ct_addon wins when present.
+      // R2c: with ct_plan present the legacy addon key is not consulted. No Premium, but the Team base survives.
       const mixed = { ct_plan: "addon", addon: "premium_voice", ct_version: "1" };
-      expect(entitlementFromItems([team, item(L.premium.month!, mixed, 3)], L)).toMatchObject({ plan: "team", premium: true });
-      expect(entitlementFromItems([team, item("price_test_archived", mixed, 3)], L)).toMatchObject({ plan: "team", premium: true });
+      for (const priceId of [L.premium.month!, "price_test_archived"]) {
+        expect(entitlementFromItems([team, item(priceId, mixed, 3)], L), priceId).toEqual({ plan: "team", seats: 3, premium: false, interval: "month" });
+      }
+      expect(entitlementFromItems([team, item(L.premium.month!, { ct_plan: "addon", ct_version: "1" }, 3)], L)).toMatchObject({ plan: "team", premium: false });
+      // Without a trusted price or ct_version=1 the unmarked add-on is still refused outright.
+      expect(entitlementFromItems([team, item("price_test_archived", { ct_plan: "addon", addon: "premium_voice" }, 3)], L)).toBeNull();
+      // An explicit ct_addon that is not premium_voice refuses the sync, whatever the legacy key says.
       expect(entitlementFromItems([team, item(L.premium.month!, { ...mixed, ct_addon: "none" }, 3)], L)).toBeNull();
+      // Row A: legacy plan=premium and addon=premium_voice with ct_addon=none gives no Premium.
+      expect(entitlementFromItems([team, item(L.premium.month!, { plan: "premium", addon: "premium_voice", ct_addon: "none" }, 3)], L)).toBeNull();
       expect(entitlementFromItems([team, item(L.premium.month!, { plan: "premium" }, 3)], L)).toMatchObject({ premium: true });
     });
     it("ct_addon is honored before the legacy addon/plan Premium markers", () => {

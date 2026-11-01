@@ -63,8 +63,8 @@ function productKind(meta: Record<string, string> | null | undefined): PriceSlot
   // New format: ct_plan decides alone. The add-on needs ct_plan=addon AND ct_addon=premium_voice.
   if (meta.ct_plan !== undefined) {
     if (meta.ct_plan === "pro" || meta.ct_plan === "team") return meta.ct_plan;
-    // ct_addon wins; the older addon key counts only while ct_addon is absent (mixed migrated metadata).
-    return meta.ct_plan === "addon" && (meta.ct_addon ?? meta.addon) === "premium_voice" ? "premium" : null;
+    // With ct_plan present, Premium needs ct_addon=premium_voice itself. The older addon key is not consulted.
+    return meta.ct_plan === "addon" && meta.ct_addon === "premium_voice" ? "premium" : null;
   }
   // Legacy format (no ct_plan): plan=pro|team|premium, or addon=premium_voice with no plan.
   if (meta.plan === "pro" || meta.plan === "team") return meta.plan;
@@ -355,8 +355,14 @@ export function entitlementFromItems(items: SubscriptionItemInfo[], allowlist: P
     if (it.priceType !== "recurring" || it.usageType !== "licensed") return refuse("price is not flat licensed recurring", it);
     const meta = it.productMetadata;
     if (!meta) return refuse("product not expanded or has no metadata", it);
-    const kind = productKind(meta);
     const hit = it.priceId ? slotOf(it.priceId, allowlist) : null;
+    // An add-on product with no ct_addon marker (only the older addon key) grants no Premium, but it is not a
+    // reason to revoke the base plan either: skip the item. Still needs a trusted price or ct_version=1.
+    if (meta.ct_plan === "addon" && meta.ct_addon === undefined && (hit || meta.ct_version === "1")) {
+      console.warn("[billing] add-on product has no ct_addon; Premium not granted", it.priceId ?? "");
+      continue;
+    }
+    const kind = productKind(meta);
     if (hit) {
       if (kind !== hit.slot) return refuse("allowlisted price and product plan disagree", it);
     } else if (meta.ct_version !== "1" || !kind) {
