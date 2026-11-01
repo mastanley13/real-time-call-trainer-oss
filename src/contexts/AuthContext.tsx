@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import { createContext, useContext, useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { loadConfig, performLogout } from "@/lib/authUi";
 
 export interface LoginCredentials {
   email: string;
@@ -62,6 +64,9 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   capabilities: Capabilities | null;
+  /** The last /api/config call failed, so `capabilities` is a placeholder. Sign-in and sign-up stay blocked. */
+  configError: boolean;
+  retryConfig: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -94,23 +99,34 @@ const isTokenFresh = (token: string | null): boolean => {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
+  const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
+  const [configError, setConfigError] = useState(false);
+
+  const loadCapabilities = () => {
+    // configError stays set until a retry succeeds, so the forms never reopen on the placeholder capabilities.
+    loadConfig(fetch).then((result) => {
+      if ("error" in result) {
+        // Other pages need some capabilities to render, but the sign-in forms stay blocked until a retry succeeds.
+        setConfigError(true);
+        setCapabilities({ demoMode: false, elevenlabs: false, realtime: false, voiceEngines: [], llm: false, database: true });
+        return;
+      }
+      setCapabilities(result.caps);
+      setConfigError(false);
+      if (result.caps.demoMode) {
+        setUser({ id: "demo-user", email: "demo@example.local", firstName: "Demo", lastName: "User", role: "owner" });
+        setIsAuthenticated(true);
+      }
+    });
+  };
 
   useEffect(() => {
     setIsLoading(true);
-    fetch("/api/config")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((caps: Capabilities | null) => {
-        setCapabilities(caps);
-        if (caps?.demoMode) {
-          setUser({ id: "demo-user", email: "demo@example.local", firstName: "Demo", lastName: "User", role: "owner" });
-          setIsAuthenticated(true);
-        }
-      })
-      .catch(() => setCapabilities({ demoMode: false, elevenlabs: false, realtime: false, voiceEngines: [], llm: false, database: true }));
+    loadCapabilities();
     try {
       const token = localStorage.getItem("authToken");
       const storedUser = localStorage.getItem("userData");
@@ -229,12 +245,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const logout = () => {
-    setIsLoading(true);
-    clearSession();
-    fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(
-      () => {},
-    );
-    setIsLoading(false);
+    performLogout({
+      clearSession,
+      notifyServer: () => fetch("/api/auth/logout", { method: "POST", credentials: "include" }),
+      replace: router.replace,
+    });
   };
 
   return (
@@ -248,6 +263,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         isLoading,
         isAuthenticated,
         capabilities,
+        configError,
+        retryConfig: loadCapabilities,
       }}
     >
       {children}

@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, CheckCircle2, Loader2, Printer, Quote, RefreshCw, RotateCcw, TrendingUp } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { LOGIN_PATH, canViewPrivate } from "@/lib/authUi";
 import { getLocalSession, updateLocalEvaluation, type CoachLog } from "@/lib/sessionStore";
 import { listScenarios } from "@/lib/scenarioStore";
 import type { Scenario } from "@/lib/scenarios";
@@ -88,6 +89,13 @@ export default function DebriefPage() {
 
   useEffect(() => {
     if (!capabilities || isLoading) return;
+    if (!canViewPrivate({ isAuthenticated, demoMode: capabilities.demoMode })) {
+      // Signed out: drop anything already loaded and go to sign-in.
+      setView(null);
+      setError("");
+      router.replace(LOGIN_PATH);
+      return;
+    }
     if (sessionId.startsWith("local-")) {
       const s = getLocalSession(sessionId);
       if (!s) { setError("This session isn’t stored in this browser."); return; }
@@ -154,8 +162,8 @@ export default function DebriefPage() {
     }
   }
 
-  if (error && !view) return <div className="deck min-h-screen"><div className="page"><p className="banner-warn">{error} <Link className="font-semibold underline" href="/dashboard">Back to progress</Link></p></div></div>;
-  if (!view) return <div className="deck min-h-screen"><PageSkeleton rows={2} /></div>;
+  if (error && !view) return <div className="min-h-screen"><div className="page"><p className="banner-warn">{error} <Link className="font-semibold underline" href="/dashboard">Back to progress</Link></p></div></div>;
+  if (!view) return <div className="min-h-screen"><PageSkeleton rows={2} /></div>;
 
   const spoke = view.transcript.some((t) => t.role === "user" && t.text.trim());
   const gs = ev ? goalStatusOf(ev) : null;
@@ -180,7 +188,7 @@ export default function DebriefPage() {
   const retryHref = retry ? `/trainer?retry=${encodeURIComponent(sessionId)}&turn=${retry.turn}${view.scenarioId ? `&scenario=${encodeURIComponent(view.scenarioId)}` : ""}` : "/trainer";
 
   return (
-    <div className="deck min-h-screen">
+    <div className="min-h-screen">
       <div className="page enter space-y-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
