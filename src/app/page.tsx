@@ -118,7 +118,7 @@ export default function Home() {
             <p className="label flex items-center gap-1.5"><KeyRound size={12} aria-hidden /> Run it locally</p>
             <pre className="font-mono text-[12.5px] leading-relaxed text-ink-soft">{`git clone https://github.com/mastanley13/real-time-call-trainer-oss
 cd real-time-call-trainer-oss && npm install
-cp .env.example .env   # add OPENAI_REALTIME_API_KEY or OPENAI_API_KEY for voice and the AI coach
+cp .env.example .env   # OPENAI_API_KEY enables voice and the AI coach; OPENAI_REALTIME_API_KEY, voice only
 DEMO_MODE=true npm run dev`}</pre>
           </div>
         </div>
