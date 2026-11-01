@@ -325,6 +325,12 @@ describe("2. checkout failure message", () => {
     expect(active).toContain('role="status"');
     expect(active).not.toContain('role="alert"');
     expect(active).not.toContain("<a ");
+    // Neutral info style, not the green success one; the focus ring also shows for programmatic focus.
+    expect(active).not.toContain("banner-ok");
+    expect(active).toContain("border-line");
+    expect(active).toContain("focus:outline-primary");
+    expect(active).not.toContain("focus-visible:");
+    expect(read("src/components/settings/BillingClient.tsx")).toMatch(/id="plans-h" tabIndex=\{-1\} className="[^"]*focus:outline-primary/);
     const pastDue = render(PAST_DUE_NOTICE);
     expect(pastDue).toContain('role="alert"');
     expect(pastDue).not.toContain('role="status"');
