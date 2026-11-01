@@ -17,6 +17,11 @@ export interface RegisterFormData {
   /** Exactly one of these two is supplied. */
   joinOrgCode?: string;
   newOrgName?: string;
+  /** Sign-up link context, already whitelisted by the register page. The server whitelists it again. */
+  plan?: "pro" | "team";
+  interval?: "month" | "year";
+  src?: string;
+  seg?: string;
 }
 
 export interface User {

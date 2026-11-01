@@ -1,22 +1,44 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
+import { afterSignin, intentFromQuery, rememberNotice } from "@/lib/checkoutStart";
 
 export default function RegisterPage() {
+  // useSearchParams needs a Suspense boundary in the App Router.
+  return (
+    <Suspense fallback={null}>
+      <RegisterForm />
+    </Suspense>
+  );
+}
+
+function RegisterForm() {
   const { register, isAuthenticated, capabilities } = useAuth();
   const router = useRouter();
+  // The link's plan, period, src and seg, whitelisted. Anything else in the query is dropped.
+  const intent = intentFromQuery(useSearchParams());
+  const billingEnabled = capabilities?.billing === true;
+
+  /** Billing on with a plan goes to checkout; otherwise /trainer, with a one-time notice when a plan was asked for. */
+  function goAfterSignin() {
+    const next = afterSignin(billingEnabled, intent);
+    if (next.notice) rememberNotice(next.notice);
+    router.replace(next.path);
+  }
   const [mode, setMode] = useState<"create" | "join">("create");
   const [f, setF] = useState({ firstName: "", lastName: "", email: "", password: "", orgName: "", orgCode: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Already signed in: record nothing new, follow the billing state. Wait for the capabilities so the state is known.
   useEffect(() => {
-    if (isAuthenticated) router.replace("/trainer");
-  }, [isAuthenticated, router]);
+    if (isAuthenticated && capabilities) goAfterSignin();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, capabilities]);
 
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
 
@@ -31,8 +53,9 @@ export default function RegisterPage() {
         email: f.email,
         password: f.password,
         ...(mode === "create" ? { newOrgName: f.orgName } : { joinOrgCode: f.orgCode }),
+        ...intent,
       });
-      router.push("/trainer");
+      goAfterSignin();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {
