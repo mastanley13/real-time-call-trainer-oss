@@ -34,6 +34,14 @@ export function mfaStateFor(p: MfaPolicyInput, now: Date = new Date()): MfaState
   return "enroll_required";
 }
 
+/**
+ * Whether an account may switch enforcement on. Turning it off is always allowed.
+ * Without this, the person who flips the switch could be locked out of their own team.
+ */
+export function canRequireMfa(user: { mfaEnabled: boolean }): boolean {
+  return user.mfaEnabled;
+}
+
 /** End of the grace period, or null for none. Whole days from `now`. */
 export function graceEndFor(graceDays: number | null | undefined, now: Date = new Date()): Date | null {
   if (!graceDays || graceDays < 1) return null;

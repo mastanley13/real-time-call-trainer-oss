@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
-import { canEnforceMfa, graceEndFor, MAX_GRACE_DAYS, mfaStateFor } from "@/lib/mfaPolicy";
+import { canEnforceMfa, canRequireMfa, graceEndFor, MAX_GRACE_DAYS, mfaStateFor } from "@/lib/mfaPolicy";
 import { clientIp, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { canManageTeam, memberName } from "@/lib/team";
 import { forbidden, limitFor, loadActor, noOrganization, serverError, teamIsLocal } from "../_lib/server";
@@ -100,6 +100,10 @@ export async function PUT(req: NextRequest) {
     // Turning it off is always allowed, so an org that leaves the Team plan can't get stuck.
     if (body.requireMfa && !canEnforceMfa(org.planTier)) {
       return NextResponse.json({ error: "plan_required", message: "Requiring MFA is part of the Team plan. Upgrade to turn it on." }, { status: 403 });
+    }
+
+    if (body.requireMfa && !canRequireMfa(actor)) {
+      return NextResponse.json({ error: "mfa_enroll_first", message: "Set up two-factor sign-in for your own account before requiring it for your team." }, { status: 409 });
     }
 
     const now = new Date();

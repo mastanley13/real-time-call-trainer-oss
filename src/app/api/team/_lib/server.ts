@@ -16,7 +16,7 @@ export function teamIsLocal(): boolean {
 export async function loadActor(userId: string) {
   return prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, role: true, isPlatformAdmin: true, organizationId: true, firstName: true, lastName: true, email: true },
+    select: { id: true, role: true, isPlatformAdmin: true, organizationId: true, firstName: true, lastName: true, email: true, mfaEnabled: true },
   });
 }
 export type Actor = NonNullable<Awaited<ReturnType<typeof loadActor>>>;

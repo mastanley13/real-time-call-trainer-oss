@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { canEnforceMfa, graceEndFor, isEnrollmentPath, mfaStateFor } from "@/lib/mfaPolicy";
+import { canEnforceMfa, canRequireMfa, graceEndFor, isEnrollmentPath, mfaStateFor } from "@/lib/mfaPolicy";
 
 const NOW = new Date("2026-10-31T12:00:00Z");
 const DAY = 86_400_000;
+
+describe("canRequireMfa", () => {
+  it("needs the acting user to be enrolled", () => {
+    expect(canRequireMfa({ mfaEnabled: true })).toBe(true);
+    expect(canRequireMfa({ mfaEnabled: false })).toBe(false);
+  });
+});
 
 describe("mfaStateFor", () => {
   it("does nothing when the org does not require MFA", () => {

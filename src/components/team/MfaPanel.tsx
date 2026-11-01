@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { Check, ShieldCheck } from "lucide-react";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { MAX_GRACE_DAYS, type MfaState } from "@/lib/mfaPolicy";
+import { canRequireMfa, MAX_GRACE_DAYS, type MfaState } from "@/lib/mfaPolicy";
 
 interface MfaMember { id: string; name: string; role: string; mfaEnabled: boolean; mfaEnrolledAt: string | null; state: MfaState }
 interface MfaData { requireMfa: boolean; graceEndsAt: string | null; canEnforce: boolean; members: MfaMember[] }
@@ -84,6 +85,8 @@ export default function MfaPanel({ viewerId }: { viewerId: string }) {
   }
 
   const enrolled = data?.members.filter((m) => m.mfaEnabled).length ?? 0;
+  const viewer = data?.members.find((m) => m.id === viewerId);
+  const viewerEnrolled = viewer ? canRequireMfa(viewer) : false;
 
   return (
     <section className="panel p-4 sm:p-5" aria-labelledby="mfa-h">
@@ -113,7 +116,13 @@ export default function MfaPanel({ viewerId }: { viewerId: string }) {
                   {GRACE_CHOICES.map((d) => <option key={d} value={d}>{d ? `${d} days` : "None"}</option>)}
                 </select>
               </div>
-              <button type="button" className="btn-primary" disabled={busy} onClick={() => setRequired(true)}>Require MFA</button>
+              <button type="button" className="btn-primary" disabled={busy || !viewerEnrolled} onClick={() => setRequired(true)}>Require MFA</button>
+              {!viewerEnrolled && (
+                <p className="banner-warn basis-full" role="note">
+                  Set up two-factor sign-in for your own account before requiring it for your team.{" "}
+                  <Link href="/settings/security" className="underline">Open security settings</Link>
+                </p>
+              )}
             </div>
           ) : (
             <p className="text-sm text-ink-soft">Requiring MFA is part of the Team plan. Upgrade to turn it on for your organization.</p>

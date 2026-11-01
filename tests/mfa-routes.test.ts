@@ -22,7 +22,7 @@ import { POST as disableMfa } from "@/app/api/auth/mfa/disable/route";
 import { GET as me } from "@/app/api/me/route";
 
 const savedEnv = { DATABASE_URL: process.env.DATABASE_URL, DEMO_MODE: process.env.DEMO_MODE, JWT_SECRET: process.env.JWT_SECRET };
-const actor = (over: object = {}) => ({ id: "m-1", role: "manager", isPlatformAdmin: false, organizationId: "o-1", firstName: "Mia", lastName: "Chen", email: "m-1@example.test", ...over });
+const actor = (over: object = {}) => ({ id: "m-1", role: "manager", isPlatformAdmin: false, organizationId: "o-1", firstName: "Mia", lastName: "Chen", email: "m-1@example.test", mfaEnabled: true, ...over });
 const json = (url: string, method: string, body: unknown) =>
   new NextRequest(`http://localhost${url}`, { method, body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
 const put = (body: unknown) => setPolicy(json("/api/team/mfa", "PUT", body));
@@ -53,6 +53,29 @@ describe("PUT /api/team/mfa", () => {
     expect(await res.json()).toMatchObject({ requireMfa: true, graceEndsAt: null, changed: true });
     expect(mocks.prisma.organization.update).toHaveBeenCalledWith({ where: { id: "o-1" }, data: { requireMfa: true, mfaGraceEndsAt: null } });
     expect(mocks.prisma.auditEvent.create.mock.calls[0][0].data).toMatchObject({ userId: "m-1", action: "org.mfa_enforcement_enabled", resource: "o-1" });
+  });
+
+  it("refuses to enable it for an owner who has not enrolled, without writing", async () => {
+    mocks.prisma.user.findUnique.mockResolvedValue(actor({ role: "owner", mfaEnabled: false }));
+    const res = await put({ requireMfa: true });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "mfa_enroll_first", message: "Set up two-factor sign-in for your own account before requiring it for your team." });
+    expect(mocks.prisma.organization.update).not.toHaveBeenCalled();
+    expect(mocks.prisma.auditEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("lets an enrolled owner enable it", async () => {
+    mocks.prisma.user.findUnique.mockResolvedValue(actor({ role: "owner", mfaEnabled: true }));
+    expect((await put({ requireMfa: true })).status).toBe(200);
+    expect(mocks.prisma.organization.update).toHaveBeenCalled();
+  });
+
+  it("lets an unenrolled owner turn it off", async () => {
+    mocks.prisma.user.findUnique.mockResolvedValue(actor({ role: "owner", mfaEnabled: false }));
+    mocks.prisma.organization.findUnique.mockResolvedValue({ planTier: "team", requireMfa: true, mfaGraceEndsAt: null });
+    const res = await put({ requireMfa: false });
+    expect(res.status).toBe(200);
+    expect(mocks.prisma.organization.update).toHaveBeenCalledWith({ where: { id: "o-1" }, data: { requireMfa: false, mfaGraceEndsAt: null } });
   });
 
   it("starts a grace period only when asked", async () => {
