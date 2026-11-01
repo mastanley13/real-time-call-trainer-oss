@@ -60,12 +60,14 @@ function slotOf(id: string, list: PriceIds): { slot: PriceSlot; interval: Interv
  */
 function productKind(meta: Record<string, string> | null | undefined): PriceSlot | null {
   if (!meta) return null;
-  const plan = meta.ct_plan ?? meta.plan;
-  if (plan === "pro" || plan === "team") return plan;
-  const addon = meta.ct_addon ?? meta.addon;
-  if (plan === "addon" || plan === "premium" || (!plan && addon)) {
-    return (addon ?? (plan === "premium" ? "premium_voice" : undefined)) === "premium_voice" ? "premium" : null;
+  // New format: ct_plan decides alone. The add-on needs ct_plan=addon AND ct_addon=premium_voice.
+  if (meta.ct_plan !== undefined) {
+    if (meta.ct_plan === "pro" || meta.ct_plan === "team") return meta.ct_plan;
+    return meta.ct_plan === "addon" && meta.ct_addon === "premium_voice" ? "premium" : null;
   }
+  // Legacy format (no ct_plan): plan=pro|team|premium, or addon=premium_voice with no plan.
+  if (meta.plan === "pro" || meta.plan === "team") return meta.plan;
+  if (meta.plan === "premium" || (meta.plan === undefined && meta.addon === "premium_voice")) return "premium";
   return null;
 }
 

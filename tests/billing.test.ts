@@ -707,6 +707,24 @@ describe("customer.subscription.updated", () => {
       // ct_* wins over the older key.
       expect(entitlementFromItems([item(L.team.month!, { ct_plan: "pro", plan: "team" }, 3)], L)).toBeNull();
     });
+    it("Premium needs ct_plan=addon with ct_addon=premium_voice in the new format; plan=premium is legacy only", () => {
+      const team = item(L.team.month!, TEAM_META, 3);
+      const bad: Record<string, string>[] = [
+        { ct_plan: "premium", ct_version: "1" },
+        { ct_plan: "premium", ct_addon: "premium_voice", ct_version: "1" },
+        { ct_plan: "addon", ct_version: "1" },
+        { ct_plan: "addon", ct_addon: "none", ct_version: "1" },
+        { ct_addon: "premium_voice", ct_version: "1" },
+        { ct_plan: "enterprise", plan: "premium", ct_version: "1" },
+      ];
+      for (const meta of bad) {
+        // Not allowlisted (fallback path) and allowlisted: neither grants Premium, and the bad item refuses the sync.
+        expect(entitlementFromItems([team, item("price_test_archived", meta, 3)], L), JSON.stringify(meta)).toBeNull();
+        expect(entitlementFromItems([team, item(L.premium.month!, meta, 3)], L), JSON.stringify(meta)).toBeNull();
+      }
+      expect(entitlementFromItems([team, item("price_test_archived", PREMIUM_META, 3)], L)).toMatchObject({ plan: "team", premium: true });
+      expect(entitlementFromItems([team, item(L.premium.month!, { plan: "premium" }, 3)], L)).toMatchObject({ premium: true });
+    });
     it("an empty allowlist trusts no price id, so only the ct_version=1 fallback can grant", () => {
       const empty: PriceIds = { pro: { month: undefined, year: undefined }, team: { month: undefined, year: undefined }, premium: { month: undefined, year: undefined } };
       expect(entitlementFromItems([item(L.pro.month!, { plan: "pro" })], empty)).toBeNull();
