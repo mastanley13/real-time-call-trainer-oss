@@ -18,6 +18,7 @@ import { formatDuration } from "@/lib/format";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import { PersonaAvatar } from "@/components/ui/Persona";
 import { CUE_ICON } from "@/components/call/CopilotRail";
+import { textModelFor } from "@/lib/textModel";
 
 interface View {
   title: string;
@@ -166,9 +167,11 @@ export default function DebriefPage() {
   const mayRegrade = view.local
     ? !!heuristic
     : canRegrade({ managesOrg: canManageTeam(user?.role, !!user?.isPlatformAdmin), ownsSession: !!user && view.ownerId === user.id }, ev);
-  const aiGradeLocked = !view.local && !mayRegrade && isAiGrade(ev);
+  // The grader's own key decides, not the aggregate llm flag.
+  const gradeModel = textModelFor(capabilities, "grade");
+  const aiGradeLocked =!view.local && !mayRegrade && isAiGrade(ev);
   // Shown with the grade, or with the "wasn't graded" banner when a server call was saved without one.
-  const regradeButton = mayRegrade && view.scenario && capabilities?.llm && (
+  const regradeButton = mayRegrade && view.scenario && gradeModel && (
     <button type="button" className="btn-ghost btn-sm w-full print:hidden" onClick={regrade} aria-disabled={regrading} aria-busy={regrading}>{regrading ? <Loader2 size={13} className="animate-spin" aria-hidden /> : <RefreshCw size={13} aria-hidden />} {regrading ? "Re-grading" : "Re-grade with AI"}</button>
   );
   const regradeStatus = regradeMsg && <p ref={regradeMsgRef} tabIndex={-1} role={regradeMsg.ok ? "status" : "alert"} className={`text-xs outline-none ${regradeMsg.ok ? "text-ok" : "text-alert"}`}>{regradeMsg.text}</p>;
@@ -219,10 +222,10 @@ export default function DebriefPage() {
                         : <span>Graded by AI{gradedOn} <span className="text-ink-muted">(model not recorded)</span></span>}
                     </p>
                     {regradeButton}
-                    {aiGradeLocked && capabilities?.llm && (
+                    {aiGradeLocked && gradeModel && (
                       <p className="text-xs text-ink-muted print:hidden">Think this grade is wrong? Ask your manager to re-grade it.</p>
                     )}
-                    {heuristic && capabilities && !capabilities.llm && (
+                    {heuristic && capabilities && !gradeModel && (
                       <p className="text-xs text-ink-muted print:hidden">AI grading is off on this server. <Link href="/settings/models" className="font-semibold text-primary underline-offset-2 hover:underline">See how to turn it on</Link></p>
                     )}
                     {regradeStatus}

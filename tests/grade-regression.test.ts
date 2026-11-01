@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  INFO_CREDIT_THRESHOLD, evaluateCandidate, isVerbatim, letterFor, percentile, renderReport,
+  INFO_CREDIT_THRESHOLD, evaluateCandidate as evaluateWith, isVerbatim, letterFor, percentile, renderReport,
   type FixtureRef, type RunResult,
 } from "../scripts/grade-regression-eval";
 import { gradeFor } from "@/lib/grader";
@@ -22,6 +22,9 @@ const run = (fixtureId: string, score: number, over: Partial<RunResult> = {}): R
 /** Three runs per fixture at the given scores. */
 const runs = (scores: Record<string, number>, over: Partial<RunResult> = {}) =>
   Object.entries(scores).flatMap(([id, s]) => [1, 2, 3].map((n) => run(id, s, { run: n, ...over })));
+
+/** Every test here uses three runs per fixture, as the script does by default. */
+const evaluateCandidate = (f: FixtureRef[], b: RunResult[], c: RunResult[], runsPerFixture = 3) => evaluateWith(f, b, c, runsPerFixture);
 
 const BASE = { w1: 4, w2: 5, n1: 7, s1: 60 };
 const baseline = runs(BASE);
@@ -104,6 +107,30 @@ describe("evaluateCandidate pass rules", () => {
     expect(failedRule(r)).toEqual(expect.arrayContaining(["a", "b", "c", "e"]));
   });
 
+  it("base) fails when any baseline run fell back to the rules-based grader", () => {
+    const b = runs(BASE);
+    b[0] = { ...b[0], parsed: false };
+    const r = evaluateCandidate(fixtures, b, runs(BASE));
+    expect(failedRule(r)).toEqual(["base"]);
+    expect(r.pass).toBe(false);
+    expect(r.rules[0].detail).toContain("1 of 12 baseline runs did not parse");
+  });
+
+  it("base) a fully failed baseline cannot let a low-scoring candidate pass", () => {
+    const r = evaluateCandidate(fixtures, runs({ w1: 0, w2: 0, n1: 0, s1: 0 }, { parsed: false, latencyMs: 10_000 }), runs({ w1: 0, w2: 0, n1: 0, s1: 0 }, { latencyMs: 10_000 }));
+    expect(r.rules.find((x) => x.id === "base")?.pass).toBe(false);
+    expect(r.pass).toBe(false);
+  });
+
+  it("base) fails when the baseline or the candidate is missing runs for a fixture", () => {
+    const missingBase = evaluateCandidate(fixtures, runs(BASE).filter((r) => !(r.fixtureId === "s1" && r.run === 3)), runs(BASE));
+    expect(missingBase.rules[0]).toMatchObject({ id: "base", pass: false });
+    expect(missingBase.rules[0].detail).toContain("baseline is missing runs for s1");
+    const noFixtureRuns = evaluateCandidate(fixtures, runs(BASE), runs(BASE).filter((r) => r.fixtureId !== "n1"));
+    expect(noFixtureRuns.rules[0].detail).toContain("candidate is missing runs for n1");
+    expect(evaluateCandidate(fixtures, runs(BASE), runs(BASE), 4).rules[0].pass).toBe(false);
+  });
+
   it("the baseline is compared against itself on the mean of its runs", () => {
     const wobbly = [run("w1", 2), run("w1", 6, { run: 2 }), run("w1", 4, { run: 3 })];
     const r = evaluateCandidate([{ id: "w1", kind: "weak_no_contact" }], wobbly, runs({ w1: 4 }));
@@ -137,7 +164,7 @@ describe("helpers", () => {
     expect(md).toContain("# Grading regression: cand-m against base-m");
     expect(md).toContain("Verdict: **FAIL**");
     expect(md).toContain("must not become LLM_MODEL_GRADE");
-    for (const id of ["a)", "b)", "c)", "d)", "e)", "f)"]) expect(md).toContain(`| ${id} `);
+    for (const id of ["base)", "a)", "b)", "c)", "d)", "e)", "f)"]) expect(md).toContain(`| ${id} `);
     expect(md).not.toContain("—");
   });
 });

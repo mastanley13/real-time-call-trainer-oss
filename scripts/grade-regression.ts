@@ -70,7 +70,17 @@ globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters
   return res;
 }) as typeof fetch;
 
+// The grade endpoint and key as the shell had them. Each model starts from these, so one model's --provider
+// override never leaks into the next model that has none.
+const INITIAL_GRADE_ENV = { base: process.env.LLM_BASE_URL_GRADE, key: process.env.LLM_API_KEY_GRADE };
+function restore(name: string, value: string | undefined) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
+
 function useModel(model: string) {
+  restore("LLM_BASE_URL_GRADE", INITIAL_GRADE_ENV.base);
+  restore("LLM_API_KEY_GRADE", INITIAL_GRADE_ENV.key);
   process.env.LLM_MODEL_GRADE = model;
   const p = providers.get(model);
   if (p) {
@@ -137,7 +147,7 @@ async function main() {
   const baseline = await gradeAll(baselineModel, fixtures, runs);
   let allPass = true;
   for (const model of candidates) {
-    const result = evaluateCandidate(fixtures, baseline, await gradeAll(model, fixtures, runs));
+    const result = evaluateCandidate(fixtures, baseline, await gradeAll(model, fixtures, runs), runs);
     allPass &&= result.pass;
     const file = path.join(outDir, `grade-regression-${model.replace(/[^\w.-]/g, "_")}.md`);
     fs.writeFileSync(file, renderReport({ baselineModel, candidateModel: model, runsPerFixture: runs, result, when: new Date().toISOString() }));

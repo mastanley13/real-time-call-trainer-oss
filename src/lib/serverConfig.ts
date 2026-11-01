@@ -167,6 +167,8 @@ export function resolveLlmKeyFor(role: LlmRole, env: Env = process.env): string 
   const base = llmBaseUrlFor(role, env);
   const sharedBase = (env.LLM_BASE_URL?.trim() || OPENAI_DEFAULT_BASE).replace(/\/$/, "");
   const shared = env.LLM_API_KEY?.trim();
+  // Deliberate (security): one provider's key is never sent to a different endpoint. A role on another base URL
+  // must bring its own key; do not "fix" this to fall back to the shared key.
   if (shared && base === sharedBase) return shared;
   return isOpenAiBaseUrl(base) ? env.OPENAI_API_KEY?.trim() || undefined : undefined;
 }

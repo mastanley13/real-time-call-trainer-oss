@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getCapabilities, voiceModelForCall } from "@/lib/serverConfig";
 import { voiceModelFromCaps } from "@/lib/voiceModel";
+import { textModelFor } from "@/lib/textModel";
 import { jobRows, voiceEngines } from "@/components/settings/models";
 import { usageSnapshotFromUsage } from "@/lib/billingUi";
 
@@ -60,6 +61,27 @@ describe("capabilities report what runs", () => {
     const caps = getCapabilities();
     expect(caps).not.toHaveProperty("realtimeModel");
     expect(voiceModelFromCaps(caps)).toBeUndefined();
+  });
+});
+
+describe("textModelFor judges each job by its own key", () => {
+  it("with only the grader keyed, the coach and caller have no AI model but the grader does", () => {
+    vi.stubEnv("OPENAI_API_KEY", "");
+    vi.stubEnv("LLM_API_KEY_GRADE", "grade-key");
+    vi.stubEnv("LLM_BASE_URL_GRADE", "https://api.anthropic.com/v1");
+    vi.stubEnv("LLM_MODEL", "claude-sonnet-5-5");
+    const caps = getCapabilities();
+    expect(caps.llm).toBe(true);
+    expect(textModelFor(caps, "coach")).toBeUndefined();
+    expect(textModelFor(caps, "persona")).toBeUndefined();
+    expect(textModelFor(caps, "wizard")).toBeUndefined();
+    expect(textModelFor(caps, "grade")).toBe("claude-sonnet-5-5");
+  });
+
+  it("reads the older single-model payload and handles missing capabilities", () => {
+    expect(textModelFor({ llm: true, model: "gpt-x" }, "coach")).toBe("gpt-x");
+    expect(textModelFor({ llm: false, model: "gpt-x" }, "coach")).toBeUndefined();
+    expect(textModelFor(null, "grade")).toBeUndefined();
   });
 });
 

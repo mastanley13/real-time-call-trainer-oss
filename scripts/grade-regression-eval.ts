@@ -46,7 +46,8 @@ export interface RunResult {
 }
 
 export interface RuleResult {
-  id: "a" | "b" | "c" | "d" | "e" | "f";
+  /** "base" is the precondition: a complete, fully parsed baseline and a complete candidate run set. */
+  id: "base" | "a" | "b" | "c" | "d" | "e" | "f";
   name: string;
   pass: boolean;
   detail: string;
@@ -88,8 +89,21 @@ export function isVerbatim(quote: string, turns: { text: string }[]): boolean {
 
 const pct = (n: number, d: number) => (d ? `${((n / d) * 100).toFixed(1)}%` : "n/a");
 
-export function evaluateCandidate(fixtures: FixtureRef[], baseline: RunResult[], candidate: RunResult[]): Evaluation {
+/** Fixtures that do not have exactly `expected` runs in `runs`. */
+const incomplete = (fixtures: FixtureRef[], runs: RunResult[], expected: number) =>
+  fixtures.filter((f) => runs.filter((r) => r.fixtureId === f.id).length !== expected).map((f) => f.id);
+
+/**
+ * `runsPerFixture` is how many gradings each fixture should have, for the baseline and for the candidate. A
+ * comparison against a baseline that is missing runs or fell back to the rules-based grader proves nothing, so
+ * it fails the "base" rule whatever the candidate scored.
+ */
+export function evaluateCandidate(fixtures: FixtureRef[], baseline: RunResult[], candidate: RunResult[], runsPerFixture: number): Evaluation {
   const byFixture = (runs: RunResult[], id: string) => runs.filter((r) => r.fixtureId === id);
+  const baseMissing = incomplete(fixtures, baseline, runsPerFixture);
+  const candMissing = incomplete(fixtures, candidate, runsPerFixture);
+  const baseUnparsed = baseline.filter((r) => !r.parsed).length;
+  const preconditionOk = fixtures.length > 0 && runsPerFixture > 0 && !baseMissing.length && !candMissing.length && baseUnparsed === 0;
   // Per fixture, compare the mean score of the runs that parsed. A model that never parses has no score to compare.
   const summaries: FixtureSummary[] = fixtures.map((f) => {
     const b = mean(byFixture(baseline, f.id).filter((r) => r.parsed).map((r) => r.score));
@@ -126,6 +140,19 @@ export function evaluateCandidate(fixtures: FixtureRef[], baseline: RunResult[],
   const latencyLimit = baseP95 * (1 + LATENCY_SLACK);
 
   const rules: RuleResult[] = [
+    {
+      id: "base",
+      name: "Baseline complete and parsed",
+      pass: preconditionOk,
+      detail: preconditionOk
+        ? `${baseline.length} baseline and ${candidate.length} candidate runs, ${runsPerFixture} per fixture, every baseline run parsed`
+        : [
+            fixtures.length === 0 || runsPerFixture <= 0 ? "no fixtures or runs requested" : "",
+            baseMissing.length ? `baseline is missing runs for ${baseMissing.join(", ")}` : "",
+            candMissing.length ? `candidate is missing runs for ${candMissing.join(", ")}` : "",
+            baseUnparsed ? `${baseUnparsed} of ${baseline.length} baseline runs did not parse (rules-based fallback)` : "",
+          ].filter(Boolean).join("; "),
+    },
     {
       id: "a",
       name: "Letter grade matches baseline",
