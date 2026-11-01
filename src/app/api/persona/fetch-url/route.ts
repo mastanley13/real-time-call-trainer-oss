@@ -11,7 +11,7 @@ const Body = z.object({ url: z.string().trim().min(1).max(2048) });
 
 /** Persona wizard "Product page" tab: fetches a public page and returns its readable text (FetchedPage). */
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   const ipLimited = ipLimitResponse(req, "wizard");
   if (ipLimited) return ipLimited;

@@ -39,7 +39,7 @@ function mergeTurns(h: { role: "user" | "assistant"; text: string }[]) {
  * otherwise answers from the scenario's scripted replies by matching the trainee's intent.
  */
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   const ipLimited = ipLimitResponse(req, "caller");
   if (ipLimited) return ipLimited;

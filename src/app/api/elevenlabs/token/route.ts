@@ -7,7 +7,7 @@ import { rateLimit, ipLimitResponse } from "@/lib/rateLimit";
  * ElevenLabs agent. The API key never leaves the server.
  */
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 
   const ipLimited = ipLimitResponse(req, "token");

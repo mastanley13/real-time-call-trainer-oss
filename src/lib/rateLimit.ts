@@ -111,6 +111,10 @@ export const IP_LIMITS = {
   coach: () => ({ limit: envInt("RATE_LIMIT_COACH_MAX", 120), windowMs: envInt("RATE_LIMIT_COACH_WINDOW_SEC", 600) * 1000 }),
   /** Persona wizard: generation and URL fetching. */
   wizard: () => ({ limit: envInt("RATE_LIMIT_WIZARD_MAX", 20), windowMs: envInt("RATE_LIMIT_WIZARD_WINDOW_SEC", 3600) * 1000 }),
+  /** Team MFA policy changes (PUT /api/team/mfa). */
+  teamMfaPolicy: () => ({ limit: envInt("RATE_LIMIT_TEAM_MFA_POLICY_MAX", 20), windowMs: envInt("RATE_LIMIT_TEAM_MFA_POLICY_WINDOW_SEC", 600) * 1000 }),
+  /** Support MFA resets (POST /api/team/mfa/reset). */
+  teamMfaReset: () => ({ limit: envInt("RATE_LIMIT_TEAM_MFA_RESET_MAX", 20), windowMs: envInt("RATE_LIMIT_TEAM_MFA_RESET_WINDOW_SEC", 600) * 1000 }),
 } as const;
 
 /**

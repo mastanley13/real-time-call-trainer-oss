@@ -27,6 +27,8 @@ export interface User {
   role?: "trainee" | "manager" | "owner" | "admin";
   /** Set by the login, MFA and register routes. Display only; the server checks it again on every request. */
   isPlatformAdmin?: boolean;
+  /** Set from /api/me: the org requires MFA and this user has not enrolled. Display only. */
+  mfaEnrollment?: boolean;
 }
 
 export interface Capabilities {
@@ -59,6 +61,8 @@ interface AuthContextType {
   ) => Promise<void>;
   register: (formData: RegisterFormData) => Promise<void>;
   logout: () => void;
+  /** Mirror the server's answer about whether this user must enrol in MFA. Display only; the server checks it on every request. */
+  setMfaEnrollment: (on: boolean) => void;
   isLoading: boolean;
   isAuthenticated: boolean;
   capabilities: Capabilities | null;
@@ -237,10 +241,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     setIsLoading(false);
   };
 
+  const setMfaEnrollment = (on: boolean) => {
+    setUser((u) => {
+      if (!u || !!u.mfaEnrollment === on) return u;
+      const next = { ...u, mfaEnrollment: on || undefined };
+      try { localStorage.setItem("userData", JSON.stringify(next)); } catch { /* storage blocked */ }
+      return next;
+    });
+  };
+
   return (
     <AuthContext.Provider
       value={{
         user,
+        setMfaEnrollment,
         login,
         completeMfaChallenge,
         register,

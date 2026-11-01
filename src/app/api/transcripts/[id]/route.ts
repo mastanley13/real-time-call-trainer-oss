@@ -29,7 +29,7 @@ async function canAccess(userId: string, session: { userId: string; organization
 
 /** Fetch one session. Owners can read their own; managers/owners can read their org's. */
 export async function GET(req: NextRequest, { params }: Params) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   const { id } = await params;
 
@@ -60,7 +60,7 @@ const notAllowed = () => fail(403, "regrade_not_allowed", "This call already has
  * scenario from the client); the trainee only while it has no AI grade.
  */
 export async function PATCH(req: NextRequest, { params }: Params) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   if (isDemoUser(auth) || !getCapabilities().database) {
     return fail(400, "server_sessions_unavailable", "This server keeps sessions in the browser, so it has no stored session to re-grade.");

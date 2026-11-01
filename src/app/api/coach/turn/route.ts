@@ -22,7 +22,7 @@ const Body = z.object({
  * its cueKey). Cues are for the rep only and are never sent to the persona.
  */
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 
   const ipLimited = ipLimitResponse(req, "coach");

@@ -134,6 +134,13 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 1. Register a new team and land in the app. Sign out and back in. A wrong password shows an error.
 2. `/settings/security`: enrol TOTP MFA, sign out, and sign in with the code. A wrong code is rejected.
 3. Signed out, `/dashboard` redirects to `/login`. Sessions persist across devices.
+4. **MFA enforcement** (organization on the Team plan, one manager and one trainee, neither enrolled):
+   1. As the manager, open the MFA panel on the Team page. **Require MFA** is disabled and a note links to `/settings/security`. `PUT /api/team/mfa` with `{"requireMfa":true}` returns 409 `mfa_enroll_first`.
+   2. Enrol the manager, then turn on **Require MFA** with a 7 day grace period. The panel shows when the grace period ends.
+   3. As the trainee, a banner asks them to set up MFA within 7 days. Every page still works.
+   4. Turn enforcement on again with no grace period. The trainee is redirected to `/settings/security`, other pages bounce back there, and protected API routes return 403 `mfa_enrollment_required`.
+   5. Once the trainee enrols, `POST /api/auth/mfa/disable` returns 403 `mfa_required_by_org`.
+   6. As the manager, reset the trainee's MFA from the panel. The trainee is limited to `/settings/security` until they enrol again.
 
 ### 15. API sanity
 1. `GET /api/config` returns capability flags and the model id only, never a key or base URL.
@@ -165,6 +172,8 @@ Every limit is a fixed window in memory, per server instance, and resets on rest
 | `/api/persona/generate` + `/api/persona/fetch-url` (wizard, shared) | `RATE_LIMIT_WIZARD_MAX` (20 per 3600 s) | Set 2, import a URL twice, then **Draft persona** |
 | `/api/realtime/session` (OpenAI Realtime voice) | `RATE_LIMIT_REALTIME_MAX` (10 per 3600 s) | Set 1 and start two voice calls |
 | `/api/elevenlabs/token` (ElevenLabs voice) | `RATE_LIMIT_TOKEN_MAX` (10 per 3600 s) | Set 1 and start two ElevenLabs calls |
+| `PUT /api/team/mfa` (MFA policy) | `RATE_LIMIT_TEAM_MFA_POLICY_MAX` (20 per 600 s) | Full mode as a manager. Set 2 and toggle the rule three times |
+| `POST /api/team/mfa/reset` (support reset) | `RATE_LIMIT_TEAM_MFA_RESET_MAX` (20 per 600 s) | Full mode as a manager. Set 1 and reset two members |
 | `/api/llm/check` (Models page) | fixed, 6 per 10 min | Press **Check connection** seven times |
 | `/api/access` | fixed, 10 per 15 min | See Access code above |
 | `/api/auth/login`, `/api/auth/register`, `/api/auth/mfa/challenge` | fixed, 10, 5 and 10 per minute | Full mode only. These answer with their own error text |

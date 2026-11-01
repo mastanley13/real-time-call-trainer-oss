@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
+import { mfaStateFor } from "@/lib/mfaPolicy";
 
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req);
+  // Open to members who must still enrol: the security page and MfaGate read the org's MFA rule from here.
+  const auth = await requireAuth(req, { allowMfaEnrollment: true });
   if (auth instanceof NextResponse) return auth;
 
   const user = await prisma.user.findUnique({
@@ -13,6 +15,12 @@ export async function GET(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
+  const org = user.organization;
+  const mfaState = mfaStateFor({
+    requireMfa: org?.requireMfa ?? false,
+    mfaGraceEndsAt: org?.mfaGraceEndsAt ?? null,
+    mfaEnabled: user.mfaEnabled,
+  });
   return NextResponse.json({
     user: {
       id: user.id,
@@ -24,14 +32,20 @@ export async function GET(req: NextRequest) {
       mfaEnabled: user.mfaEnabled,
       mfaEnrolledAt: user.mfaEnrolledAt,
     },
-    organization: user.organization
+    organization: org
       ? {
-          id: user.organization.id,
-          name: user.organization.name,
-          code: user.organization.code,
-          planTier: user.organization.planTier,
-          sessionRetentionDays: user.organization.sessionRetentionDays,
+          id: org.id,
+          name: org.name,
+          code: org.code,
+          planTier: org.planTier,
+          sessionRetentionDays: org.sessionRetentionDays,
         }
       : null,
+    // Display only: requireAuth reads the same rule from the database on every protected request.
+    mfa: {
+      state: mfaState,
+      requiredByOrg: org?.requireMfa ?? false,
+      graceEndsAt: mfaState === "grace" ? org?.mfaGraceEndsAt?.toISOString() ?? null : null,
+    },
   });
 }

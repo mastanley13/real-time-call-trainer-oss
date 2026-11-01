@@ -29,7 +29,7 @@ const GradeFields = z.object({
 
 /** Save a completed practice session for the signed-in user. */
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   if (isDemoUser(auth)) {
     return NextResponse.json({ error: "Demo mode keeps sessions in the browser only." }, { status: 400 });
@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
 
 /** List the signed-in user's sessions (newest first). */
 export async function GET(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   const rows = await prisma.trainerSession.findMany({
     where: { userId: auth.id },

@@ -12,7 +12,8 @@ const BodySchema = z.object({ code: z.string().regex(/^[0-9]{6}$/) });
  * `mfaEnabled` flips to true and subsequent logins will require TOTP.
  */
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req);
+  // Open to members who must still enrol: activating is what lifts the restriction.
+  const auth = await requireAuth(req, { allowMfaEnrollment: true });
   if (auth instanceof NextResponse) return auth;
   const user = auth;
 

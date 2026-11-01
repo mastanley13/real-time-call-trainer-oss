@@ -34,6 +34,11 @@ model Organization {
   /// Nullable = keep training records indefinitely. When set, the nightly
   /// purge job deletes TrainerSession rows older than this many days.
   sessionRetentionDays Int?
+  /// Team plan only: members must have TOTP MFA enrolled. Off by default.
+  requireMfa     Boolean   @default(false)
+  /// Optional grace period. While this is in the future, members without MFA
+  /// get a banner instead of forced enrollment. Null means enforce at once.
+  mfaGraceEndsAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -5,6 +5,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import SiteHeader from "@/components/SiteHeader";
 import MobileTabBar from "@/components/MobileTabBar";
 import CommandPalette from "@/components/CommandPalette";
+import MfaGate from "@/components/MfaGate";
 
 const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-inter" });
 const sora = Sora({ subsets: ["latin"], display: "swap", variable: "--font-sora" });
@@ -39,6 +40,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <AuthProvider>
           <a href="#main" className="skip-link">Skip to content</a>
           <SiteHeader />
+          <MfaGate />
           <main id="main" tabIndex={-1} className="pb-[calc(4.5rem+env(safe-area-inset-bottom))] outline-none md:pb-0">{children}</main>
           <MobileTabBar />
           <CommandPalette />

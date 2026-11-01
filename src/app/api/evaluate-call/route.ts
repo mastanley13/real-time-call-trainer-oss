@@ -20,7 +20,7 @@ const Body = z.object({
 });
 
 export async function POST(request: NextRequest) {
-  const auth = requireAuth(request);
+  const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
   const ipLimited = ipLimitResponse(request, "grading");

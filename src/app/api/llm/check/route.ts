@@ -29,7 +29,7 @@ function result(r: Omit<LlmCheckResult, "hint">, failure?: CheckFailure) {
  * is never read or echoed, and neither the key nor the endpoint URL is returned.
  */
 export async function POST(req: NextRequest) {
-  const auth = requireAuth(req);
+  const auth = await requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 
   const ipLimit = rateLimit({ key: `llmcheck:${clientIp(req)}`, limit: CHECK_LIMIT, windowMs: CHECK_WINDOW_MS });

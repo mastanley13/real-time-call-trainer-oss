@@ -38,8 +38,7 @@ export function verifySessionToken(token: string): SessionUser | null {
       email: String(payload.email),
       firstName: payload.firstName as string | undefined,
       lastName: payload.lastName as string | undefined,
-      role: (payload.role as SessionRole) || "trainee",
-    };
+      role: (payload.role as SessionRole) || "trainee",    };
   } catch {
     return null;
   }

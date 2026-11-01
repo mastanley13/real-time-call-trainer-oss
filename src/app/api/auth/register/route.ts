@@ -5,7 +5,6 @@ import { hashPassword, signSessionToken } from "@/lib/auth";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { generateOrgCode, isValidOrgCode } from "@/lib/orgCodes";
-
 const RegisterSchema = z
   .object({
     firstName: z.string().trim().min(1).max(80),
@@ -126,8 +125,7 @@ export async function POST(request: NextRequest) {
       email: user.email,
       firstName: user.firstName ?? undefined,
       lastName: user.lastName ?? undefined,
-      role: user.role as "trainee" | "manager" | "owner",
-    };
+      role: user.role as "trainee" | "manager" | "owner",    };
     const token = signSessionToken(sessionUser);
 
     const res = NextResponse.json({

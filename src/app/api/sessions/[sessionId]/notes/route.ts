@@ -34,7 +34,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ sessionId: string }> },
 ) {
-  const auth = requireAuth(request);
+  const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
   const user = auth;
 
@@ -78,7 +78,7 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ sessionId: string }> },
 ) {
-  const auth = requireAuth(request);
+  const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
   const user = auth;
 
