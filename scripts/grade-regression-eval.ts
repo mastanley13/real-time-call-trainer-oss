@@ -3,8 +3,9 @@
  * so tests/grade-regression.test.ts can run it on synthetic data.
  *
  * A candidate grader model may replace the baseline only when every rule passes:
- *  a) same letter grade as the baseline on at least 90% of fixtures, and never more than one letter apart;
- *  b) mean absolute difference of per-fixture mean scores at most 5 points;
+ *  a) every candidate run is compared with its fixture's baseline mean: same letter on at least 90% of runs, and no
+ *     run more than one letter apart;
+ *  b) mean absolute error of the individual candidate runs against the baseline mean at most 5 points;
  *  c) none of the weak "no contact asked" runs credit information capture;
  *  d) 100% of evidence quotes are verbatim in the transcript;
  *  e) the JSON parses (and validates) on 100% of runs;
@@ -106,28 +107,35 @@ export function evaluateCandidate(fixtures: FixtureRef[], baseline: RunResult[],
   const candMissing = incomplete(fixtures, candidate, runsPerFixture);
   const baseUnparsed = baseline.filter((r) => !r.parsed).length;
   const preconditionOk = fixtures.length > 0 && runsPerFixture > 0 && !baseMissing.length && !candMissing.length && baseUnparsed === 0;
-  // Per fixture, compare the mean score of the runs that parsed. A model that never parses has no score to compare.
+  // The reference for a fixture is the mean of the baseline's runs. Every CANDIDATE RUN is compared with it on its
+  // own: averaging the candidate's runs first would let errors cancel (40 and 100 average to 70) and approve an
+  // unstable grader. A candidate run that did not parse scores 0, so it is a large error, never skipped.
+  const comparisons: { letterDistance: number; absDiff: number }[] = [];
   const summaries: FixtureSummary[] = fixtures.map((f) => {
     const b = mean(byFixture(baseline, f.id).filter((r) => r.parsed).map((r) => r.score));
-    const parsedCandidate = byFixture(candidate, f.id).filter((r) => r.parsed);
-    const c = parsedCandidate.length ? mean(parsedCandidate.map((r) => r.score)) : 0;
     const bl = letterFor(b);
-    const cl = letterFor(c);
+    const perRun = byFixture(candidate, f.id).map((r) => {
+      const s = r.parsed ? r.score : 0;
+      return { score: s, letterDistance: Math.abs(LETTERS.indexOf(bl) - LETTERS.indexOf(letterFor(s))), absDiff: Math.abs(b - s) };
+    });
+    comparisons.push(...perRun);
+    const c = mean(perRun.map((p) => p.score));
     return {
       fixtureId: f.id,
       baselineScore: b,
       baselineLetter: bl,
       candidateScore: c,
-      candidateLetter: cl,
-      letterDistance: Math.abs(LETTERS.indexOf(bl) - LETTERS.indexOf(cl)),
-      absDiff: Math.abs(b - c),
+      candidateLetter: letterFor(c),
+      // Worst single run, and the mean of the runs' own errors.
+      letterDistance: Math.max(0, ...perRun.map((p) => p.letterDistance)),
+      absDiff: mean(perRun.map((p) => p.absDiff)),
     };
   });
 
-  const n = summaries.length;
-  const same = summaries.filter((s) => s.letterDistance === 0).length;
-  const worst = Math.max(0, ...summaries.map((s) => s.letterDistance));
-  const meanDiff = mean(summaries.map((s) => s.absDiff));
+  const n = comparisons.length;
+  const same = comparisons.filter((c) => c.letterDistance === 0).length;
+  const worst = Math.max(0, ...comparisons.map((c) => c.letterDistance));
+  const meanDiff = mean(comparisons.map((c) => c.absDiff));
 
   const weakIds = new Set(fixtures.filter((f) => f.kind === "weak_no_contact").map((f) => f.id));
   const weakRuns = candidate.filter((r) => weakIds.has(r.fixtureId) && r.parsed);
@@ -160,7 +168,7 @@ export function evaluateCandidate(fixtures: FixtureRef[], baseline: RunResult[],
       id: "a",
       name: "Letter grade matches baseline",
       pass: n > 0 && same / n >= MIN_LETTER_MATCH && worst <= 1,
-      detail: `${same} of ${n} fixtures (${pct(same, n)}) same letter, needs at least ${MIN_LETTER_MATCH * 100}%; furthest apart ${worst} letter${worst === 1 ? "" : "s"}, needs at most 1`,
+      detail: `${same} of ${n} runs (${pct(same, n)}) same letter as the baseline, needs at least ${MIN_LETTER_MATCH * 100}%; furthest apart ${worst} letter${worst === 1 ? "" : "s"}, needs at most 1`,
     },
     {
       id: "b",
@@ -214,7 +222,9 @@ export function renderReport(opts: { baselineModel: string; candidateModel: stri
     "|---|---|---|",
     ...result.rules.map((r) => `| ${r.id}) ${r.name} | ${r.pass ? "pass" : "FAIL"} | ${r.detail} |`),
     "",
-    "## Per fixture (mean of runs)",
+    "## Per fixture",
+    "",
+    `Scores are the mean of the runs. Difference is the mean error of the individual ${candidateModel} runs against the ${baselineModel} mean, and the letters apart are for its worst run.`,
     "",
     `| Fixture | ${baselineModel} | ${candidateModel} | Difference |`,
     "|---|---|---|---|",

@@ -53,6 +53,24 @@ describe("evaluateCandidate pass rules", () => {
     expect(r.rules.find((x) => x.id === "a")?.detail).toContain("furthest apart 2 letters");
   });
 
+  it("a) and b) catch errors that cancel in the mean: baseline 80,80,80 against candidate 40,100,100", () => {
+    const one: FixtureRef[] = [{ id: "u1", kind: "contact_captured" }];
+    const b = runs({ u1: 80 });
+    const c = [run("u1", 40), run("u1", 100, { run: 2 }), run("u1", 100, { run: 3 })];
+    const r = evaluateCandidate(one, b, c);
+    // The candidate's mean is 80, the same as the baseline, so only per-run checks can see the problem.
+    expect(failedRule(r)).toEqual(expect.arrayContaining(["a", "b"]));
+    expect(r.rules.find((x) => x.id === "a")?.detail).toContain("furthest apart 3 letters");
+    expect(r.rules.find((x) => x.id === "b")?.detail).toContain("26.67 points");
+    expect(r.pass).toBe(false);
+  });
+
+  it("a) a candidate whose runs all match the baseline passes the per-run checks", () => {
+    const one: FixtureRef[] = [{ id: "u1", kind: "contact_captured" }];
+    const r = evaluateCandidate(one, runs({ u1: 80 }), [run("u1", 82), run("u1", 84, { run: 2 }), run("u1", 80, { run: 3 })]);
+    expect(r.rules.filter((x) => x.id === "a" || x.id === "b").every((x) => x.pass)).toBe(true);
+  });
+
   it("a) passes at exactly 90% with a one-letter move", () => {
     const many: FixtureRef[] = Array.from({ length: 10 }, (_, i) => ({ id: `f${i}`, kind: "contact_captured" as const }));
     const b = runs(Object.fromEntries(many.map((f) => [f.id, 85])));
