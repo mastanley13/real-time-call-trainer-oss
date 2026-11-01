@@ -38,7 +38,7 @@ The gap: every enforcement step ends with "the client hangs up". A client that i
 
 - `PROVIDER_LIMIT_GRACE_SECONDS = 20`. The provider limit is `maxSeconds + grace`, so the server's own stop (heartbeat, `max_duration`) normally fires first and the provider limit is the backstop.
 
-Billing off (`meteringEnabled()` false): no `callId`, no `maxSeconds`. Use a fixed backstop instead (`UNMETERED_CALL_SECONDS`, default 30 minutes, env override `VOICE_MAX_CALL_SECONDS`) so a self-hosted call cannot run forever by accident. This is a safety limit, not a plan cap, and it does not write to the ledger. Document the env var in the README table.
+Metering off (`USAGE_CAPS` unset and no Stripe key; `meteringEnabled()` false): no `callId`, no `maxSeconds`. Use a fixed backstop instead (`UNMETERED_CALL_SECONDS`, default 30 minutes, env override `VOICE_MAX_CALL_SECONDS`) so a self-hosted call cannot run forever by accident. This is a safety limit, not a plan cap, and it does not write to the ledger. Document the env var in the README table.
 
 ### 2. OpenAI Realtime
 
@@ -56,7 +56,7 @@ If neither a provider max duration nor a hangup is available for the key in use,
 
 Server hangup must not depend on a client request. Settlement and heartbeats only run when the browser calls us, so a silent client would never trigger them, and the 5 minute reconcile job in section 4 selects only ended calls. Add a deadline that the server enforces on its own:
 
-- New nullable column `providerDeadlineAt` on `TrainerSession`, written at mint as `mintedAt + maxSeconds + PROVIDER_LIMIT_GRACE_SECONDS` (or `UNMETERED_CALL_SECONDS + grace` when billing is off). The database row is the schedule, so nothing lives only in process memory and a restart loses nothing.
+- New nullable column `providerDeadlineAt` on `TrainerSession`, written at mint as `mintedAt + maxSeconds + PROVIDER_LIMIT_GRACE_SECONDS` (or `UNMETERED_CALL_SECONDS + grace` when metering is off). The database row is the schedule, so nothing lives only in process memory and a restart loses nothing.
 - Route `cron/enforce-deadlines` (same `CRON_SECRET` pattern as `purge-expired`), run every minute. It selects calls with `providerDeadlineAt <= now`, no provider hangup recorded (`providerHangupAt` null) and a known provider id. For each it sends the hangup, sets `providerHangupAt`, settles the call if it is still open (reason `max_duration`, billed on the server clock as today) and calls `flagOverrun` if the provider reports extra seconds. Cap the batch and the provider calls per run.
 - An in-process timer set at mint may call the same function earlier as an optimization. It is never relied on. Both paths use the same idempotent update (`providerHangupAt` null check), so a double fire sends one hangup.
 - Restart recovery: on the first sweep after a restart, every overdue row is picked up by the query above. No state is rebuilt.
@@ -103,13 +103,13 @@ No new trust in the client. It keeps sending heartbeats and still hangs up on `s
 | User A reports user B's conversation id | Bind is rejected with 409 `conversation_mismatch`. B's conversation is not ended and no row stores the id. |
 | Mint succeeds but the provider id is never recorded (SDP relay fails) | Call is billed from the server mint clock as today. Only the server hangup is lost. The provider limit from section 2 or 3 is the remaining control. |
 | Reconcile job cannot reach the provider | Rows stay unreconciled and are picked up on the next run. No billing change. |
-| Billing off | Fixed `UNMETERED_CALL_SECONDS` provider limit only. No ledger writes, no reconcile job work. |
+| Metering off (`USAGE_CAPS` unset and no Stripe key) | Fixed `UNMETERED_CALL_SECONDS` provider limit only. No ledger writes, no reconcile job work. |
 
 ## Tests
 
 All deterministic, no network, provider calls mocked.
 
-- Mint sets the provider limit: with metering on, the OpenAI mint body contains a duration equal to `maxSeconds + PROVIDER_LIMIT_GRACE_SECONDS`. With billing off it uses `UNMETERED_CALL_SECONDS`. Same for the ElevenLabs path.
+- Mint sets the provider limit: with metering on, the OpenAI mint body contains a duration equal to `maxSeconds + PROVIDER_LIMIT_GRACE_SECONDS`. With metering off (`USAGE_CAPS` unset and no Stripe key) it uses `UNMETERED_CALL_SECONDS`. Same for the ElevenLabs path.
 - A mint without the provider limit supported does not fail the mint but is reported by the connection check.
 - Server settlement with reason `cap_reached`, `max_duration` or `heartbeat_timeout` calls the provider hangup once with the stored provider id. A user-hangup settlement does not.
 - Hangup failure is logged as status only and never throws out of `endCall` or the heartbeat route.

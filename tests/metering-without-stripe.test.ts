@@ -188,6 +188,13 @@ describe("the call setup UI", () => {
     expect(out).toContain('id="voice-unavailable"');
   });
 
+  it("fail closed: the Voice readiness lamp is off, not a green Voice · OpenAI Realtime", () => {
+    const out = render({ mode: "voice", usageUnavailable: true });
+    expect(out).not.toContain("Voice · OpenAI Realtime");
+    expect(out).toMatch(/lamp-off[^>]*><\/span><div[^>]*><p[^>]*>Voice <span[^>]*>\(off\)/);
+    expect(render({ mode: "voice" })).toContain("Voice · OpenAI Realtime");
+  });
+
   it("fail closed leaves Text mode open", () => {
     const out = render({ mode: "text", usageUnavailable: true });
     expect(out).not.toContain("Voice is unavailable");
