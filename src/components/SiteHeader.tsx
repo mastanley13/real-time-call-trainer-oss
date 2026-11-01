@@ -14,6 +14,7 @@ export const NAV = [
   { href: "/library", label: "Library", match: (p: string) => p.startsWith("/library") || p.startsWith("/trainer/scenarios") },
   { href: "/dashboard", label: "Progress", match: (p: string) => p.startsWith("/dashboard") },
 ];
+export const PRICING_NAV = { href: "/pricing", label: "Pricing", match: (p: string) => p.startsWith("/pricing") };
 export const TEAM_NAV = { href: "/team", label: "Team", match: (p: string) => p.startsWith("/team") };
 
 /** Main links for this user. Team shows for managers, owners and platform admins; the server enforces access either way. */
@@ -63,9 +64,8 @@ export default function SiteHeader() {
           <span className="hidden rounded border border-line px-1.5 py-px font-mono text-[10px] font-medium text-ink-muted sm:inline">OSS</span>
         </Link>
 
-        {isAuthenticated && (
-          <nav className="hidden items-center gap-1 md:flex" aria-label="Main">
-            {links.map((l) => {
+        <nav className="hidden items-center gap-1 md:flex" aria-label="Main">
+            {[...(isAuthenticated ? links : []), PRICING_NAV].map((l) => {
               const on = l.match(pathname);
               return (
                 <Link key={l.href} href={l.href} aria-current={on ? "page" : undefined}
@@ -74,8 +74,7 @@ export default function SiteHeader() {
                 </Link>
               );
             })}
-          </nav>
-        )}
+        </nav>
 
         <div className="ml-auto flex items-center gap-1.5">
           {capabilities?.model && capabilities.llm && (
