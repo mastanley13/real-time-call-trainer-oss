@@ -488,9 +488,9 @@ async function reconcile(
     productMetadata: typeof i.price.product === "object" ? i.price.product?.metadata : null,
   })));
   if (!found) {
-    // Items that declare no valid plan never grant access. A subscription that is no longer paid still
-    // revokes it from whoever holds it, so an unpaid or canceled state is honored whatever the items say.
-    if (ENTITLED.has(live.status)) return null;
+    // Items that fail validation never grant access, and they revoke it too: the subject whose CURRENT
+    // subscription this is drops to Free (fail closed), whatever the status. A subscription nobody holds,
+    // or an old one a newer subscription replaced, finds no holder and changes nothing.
     const holder = await subjectOfSubscription(tx, live.id);
     return holder ? applyEntitlement(tx, holder, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status }, now) : null;
   }

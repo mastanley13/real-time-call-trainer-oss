@@ -577,9 +577,31 @@ describe("customer.subscription.updated", () => {
   const withItems = (items: unknown[], status = "active") =>
     deliver(event("customer.subscription.updated", { ...sub({ id: "sub_test_team", customer: "cus_test_team", metadata: { organizationId: "org-1" }, status }), items: { data: items } }));
 
-  it("does not change a paid plan when the items declare no valid plan", async () => {
-    await withItems([{ quantity: 1, price: itemPrice("price_unknown", {}) }]);
-    expect(org().planTier).toBe("team");
+  describe("an entitled Team org whose current subscription fails validation drops to Free", () => {
+    const cases: [string, unknown[]][] = [
+      ["no valid plan on an unknown price", [{ quantity: 3, price: itemPrice("price_unknown", {}) }]],
+      ["Team seats drop below the minimum", [{ quantity: 2, price: TEAM_PRICE }]],
+      ["allowlisted Team price on a Pro product", [{ quantity: 3, price: itemPrice("price_test_team_m", PRO_META) }]],
+      ["metered price", [{ quantity: 3, price: itemPrice("price_test_team_m", TEAM_META, { recurring: { usage_type: "metered", interval: "month" } }) }]],
+      ["Pro and Team base plans together", [{ quantity: 3, price: TEAM_PRICE }, { quantity: 1, price: PRO_PRICE }]],
+      ["unexpanded product", [{ quantity: 3, price: itemPrice("price_test_team_m", null) }]],
+    ];
+    for (const [name, items] of cases) {
+      it(name, async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        expect(org().planTier).toBe("team");
+        await withItems(items.map((i) => ({ ...(i as object) })));
+        expect(org()).toMatchObject({ planTier: "free", premiumVoice: false, seatCount: 1 });
+        expect(allowance("organizationId", "org-1")).toMatchObject({ planTier: "free", minutesCap: 10 });
+      });
+    }
+
+    it("a stale subscription that nobody holds cannot revoke the current one", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      await deliver(event("customer.subscription.updated", { ...sub({ id: "sub_test_old", customer: "cus_test_team", metadata: { organizationId: "org-1" } }), items: { data: [{ quantity: 2, price: TEAM_PRICE }] } }));
+      expect(org()).toMatchObject({ planTier: "team", seatCount: 3, stripeSubscriptionId: "sub_test_team" });
+      expect(allowance("organizationId", "org-1")?.minutesCap).toBe(900);
+    });
   });
 
   it("an archived price (not allowlisted) still syncs from its product metadata", async () => {
