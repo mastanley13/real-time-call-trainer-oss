@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_REALTIME_MODEL, DEFAULT_REALTIME_VOICE, TurnAssembler, applyRealtimeEvent, averageLevel, chooseVoiceEngine,
-  micErrorMessage, openingInstructions, orderVoiceEngines, pickRealtimeVoice, realtimeModel, realtimeUpstreamMessage, resolveRealtimeKey,
+  micErrorMessage, openingInstructions, orderVoiceEngines, pickRealtimeVoice, realtimeTranscribeModel, realtimeUpstreamMessage, resolveRealtimeKey,
+  DEFAULT_TRANSCRIBE_MODEL,
 } from "@/lib/realtime";
-import { getCapabilities } from "@/lib/serverConfig";
+import { DEFAULT_STANDARD_REALTIME_MODEL, getCapabilities, realtimeModelFor } from "@/lib/serverConfig";
 import { BUILT_IN_SCENARIOS, buildAgentPrompt } from "@/lib/scenarios";
 import { NextRequest } from "next/server";
 import { POST as sessionPOST } from "@/app/api/realtime/session/route";
@@ -31,9 +32,18 @@ describe("resolveRealtimeKey", () => {
 describe("model and voice", () => {
   it("defaults the model and honours REALTIME_MODEL", () => {
     vi.stubEnv("REALTIME_MODEL", "");
-    expect(realtimeModel()).toBe(DEFAULT_REALTIME_MODEL);
-    vi.stubEnv("REALTIME_MODEL", "gpt-realtime-2.1");
-    expect(realtimeModel()).toBe("gpt-realtime-2.1");
+    vi.stubEnv("REALTIME_MODEL_STANDARD", "");
+    vi.stubEnv("REALTIME_TRANSCRIBE_MODEL", "");
+    expect(DEFAULT_REALTIME_MODEL).toBe("gpt-realtime-2.1");
+    expect(realtimeModelFor("premium")).toBe("gpt-realtime-2.1");
+    expect(DEFAULT_STANDARD_REALTIME_MODEL).toBe("gpt-realtime-2.1-mini");
+    expect(realtimeModelFor("standard")).toBe("gpt-realtime-2.1-mini");
+    expect(DEFAULT_TRANSCRIBE_MODEL).toBe("gpt-transcribe");
+    expect(realtimeTranscribeModel()).toBe("gpt-transcribe");
+    vi.stubEnv("REALTIME_MODEL", "gpt-realtime-custom");
+    expect(realtimeModelFor("premium")).toBe("gpt-realtime-custom");
+    vi.stubEnv("REALTIME_TRANSCRIBE_MODEL", "my-transcribe");
+    expect(realtimeTranscribeModel()).toBe("my-transcribe");
   });
   it("picks persona voice, then env voice, then the default, ignoring unknown names", () => {
     expect(pickRealtimeVoice("Cedar", "ash")).toBe("cedar");
@@ -181,6 +191,7 @@ describe("POST /api/realtime/session", () => {
     vi.stubEnv("OPENAI_REALTIME_API_KEY", "");
     vi.stubEnv("LLM_API_KEY", "");
     vi.stubEnv("REALTIME_MODEL", "");
+    vi.stubEnv("REALTIME_TRANSCRIBE_MODEL", "");
     vi.stubEnv("REALTIME_VOICE", "");
   };
   afterEach(() => vi.unstubAllGlobals());
@@ -209,7 +220,8 @@ describe("POST /api/realtime/session", () => {
     const sent = JSON.parse(init.body as string);
     expect(sent.session.type).toBe("realtime");
     expect(sent.session.instructions).toBe(buildAgentPrompt(scenario));
-    expect(sent.session.audio.input.transcription.model).toBeTruthy();
+    expect(sent.session.model).toBe("gpt-realtime-2.1");
+    expect(sent.session.audio.input.transcription.model).toBe("gpt-transcribe");
     expect(sent.session.audio.input.turn_detection.type).toBe("semantic_vad");
     expect(sent.session.audio.output.voice).toBe("marin");
   });

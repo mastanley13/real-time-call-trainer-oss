@@ -5,7 +5,7 @@ import { rateLimit, ipLimitResponse, readJsonLimited, MAX_TURNS, MAX_TRANSCRIPT_
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { chatFull } from "@/lib/llm";
 import { scriptedReply } from "@/lib/scriptedCaller";
-import { llmKey } from "@/lib/serverConfig";
+import { llmKeyFor } from "@/lib/serverConfig";
 
 const Body = z.object({
   scenario: ScenarioSchema,
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
   }
   const { scenario, history } = body;
 
-  if (llmKey()) {
+  if (llmKeyFor("persona")) {
     try {
       const { text, truncated } = await chatFull(
         [
@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
           ...(history[0]?.role === "assistant" ? [{ role: "user" as const, content: "(The call connects.)" }] : []),
           ...mergeTurns(history),
         ],
-        { maxTokens: 500, temperature: 0.8 },
+        { role: "persona", maxTokens: 500, temperature: 0.8 },
       );
       const hadEnd = text.includes(END_TOKEN);
       let reply = text.replace(END_TOKEN, "").trim();

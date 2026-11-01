@@ -1,0 +1,27 @@
+{
+  "id": "tally-prism-60d",
+  "kind": "contact_captured",
+  "scenarioId": "home-services-inbound-lead",
+  "source": "tally prism-60d-session.md (TrainerSession read-only lookup, text sim)",
+  "notes": "Trainee asked for name, address and phone at line 8 and the caller gave them at line 9, so info-capture credit is correct. Tally checked every claim and quote in the recorded debrief and found them accurate. Weighted score checks out: 60. The trainee's first name in line 2 was replaced with a fictional one (Sam) because fixtures must not carry real names.",
+  "recorded": {
+    "score": 60,
+    "letter": "D",
+    "goal": "partial",
+    "criteria": { "greeting": 65, "discovery": 55, "capture": 55, "fee": 85, "close": 50 },
+    "infoCapture": 55,
+    "grader": "claude-sonnet-5-5",
+    "graderVersion": "llm-v2"
+  },
+  "transcript": [
+    { "role": "assistant", "text": "Hi, yeah, my water heater is leaking all over the garage floor. Can someone come out today?" },
+    { "role": "user", "text": "Thanks for calling Apex Plumbing, this is Sam. I'm sorry about the leak, is the water still running?" },
+    { "role": "assistant", "text": "Yes, it's still leaking. There's a pretty big puddle spreading across the garage floor. I haven't touched anything yet because I'm not sure what to do." },
+    { "role": "user", "text": "Can you tell me how old the unit is and whether you've shut off the water supply?" },
+    { "role": "assistant", "text": "It's about 11 years old, and no, I haven't shut anything off. I wouldn't know how to do that, can you walk me through it?" },
+    { "role": "user", "text": "I can have a tech there this afternoon between 2 and 4. The diagnostic visit is $89, credited toward the repair." },
+    { "role": "assistant", "text": "Okay, this afternoon works, and the $89 sounds fine if it's credited toward the repair. But the water's still leaking, so can you tell me how to shut it off before the tech gets here?" },
+    { "role": "user", "text": "Great. Can I get your name, address and best callback number to book that?" },
+    { "role": "assistant", "text": "It's Dana Whitfield, 42 Maple Lane, and my cell is 555-0142. But the puddle keeps growing, so can you please tell me how to stop the water before I hang up?" }
+  ]
+}

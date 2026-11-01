@@ -5,7 +5,7 @@ import { APOLOGY_STEP_RE, isApology } from "./apology";
 import { detectSlotOffer, gradeHeuristically } from "./grader";
 import { chat, extractJson } from "./llm";
 import { normalizeWeights, talkTrackSteps, type Objection, type ObjectionType, type RubricCriterion, type Scenario } from "./scenarios";
-import { llmKey, llmModel } from "./serverConfig";
+import { llmKeyFor, llmModelFor } from "./serverConfig";
 
 /**
  * Live coach. Called after every finished turn of a practice call; returns a
@@ -614,7 +614,7 @@ async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptio
   const steps = talkTrackSteps(scenario.callScript);
   const { system, user } = buildPrompt(scenario, spoken, steps, rubric, opts);
   const text = await withTimeout(
-    chat([{ role: "system", content: system }, { role: "user", content: user }], { json: true, maxTokens: 700, temperature: 0.2 }),
+    chat([{ role: "system", content: system }, { role: "user", content: user }], { role: "coach", json: true, maxTokens: 700, temperature: 0.2 }),
     LLM_TIMEOUT_MS,
   );
   const out = LlmCoachOutput.parse(extractJson(text));
@@ -639,7 +639,7 @@ async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptio
     cueKey: picked?.key,
     talkRatio: talkRatioOf(spoken),
     source: "llm",
-    model: llmModel(),
+    model: llmModelFor("coach"),
   };
 }
 
@@ -647,7 +647,7 @@ async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptio
 export async function coachTurn(scenario: Scenario, transcript: CoachTurnInput[], opts: CoachOptions): Promise<CoachResult> {
   const t0 = Date.now();
   const spoken = spokenLines(transcript, opts.lineOffset);
-  if (llmKey() && spoken.length) {
+  if (llmKeyFor("coach") && spoken.length) {
     try {
       const result = await coachWithLlm(scenario, spoken, opts);
       return { ...result, latencyMs: Date.now() - t0 };

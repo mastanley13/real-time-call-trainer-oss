@@ -54,6 +54,8 @@ export interface UsageSnapshot {
   resetsAt?: string;
   /** False when billing is off on this server, so Upgrade goes to the pricing page. */
   billingEnabled?: boolean;
+  /** The engine the next voice call starts on. Absent when the server did not say; the briefing then names the premium model. */
+  voiceEngine?: "premium" | "standard";
 }
 
 /** "Nov 10" from an ISO date, in UTC so the server and the browser agree; empty when it is not a date. */
@@ -75,7 +77,7 @@ export const voiceMinutesLeftLabel = (u: UsageSnapshot): string => `${formatMinu
 
 /** Remaining and plan minutes from a /api/usage response; null when minutes are not metered or the answer is unusable. */
 export function usageSnapshotFromUsage(data: unknown): UsageSnapshot | null {
-  const d = data as { metered?: unknown; remaining?: unknown; minutesCap?: unknown; periodEnd?: unknown; billing?: { enabled?: unknown } } | null;
+  const d = data as { metered?: unknown; remaining?: unknown; minutesCap?: unknown; periodEnd?: unknown; voiceEngine?: unknown; billing?: { enabled?: unknown } } | null;
   if (d?.metered !== true || typeof d.remaining !== "number" || typeof d.minutesCap !== "number") return null;
   if (!Number.isFinite(d.remaining) || !Number.isFinite(d.minutesCap)) return null;
   return {
@@ -83,6 +85,7 @@ export function usageSnapshotFromUsage(data: unknown): UsageSnapshot | null {
     cap: Math.max(0, d.minutesCap),
     ...(typeof d.periodEnd === "string" ? { resetsAt: d.periodEnd } : {}),
     ...(typeof d.billing?.enabled === "boolean" ? { billingEnabled: d.billing.enabled } : {}),
+    ...(d.voiceEngine === "premium" || d.voiceEngine === "standard" ? { voiceEngine: d.voiceEngine } : {}),
   };
 }
 

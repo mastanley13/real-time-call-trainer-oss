@@ -21,10 +21,10 @@ const STEPS = [
 ];
 
 const MODELS = [
-  { job: "Live coach", model: "gpt-4.1-mini (default)", note: "Per-turn cues and rubric estimate, as validated JSON" },
-  { job: "Grading", model: "gpt-4.1-mini (default)", note: "Full-transcript rubric grade with verbatim evidence checks" },
-  { job: "Persona wizard", model: "gpt-4.1-mini (default)", note: "Builds a persona, objections and rubric from your context" },
-  { job: "Voice", model: "gpt-realtime-1.5 (default)", note: "OpenAI Realtime over WebRTC, the default when an OpenAI key is set. ElevenLabs Agents also supported" },
+  { job: "Live coach", model: "AI coach", note: "Per-turn cues and rubric estimate, as validated JSON" },
+  { job: "Grading", model: "AI grader", note: "Full-transcript rubric grade with verbatim evidence checks" },
+  { job: "Persona wizard", model: "AI persona builder", note: "Builds a persona, objections and rubric from your context" },
+  { job: "Voice", model: "OpenAI Realtime voice", note: "Real-time voice over WebRTC, the default when an OpenAI key is set. ElevenLabs Agents also supported" },
 ];
 
 export default function Home() {

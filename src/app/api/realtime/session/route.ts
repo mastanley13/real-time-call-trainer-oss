@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
-import { meteringEnabled, realtimeModelFor } from "@/lib/serverConfig";
+import { meteringEnabled, voiceModelForCall } from "@/lib/serverConfig";
 import { beginCall, endCall, type VoiceEngine } from "@/lib/usage";
 import { capReached, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
 import { realtimeKey, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
@@ -68,7 +68,8 @@ export async function POST(req: NextRequest) {
     maxSeconds = begun.maxSeconds;
   }
 
-  const model = realtimeModelFor(engine);
+  // Same helper the briefing's model label is built from, so the label cannot drift from what runs.
+  const model = voiceModelForCall(engine);
   const voice = realtimeVoice(scenario.aiPersona.realtimeVoice);
   const session = {
     type: "realtime",

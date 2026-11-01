@@ -12,7 +12,7 @@ By Mykel Stanley · MIT licensed
 - **AI persona wizard** (`/library/new`): build a persona, objection bank and rubric from a job description, a product page URL (fetched server-side with SSRF protections), CRM notes, an ideal-customer profile or a pasted call. Every field shows the source it came from; export the result as a pack file for a pull request. Without a key it builds a template draft you can edit.
 - **Black-box debrief**: score ring and outcome stamp, a clickable moment strip, criterion evidence that jumps to the transcript line, a grader label naming the model that graded the call (or "rules-based"), a re-grade action, a *Retry from turn N* aimed at your weakest moment, and a next-drill suggestion. See [Grading and re-grades](#grading-and-re-grades).
 - **Progress logbook**: KPI sparklines, score trend, practice-day heatmap, skill averages by criterion and a "practise this next" drill.
-- **Voice practice** with [OpenAI Realtime](https://platform.openai.com/docs/guides/realtime) (the default whenever an OpenAI key is set, `gpt-realtime-1.5` over WebRTC) or [ElevenLabs Agents](https://elevenlabs.io/docs/agents-platform), or a text simulation that needs no voice keys. A scripted caller and a rules-based coach and grader take over when no LLM key is set.
+- **Voice practice** with [OpenAI Realtime](https://platform.openai.com/docs/guides/realtime) (the default whenever an OpenAI key is set, `gpt-realtime-2.1` for Premium and `gpt-realtime-2.1-mini` for Standard, over WebRTC) or [ElevenLabs Agents](https://elevenlabs.io/docs/agents-platform), or a text simulation that needs no voice keys. A scripted caller and a rules-based coach and grader take over when no LLM key is set.
 - **Team view** (`/team`, managers and owners): KPIs, a rep-by-criterion heatmap, a coaching queue, supervisor notes, persona assignments with due dates, and a roster CSV export. Demo mode shows a sample team. See [Team view and assignments](#team-view-and-assignments).
 - **Command palette**: Ctrl K (⌘K on macOS) jumps to any page or persona, resumes your last persona and switches the theme.
 - **Model settings** (`/settings/models`): which model runs the coach, grading, wizard and text caller, which voice engines are on, and a one-token connection check (`/api/llm/check`). Keys and endpoint URLs are never shown.
@@ -66,17 +66,19 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 |---|---|---|
 | `OPENAI_REALTIME_API_KEY` | For voice | OpenAI key for Realtime voice calls. Falls back to `OPENAI_API_KEY`, then to `LLM_API_KEY` when `LLM_BASE_URL` is api.openai.com |
 | `OPENAI_API_KEY` | Optional | Voice key when `OPENAI_REALTIME_API_KEY` is unset. Also stands in for `LLM_API_KEY`, but only while `LLM_BASE_URL` is unset or points at api.openai.com, so an OpenAI key is never sent to another provider |
-| `REALTIME_MODEL` | Optional | Default `gpt-realtime-1.5` |
-| `REALTIME_MODEL_STANDARD` | Optional | Model for accounts without Premium Voice, and for the next call once Premium has used 60% of the plan's minutes. Default `gpt-realtime-mini`. A running call is never switched or ended |
+| `REALTIME_MODEL` | Optional | The Premium voice model. Default `gpt-realtime-2.1` |
+| `REALTIME_MODEL_STANDARD` | Optional | Model for accounts without Premium Voice, and for the next call once Premium has used 60% of the plan's minutes. Default `gpt-realtime-2.1-mini`. A running call is never switched or ended |
 | `REALTIME_VOICE` | Optional | Default `marin`. A persona's own `realtimeVoice` wins |
-| `REALTIME_TRANSCRIBE_MODEL` | Optional | Transcribes your side of a voice call. Default `gpt-4o-mini-transcribe` |
+| `REALTIME_TRANSCRIBE_MODEL` | Optional | Transcribes your side of a voice call. Default `gpt-transcribe`. A deployment can override the voice and transcription models above; `/settings/models` shows what is live. `gpt-live-1` uses a separate endpoint (`v1/live/sessions`, not Realtime) and is not integrated yet |
 | `VOICE_ENGINE` | Optional | `openai` (default) or `elevenlabs`: which engine the briefing picks first when both are set up |
 | `ELEVENLABS_API_KEY` | For ElevenLabs voice | Server-side key used to mint conversation tokens |
 | `ELEVENLABS_AGENT_ID` | For ElevenLabs voice | The agent to call (the Premium tier) |
 | `ELEVENLABS_AGENT_ID_STANDARD` | Optional | Agent for the standard tier. Unset means only accounts with Premium Voice (and Premium minutes left) can start an ElevenLabs call; everyone else gets 503 `standard_voice_not_configured` |
 | `LLM_API_KEY` | Optional | Live coach, post-call grading, persona wizard and text simulation (any OpenAI-compatible API). With a custom `LLM_BASE_URL`, this is the only key sent. Without a key: rules-based coach and grader, template wizard, scripted caller |
 | `LLM_BASE_URL` | Optional | Default `https://api.openai.com/v1` |
-| `LLM_MODEL` | Optional | Default `gpt-4.1-mini` |
+| `LLM_MODEL` | Optional | Model for every text job unless a per-job variable below is set. Default `gpt-6-luna` |
+| `LLM_MODEL_COACH`, `LLM_MODEL_GRADE`, `LLM_MODEL_PERSONA`, `LLM_MODEL_WIZARD` | Optional | Model for one job: live coach, post-call grading, text caller, persona wizard. Each falls back to `LLM_MODEL`, then to `gpt-6-luna`. Grading has no default of its own, so it stays on `LLM_MODEL` until `LLM_MODEL_GRADE` is set |
+| `LLM_BASE_URL_<ROLE>`, `LLM_API_KEY_<ROLE>` | Optional | Endpoint and key for one job (`COACH`, `GRADE`, `PERSONA` or `WIZARD`), so grading can stay on one provider while the coach moves to another. They fall back to `LLM_BASE_URL` and `LLM_API_KEY`. The shared `LLM_API_KEY` is only sent to the shared `LLM_BASE_URL`: a job with its own base URL needs its own key (or `OPENAI_API_KEY` when that URL is api.openai.com). A deployment can override all of these; `/settings/models` shows what is live |
 | `DATABASE_URL` | For accounts | Postgres connection string |
 | `JWT_SECRET` | For accounts | 32+ random bytes (`node generate-jwt-secret.js`). Also keys the grade seal and the access-code cookie |
 | `CRON_SECRET` | Optional | Bearer secret for `/api/cron/purge-expired`. The route accepts only `Authorization: Bearer $CRON_SECRET` (Vercel Cron sends it when the variable is set) and returns 401 without it |
@@ -112,7 +114,7 @@ OpenAI Realtime is used whenever an OpenAI key is available. The server mints a 
 5. Optional: set a `voiceId` per scenario in the editor.
 
 ### Grading and re-grades
-- `/api/evaluate-call` grades the transcript against the persona's rubric with `LLM_MODEL`. Without a key, or when the model call fails, a rules-based grader scores rubric coverage and the debrief marks it "Estimate. Rules-based grade, not AI-graded."
+- `/api/evaluate-call` grades the transcript against the persona's rubric with `LLM_MODEL_GRADE` (else `LLM_MODEL`). Without a key, or when the model call fails, a rules-based grader scores rubric coverage and the debrief marks it "Estimate. Rules-based grade, not AI-graded."
 - The debrief shows which model graded the call (the model stored with the grade, not today's setting), the grader version and when. Evidence quotes are checked against the transcript, and quotes that aren't in it are dropped.
 - **Grade seal**: every grade comes back with an HMAC seal keyed by `JWT_SECRET` over the user, persona, transcript and evaluation. `POST /api/transcripts` stores a score only when the seal checks out, so a client can't save a score it made up; anything else is saved ungraded. Team KPIs and assignment completion read only these stored scores, and only for library personas: a custom persona's rubric comes from the rep's own browser, so those calls count as practice on the team view but their scores stay personal, and assignments accept library personas only.
 - **Long calls**: the grader reads the first 1,000 turns and 120,000 characters. A longer call is graded on that opening part, and the debrief says how many turns were graded.

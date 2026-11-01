@@ -1,6 +1,7 @@
 import "server-only";
 import { safeEqual } from "./access";
-import { orderVoiceEngines, realtimeKey, realtimeModel } from "./realtime";
+import { DEFAULT_REALTIME_MODEL, orderVoiceEngines, realtimeKey } from "./realtime";
+import { pickVoiceModel } from "./voiceModel";
 import { stripeStatus } from "./stripe";
 
 /**
@@ -19,16 +20,24 @@ export const billingActive = (env: Record<string, string | undefined> = process.
 
 type Env = Record<string, string | undefined>;
 
-export const DEFAULT_STANDARD_REALTIME_MODEL = "gpt-realtime-mini";
+export const DEFAULT_STANDARD_REALTIME_MODEL = "gpt-realtime-2.1-mini";
 
 /**
- * The Realtime model for a session. Premium is the configured REALTIME_MODEL; standard is
- * REALTIME_MODEL_STANDARD (default gpt-realtime-mini). Without metering there is no entitlement to
- * check, so the configured model runs as before.
+ * The only function that names a voice model. Premium is REALTIME_MODEL (default gpt-realtime-2.1); standard is
+ * REALTIME_MODEL_STANDARD (default gpt-realtime-2.1-mini). A deployment can override both; /settings/models
+ * shows what is live.
  */
 export function realtimeModelFor(engine: "premium" | "standard", env: Env = process.env): string {
-  if (engine === "premium") return realtimeModel();
+  if (engine === "premium") return env.REALTIME_MODEL?.trim() || DEFAULT_REALTIME_MODEL;
   return env.REALTIME_MODEL_STANDARD?.trim() || DEFAULT_STANDARD_REALTIME_MODEL;
+}
+
+/**
+ * The model a session runs on. Without metering there is no entitlement to check, so the engine is unknown
+ * and the call runs premium, exactly as the session route does.
+ */
+export function voiceModelForCall(engine: "premium" | "standard" | undefined, env: Env = process.env): string {
+  return pickVoiceModel({ premium: realtimeModelFor("premium", env), standard: realtimeModelFor("standard", env) }, engine);
 }
 
 /**
@@ -54,12 +63,15 @@ export function getCapabilities() {
     realtime,
     /** Voice engines in preference order: OpenAI first unless VOICE_ENGINE=elevenlabs. Empty means text only. */
     voiceEngines: orderVoiceEngines({ openai: realtime, elevenlabs }, process.env.VOICE_ENGINE),
-    ...(realtime ? { realtimeModel: realtimeModel() } : {}),
-    llm: Boolean(llmKey()),
+    ...(realtime ? { realtimeModel: realtimeModelFor("premium"), realtimeModelStandard: realtimeModelFor("standard") } : {}),
+    /** True when at least one text role has a key. */
+    llm: LLM_ROLES.some((r) => Boolean(llmKeyFor(r))),
+    /** Model per text role, for the roles that have a key. A role without a key runs its rules-based fallback. */
+    llmModels: Object.fromEntries(LLM_ROLES.filter((r) => llmKeyFor(r)).map((r) => [r, llmModelFor(r)])) as Partial<Record<LlmRole, string>>,
     database: Boolean(process.env.DATABASE_URL),
     /** Stripe test-mode billing: false when unset, in demo mode, or when the key is not an sk_test_ key. */
     billing: stripeStatus() === "ready",
-    /** Model used for the coach, grading, persona wizard and text caller. Shown in provenance chips. */
+    /** The deployment's general text model (LLM_MODEL). Per-role models are in llmModels. */
     model: llmModel(),
     /** "openai" when LLM_BASE_URL is unset or points at api.openai.com; the URL itself is never exposed. */
     provider: isOpenAiBaseUrl(llmBaseUrl()) ? ("openai" as const) : ("custom" as const),
@@ -122,8 +134,50 @@ export function cronAuthorized(authorization: string | null | undefined, secret:
   return safeEqual(auth.slice(7).trim(), want);
 }
 
+/** Code default for every text role. Cheap and fast: the coach and the text caller run on it every turn. */
+export const DEFAULT_LLM_MODEL = "gpt-6-luna";
+
+/** The AI jobs that run on a chat model. Each can have its own model, base URL and key. */
+export const LLM_ROLES = ["coach", "grade", "persona", "wizard"] as const;
+export type LlmRole = (typeof LLM_ROLES)[number];
+
+/**
+ * LLM_MODEL_<ROLE>, else LLM_MODEL, else the code default. The grader has no default of its own:
+ * it follows the deployment's LLM_MODEL until LLM_MODEL_GRADE is set on purpose.
+ */
+export function llmModelFor(role: LlmRole, env: Env = process.env): string {
+  return env[`LLM_MODEL_${role.toUpperCase()}`]?.trim() || env.LLM_MODEL?.trim() || DEFAULT_LLM_MODEL;
+}
+
+const OPENAI_DEFAULT_BASE = "https://api.openai.com/v1";
+
+/** LLM_BASE_URL_<ROLE>, else LLM_BASE_URL, else OpenAI. */
+export function llmBaseUrlFor(role: LlmRole, env: Env = process.env): string {
+  return (env[`LLM_BASE_URL_${role.toUpperCase()}`]?.trim() || env.LLM_BASE_URL?.trim() || OPENAI_DEFAULT_BASE).replace(/\/$/, "");
+}
+
+/**
+ * LLM_API_KEY_<ROLE>, else LLM_API_KEY, else OPENAI_API_KEY while the role's base URL is OpenAI.
+ * The shared LLM_API_KEY belongs to the shared LLM_BASE_URL: a role that points at a different base URL without
+ * its own key does not get it, so moving one role to another provider can never send the first provider's key there.
+ */
+export function resolveLlmKeyFor(role: LlmRole, env: Env = process.env): string | undefined {
+  const own = env[`LLM_API_KEY_${role.toUpperCase()}`]?.trim();
+  if (own) return own;
+  const base = llmBaseUrlFor(role, env);
+  const sharedBase = (env.LLM_BASE_URL?.trim() || OPENAI_DEFAULT_BASE).replace(/\/$/, "");
+  const shared = env.LLM_API_KEY?.trim();
+  // Deliberate (security): one provider's key is never sent to a different endpoint. A role on another base URL
+  // must bring its own key; do not "fix" this to fall back to the shared key.
+  if (shared && base === sharedBase) return shared;
+  return isOpenAiBaseUrl(base) ? env.OPENAI_API_KEY?.trim() || undefined : undefined;
+}
+
+export const llmKeyFor = (role: LlmRole): string | undefined => resolveLlmKeyFor(role, process.env);
+
+/** The general, role-less model: LLM_MODEL or the code default. Roles use llmModelFor. */
 export function llmModel(): string {
-  return process.env.LLM_MODEL || "gpt-4.1-mini";
+  return process.env.LLM_MODEL?.trim() || DEFAULT_LLM_MODEL;
 }
 
 export function llmBaseUrl(): string {

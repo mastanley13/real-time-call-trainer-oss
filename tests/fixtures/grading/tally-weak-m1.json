@@ -1,0 +1,27 @@
+{
+  "id": "tally-weak-m1",
+  "kind": "weak_no_contact",
+  "scenarioId": "home-services-inbound-lead",
+  "source": "tally hall-raw.md, follow-up hall_m1 (mobile width)",
+  "notes": "Trainee never asked for contact details. Recorded debrief said the caller 'offered their information'; she only asked 'Do you need my information'.",
+  "recorded": {
+    "score": 3,
+    "letter": "F",
+    "goal": "not_achieved",
+    "criteria": { "greeting": 12, "discovery": 3, "capture": 0, "fee": 0, "close": 3 },
+    "infoCapture": 0,
+    "grader": "claude-sonnet-5-5",
+    "graderVersion": "llm-v2"
+  },
+  "transcript": [
+    { "role": "assistant", "text": "Hi, yeah, my water heater is leaking all over the garage floor. Can someone come out today?" },
+    { "role": "user", "text": "Hi, how can I help?" },
+    { "role": "assistant", "text": "Hi, I think my water heater is leaking. I found water pooling around it this morning and I'm kind of worried. Can someone come take a look today?" },
+    { "role": "user", "text": "ok" },
+    { "role": "assistant", "text": "Okay... so can you send someone out today? I'm not sure what I should be doing in the meantime, either." },
+    { "role": "user", "text": "we can probably look at that" },
+    { "role": "assistant", "text": "Probably? I'm sorry, I'm just a little stressed, there's water all over the floor. Do you need my information, or can you tell me when someone could actually get here?" },
+    { "role": "user", "text": "alright, thanks, bye" },
+    { "role": "assistant", "text": "Wait, that's it? I still don't have a time or know what to do about the water. I guess I'll try another company, bye." }
+  ]
+}

@@ -688,6 +688,8 @@ export interface UsageSummary {
   periodStart: string;
   periodEnd: string;
   premiumVoice: { enabled: boolean; minutesCap: number; minutesUsed: number };
+  /** The engine the next voice call starts on (chooseEngine, as beginCall decides it), so the briefing can name its model. */
+  voiceEngine: VoiceEngine;
   entries: { id: string; kind: string; minutes: number; createdAt: string }[];
 }
 
@@ -715,6 +717,7 @@ export async function usageSummary(userId: string, now = new Date()): Promise<Us
         minutesCap: r.premiumVoice ? premiumVoiceCap(r.allowance.minutesCap) : 0,
         minutesUsed: r.allowance.premiumMinutesUsed,
       },
+      voiceEngine: chooseEngine(r, 1).engine,
       entries: entries.map((e) => ({ id: e.id, kind: e.kind, minutes: e.minutes, createdAt: e.createdAt.toISOString() })),
     };
   });

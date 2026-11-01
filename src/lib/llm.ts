@@ -1,53 +1,65 @@
 import "server-only";
-import { llmBaseUrl, llmKey, llmModel } from "./serverConfig";
+import { llmBaseUrlFor, llmKeyFor, llmModelFor, type LlmRole } from "./serverConfig";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
 
+export interface ChatOptions {
+  /** Which AI job this is. Picks the model, base URL and key (see llmModelFor). Defaults to the coach. */
+  role?: LlmRole;
+  json?: boolean;
+  maxTokens?: number;
+  temperature?: number;
+}
+
 /**
  * Minimal OpenAI-compatible chat completion call (works with OpenAI, Azure,
  * OpenRouter, Ollama, vLLM...). Configure with LLM_API_KEY (or OPENAI_API_KEY),
- * LLM_BASE_URL and LLM_MODEL. Used for the coach, grading, the persona wizard
- * and the text simulation; voice goes through OpenAI Realtime or ElevenLabs.
+ * LLM_BASE_URL and LLM_MODEL, each with an optional per-role override
+ * (LLM_MODEL_COACH, LLM_BASE_URL_GRADE, LLM_API_KEY_WIZARD...). Used for the coach, grading,
+ * the persona wizard and the text simulation; voice goes through OpenAI Realtime or ElevenLabs.
  */
-export async function chat(
-  messages: ChatMessage[],
-  opts: { json?: boolean; maxTokens?: number; temperature?: number } = {},
-): Promise<string> {
+export async function chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<string> {
   return (await chatFull(messages, opts)).text;
 }
 
 /** Like chat(), but also reports whether the model stopped because it hit max_tokens. */
-export async function chatFull(
-  messages: ChatMessage[],
-  opts: { json?: boolean; maxTokens?: number; temperature?: number } = {},
-): Promise<{ text: string; truncated: boolean }> {
-  const key = llmKey();
+export async function chatFull(messages: ChatMessage[], opts: ChatOptions = {}): Promise<{ text: string; truncated: boolean }> {
+  const role = opts.role ?? "coach";
+  const key = llmKeyFor(role);
   if (!key) throw new Error("LLM_NOT_CONFIGURED");
-  const base = llmBaseUrl();
-  // Anthropic's OpenAI-compatible endpoint ignores response_format, so we
-  // never send it there and rely on extractJson() + the prompt instead.
+  const base = llmBaseUrlFor(role);
+  const model = llmModelFor(role);
+  // Anthropic's OpenAI-compatible endpoint ignores response_format, so we never send it there and rely on
+  // extractJson() + the prompt instead. Checked per role: one role can sit on Anthropic while another is on OpenAI.
   const sendJsonFormat = opts.json && !/anthropic\.com/i.test(base);
-  const call = (withTemperature: boolean) =>
+  const call = (withTemperature: boolean, completionTokens: boolean) =>
     fetch(`${base}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify({
-        model: llmModel(),
+        model,
         messages,
         ...(withTemperature ? { temperature: opts.temperature ?? 0.4 } : {}),
-        max_tokens: opts.maxTokens ?? 1800,
+        // Newer OpenAI models reject max_tokens and want max_completion_tokens.
+        [completionTokens ? "max_completion_tokens" : "max_tokens"]: opts.maxTokens ?? 1800,
         ...(sendJsonFormat ? { response_format: { type: "json_object" } } : {}),
       }),
       signal: AbortSignal.timeout(60_000),
     });
-  let res = await call(true);
-  if (!res.ok && res.status === 400) {
-    // Some newer models reject `temperature`; retry once without it. The body is only inspected, never logged.
+  let withTemperature = true;
+  let completionTokens = false;
+  let res = await call(withTemperature, completionTokens);
+  // Some newer models reject `temperature` or `max_tokens`; retry without it or under the other name.
+  // The 400 body is only inspected for the parameter name, never logged. One retry per parameter.
+  for (let i = 0; i < 2 && !res.ok && res.status === 400; i++) {
     const detail = (await res.text().catch(() => "")).slice(0, 300);
-    if (/temperature/i.test(detail)) res = await call(false);
+    if (withTemperature && /temperature/i.test(detail)) withTemperature = false;
+    else if (!completionTokens && /max_tokens/i.test(detail)) completionTokens = true;
+    else break;
+    res = await call(withTemperature, completionTokens);
   }
   if (!res.ok) {
     // Status only: provider error bodies can echo prompts or account details, and callers log this message.

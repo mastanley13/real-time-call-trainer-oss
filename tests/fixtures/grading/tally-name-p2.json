@@ -1,0 +1,27 @@
+{
+  "id": "tally-name-p2",
+  "kind": "name_only",
+  "scenarioId": "home-services-inbound-lead",
+  "source": "tally hall-raw.md, follow-up hall_p2 (desktop, name only)",
+  "notes": "Trainee asked only for the name. Partial info-capture credit is correct here, so this fixture is not part of rule (c). The source note abbreviates the caller's first line; it is restored from the note that every run opens with the same line.",
+  "recorded": {
+    "score": 5,
+    "letter": "F",
+    "goal": "not_achieved",
+    "criteria": { "greeting": 10, "discovery": 3, "capture": 12, "fee": 0, "close": 3 },
+    "infoCapture": 12,
+    "grader": "claude-sonnet-5-5",
+    "graderVersion": "llm-v2"
+  },
+  "transcript": [
+    { "role": "assistant", "text": "Hi, yeah, my water heater is leaking all over the garage floor. Can someone come out today?" },
+    { "role": "user", "text": "Can I get your name?" },
+    { "role": "assistant", "text": "It's Dana Whitfield. I just found the puddle this morning and I'm kind of worried it's getting worse." },
+    { "role": "user", "text": "Thanks, Dana." },
+    { "role": "assistant", "text": "Sure. So, is there any way someone can come out today? I'm not sure what to do about the water in the meantime." },
+    { "role": "user", "text": "we can probably look at that" },
+    { "role": "assistant", "text": "\"Probably\" doesn't tell me much, I'm sorry. Can you tell me when someone could actually get here? And is there something I should be doing about the water in the meantime?" },
+    { "role": "user", "text": "alright, thanks, bye" },
+    { "role": "assistant", "text": "Wait, that's it? I still don't know if anyone's coming... okay, I'll try another company. Bye." }
+  ]
+}

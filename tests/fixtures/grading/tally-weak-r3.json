@@ -1,0 +1,27 @@
+{
+  "id": "tally-weak-r3",
+  "kind": "weak_no_contact",
+  "scenarioId": "home-services-inbound-lead",
+  "source": "tally hall-raw.md, run 3 (desktop)",
+  "notes": "Trainee never asked for contact details. Recorded debrief said the caller 'offered to give an address'; she only asked 'Do you need my address or something'.",
+  "recorded": {
+    "score": 4,
+    "letter": "F",
+    "goal": "not_achieved",
+    "criteria": { "greeting": 12, "discovery": 3, "capture": 2, "fee": 0, "close": 3 },
+    "infoCapture": 2,
+    "grader": "claude-sonnet-5-5",
+    "graderVersion": "llm-v2"
+  },
+  "transcript": [
+    { "role": "assistant", "text": "Hi, yeah, my water heater is leaking all over the garage floor. Can someone come out today?" },
+    { "role": "user", "text": "Hi, how can I help?" },
+    { "role": "assistant", "text": "Hi, I think I just said, my water heater is leaking and there's water pooling all over my garage floor. I noticed it this morning and I'm kind of worried about it. Can you send someone out today?" },
+    { "role": "user", "text": "ok" },
+    { "role": "assistant", "text": "Okay... so can someone come out today? I'm not sure what to do about the water in the meantime." },
+    { "role": "user", "text": "yep got it, we can probably look at that" },
+    { "role": "assistant", "text": "Probably? I'm sorry, I'm just not sure what happens next. Do you need my address or something, and should I be shutting anything off in the meantime?" },
+    { "role": "user", "text": "alright, thanks, bye" },
+    { "role": "assistant", "text": "Wait, that's it? I don't even have a time or anything... okay, I guess I'll try another company. Bye." }
+  ]
+}

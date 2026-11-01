@@ -25,10 +25,10 @@ export const VOICE_ENGINE_LABELS: Record<VoiceEngine, string> = { openai: "OpenA
 export const REALTIME_VOICES = ["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"] as const;
 export type RealtimeVoice = (typeof REALTIME_VOICES)[number];
 
-/** gpt-realtime is marked deprecated on the models page; gpt-realtime-1.5 is the flagship audio-in, audio-out model. */
-export const DEFAULT_REALTIME_MODEL = "gpt-realtime-1.5";
+/** Premium voice default: the full realtime model. Standard (gpt-realtime-2.1-mini) is beside realtimeModelFor in serverConfig.ts. */
+export const DEFAULT_REALTIME_MODEL = "gpt-realtime-2.1";
 export const DEFAULT_REALTIME_VOICE: RealtimeVoice = "marin";
-export const DEFAULT_TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe";
+export const DEFAULT_TRANSCRIBE_MODEL = "gpt-transcribe";
 
 type Env = Record<string, string | undefined>;
 
@@ -41,7 +41,6 @@ export function resolveRealtimeKey(env: Env): string | undefined {
 }
 
 export const realtimeKey = (): string | undefined => resolveRealtimeKey(process.env);
-export const realtimeModel = (): string => process.env.REALTIME_MODEL?.trim() || DEFAULT_REALTIME_MODEL;
 export const realtimeTranscribeModel = (): string => process.env.REALTIME_TRANSCRIBE_MODEL?.trim() || DEFAULT_TRANSCRIBE_MODEL;
 
 export const isRealtimeVoice = (v: unknown): v is RealtimeVoice => typeof v === "string" && (REALTIME_VOICES as readonly string[]).includes(v);

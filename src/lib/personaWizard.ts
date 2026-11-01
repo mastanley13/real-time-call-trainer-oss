@@ -13,7 +13,7 @@ import {
   type RubricCriterion,
   type Scenario,
 } from "./scenarios";
-import { llmKey, llmModel } from "./serverConfig";
+import { llmKeyFor, llmModelFor } from "./serverConfig";
 import { CONTEXT_LABELS, type FieldSource, type WizardInput, type WizardOutput } from "./wizard-types";
 
 /**
@@ -311,7 +311,7 @@ async function generateWithLlm(input: WizardInput): Promise<WizardOutput> {
       { role: "system", content: system },
       { role: "user", content: user },
     ],
-    { json: true, maxTokens: 3000, temperature: 0.7 },
+    { role: "wizard", json: true, maxTokens: 3000, temperature: 0.7 },
   );
   if (truncated) throw new Error("LLM_TRUNCATED");
   const out = LlmScenario.parse(extractJson(text));
@@ -348,7 +348,7 @@ async function generateWithLlm(input: WizardInput): Promise<WizardOutput> {
     },
     family,
   );
-  return { scenario, sources: verifySources(out.sources as Record<string, unknown>, input), method: "llm", model: llmModel() };
+  return { scenario, sources: verifySources(out.sources as Record<string, unknown>, input), method: "llm", model: llmModelFor("wizard") };
 }
 
 // ---------------------------------------------------------------------------
@@ -798,7 +798,7 @@ export function templatePersona(input: WizardInput): WizardOutput {
 // ---------------------------------------------------------------------------
 
 export async function generatePersona(input: WizardInput): Promise<WizardOutput> {
-  if (llmKey()) {
+  if (llmKeyFor("wizard")) {
     try {
       return await generateWithLlm(input);
     } catch (e) {

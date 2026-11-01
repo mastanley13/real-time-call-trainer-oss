@@ -1,0 +1,27 @@
+{
+  "id": "tally-weak-r2",
+  "kind": "weak_no_contact",
+  "scenarioId": "home-services-inbound-lead",
+  "source": "tally hall-raw.md, run 2 (desktop)",
+  "notes": "Trainee never asked for contact details. No false claims found in the recorded debrief.",
+  "recorded": {
+    "score": 5,
+    "letter": "F",
+    "goal": "not_achieved",
+    "criteria": { "greeting": 15, "discovery": 3, "capture": 2, "fee": 0, "close": 8 },
+    "infoCapture": 2,
+    "grader": "claude-sonnet-5-5",
+    "graderVersion": "llm-v2"
+  },
+  "transcript": [
+    { "role": "assistant", "text": "Hi, yeah, my water heater is leaking all over the garage floor. Can someone come out today?" },
+    { "role": "user", "text": "Hello, thanks for calling." },
+    { "role": "assistant", "text": "Hi, thanks. I just noticed this morning that there's water pooling all around my water heater in the garage. I'm kind of worried about it, so can you help?" },
+    { "role": "user", "text": "uh huh" },
+    { "role": "assistant", "text": "Hello? Sorry, are you still there? I'm just trying to figure out if someone can come take a look at it today." },
+    { "role": "user", "text": "yeah we can probably get somebody to look at it" },
+    { "role": "assistant", "text": "Oh, okay, good. What do you need from me to get that set up?" },
+    { "role": "user", "text": "ok sounds good, take care" },
+    { "role": "assistant", "text": "Wait, hold on. You don't have my name or address yet, and I don't know when anyone's coming. Is someone actually scheduled?" }
+  ]
+}
