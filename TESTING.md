@@ -134,6 +134,13 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 1. Register a new team and land in the app. Sign out and back in. A wrong password shows an error.
 2. `/settings/security`: enrol TOTP MFA, sign out, and sign in with the code. A wrong code is rejected.
 3. Signed out, `/dashboard` redirects to `/login`. Sessions persist across devices.
+4. **MFA enforcement** (organization on the Team plan, one manager and one trainee, neither enrolled):
+   1. As the manager, open the MFA panel on the Team page. **Require MFA** is disabled and a note links to `/settings/security`. `PUT /api/team/mfa` with `{"requireMfa":true}` returns 409 `mfa_enroll_first`.
+   2. Enrol the manager, then turn on **Require MFA** with a 7 day grace period. The panel shows when the grace period ends.
+   3. As the trainee, a banner asks them to set up MFA within 7 days. Every page still works.
+   4. Turn enforcement on again with no grace period. The trainee is redirected to `/settings/security`, other pages bounce back there, and protected API routes return 403 `mfa_enrollment_required`.
+   5. Once the trainee enrols, `POST /api/auth/mfa/disable` returns 403 `mfa_required_by_org`.
+   6. As the manager, reset the trainee's MFA from the panel. The trainee is limited to `/settings/security` until they enrol again.
 
 ### 15. API sanity
 1. `GET /api/config` returns capability flags and the model id only, never a key or base URL.

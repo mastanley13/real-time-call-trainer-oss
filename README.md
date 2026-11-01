@@ -110,7 +110,7 @@ OpenAI Realtime is used whenever an OpenAI key is available. The server mints a 
 
 Supervisor notes are written from the coaching queue, and the rep sees them on their debrief. If someone else saved the note after you opened it, the save is refused with 409 `conflict` and the editor asks you to open the note again, so one manager can't silently overwrite another.
 
-Demo mode shows a sample team and keeps assignments and notes in your browser. With a database, run the `20261027000000_training_assignments` migration.
+Demo mode shows a sample team and keeps assignments and notes in your browser. With a database, run `npm run db:migrate` after every pull. v1.x needs `20261027000000_training_assignments` and `20261031000000_org_require_mfa`. Skipping a migration breaks protected routes, not just Team, because the org MFA policy is checked in the database on every protected request.
 
 ### Database
 ```bash
@@ -119,7 +119,7 @@ createdb call_trainer
 npm run db:migrate        # prisma migrate deploy
 npm run db:seed           # optional platform admin
 ```
-Run `npm run db:migrate` again after pulling changes that add a migration. The team view needs `20261027000000_training_assignments`.
+Run `npm run db:migrate` after every pull. v1.x needs `20261027000000_training_assignments` and `20261031000000_org_require_mfa`. Skipping a migration breaks protected routes, not just Team, because the org MFA policy is checked in the database on every protected request.
 
 ### Scripts
 | Script | What it does |
