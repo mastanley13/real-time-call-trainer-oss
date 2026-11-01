@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({ fake: null as unknown as ReturnType<typeof imp
 vi.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get: (_t, k) => (mocks.fake.db as Record<string | symbol, unknown>)[k] }) }));
 vi.mock("@/lib/apiAuth", () => ({ requireAuth: () => ({ id: mocks.authId, email: `${mocks.authId}@example.test` }), isDemoUser: () => false }));
 
-import { buildCheckoutParams, CheckoutConfigError, entitlementFromItems, PRICE_ENV, resetPriceCache, resolvePriceIds, type PriceIds } from "@/lib/billing";
+import { buildCheckoutParams, CheckoutConfigError, entitlementFromItems, PRICE_ENV, priceAllowlist, resetPriceCache, resolvePriceIds, type PriceIds } from "@/lib/billing";
 import { isTeamPlan } from "@/lib/usagePlan";
 import { billingGate, encodeForm, stripeApi, StripeApiError, stripeSecretKey, stripeStatus, StripeConfigError, verifyWebhookSignature } from "@/lib/stripe";
 import { classifyPlanChange, setBillingEventSink, type BillingLifecycleEvent } from "@/lib/billingEvents";
@@ -65,6 +65,8 @@ beforeEach(() => {
   vi.stubEnv("DEMO_MODE", "");
   vi.stubEnv("DATABASE_URL", "postgresql://ci:ci@localhost:5432/ci");
   resetPriceCache();
+  // Test-only: the suite posts to the billing routes more than the default hourly limit within one process.
+  vi.stubEnv("RATE_LIMIT_BILLING_MAX", "1000");
   stubAllowlist();
   vi.spyOn(stripeApi, "retrievePrice");
   retrieveFrom(PRICE_ROWS);
@@ -239,17 +241,15 @@ describe("checkout params per plan", () => {
     expect(await resolvePriceIds()).toEqual({ pro: none, team: none, premium: none });
   });
 
-  it("a product with no, unexpanded or different plan metadata is not resolved; the older plan key still works", async () => {
+  it("a product with no, unexpanded or different plan metadata is not resolved; the older plan key is not read", async () => {
     const none = { month: undefined, year: undefined };
-    const bad: (Record<string, string> | null)[] = [null, {}, { ct_plan: "" }, { ct_plan: "enterprise" }, { ct_seat_min: "3" }, { ct_plan: "addon", ct_addon: "none" }];
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const bad: (Record<string, string> | null)[] = [null, {}, { ct_plan: "" }, { ct_plan: "enterprise" }, { ct_seat_min: "3" }, { ct_plan: "addon", ct_addon: "none" }, { plan: "team" }, { ct_plan: "team", ct_addon: "premium_voice" }];
     for (const metadata of bad) {
       resetPriceCache();
       retrieveFrom({ [PRICES.team.month!]: priceRow(PRICES.team.month!, metadata) });
       expect((await resolvePriceIds()).team, JSON.stringify(metadata)).toEqual(none);
     }
-    resetPriceCache();
-    retrieveFrom({ [PRICES.team.month!]: priceRow(PRICES.team.month!, { plan: "team" }) });
-    expect((await resolvePriceIds()).team.month).toBe(PRICES.team.month);
   });
 
   it("a Team product behind a Pro slot (and the reverse) is refused", async () => {
@@ -358,9 +358,31 @@ describe("checkout route", () => {
   it("blocks a second subscription and points to the portal", async () => {
     fake.rows("user")[0].planTier = "pro";
     fake.rows("user")[0].stripeSubscriptionId = "sub_test_1";
+    fake.rows("user")[0].subscriptionStatus = "active";
     const res = await post({ plan: "pro", interval: "month" });
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe("already_subscribed");
+  });
+
+  it("409 only while the linked subscription is billing: active, trialing and past_due block", async () => {
+    const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_x", url: "https://checkout.example/x" });
+    fake.rows("user")[0].stripeSubscriptionId = "sub_test_1";
+    for (const status of ["active", "trialing", "past_due"]) {
+      fake.rows("user")[0].subscriptionStatus = status;
+      expect((await post({ plan: "pro", interval: "month" })).status, status).toBe(409);
+    }
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("a canceled, incomplete_expired or unpaid linked subscription may check out again", async () => {
+    const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_again", url: "https://checkout.example/again" });
+    fake.rows("user")[0].stripeSubscriptionId = "sub_test_1";
+    for (const status of ["canceled", "incomplete_expired", "unpaid"]) {
+      fake.rows("user")[0].subscriptionStatus = status;
+      fake.rows("user")[0].stripeCheckoutSessionId = null;
+      expect((await post({ plan: "pro", interval: "month" })).status, status).toBe(200);
+    }
+    expect(create).toHaveBeenCalled();
   });
 
   it("does not leak a Stripe failure", async () => {
@@ -728,55 +750,74 @@ describe("customer.subscription.updated", () => {
       expect(entitlementFromItems([item(L.pro.month!, PRO_META, 1, { priceType: "one_time" })], L)).toBeNull();
       expect(entitlementFromItems([item(L.pro.month!, null)], L)).toBeNull();
     });
-    it("a zero-quantity Premium item sets no flag, and the older plan and addon keys still read", () => {
+    it("a zero-quantity Premium item sets no flag", () => {
       expect(entitlementFromItems([item(L.pro.month!, PRO_META), item(L.premium.month!, PREMIUM_META, 0)], L)).toMatchObject({ premium: false });
-      expect(entitlementFromItems([item(L.team.month!, { plan: "team" }, 3), item(L.premium.month!, { addon: "premium_voice" }, 3)], L)).toMatchObject({ plan: "team", premium: true });
-      // ct_* wins over the older key.
-      expect(entitlementFromItems([item(L.team.month!, { ct_plan: "pro", plan: "team" }, 3)], L)).toBeNull();
     });
-    it("Premium needs ct_plan=addon with ct_addon=premium_voice in the new format; plan=premium is legacy only", () => {
+    it("the older plan and addon keys are no longer read", () => {
+      warn.mockClear();
+      expect(entitlementFromItems([item(L.pro.month!, { plan: "pro" })], L)).toBeNull();
+      expect(entitlementFromItems([item("price_test_archived", { plan: "team" }, 3)], L)).toBeNull();
+      expect(entitlementFromItems([item(L.team.month!, { plan: "team" }, 3)], L)).toBeNull();
+      expect(entitlementFromItems([item(L.team.month!, TEAM_META, 3), item(L.premium.month!, { plan: "premium", addon: "premium_voice" }, 3)], L)).toBeNull();
+      expect(entitlementFromItems([item(L.team.month!, TEAM_META, 3), item(L.premium.month!, { addon: "premium_voice" }, 3)], L)).toBeNull();
+      expect(warn).toHaveBeenCalledWith("[billing] product has no ct_* metadata");
+    });
+    it("R2c: a Team base plus an invalid non-allowlisted add-on grants Team without Premium, and warns", () => {
+      const only = { ...L, team: { month: L.team.month, year: undefined }, pro: { month: undefined, year: undefined }, premium: { month: undefined, year: undefined } };
+      const base = item(L.team.month!, TEAM_META, 3);
+      warn.mockClear();
+      expect(entitlementFromItems([base, item("price_test_archived", { ct_plan: "addon", ct_version: "1", addon: "premium_voice" }, 3)], only)).toEqual({ plan: "team", seats: 3, premium: false, interval: "month" });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("not a valid Premium add-on"), "price_test_archived");
+      const invalid: Record<string, string>[] = [{ ct_plan: "addon", ct_version: "1" }, { ct_plan: "addon", ct_addon: "none", ct_version: "1" }, { ct_plan: "addon", ct_addon: "premium_voice" }];
+      for (const meta of invalid) {
+        expect(entitlementFromItems([base, item("price_test_archived", meta, 3)], only), JSON.stringify(meta)).toMatchObject({ plan: "team", premium: false });
+        expect(entitlementFromItems([base, item(L.premium.month!, meta, 3)], L), JSON.stringify(meta)).toMatchObject({ plan: "team", premium: false });
+      }
+    });
+    it("R3: a base product carrying ct_addon=premium_voice is refused, so it cannot grant", () => {
+      expect(entitlementFromItems([item("price_test_archived", { ct_plan: "pro", ct_addon: "premium_voice", ct_version: "1" }, 1)], L)).toBeNull();
+      expect(entitlementFromItems([item(L.team.month!, { ...TEAM_META, ct_addon: "premium_voice" }, 3)], L)).toBeNull();
+      // ct_addon=none (or absent) is fine on a base product.
+      expect(entitlementFromItems([item(L.team.month!, { ...TEAM_META, ct_addon: "none" }, 3)], L)).toMatchObject({ plan: "team" });
+    });
+    it("control: a Team base plus an allowlisted valid Premium add-on grants Premium", () => {
+      expect(entitlementFromItems([item(L.team.month!, TEAM_META, 3), item(L.premium.month!, { ct_plan: "addon", ct_addon: "premium_voice", ct_version: "1" }, 3)], L)).toEqual({ plan: "team", seats: 3, premium: true, interval: "month" });
+    });
+    it("Premium needs ct_plan=addon, ct_addon=premium_voice and ct_version=1; anything else on a non-addon item refuses", () => {
       const team = item(L.team.month!, TEAM_META, 3);
       const bad: Record<string, string>[] = [
         { ct_plan: "premium", ct_version: "1" },
         { ct_plan: "premium", ct_addon: "premium_voice", ct_version: "1" },
-        { ct_plan: "addon", ct_addon: "none", ct_version: "1" },
         { ct_addon: "premium_voice", ct_version: "1" },
         { ct_plan: "enterprise", plan: "premium", ct_version: "1" },
       ];
       for (const meta of bad) {
-        // Not allowlisted (fallback path) and allowlisted: neither grants Premium, and the bad item refuses the sync.
         expect(entitlementFromItems([team, item("price_test_archived", meta, 3)], L), JSON.stringify(meta)).toBeNull();
         expect(entitlementFromItems([team, item(L.premium.month!, meta, 3)], L), JSON.stringify(meta)).toBeNull();
       }
       expect(entitlementFromItems([team, item("price_test_archived", PREMIUM_META, 3)], L)).toMatchObject({ plan: "team", premium: true });
-      // R2c: with ct_plan present the legacy addon key is not consulted. No Premium, but the Team base survives.
-      const mixed = { ct_plan: "addon", addon: "premium_voice", ct_version: "1" };
-      for (const priceId of [L.premium.month!, "price_test_archived"]) {
-        expect(entitlementFromItems([team, item(priceId, mixed, 3)], L), priceId).toEqual({ plan: "team", seats: 3, premium: false, interval: "month" });
-      }
-      expect(entitlementFromItems([team, item(L.premium.month!, { ct_plan: "addon", ct_version: "1" }, 3)], L)).toMatchObject({ plan: "team", premium: false });
-      // Without a trusted price or ct_version=1 the unmarked add-on is still refused outright.
-      expect(entitlementFromItems([team, item("price_test_archived", { ct_plan: "addon", addon: "premium_voice" }, 3)], L)).toBeNull();
-      // An explicit ct_addon that is not premium_voice refuses the sync, whatever the legacy key says.
-      expect(entitlementFromItems([team, item(L.premium.month!, { ...mixed, ct_addon: "none" }, 3)], L)).toBeNull();
-      // Row A: legacy plan=premium and addon=premium_voice with ct_addon=none gives no Premium.
-      expect(entitlementFromItems([team, item(L.premium.month!, { plan: "premium", addon: "premium_voice", ct_addon: "none" }, 3)], L)).toBeNull();
-      expect(entitlementFromItems([team, item(L.premium.month!, { plan: "premium" }, 3)], L)).toMatchObject({ premium: true });
     });
-    it("ct_addon is honored before the legacy addon/plan Premium markers", () => {
-      const team = item(L.team.month!, TEAM_META, 3);
-      const vetoed: Record<string, string>[] = [
-        { plan: "premium", addon: "premium_voice", ct_addon: "none" },
-        { plan: "premium", ct_addon: "none" },
-        { addon: "premium_voice", ct_addon: "none" },
-        { plan: "premium", addon: "other" },
-      ];
-      for (const meta of vetoed) expect(entitlementFromItems([team, item(L.premium.month!, meta, 3)], L), JSON.stringify(meta)).toBeNull();
-      expect(entitlementFromItems([team, item(L.premium.month!, { plan: "premium", addon: "premium_voice", ct_addon: "premium_voice" }, 3)], L)).toMatchObject({ premium: true });
+    it("an allowlisted base price whose product is an invalid add-on is a mismatch: nothing is granted, even next to a valid base", () => {
+      const pro = item(L.pro.month!, PRO_META);
+      const metas: Record<string, string>[] = [{ ct_plan: "addon", ct_version: "1" }, { ct_plan: "addon", ct_addon: "none", ct_version: "1" }, { ct_plan: "addon", ct_addon: "premium_voice", ct_version: "1" }];
+      for (const meta of metas) {
+        expect(entitlementFromItems([pro, item(L.team.month!, meta, 3)], L), JSON.stringify(meta)).toBeNull();
+        expect(entitlementFromItems([pro, item(L.pro.year!, meta, 1)], L), JSON.stringify(meta)).toBeNull();
+      }
+    });
+    it("priceAllowlist reads the six _MONTHLY and _ANNUAL variables and nothing else", () => {
+      const env = {
+        STRIPE_PRICE_PRO_MONTHLY: "p1", STRIPE_PRICE_PRO_ANNUAL: "p2", STRIPE_PRICE_TEAM_MONTHLY: "t1", STRIPE_PRICE_TEAM_ANNUAL: "t2",
+        STRIPE_PRICE_PREMIUM_MONTHLY: "a1", STRIPE_PRICE_PREMIUM_ANNUAL: " a2 ",
+        STRIPE_PRICE_PRO_MONTH: "old", STRIPE_PRICE_TEAM_YEAR: "old",
+      } as unknown as NodeJS.ProcessEnv;
+      expect(priceAllowlist(env)).toEqual({ pro: { month: "p1", year: "p2" }, team: { month: "t1", year: "t2" }, premium: { month: "a1", year: "a2" } });
+      expect(priceAllowlist({ STRIPE_PRICE_PRO_MONTH: "old" } as unknown as NodeJS.ProcessEnv).pro.month).toBeUndefined();
+      expect(Object.values(PRICE_ENV).flatMap((p) => Object.values(p)).sort()).toEqual(Object.keys(env).filter((k) => /_(MONTHLY|ANNUAL)$/.test(k)).sort());
     });
     it("an empty allowlist trusts no price id, so only the ct_version=1 fallback can grant", () => {
       const empty: PriceIds = { pro: { month: undefined, year: undefined }, team: { month: undefined, year: undefined }, premium: { month: undefined, year: undefined } };
-      expect(entitlementFromItems([item(L.pro.month!, { plan: "pro" })], empty)).toBeNull();
+      expect(entitlementFromItems([item(L.pro.month!, { ct_plan: "pro" })], empty)).toBeNull();
       expect(entitlementFromItems([item(L.pro.month!, PRO_META)], empty)).toMatchObject({ plan: "pro" });
     });
   });

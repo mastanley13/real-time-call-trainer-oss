@@ -61,7 +61,7 @@ beforeEach(() => {
   vi.stubEnv("DEMO_MODE", "");
   vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
   // Checkout only asks Stripe about allowlisted price ids.
-  vi.stubEnv("STRIPE_PRICE_PRO_MONTH", "price_test_pro_m");
+  vi.stubEnv("STRIPE_PRICE_PRO_MONTHLY", "price_test_pro_m");
   resetPriceCache();
 });
 afterEach(() => {

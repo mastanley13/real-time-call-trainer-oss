@@ -31,9 +31,9 @@ type PriceSlot = keyof PriceIds;
 
 /** Env vars holding the six allowlisted price ids. Price ids are not secrets. */
 export const PRICE_ENV = {
-  pro: { month: "STRIPE_PRICE_PRO_MONTH", year: "STRIPE_PRICE_PRO_YEAR" },
-  team: { month: "STRIPE_PRICE_TEAM_MONTH", year: "STRIPE_PRICE_TEAM_YEAR" },
-  premium: { month: "STRIPE_PRICE_PREMIUM_MONTH", year: "STRIPE_PRICE_PREMIUM_YEAR" },
+  pro: { month: "STRIPE_PRICE_PRO_MONTHLY", year: "STRIPE_PRICE_PRO_ANNUAL" },
+  team: { month: "STRIPE_PRICE_TEAM_MONTHLY", year: "STRIPE_PRICE_TEAM_ANNUAL" },
+  premium: { month: "STRIPE_PRICE_PREMIUM_MONTHLY", year: "STRIPE_PRICE_PREMIUM_ANNUAL" },
 } as const;
 
 const SLOTS: PriceSlot[] = ["pro", "team", "premium"];
@@ -55,24 +55,21 @@ function slotOf(id: string, list: PriceIds): { slot: PriceSlot; interval: Interv
 }
 
 /**
- * What a product declares itself to be: "pro", "team" or "premium" (the add-on). Reads ct_plan and ct_addon
- * first and the older plan and addon keys as a migration fallback. Null means no valid declaration.
+ * What a product declares itself to be: "pro", "team" or "premium" (the add-on). New ct_* format only; the
+ * older plan and addon keys are never read. Null means no valid declaration.
+ * - pro or team: ct_plan is that plan and ct_addon is absent or "none".
+ * - premium: ct_plan=addon, ct_addon=premium_voice and ct_version=1.
  */
 function productKind(meta: Record<string, string> | null | undefined): PriceSlot | null {
   if (!meta) return null;
-  // New format: ct_plan decides alone. The add-on needs ct_plan=addon AND ct_addon=premium_voice.
-  if (meta.ct_plan !== undefined) {
-    if (meta.ct_plan === "pro" || meta.ct_plan === "team") return meta.ct_plan;
-    // With ct_plan present, Premium needs ct_addon=premium_voice itself. The older addon key is not consulted.
-    return meta.ct_plan === "addon" && meta.ct_addon === "premium_voice" ? "premium" : null;
+  if (!Object.keys(meta).some((k) => k.startsWith("ct_"))) {
+    console.warn("[billing] product has no ct_* metadata");
+    return null;
   }
-  // Legacy format (no ct_plan): plan=pro|team|premium, or addon=premium_voice with no plan.
-  if (meta.plan === "pro" || meta.plan === "team") return meta.plan;
-  // ct_addon still wins over the older addon key, so ct_addon=none vetoes a legacy Premium marker.
-  if (meta.ct_addon !== undefined && meta.ct_addon !== "premium_voice") return null;
-  if (meta.plan === "premium" && (meta.addon === undefined || meta.addon === "premium_voice")) return "premium";
-  if (meta.plan === undefined && meta.addon === "premium_voice") return "premium";
-  return null;
+  if (meta.ct_plan === "pro" || meta.ct_plan === "team") {
+    return meta.ct_addon === undefined || meta.ct_addon === "none" ? meta.ct_plan : null;
+  }
+  return meta.ct_plan === "addon" && meta.ct_addon === "premium_voice" && meta.ct_version === "1" ? "premium" : null;
 }
 
 const PriceObject = z.object({
@@ -319,6 +316,9 @@ type LiveSubscription = z.infer<typeof SubscriptionObject>;
 /** Stripe statuses that keep a paid plan. Anything else (canceled, unpaid, incomplete_expired, paused) is Free. */
 const ENTITLED = new Set(["active", "trialing", "past_due"]);
 
+/** True while Stripe is still billing a subscription in this status (active, trialing, past_due). */
+export const isBillingStatus = (status: string | null | undefined): boolean => !!status && ENTITLED.has(status);
+
 interface Entitlement { plan: PlanTier; seats: number; premium: boolean; interval?: Interval }
 
 export interface SubscriptionItemInfo {
@@ -339,11 +339,13 @@ const refuse = (reason: string, it?: SubscriptionItemInfo): null => {
 
 /**
  * Reads plan, seats and the premium flag from the subscription's own items.
- * 1. A price on the env allowlist is trusted only if its product agrees (ct_plan, or the older plan key).
+ * 1. A price on the env allowlist is trusted only if its product's ct_plan agrees with the price's slot.
  * 2. Any other price (archived or replaced) needs product metadata with ct_version=1 and a valid ct_plan.
- * Fails closed (null, so the account stays Free) on an unknown price or product, a metered or non-recurring
- * price, an unexpanded product, two different base plans, or Team below the product's seat minimum.
- * Premium counts only with quantity above 0 next to a base plan.
+ * Fails closed (null, so the account stays Free) on an unknown base price or product, a mismatch between an
+ * allowlisted price and its product, a metered or non-recurring price, an unexpanded product, two different
+ * base plans, or Team below the product's seat minimum. An add-on item (ct_plan=addon) that is not a valid
+ * Premium add-on, or that sits on the Premium slot without being one, is skipped with a warning and the base
+ * plan still grants. Premium counts only with quantity above 0 next to a base plan.
  */
 export function entitlementFromItems(items: SubscriptionItemInfo[], allowlist: PriceIds = priceAllowlist()): Entitlement | null {
   const plans = new Set<PaidPlan>();
@@ -356,16 +358,15 @@ export function entitlementFromItems(items: SubscriptionItemInfo[], allowlist: P
     const meta = it.productMetadata;
     if (!meta) return refuse("product not expanded or has no metadata", it);
     const hit = it.priceId ? slotOf(it.priceId, allowlist) : null;
-    // An add-on product with no ct_addon marker (only the older addon key) grants no Premium, but it is not a
-    // reason to revoke the base plan either: skip the item. Still needs a trusted price or ct_version=1.
-    if (meta.ct_plan === "addon" && meta.ct_addon === undefined && (hit || meta.ct_version === "1")) {
-      console.warn("[billing] add-on product has no ct_addon; Premium not granted", it.priceId ?? "");
+    const kind = productKind(meta);
+    // The allowlisted slot is checked first, so no add-on skip can hide a mismatch on a base price.
+    if (hit && hit.slot !== "premium" && kind !== hit.slot) return refuse("allowlisted price and product plan disagree", it);
+    if (kind !== "premium" && meta.ct_plan === "addon" && (!hit || hit.slot === "premium")) {
+      console.warn("[billing] add-on item is not a valid Premium add-on; skipped", it.priceId ?? "");
       continue;
     }
-    const kind = productKind(meta);
-    if (hit) {
-      if (kind !== hit.slot) return refuse("allowlisted price and product plan disagree", it);
-    } else if (meta.ct_version !== "1" || !kind) {
+    if (hit && hit.slot === "premium" && kind !== "premium") return refuse("allowlisted price and product plan disagree", it);
+    if (!hit && (meta.ct_version !== "1" || !kind)) {
       return refuse("price is not allowlisted and its product has no valid ct_plan with ct_version=1", it);
     }
     if (kind === "premium") {
