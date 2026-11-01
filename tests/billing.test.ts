@@ -757,6 +757,17 @@ describe("customer.subscription.updated", () => {
       expect(entitlementFromItems([team, item(L.premium.month!, { ...mixed, ct_addon: "none" }, 3)], L)).toBeNull();
       expect(entitlementFromItems([team, item(L.premium.month!, { plan: "premium" }, 3)], L)).toMatchObject({ premium: true });
     });
+    it("ct_addon is honored before the legacy addon/plan Premium markers", () => {
+      const team = item(L.team.month!, TEAM_META, 3);
+      const vetoed: Record<string, string>[] = [
+        { plan: "premium", addon: "premium_voice", ct_addon: "none" },
+        { plan: "premium", ct_addon: "none" },
+        { addon: "premium_voice", ct_addon: "none" },
+        { plan: "premium", addon: "other" },
+      ];
+      for (const meta of vetoed) expect(entitlementFromItems([team, item(L.premium.month!, meta, 3)], L), JSON.stringify(meta)).toBeNull();
+      expect(entitlementFromItems([team, item(L.premium.month!, { plan: "premium", addon: "premium_voice", ct_addon: "premium_voice" }, 3)], L)).toMatchObject({ premium: true });
+    });
     it("an empty allowlist trusts no price id, so only the ct_version=1 fallback can grant", () => {
       const empty: PriceIds = { pro: { month: undefined, year: undefined }, team: { month: undefined, year: undefined }, premium: { month: undefined, year: undefined } };
       expect(entitlementFromItems([item(L.pro.month!, { plan: "pro" })], empty)).toBeNull();
@@ -1236,4 +1247,50 @@ describe("a Team that cancels or goes unpaid carries this month's pool usage int
       expect(await beginCall("owner-1", scnInfo)).toMatchObject({ ok: true, remaining: 6 });
     });
   }
+});
+
+describe("a new purchase that fails item validation", () => {
+  const teamItems = (quantity: number) => [{ quantity, price: TEAM_PRICE }];
+  const purchase = async (subId: string, quantity: number) => {
+    liveStripe.set(subId, { ...sub({ id: subId, customer: "cus_test_new", metadata: { organizationId: "org-1" } }), items: { data: teamItems(quantity) } });
+    await deliverRaw(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_new", subscription: subId, metadata: { plan: "team", userId: "owner-1", organizationId: "org-1", seats: "2" } }));
+  };
+  const post = () => checkout(new NextRequest("http://localhost/api/billing/checkout", { method: "POST", body: JSON.stringify({ plan: "team", interval: "month", seats: 3 }), headers: { "content-type": "application/json" } }));
+
+  it("grants nothing but records the billing link, so a second purchase is refused", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await purchase("sub_test_bad", 2);
+    expect(org()).toMatchObject({ planTier: "free", stripeSubscriptionId: "sub_test_bad", stripeCustomerId: "cus_test_new" });
+    expect(allowance("organizationId", "org-1")).toMatchObject({ planTier: "free", minutesCap: 10 });
+    const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_dup", url: "https://checkout.example/dup" });
+    const res = await post();
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("already_subscribed");
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("a second subscription for the same account is cancelled as a duplicate", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await purchase("sub_test_bad", 2);
+    await purchase("sub_test_bad2", 2);
+    expect(cancelSpy).toHaveBeenCalledWith("sub_test_bad2");
+    expect(org().stripeSubscriptionId).toBe("sub_test_bad");
+  });
+
+  it("fixing the quantity on that subscription then grants Team", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await purchase("sub_test_bad", 2);
+    liveStripe.set("sub_test_bad", { ...sub({ id: "sub_test_bad", customer: "cus_test_new", metadata: { organizationId: "org-1" } }), items: { data: teamItems(3) } });
+    await deliverRaw(event("customer.subscription.updated", { id: "sub_test_bad", customer: "cus_test_new", status: "active", metadata: { organizationId: "org-1" } }));
+    expect(org()).toMatchObject({ planTier: "team", seatCount: 3, stripeSubscriptionId: "sub_test_bad" });
+  });
+
+  it("an unpaid or unknown-owner failed subscription links nothing", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    liveStripe.set("sub_test_unpaid", { ...sub({ id: "sub_test_unpaid", customer: "cus_test_new", metadata: { organizationId: "org-1" }, status: "unpaid" }), items: { data: teamItems(2) } });
+    await deliverRaw(event("customer.subscription.updated", { id: "sub_test_unpaid", customer: "cus_test_new", status: "unpaid", metadata: { organizationId: "org-1" } }));
+    liveStripe.set("sub_test_nobody", { ...sub({ id: "sub_test_nobody", customer: "cus_nobody", metadata: {} }), items: { data: teamItems(2) } });
+    await deliverRaw(event("customer.subscription.updated", { id: "sub_test_nobody", customer: "cus_nobody", status: "active", metadata: {} }));
+    expect(org().stripeSubscriptionId ?? null).toBeNull();
+  });
 });

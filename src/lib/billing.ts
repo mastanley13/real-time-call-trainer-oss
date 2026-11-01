@@ -68,7 +68,10 @@ function productKind(meta: Record<string, string> | null | undefined): PriceSlot
   }
   // Legacy format (no ct_plan): plan=pro|team|premium, or addon=premium_voice with no plan.
   if (meta.plan === "pro" || meta.plan === "team") return meta.plan;
-  if (meta.plan === "premium" || (meta.plan === undefined && meta.addon === "premium_voice")) return "premium";
+  // ct_addon still wins over the older addon key, so ct_addon=none vetoes a legacy Premium marker.
+  if (meta.ct_addon !== undefined && meta.ct_addon !== "premium_voice") return null;
+  if (meta.plan === "premium" && (meta.addon === undefined || meta.addon === "premium_voice")) return "premium";
+  if (meta.plan === undefined && meta.addon === "premium_voice") return "premium";
   return null;
 }
 
@@ -498,7 +501,15 @@ async function reconcile(
     // or an old one a newer subscription replaced, finds no holder and changes nothing. While Stripe is still
     // billing it (entitled status) the link is kept, so the account cannot start a second subscription.
     const holder = await subjectOfSubscription(tx, live.id);
-    return holder ? applyEntitlement(tx, holder, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status, retainSubscription: ENTITLED.has(live.status) }, now) : null;
+    if (holder) return applyEntitlement(tx, holder, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status, retainSubscription: ENTITLED.has(live.status) }, now);
+    // Nobody holds it yet: a new purchase that failed validation. If Stripe is billing it, record the link
+    // (without granting anything) so checkout is blocked and a duplicate is detected, as for a valid purchase.
+    if (!ENTITLED.has(live.status)) return null;
+    const owner = await findSubject(tx, { subscriptionId: live.id, customerId: live.customer, metadata: { ...(hint.metadata ?? {}), ...(live.metadata ?? {}) } });
+    if (!owner) return null;
+    const heldByOwner = await currentSubscriptionId(tx, owner);
+    if (heldByOwner && heldByOwner !== live.id) return { event: null, cancelSubscriptionId: live.id };
+    return applyEntitlement(tx, owner, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status, retainSubscription: true }, now);
   }
   const subject = await findSubject(tx, { subscriptionId: live.id, customerId: live.customer, metadata: { ...(hint.metadata ?? {}), ...(live.metadata ?? {}) } });
   if (!subject) return null;
