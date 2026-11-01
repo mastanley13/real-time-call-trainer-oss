@@ -93,7 +93,7 @@ describe("1. minutes left on the briefing, before Start", () => {
     expect(out).toContain('href="/settings/billing"');
     expect(out).toContain("Upgrade");
     expect(out).not.toContain(ASK_ADMIN_MESSAGE);
-    expect(out).not.toContain("voice minutes left");
+    expect(out).toContain(`0 of ${FREE_MINUTES} voice minutes left`);
   });
 
   it("a Team pool member with none left is told to ask their team admin, with no link they cannot use", () => {
@@ -150,10 +150,11 @@ describe("1. minutes left on the briefing, before Start", () => {
       expect(plain).not.toContain("Text practice is unlimited.");
     });
 
-    it("a refusal from the server and the out-of-minutes panel are not both shown", () => {
+    it("a refusal from the server and the out-of-minutes panel are not both shown: the panel stays, with its details", () => {
       const out = render({ mode: "voice", usage: { remaining: 0, cap: FREE_MINUTES }, error: CAP_REACHED_MESSAGE });
-      expect(out).toContain("You have used all your voice minutes for this period.");
-      expect(out).not.toContain(OUT_OF_MINUTES_MESSAGE);
+      expect(out).toContain(OUT_OF_MINUTES_MESSAGE);
+      expect(out).toContain(`0 of ${FREE_MINUTES} voice minutes left`);
+      expect(out).not.toContain(CAP_REACHED_MESSAGE);
       expect(out.match(/href="\/settings\/billing"/g)).toHaveLength(1);
     });
   });
@@ -161,7 +162,7 @@ describe("1. minutes left on the briefing, before Start", () => {
   describe("from /api/usage, with metering on", () => {
     it("a new Free account has all 10 minutes", async () => {
       const snap = usageSnapshotFromUsage(await usageOf("free-1"));
-      expect(snap).toEqual({ remaining: FREE_MINUTES, cap: FREE_MINUTES });
+      expect(snap).toMatchObject({ remaining: FREE_MINUTES, cap: FREE_MINUTES });
       expect(html(snap, "voice")).toContain(voiceMinutesLeftLabel({ remaining: FREE_MINUTES, cap: FREE_MINUTES }));
     });
 
@@ -199,8 +200,10 @@ describe("1. minutes left on the briefing, before Start", () => {
   });
 
   it("reads only usable numbers from /api/usage", () => {
-    expect(usageSnapshotFromUsage({ metered: true, remaining: 3, minutesCap: 10 })).toEqual({ remaining: 3, cap: 10 });
-    expect(usageSnapshotFromUsage({ metered: true, remaining: -1, minutesCap: 10 })).toEqual({ remaining: 0, cap: 10 });
+    expect(usageSnapshotFromUsage({ metered: true, remaining: 3, minutesCap: 10 })).toMatchObject({ remaining: 3, cap: 10 });
+    expect(usageSnapshotFromUsage({ metered: true, remaining: -1, minutesCap: 10 })).toMatchObject({ remaining: 0, cap: 10 });
+    expect(usageSnapshotFromUsage({ metered: true, remaining: 3, minutesCap: 10, periodEnd: "2026-11-10T12:00:00.000Z", billing: { enabled: false } }))
+      .toEqual({ remaining: 3, cap: 10, resetsAt: "2026-11-10T12:00:00.000Z", billingEnabled: false });
     expect(usageSnapshotFromUsage({ metered: true, remaining: 3 })).toBeNull();
     expect(usageSnapshotFromUsage({ metered: false, billing: { enabled: false } })).toBeNull();
     expect(usageSnapshotFromUsage({ metered: true, remaining: Number.NaN, minutesCap: 10 })).toBeNull();

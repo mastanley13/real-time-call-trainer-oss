@@ -4,14 +4,18 @@ import { orderVoiceEngines, realtimeKey, realtimeModel } from "./realtime";
 import { stripeStatus } from "./stripe";
 
 /**
- * Voice minutes are metered only for stored accounts (not demo mode, with a database) and only when billing
- * is on, meaning STRIPE_SECRET_KEY is set. Without it, self-hosters are not held to the Free cap: calls mint
- * with no reservation or limit. A key that is set but refused (a live key) still meters, so a misconfigured
- * paid deployment fails closed instead of open.
+ * Voice minutes are metered for stored accounts (not demo mode, with a database) when USAGE_CAPS=on or Stripe is
+ * configured. Default off, so a self-hosted install stays uncapped. With USAGE_CAPS=on and no Stripe key everyone
+ * is on Free (10 minutes a month) and voice fails closed on a lookup error; paid plans only come from Stripe
+ * subscription state. A Stripe key that is set but refused (a live key) still meters, so a misconfigured paid
+ * deployment fails closed instead of open. Text practice is never metered.
  */
 export function meteringEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return env.DEMO_MODE !== "true" && Boolean(env.DATABASE_URL) && stripeStatus(env) !== "disabled";
+  return env.DEMO_MODE !== "true" && Boolean(env.DATABASE_URL) && (env.USAGE_CAPS?.trim() === "on" || stripeStatus(env) !== "disabled");
 }
+
+/** True when plans can be paid for: Stripe is configured (a refused live key still counts, so it fails closed). */
+export const billingActive = (env: Record<string, string | undefined> = process.env): boolean => stripeStatus(env) !== "disabled";
 
 type Env = Record<string, string | undefined>;
 

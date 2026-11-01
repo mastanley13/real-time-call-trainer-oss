@@ -123,6 +123,7 @@ export default function TrainerClient() {
   const [usage, setUsage] = useState<UsageSnapshot | null>(null);
   /** False for a Team pool member who is not an owner or manager, who is sent to their admin instead of the billing page. */
   const [canUpgrade, setCanUpgrade] = useState(true);
+  const [usageUnavailable, setUsageUnavailable] = useState(false);
   /** Who wrote the latest text-call reply: the configured model, or the scripted fallback. */
   const [callerSource, setCallerSource] = useState<"llm" | "scripted" | null>(null);
   const [busy, setBusy] = useState(false);
@@ -211,12 +212,13 @@ export default function TrainerClient() {
   // Read the minutes left each time the briefing shows, so it is right after a call and after an upgrade.
   const stored = !!capabilities?.database && !capabilities?.demoMode;
   useEffect(() => {
-    if (phase !== "idle" || !isAuthenticated || !stored) { setUsage(null); return; }
+    if (phase !== "idle" || !isAuthenticated || !stored) { setUsage(null); setUsageUnavailable(false); return; }
     let live = true;
+    // Any failed lookup on a stored account blocks voice (fail closed); text practice stays open.
     fetch("/api/usage", { credentials: "include" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (live) { setUsage(usageSnapshotFromUsage(d)); setCanUpgrade(canUpgradeFromUsage(d)); } })
-      .catch(() => { if (live) setUsage(null); });
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("usage lookup failed"))))
+      .then((d) => { if (live) { setUsage(usageSnapshotFromUsage(d)); setCanUpgrade(canUpgradeFromUsage(d)); setUsageUnavailable(false); } })
+      .catch(() => { if (live) { setUsage(null); setUsageUnavailable(true); } });
     return () => { live = false; };
   }, [phase, isAuthenticated, stored]);
 
@@ -398,7 +400,7 @@ export default function TrainerClient() {
     return (
       // Keyed by persona: revealed prep answers, "Got it" and the mic test belong to one buyer.
       <Briefing key={scenario.id} scenario={scenario} capabilities={capabilities} mode={mode} onModeChange={setMode} engine={engine} onEngineChange={setEngine} coachMode={coachMode} onCoachModeChange={setCoachMode}
-        onStart={begin} retryFrom={retry ? { turn: retry.turn, line: retry.line } : null} error={error} notice={notice} usage={usage} canUpgrade={canUpgrade} />
+        onStart={begin} retryFrom={retry ? { turn: retry.turn, line: retry.line } : null} error={error} notice={notice} usage={usage} canUpgrade={canUpgrade} usageUnavailable={usageUnavailable} />
     );
   }
 

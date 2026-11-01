@@ -32,24 +32,73 @@ describe("meteringEnabled", () => {
   it("stays on when the key is refused, so a bad paid setup fails closed", () => {
     expect(meteringEnabled({ ...db, STRIPE_SECRET_KEY: "sk_live_abc" })).toBe(true);
   });
-  it("is off without a Stripe key even with a database (billing off)", () => {
+  it("is off by default with a database and no Stripe key, so self-hosters stay uncapped", () => {
     expect(meteringEnabled({ ...db })).toBe(false);
     expect(meteringEnabled({ ...db, STRIPE_SECRET_KEY: "  " })).toBe(false);
+    expect(meteringEnabled({ ...db, USAGE_CAPS: "off" })).toBe(false);
+    expect(meteringEnabled({ ...db, USAGE_CAPS: "" })).toBe(false);
   });
-  it("is off in demo mode and without a database", () => {
+  it("USAGE_CAPS=on turns it on with no Stripe key", () => {
+    expect(meteringEnabled({ ...db, USAGE_CAPS: "on" })).toBe(true);
+    expect(meteringEnabled({ ...db, USAGE_CAPS: "on", STRIPE_SECRET_KEY: "sk_test_abc" })).toBe(true);
+  });
+  it("is off in demo mode and without a database, even with USAGE_CAPS=on or Stripe set", () => {
     expect(meteringEnabled({ ...db, STRIPE_SECRET_KEY: "sk_test_abc", DEMO_MODE: "true" })).toBe(false);
+    expect(meteringEnabled({ ...db, USAGE_CAPS: "on", DEMO_MODE: "true" })).toBe(false);
+    expect(meteringEnabled({ USAGE_CAPS: "on" })).toBe(false);
     expect(meteringEnabled({ STRIPE_SECRET_KEY: "sk_test_abc" })).toBe(false);
+    expect(meteringEnabled({})).toBe(false);
   });
 });
 
 describe("voice mint and billing", () => {
-  it("billing off: mints with no reservation, no cap, no callId", async () => {
+  it("USAGE_CAPS off and no Stripe key: mints with no reservation, no cap, no callId", async () => {
     vi.stubEnv("STRIPE_SECRET_KEY", "");
+    vi.stubEnv("USAGE_CAPS", "");
     beginCall.mockResolvedValue({ ok: false, error: "cap_reached" });
     const res = await elToken(req());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ token: "tok" });
     expect(beginCall).not.toHaveBeenCalled();
+  });
+
+  it("USAGE_CAPS=on, no Stripe key: still reserves through beginCall and returns the callId", async () => {
+    vi.stubEnv("STRIPE_SECRET_KEY", "");
+    vi.stubEnv("USAGE_CAPS", "on");
+    beginCall.mockResolvedValue({ ok: true, callId: "c1", maxSeconds: 600, engine: "premium" });
+    const res = await elToken(req());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ token: "tok", callId: "c1" });
+    expect(beginCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("USAGE_CAPS=on, no Stripe key: a reached cap blocks the mint", async () => {
+    vi.stubEnv("STRIPE_SECRET_KEY", "");
+    vi.stubEnv("USAGE_CAPS", "on");
+    beginCall.mockResolvedValue({ ok: false, error: "cap_reached" });
+    const res = await elToken(req());
+    expect(res.status).toBe(402);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("demo mode: mints with no reservation, no cap, no callId", async () => {
+    vi.stubEnv("DEMO_MODE", "true");
+    beginCall.mockResolvedValue({ ok: false, error: "cap_reached" });
+    const res = await elToken(req());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ token: "tok" });
+    expect(beginCall).not.toHaveBeenCalled();
+  });
+
+  it("a usage lookup error refuses the mint (fail closed) without calling the provider", async () => {
+    vi.stubEnv("STRIPE_SECRET_KEY", "");
+    vi.stubEnv("USAGE_CAPS", "on");
+    beginCall.mockRejectedValue(new Error("db down"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await elToken(req());
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: "usage_unavailable", message: "Voice is unavailable right now. Text practice still works." });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("billing on: reserves through beginCall and returns the callId", async () => {

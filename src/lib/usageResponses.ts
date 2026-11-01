@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { CAP_REACHED_MESSAGE } from "./billingUi";
+import { CAP_REACHED_MESSAGE, VOICE_UNAVAILABLE_MESSAGE } from "./billingUi";
 
 /** The 409 when the plan has minutes left but open calls have reserved them all. */
 export function minutesReserved(): NextResponse {
@@ -23,6 +23,11 @@ export function standardVoiceUnavailable(): NextResponse {
     { error: "standard_voice_not_configured", message: "Standard voice is not set up on the server. Switch to Text to practice now, or ask an admin to add the Premium Voice plan." },
     { status: 503 },
   );
+}
+
+/** The 503 when the usage lookup fails: voice fails closed, text practice stays open. */
+export function voiceUnavailable(): NextResponse {
+  return NextResponse.json({ error: "usage_unavailable", message: VOICE_UNAVAILABLE_MESSAGE }, { status: 503, headers: { "Retry-After": "30" } });
 }
 
 /** The 402 every voice-start route returns when the allowance is empty. One wording, one status. */

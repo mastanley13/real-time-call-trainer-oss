@@ -42,6 +42,15 @@ export function isPlanTier(v: unknown): v is PlanTier {
 }
 
 /**
+ * The plan that applies right now. Paid plans only come from Stripe state, so with no Stripe key (`billingOn` false)
+ * every account is Free, whatever a stored row says. A Team tier on a user row is never a personal plan.
+ */
+export function effectivePlan(tier: unknown, billingOn: boolean): PlanTier {
+  if (!billingOn || !isPlanTier(tier) || tier === "team") return "free";
+  return tier;
+}
+
+/**
  * True only when the organization's planTier is "team". That value is written solely by the Stripe
  * webhook sync in billing.ts, so this is the one check the Team MFA enforcement toggle should use.
  */

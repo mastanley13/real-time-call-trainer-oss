@@ -13,6 +13,10 @@ export const CAP_REACHED_MESSAGE = "You have used all your voice minutes for thi
 export const CAP_STOPPED_MESSAGE = "You have used all your voice minutes for this period.";
 
 export const BILLING_PATH = "/settings/billing";
+/** Where Upgrade goes when billing is off on this server: there is nothing to buy, so it shows the plans. */
+export const PRICING_PATH = "/pricing";
+/** The usage lookup failed, so voice is refused. Shown with a link to the text sim. */
+export const VOICE_UNAVAILABLE_MESSAGE = "Voice is unavailable right now. Text practice still works.";
 
 /** For a Team pool member who cannot buy minutes themselves. Shown instead of the Upgrade link. */
 export const ASK_ADMIN_MESSAGE = "Ask your team admin for more minutes.";
@@ -43,7 +47,23 @@ export const formatMinutes = (n: number): string => String(Math.round(n * 100) /
 export const minutesLeftLabel = (remaining: number): string => `${formatMinutes(remaining)} voice ${remaining === 1 ? "minute" : "minutes"} left`;
 
 /** The count the briefing shows: minutes left and the plan's minutes for the period. */
-export interface UsageSnapshot { remaining: number; cap: number }
+export interface UsageSnapshot {
+  remaining: number;
+  cap: number;
+  /** ISO date the minutes reset (the end of the period), when the server said. */
+  resetsAt?: string;
+  /** False when billing is off on this server, so Upgrade goes to the pricing page. */
+  billingEnabled?: boolean;
+}
+
+/** "Nov 10" from an ISO date, in UTC so the server and the browser agree; empty when it is not a date. */
+export function formatResetDate(iso: string | undefined): string {
+  const t = iso ? new Date(iso) : null;
+  return t && Number.isFinite(t.getTime()) ? t.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }) : "";
+}
+
+/** Where the Upgrade link goes: billing when it is on, the pricing page when it is off. */
+export const upgradePath = (u: Pick<UsageSnapshot, "billingEnabled">): string => (u.billingEnabled === false ? PRICING_PATH : BILLING_PATH);
 
 /** Shown near Start call in Voice mode when no minutes are left. The Upgrade link, or the ask-your-admin line, goes with it. */
 export const OUT_OF_MINUTES_MESSAGE = "Out of voice minutes this month.";
@@ -55,10 +75,15 @@ export const voiceMinutesLeftLabel = (u: UsageSnapshot): string => `${formatMinu
 
 /** Remaining and plan minutes from a /api/usage response; null when minutes are not metered or the answer is unusable. */
 export function usageSnapshotFromUsage(data: unknown): UsageSnapshot | null {
-  const d = data as { metered?: unknown; remaining?: unknown; minutesCap?: unknown } | null;
+  const d = data as { metered?: unknown; remaining?: unknown; minutesCap?: unknown; periodEnd?: unknown; billing?: { enabled?: unknown } } | null;
   if (d?.metered !== true || typeof d.remaining !== "number" || typeof d.minutesCap !== "number") return null;
   if (!Number.isFinite(d.remaining) || !Number.isFinite(d.minutesCap)) return null;
-  return { remaining: Math.max(0, d.remaining), cap: Math.max(0, d.minutesCap) };
+  return {
+    remaining: Math.max(0, d.remaining),
+    cap: Math.max(0, d.minutesCap),
+    ...(typeof d.periodEnd === "string" ? { resetsAt: d.periodEnd } : {}),
+    ...(typeof d.billing?.enabled === "boolean" ? { billingEnabled: d.billing.enabled } : {}),
+  };
 }
 
 /** Minutes left from a /api/usage response, or null when minutes are not metered or the answer is unusable. */

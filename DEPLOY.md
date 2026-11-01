@@ -50,6 +50,11 @@ Too low, and every visitor shares the CDN's address and its rate-limit bucket. T
 - Auth cookies are `httpOnly`, `sameSite=lax` and `secure` in production. Serve over HTTPS.
 - Transcripts may contain personal data. Set retention windows and review your privacy obligations.
 
+## Voice minutes without Stripe
+- Voice caps are off by default, so a self-hosted install is uncapped. Set `USAGE_CAPS=on` (with `DATABASE_URL` set and `DEMO_MODE` off) to meter voice with no Stripe key: everyone is on Free, 10 voice minutes a month, resetting monthly. Leave it unset to disable the cap.
+- Setting `STRIPE_SECRET_KEY` also turns metering on. Paid plans only come from an active Stripe subscription; an account with none is Free.
+- When metering is on and the usage lookup fails (for example the database is down), voice is refused and text practice stays open. Text practice is never metered.
+
 ## Access code and rate limits (Vercel)
 
 1. Project → Settings → Environment Variables: add `TRAINER_ACCESS_CODE` (a long random string) to gate the whole site. Visitors see `/access` and enter it once; the cookie lasts 30 days. Leave it unset for a public deployment. `/api/health` stays open for uptime checks.

@@ -3,7 +3,7 @@ import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, ipLimitResponse } from "@/lib/rateLimit";
 import { elevenLabsAgentFor, meteringEnabled } from "@/lib/serverConfig";
 import { beginCall, endCall } from "@/lib/usage";
-import { capReached, minutesReserved, standardVoiceUnavailable, voiceBlocked } from "@/lib/usageResponses";
+import { capReached, minutesReserved, standardVoiceUnavailable, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
 
 /**
  * Mints a short-lived WebRTC conversation token for the configured
@@ -37,21 +37,25 @@ export async function GET(req: NextRequest) {
   let mintAgentId = agentId;
   if (meteringEnabled()) {
     const q = req.nextUrl.searchParams;
+    // A failed lookup refuses voice (fail closed); text practice never reaches this route.
     const begun = await beginCall(
       auth.id,
       { id: (q.get("scenarioId") || "unknown").slice(0, 80), title: q.get("title")?.slice(0, 120) || undefined },
       new Date(),
       { standardAvailable: elevenLabsAgentFor("standard").standardAvailable },
-    );
+    ).catch((e) => {
+      console.error("[elevenlabs/token] usage lookup failed", e instanceof Error ? e.name : "unknown");
+      return null;
+    });
+    if (!begun) return voiceUnavailable();
     if (!begun.ok && begun.error === "cap_reached") return capReached();
     if (!begun.ok && begun.error === "minutes_reserved") return minutesReserved();
     if (!begun.ok && begun.error === "voice_blocked") return voiceBlocked(begun.retryAfterSeconds);
     if (!begun.ok && begun.error === "standard_unavailable") return standardVoiceUnavailable();
-    if (begun.ok) {
-      callId = begun.callId;
-      maxSeconds = begun.maxSeconds;
-      mintAgentId = elevenLabsAgentFor(begun.engine).agentId ?? agentId;
-    }
+    if (!begun.ok) return voiceUnavailable();
+    callId = begun.callId;
+    maxSeconds = begun.maxSeconds;
+    mintAgentId = elevenLabsAgentFor(begun.engine).agentId ?? agentId;
   }
 
   try {

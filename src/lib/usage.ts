@@ -1,10 +1,11 @@
 import "server-only";
 import type { Prisma, TrainerSession, UsageAllowance } from "@prisma/client";
 import { prisma } from "./db";
+import { billingActive } from "./serverConfig";
 import {
   CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, MAX_CONNECT_LAG_SECONDS, MAX_RESERVE_MINUTES,
   OVERRUN_GRACE_SECONDS, VOICE_BLOCK_SECONDS,
-  capFor, isPlanTier, maxMinutesAfter, midCallCapApplies, periodFor, premiumVoiceCap, settleCall, splitAcrossBoundary,
+  capFor, effectivePlan, isPlanTier, maxMinutesAfter, midCallCapApplies, periodFor, premiumVoiceCap, settleCall, splitAcrossBoundary,
   type CallEndReasonId, type CallOutcome, type PlanTier,
 } from "./usagePlan";
 
@@ -86,13 +87,13 @@ export async function ensureAllowance(db: Tx, subject: Subject, now: Date, depth
   let existing: UsageAllowance | null;
   if ("userId" in subject) {
     const user = await db.user.findUniqueOrThrow({ where: { id: subject.userId }, select: { planTier: true, usageAnchorAt: true } });
-    plan = planOf(user.planTier) === "team" ? "free" : planOf(user.planTier);
+    plan = effectivePlan(user.planTier, billingActive());
     cap = capFor(plan);
     anchor = user.usageAnchorAt;
     existing = await db.usageAllowance.findUnique({ where: { userId: subject.userId } });
   } else {
     const org = await db.organization.findUniqueOrThrow({ where: { id: subject.organizationId }, select: { planTier: true, seatCount: true, createdAt: true } });
-    plan = org.planTier === "team" ? "team" : "free";
+    plan = org.planTier === "team" && billingActive() ? "team" : "free";
     cap = capFor(plan, org.seatCount);
     anchor = org.createdAt;
     existing = await db.usageAllowance.findUnique({ where: { organizationId: subject.organizationId } });
@@ -172,9 +173,9 @@ export async function resolveAllowance(db: Tx, userId: string, now: Date): Promi
   const user = await db.user.findUnique({ where: { id: userId }, include: { organization: true } });
   if (!user) return null;
   const org = user.organization;
-  const pooled = !!org && org.planTier === "team";
+  const pooled = !!org && org.planTier === "team" && billingActive();
   const allowance = await ensureAllowance(db, pooled ? { organizationId: org.id } : { userId }, now);
-  const plan: PlanTier = pooled ? "team" : planOf(user.planTier) === "team" ? "free" : planOf(user.planTier);
+  const plan: PlanTier = pooled ? "team" : effectivePlan(user.planTier, billingActive());
   // A member whose Team ended (cancelled or unpaid) now has the Free allowance. Minutes they already used from the
   // pool this month still count against its cap, so leaving the pool is not a fresh 10 minutes.
   const usedElsewhere = !pooled && plan === "free" ? await usedInOtherAllowances(db, userId, allowance) : 0;

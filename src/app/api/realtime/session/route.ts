@@ -5,7 +5,7 @@ import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { meteringEnabled, realtimeModelFor } from "@/lib/serverConfig";
 import { beginCall, endCall, type VoiceEngine } from "@/lib/usage";
-import { capReached, minutesReserved, voiceBlocked } from "@/lib/usageResponses";
+import { capReached, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
 import { realtimeKey, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
 
 const Body = z.object({ scenario: ScenarioSchema });
@@ -53,15 +53,19 @@ export async function POST(req: NextRequest) {
   let engine: VoiceEngine = "premium";
   let maxSeconds = SECRET_TTL_SEC;
   if (meteringEnabled()) {
-    const begun = await beginCall(auth.id, scenario);
+    // A failed lookup refuses voice (fail closed); text practice never reaches this route.
+    const begun = await beginCall(auth.id, scenario).catch((e) => {
+      console.error("[realtime/session] usage lookup failed", e instanceof Error ? e.name : "unknown");
+      return null;
+    });
+    if (!begun) return voiceUnavailable();
     if (!begun.ok && begun.error === "cap_reached") return capReached();
     if (!begun.ok && begun.error === "minutes_reserved") return minutesReserved();
     if (!begun.ok && begun.error === "voice_blocked") return voiceBlocked(begun.retryAfterSeconds);
-    if (begun.ok) {
-      callId = begun.callId;
-      engine = begun.engine;
-      maxSeconds = begun.maxSeconds;
-    }
+    if (!begun.ok) return voiceUnavailable();
+    callId = begun.callId;
+    engine = begun.engine;
+    maxSeconds = begun.maxSeconds;
   }
 
   const model = realtimeModelFor(engine);
