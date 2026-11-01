@@ -31,6 +31,18 @@ export function canSubmitAccounts(caps: Caps, configError = false): boolean {
   return accountsState(caps, configError) === "ready";
 }
 
+/** Copy shown instead of the form while the stored session is unknown or already signed in. */
+export const SESSION_COPY = { checking: "Checking your session…", redirecting: "You're signed in. Taking you to the trainer…" } as const;
+
+/**
+ * Whether the sign-in and sign-up form may be shown. Hidden while the stored session is still being read and once
+ * signed in (the page is about to redirect). A submit in flight keeps it visible so typed values and the MFA step stay put.
+ */
+export function accountFormVisible(s: { isLoading: boolean; isAuthenticated: boolean; busy?: boolean }): boolean {
+  if (s.isAuthenticated) return false;
+  return !s.isLoading || !!s.busy;
+}
+
 /** Load /api/config. Any failure (network, non-OK, bad body) is reported as an error, never as a guess about the server. */
 export async function loadConfig(fetchImpl: (url: string) => Promise<{ ok: boolean; json: () => Promise<unknown> }>): Promise<{ caps: Capabilities } | { error: true }> {
   try {

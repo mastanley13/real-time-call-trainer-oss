@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ACCOUNTS_COPY,
   LOGIN_PATH,
+  SESSION_COPY,
+  accountFormVisible,
   accountsState,
   canSubmitAccounts,
   canViewPrivate,
@@ -13,14 +15,20 @@ import {
 } from "@/lib/authUi";
 
 type Caps = { database: boolean; demoMode: boolean } | null;
-const auth: { caps: Caps; configError: boolean } = { caps: null, configError: false };
+const auth: { caps: Caps; configError: boolean; isLoading: boolean; isAuthenticated: boolean } = {
+  caps: null,
+  configError: false,
+  isLoading: false,
+  isAuthenticated: false,
+};
 
 vi.mock("@/contexts/AuthContext", () => ({
   useAuth: () => ({
     capabilities: auth.caps,
     configError: auth.configError,
     retryConfig: vi.fn(),
-    isAuthenticated: false,
+    isAuthenticated: auth.isAuthenticated,
+    isLoading: auth.isLoading,
     register: vi.fn(),
     login: vi.fn(),
     completeMfaChallenge: vi.fn(),
@@ -48,6 +56,18 @@ function formIsLocked(html: string) {
   const submit = /<button[^>]*disabled=""[^>]*>(Create account|Sign in)/.test(form);
   return fieldset && submit;
 }
+
+describe("accountFormVisible", () => {
+  it("is hidden while the session loads and when signed in", () => {
+    expect(accountFormVisible({ isLoading: true, isAuthenticated: false })).toBe(false);
+    expect(accountFormVisible({ isLoading: false, isAuthenticated: true })).toBe(false);
+    expect(accountFormVisible({ isLoading: true, isAuthenticated: true, busy: true })).toBe(false);
+  });
+  it("is visible when signed out, and stays visible during a submit", () => {
+    expect(accountFormVisible({ isLoading: false, isAuthenticated: false })).toBe(true);
+    expect(accountFormVisible({ isLoading: true, isAuthenticated: false, busy: true })).toBe(true);
+  });
+});
 
 describe("accounts state", () => {
   it("is loading until the server config is known", () => {
@@ -107,6 +127,36 @@ describe("guardedSubmit", () => {
 describe.each(["register", "login"] as const)("%s page", (page) => {
   beforeEach(() => {
     auth.caps = null;
+    auth.isLoading = false;
+    auth.isAuthenticated = false;
+  });
+
+  it("disables every control itself, not only through the fieldset, while the check is pending", async () => {
+    const html = await render(page, null);
+    const form = html.slice(html.indexOf("<form"), html.indexOf("</form>"));
+    const controls = form.match(/<(input|button)\b[^>]*>/g) ?? [];
+    expect(controls.length).toBeGreaterThan(2);
+    for (const c of controls) expect(c).toMatch(/\sdisabled=""/);
+  });
+
+  it("hides the form while the stored session is unknown", async () => {
+    auth.isLoading = true;
+    const html = await render(page, WITH_DB);
+    expect(html).toContain(SESSION_COPY.checking);
+    expect(html).toMatch(/<form[^>]*\shidden=""/);
+  });
+
+  it("hides the form for a signed-in user who is being redirected", async () => {
+    auth.isAuthenticated = true;
+    const html = await render(page, WITH_DB);
+    expect(html).toContain(SESSION_COPY.redirecting.replace("'", "&#x27;"));
+    expect(html).toMatch(/<form[^>]*\shidden=""/);
+  });
+
+  it("shows the form once the session is known and signed out", async () => {
+    const html = await render(page, WITH_DB);
+    expect(html).not.toMatch(/<form[^>]*\shidden=""/);
+    expect(html).not.toContain(SESSION_COPY.checking);
   });
 
   it("locks the form and shows a loading message while config is unknown", async () => {
