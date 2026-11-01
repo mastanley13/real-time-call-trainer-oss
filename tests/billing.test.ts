@@ -596,6 +596,33 @@ describe("customer.subscription.updated", () => {
       });
     }
 
+    it("keeps the billing link, blocks a replacement checkout, and recovers when the seats are fixed", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      await withItems([{ quantity: 2, price: TEAM_PRICE }]);
+      // Access is revoked, but Stripe is still billing this subscription, so the link stays.
+      expect(org()).toMatchObject({ planTier: "free", stripeSubscriptionId: "sub_test_team", subscriptionStatus: "active" });
+      const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_dup", url: "https://checkout.example/dup" });
+      const res = await checkout(new NextRequest("http://localhost/api/billing/checkout", { method: "POST", body: JSON.stringify({ plan: "team", interval: "month", seats: 3 }), headers: { "content-type": "application/json" } }));
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toBe("already_subscribed");
+      expect(create).not.toHaveBeenCalled();
+      // A second, duplicate subscription is still detected and cancelled.
+      await deliver(event("customer.subscription.updated", { ...sub({ id: "sub_test_dup", customer: "cus_test_team", metadata: { organizationId: "org-1" }, team: 3 }) }));
+      expect(cancelSpy).toHaveBeenCalledWith("sub_test_dup");
+      // Fixing the quantity on the same subscription restores Team.
+      await update({ team: 3 });
+      expect(org()).toMatchObject({ planTier: "team", seatCount: 3, stripeSubscriptionId: "sub_test_team" });
+      expect(allowance("organizationId", "org-1")?.minutesCap).toBe(900);
+    });
+
+    it("a real cancellation after a refused sync still unlinks the subscription", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      await withItems([{ quantity: 2, price: TEAM_PRICE }]);
+      await withItems([{ quantity: 2, price: TEAM_PRICE }], "canceled");
+      expect(org()).toMatchObject({ planTier: "free", subscriptionStatus: "canceled" });
+      expect(org().stripeSubscriptionId ?? null).toBeNull();
+    });
+
     it("a stale subscription that nobody holds cannot revoke the current one", async () => {
       vi.spyOn(console, "warn").mockImplementation(() => undefined);
       await deliver(event("customer.subscription.updated", { ...sub({ id: "sub_test_old", customer: "cus_test_team", metadata: { organizationId: "org-1" } }), items: { data: [{ quantity: 2, price: TEAM_PRICE }] } }));
@@ -723,6 +750,11 @@ describe("customer.subscription.updated", () => {
         expect(entitlementFromItems([team, item(L.premium.month!, meta, 3)], L), JSON.stringify(meta)).toBeNull();
       }
       expect(entitlementFromItems([team, item("price_test_archived", PREMIUM_META, 3)], L)).toMatchObject({ plan: "team", premium: true });
+      // Mixed migrated metadata: ct_plan=addon with only the older addon key still counts; ct_addon wins when present.
+      const mixed = { ct_plan: "addon", addon: "premium_voice", ct_version: "1" };
+      expect(entitlementFromItems([team, item(L.premium.month!, mixed, 3)], L)).toMatchObject({ plan: "team", premium: true });
+      expect(entitlementFromItems([team, item("price_test_archived", mixed, 3)], L)).toMatchObject({ plan: "team", premium: true });
+      expect(entitlementFromItems([team, item(L.premium.month!, { ...mixed, ct_addon: "none" }, 3)], L)).toBeNull();
       expect(entitlementFromItems([team, item(L.premium.month!, { plan: "premium" }, 3)], L)).toMatchObject({ premium: true });
     });
     it("an empty allowlist trusts no price id, so only the ct_version=1 fallback can grant", () => {

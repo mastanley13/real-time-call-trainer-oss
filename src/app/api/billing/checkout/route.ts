@@ -52,7 +52,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "forbidden", message: "Only an organization owner or manager can buy a Team plan." }, { status: 403 });
   }
   const subject = body.plan === "team" && org ? org : user;
-  if (subject.stripeSubscriptionId && subject.planTier !== "free") {
+  // A linked subscription means Stripe may still be billing it, even when its items left the account on Free.
+  if (subject.stripeSubscriptionId) {
     return NextResponse.json({ error: "already_subscribed", message: "This account already has a paid plan. Use Manage billing to change it." }, { status: 409 });
   }
 

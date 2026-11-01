@@ -63,7 +63,8 @@ function productKind(meta: Record<string, string> | null | undefined): PriceSlot
   // New format: ct_plan decides alone. The add-on needs ct_plan=addon AND ct_addon=premium_voice.
   if (meta.ct_plan !== undefined) {
     if (meta.ct_plan === "pro" || meta.ct_plan === "team") return meta.ct_plan;
-    return meta.ct_plan === "addon" && meta.ct_addon === "premium_voice" ? "premium" : null;
+    // ct_addon wins; the older addon key counts only while ct_addon is absent (mixed migrated metadata).
+    return meta.ct_plan === "addon" && (meta.ct_addon ?? meta.addon) === "premium_voice" ? "premium" : null;
   }
   // Legacy format (no ct_plan): plan=pro|team|premium, or addon=premium_voice with no plan.
   if (meta.plan === "pro" || meta.plan === "team") return meta.plan;
@@ -427,11 +428,13 @@ interface Applied {
 /** Writes plan, seats, premium and Stripe ids onto the subject, then re-derives its UsageAllowance cap and period. */
 async function applyEntitlement(
   tx: Tx, subject: Subject, next: Entitlement,
-  stripe: { customerId?: string | null; subscriptionId?: string | null; status: string }, now: Date,
+  stripe: { customerId?: string | null; subscriptionId?: string | null; status: string; retainSubscription?: boolean }, now: Date,
 ): Promise<Applied> {
   const keepIds = {
     ...(stripe.customerId ? { stripeCustomerId: stripe.customerId } : {}),
-    stripeSubscriptionId: next.plan === "free" ? null : (stripe.subscriptionId ?? undefined),
+    // Free normally unlinks the subscription. `retainSubscription` keeps the link for a subscription that is
+    // still billing but failed validation, so no second one can be bought and the duplicate check still works.
+    stripeSubscriptionId: next.plan === "free" && !stripe.retainSubscription ? null : (stripe.subscriptionId ?? undefined),
     subscriptionStatus: stripe.status,
     // A paid subscription is in place, so the checkout that produced it is no longer outstanding.
     ...(next.plan === "free" ? {} : { stripeCheckoutSessionId: null, stripeCheckoutFingerprint: null, stripeCheckoutUrl: null, stripeCheckoutExpiresAt: null }),
@@ -492,9 +495,10 @@ async function reconcile(
   if (!found) {
     // Items that fail validation never grant access, and they revoke it too: the subject whose CURRENT
     // subscription this is drops to Free (fail closed), whatever the status. A subscription nobody holds,
-    // or an old one a newer subscription replaced, finds no holder and changes nothing.
+    // or an old one a newer subscription replaced, finds no holder and changes nothing. While Stripe is still
+    // billing it (entitled status) the link is kept, so the account cannot start a second subscription.
     const holder = await subjectOfSubscription(tx, live.id);
-    return holder ? applyEntitlement(tx, holder, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status }, now) : null;
+    return holder ? applyEntitlement(tx, holder, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status, retainSubscription: ENTITLED.has(live.status) }, now) : null;
   }
   const subject = await findSubject(tx, { subscriptionId: live.id, customerId: live.customer, metadata: { ...(hint.metadata ?? {}), ...(live.metadata ?? {}) } });
   if (!subject) return null;
