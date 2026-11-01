@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   const apiKey = realtimeKey();
   if (!apiKey) {
     return NextResponse.json(
-      { error: "realtime_not_configured", message: "Voice with OpenAI Realtime needs an OpenAI key. Set OPENAI_API_KEY on the server, or switch to Text." },
+      { error: "realtime_not_configured", message: "Voice with OpenAI Realtime needs an OpenAI key. Set OPENAI_REALTIME_API_KEY or OPENAI_API_KEY on the server, or switch to Text." },
       { status: 503 },
     );
   }

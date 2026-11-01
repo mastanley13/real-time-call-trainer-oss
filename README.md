@@ -1,13 +1,46 @@
 # Real-Time Call Trainer
 
-Practice live sales and service calls against AI personas from 18 sales jobs. A live coach scores every turn and cues you when an objection lands, and the debrief backs every score with quotes from your own transcript.
+[![CI](https://github.com/mastanley13/real-time-call-trainer-oss/actions/workflows/ci.yml/badge.svg)](https://github.com/mastanley13/real-time-call-trainer-oss/actions/workflows/ci.yml)
+<!-- LICENSE BADGE: uncomment only after GitHub shows "MIT" in the repo sidebar (currently detected as Other / NOASSERTION; LICENSE PR pending)
+[![License: MIT](https://img.shields.io/github/license/mastanley13/real-time-call-trainer-oss)](LICENSE)
+-->
+
+Practice sales calls against AI buyers, get cues from a live coach, and read a debrief that quotes your own transcript.
 
 By Mykel Stanley · MIT licensed
 
-![Real-Time Call Trainer](public/screenshot.png)
+## Quickstart (text sim, no keys)
+
+Needs Node 22+.
+
+```bash
+git clone https://github.com/mastanley13/real-time-call-trainer-oss.git
+cd real-time-call-trainer-oss
+npm ci
+DEMO_MODE=true npm run dev
+```
+
+Open http://localhost:3000/trainer?scenario=home-services-inbound-lead. Pick a persona, switch Call mode to Text, then press Start call. Voice is the default unless no voice engine is set up; on a keyless setup the status reads "Text simulation" and "Scripted caller replies (no AI key)." With no keys you get a scripted caller, a rules-based coach and heuristic grading. Add `LLM_API_KEY` (any OpenAI-compatible API) for the AI caller, coach and grading; add an OpenAI or ElevenLabs key for voice. See [TESTING.md](TESTING.md) for every mode.
+
+`DEMO_MODE` is for local use only. Never enable it on a public deployment.
+
+## Hosted or self-host
+
+Hosted plans: calltrainer.tech/pricing
+
+## Screenshots
+
+![Live call screen: transcript, coach rail and call controls](public/screenshot.png)
+
+<!-- Captures still to add, see docs/screenshots/README.md:
+- docs/screenshots/live-coach.png
+- docs/screenshots/debrief.png
+- docs/screenshots/library.png
+- docs/screenshots/team.png
+-->
 
 ## Features
-- **Persona library**: 54 personas across 18 sales job families (SDR cold calls, AE discovery, customer success, insurance, mortgage, real estate, solar, auto, medical devices, B2B procurement, recruiting, collections, financial advising and more), filterable by role, industry, difficulty, objection type and call type. Each persona is a plain pack in `src/lib/personas/`, validated against `ScenarioSchema` on load. Library personas start as **drafts** until a maintainer reviews them; the three original scenarios are marked reviewed.
+- **Persona library**: 54 personas across 17 sales job families (SDR cold calls, AE discovery, customer success, insurance, mortgage, real estate, solar, auto, medical devices, B2B procurement, recruiting, collections, financial advising and more), filterable by role, industry, difficulty, objection type and call type. Each persona is a plain pack in `src/lib/personas/`, validated against `ScenarioSchema` on load. Library personas start as **drafts** until a maintainer reviews them; the three original scenarios are marked reviewed.
 - **Live coach** (copilot rail): after each turn a separate coach channel returns a live rubric estimate (hatched while provisional, solid once a verbatim quote confirms it), talk-track progress, your talk ratio, and at most one cue (objection, next question, whisper or guardrail) with a suggested line. Objection cues show at once; any other cue that arrives within 8 seconds of the last one is dropped, and the coach doesn't repeat cues it gave recently. *Use line* drops the line into the composer and never sends it, and the persona never sees cues. **Blind** shows no live help, **Guided** shows the estimate and talk track, **Coached** adds cues. Without an LLM key a rules-based coach runs instead.
 - **AI persona wizard** (`/library/new`): build a persona, objection bank and rubric from a job description, a product page URL (fetched server-side with SSRF protections), CRM notes, an ideal-customer profile or a pasted call. Every field shows the source it came from; export the result as a pack file for a pull request. Without a key it builds a template draft you can edit.
 - **Black-box debrief**: score ring and outcome stamp, a clickable moment strip, criterion evidence that jumps to the transcript line, a grader label naming the model that graded the call (or "rules-based"), a re-grade action, a *Retry from turn N* aimed at your weakest moment, and a next-drill suggestion. See [Grading and re-grades](#grading-and-re-grades).
@@ -34,19 +67,30 @@ Server routes (src/app/api)
   ├─ coach/turn        live coach: estimate, talk-track steps, one cue (LLM or rules-based)
   ├─ persona/generate  persona wizard (LLM structured JSON, or a template draft)
   ├─ persona/fetch-url SSRF-safe product-page import for the wizard
-  ├─ realtime/session  mints a short-lived OpenAI Realtime client secret per call (API key stays server-side)
-  ├─ realtime/sdp      relays the browser's WebRTC offer to OpenAI, so the CSP stays same-origin
+  ├─ realtime/session  mints a short-lived OpenAI Realtime client secret per call
+                     (API key stays server-side)
+  ├─ realtime/sdp      relays the browser's WebRTC offer to OpenAI, so the CSP stays
+                     same-origin
   ├─ elevenlabs/token  mints a WebRTC conversation token (API key stays server-side)
-  ├─ evaluate-call     grades a transcript against the scenario rubric (LLM or heuristic) and seals the grade
+  ├─ evaluate-call     grades a transcript against the scenario rubric (LLM or heuristic)
+                     and seals the grade
   ├─ simulate/turn     text-mode caller (LLM or scripted)
-  ├─ transcripts       save / list / fetch sessions (Postgres); POST stores a score only with a valid grade seal, PATCH re-grades
+  ├─ transcripts       save / list / fetch sessions (Postgres); POST stores a score only
+                     with a valid grade seal, PATCH re-grades
   ├─ sessions/[id]/notes supervisor notes on a saved session; a stale save gets 409
   ├─ team/overview     team KPIs, roster, heatmap and coaching queue (org-scoped)
   ├─ team/assignments  create, list and remove persona assignments
   ├─ llm/check         one-token connection check for the Models page
-  ├─ usage, usage/heartbeat, usage/end, usage/credit   voice minute metering (on when `USAGE_CAPS=on` or Stripe is set): the ledger is the source of truth. Free is 10 voice minutes a month, checked only when a call starts (a started call runs to its end); text practice is never capped
-  ├─ billing/checkout, billing/portal   Stripe Checkout (subscription) and Billing Portal, test mode only
-  ├─ stripe/webhook    signature-verified, idempotent plan sync from Stripe's current subscription state (checkout completed, async payment succeeded and expired, subscription updated and deleted)
+  ├─ usage, usage/heartbeat, usage/end, usage/credit
+                     voice minute metering (on when `USAGE_CAPS=on` or Stripe is set): the
+                     ledger is the source of truth. Free is 10 voice minutes a month, checked
+                     only when a call starts (a started call runs to its end); text practice
+                     is never capped
+  ├─ billing/checkout, billing/portal
+                     Stripe Checkout (subscription) and Billing Portal, test mode only
+  ├─ stripe/webhook    signature-verified, idempotent plan sync from Stripe's current
+                     subscription state (checkout completed, async payment succeeded and
+                     expired, subscription updated and deleted)
   └─ auth/*, access, me, health, config, cron/purge-expired
 ```
 Design tokens (daylight, dark and the call "deck") live in `src/app/globals.css`; the coach contract is `src/lib/coach-types.ts`; the wizard contract is `src/lib/wizard-types.ts`.
@@ -94,7 +138,7 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `STRIPE_SECRET_KEY` | For billing | Stripe **test mode** key. Must start with `sk_test_`; any other key makes every Stripe call fail with `stripe_live_key_refused`. Unset, or `DEMO_MODE=true`: billing is off and the Billing tab is hidden. Setting it also turns voice minute metering on (see `USAGE_CAPS`); only an active Stripe subscription raises an account above Free |
 | `USAGE_CAPS` | Optional | `on` meters voice minutes for stored accounts (needs `DATABASE_URL`, not `DEMO_MODE`) without Stripe: everyone is Free, 10 voice minutes a month, resetting monthly, and voice is refused if the usage lookup fails. Default off, so self-hosted installs stay uncapped. A Stripe key also turns metering on. Text practice is never metered |
 | `STRIPE_WEBHOOK_SECRET` | For billing | Signing secret (`whsec_...`) for `/api/stripe/webhook`. From `stripe listen` locally, or the endpoint's page in the Stripe dashboard. Subscribe it to `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `customer.subscription.updated` and `customer.subscription.deleted` |
-| Stripe prices | For billing | No env vars. Prices are resolved at runtime with `stripe.prices.list({ lookup_keys })`: `calltrainer_pro_monthly` and `_annual` (Pro, $29 per user per month), `calltrainer_team_monthly` and `_annual` (Team, $59 per seat per month, 3 seats minimum, quantity = seats), `calltrainer_premium_monthly` and `_annual` (Premium Voice add-on, +$30 per seat per month, quantity = seats). Flat licensed prices only; a metered price is ignored |
+| Stripe prices | For billing | No env vars. Prices are resolved at runtime with `stripe.prices.list({ lookup_keys })`: `calltrainer_pro_monthly` and `_annual` (Pro), `calltrainer_team_monthly` and `_annual` (Team, 3 seats minimum, quantity = seats). Flat licensed prices only; a metered price is ignored. For hosted plans and pricing, see [calltrainer.tech](https://calltrainer.tech). |
 | `APP_BASE_URL` | Optional | Public origin used in Stripe return links, for example `https://app.example.com`. Defaults to the request origin |
 | `GHL_BILLING_EVENTS` | Optional | `true` lets the billing webhook emit upgrade, downgrade and churn events to the CRM hook (`src/lib/billingEvents.ts`). Off by default. See the TODO there for the STR-714 emitter |
 | `DEMO_MODE` | Optional | `true` skips login; sessions, assignments and notes stay in the browser and `/team` shows a sample team. Never on a public deployment. With `NODE_ENV=production` it is ignored (login stays required, the app refuses to boot, `/api/health` returns 503) unless `ALLOW_PUBLIC_DEMO=true` |
@@ -123,7 +167,7 @@ OpenAI Realtime is used whenever an OpenAI key is available. The server mints a 
 
 Supervisor notes are written from the coaching queue, and the rep sees them on their debrief. If someone else saved the note after you opened it, the save is refused with 409 `conflict` and the editor asks you to open the note again, so one manager can't silently overwrite another.
 
-Demo mode shows a sample team and keeps assignments and notes in your browser. With a database, run the `20261027000000_training_assignments` migration.
+Demo mode shows a sample team and keeps assignments and notes in your browser. With a database, run `npm run db:migrate` to apply all migrations.
 
 ### Database
 ```bash
@@ -132,7 +176,7 @@ createdb call_trainer
 npm run db:migrate        # prisma migrate deploy
 npm run db:seed           # optional platform admin
 ```
-Run `npm run db:migrate` again after pulling changes that add a migration. The team view needs `20261027000000_training_assignments`.
+Run `npm run db:migrate` again after pulling changes; it applies all pending migrations, including the one the team view needs.
 
 ### Scripts
 | Script | What it does |
@@ -162,6 +206,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 This project follows the Contributor Covenant. See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## Credits
-Originally based on OpenAI's openai-realtime-agents demo (MIT). See [LICENSE](LICENSE).
+Originally based on OpenAI's openai-realtime-agents demo (MIT). See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 > **Rate limits:** counters are in-memory (fixed window) and per server instance. On Vercel/serverless they are best-effort: each warm instance counts separately and cold starts reset them. Use a shared store (e.g. Upstash Redis) for strict enforcement. The `RATE_LIMIT_*` variables tune the per-IP limits, and `TRUSTED_PROXY_HOPS` sets where the client IP is read. Most routes also have a fixed per-account limit, so switching networks doesn't get around them: for example the wizard 20 per hour, re-grades 5 per 10 minutes, the Models check 20 per hour and new voice sessions 6 per minute. [TESTING.md](TESTING.md#rate-limits) lists every limit. Request bodies are capped at 200 KB. The live coach reads the most recent turns of a long call, the text caller accepts up to 200 turns and 20,000 characters, and grading reads the first 1,000 turns and 120,000 characters (the debrief says when a call was longer). `/api/access` attempts are limited to 10 per 15 min per IP.
