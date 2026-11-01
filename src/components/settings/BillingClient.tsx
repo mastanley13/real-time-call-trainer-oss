@@ -5,7 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CreditCard, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageSkeleton } from "@/components/ui/Skeleton";
-import { PORTAL_FAILED_MESSAGE, type CheckoutNotice, checkoutFailure, checkoutNotice, formatMinutes, freeOverCapNotice, planPriceLine, premiumLabel, proButtonLabel, seatsOnBlur, teamButtonLabel, usageHeaderCopy } from "@/lib/billingUi";
+import { PORTAL_FAILED_MESSAGE, type CheckoutNotice, checkoutFailure, checkoutNotice, formatMinutes, freeOverCapNotice, planPriceLine, proButtonLabel, seatsOnBlur, teamButtonLabel, usageHeaderCopy } from "@/lib/billingUi";
+import { PREMIUM_COMING_SOON } from "@/lib/pricing";
 import { TEAM_MIN_SEATS } from "@/lib/usagePlan";
 import BillingAlert from "./BillingAlert";
 import BillingNotice from "./BillingNotice";
@@ -42,7 +43,6 @@ export default function BillingClient() {
   const [seatsText, setSeatsText] = useState(String(TEAM_MIN_SEATS));
   /** "Set to 3, the Team minimum." after the box was left below 3. Cleared as soon as the box is edited again. */
   const [seatsNote, setSeatsNote] = useState<string | null>(null);
-  const [premium, setPremium] = useState(false);
   // State updates are not instant, so two fast clicks could both pass a check on `busy`. The ref closes that gap.
   const busyRef = useRef<string | null>(null);
   /** The 409 and unavailable-plan banner. It replaces the plain error banner for those answers. */
@@ -114,7 +114,7 @@ export default function BillingClient() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(kind === "portal" ? {} : { plan: kind, interval, premium, ...(kind === "team" ? { seats } : {}) }),
+        body: JSON.stringify(kind === "portal" ? {} : { plan: kind, interval, premium: false, ...(kind === "team" ? { seats } : {}) }),
       });
     } catch {
       // The request never got an answer (offline or timed out): the only case where trying again is the advice.
@@ -199,9 +199,9 @@ export default function BillingClient() {
                 </label>
               ))}
             </fieldset>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={premium} onChange={(e) => setPremium(e.target.checked)} />
-              {premiumLabel(interval)}
+            <label className="flex items-center gap-2 text-sm text-ink-muted">
+              <input type="checkbox" checked={false} disabled readOnly />
+              Premium AI voice: {PREMIUM_COMING_SOON}
             </label>
           </div>
 

@@ -7,6 +7,7 @@ import { billingGate, StripeApiError } from "@/lib/stripe";
 import { appBaseUrl, buildCheckoutParams, checkoutFingerprint, createOrReuseCheckout, CheckoutConfigError, blocksCheckout, resolvePriceIds } from "@/lib/billing";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "@/lib/usagePlan";
 import { CHECKOUT_UNAVAILABLE_MESSAGE } from "@/lib/billingUi";
+import { PREMIUM_COMING_SOON, PREMIUM_VOICE_ON_SALE } from "@/lib/pricing";
 
 const Body = z.object({
   plan: z.enum(["pro", "team"]),
@@ -22,8 +23,6 @@ export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 
-  const gate = billingGate();
-  if (gate) return gate;
   const ipLimited = ipLimitResponse(req, "billing");
   if (ipLimited) return ipLimited;
   const userLimited = userLimitResponse(auth.id, "billing");
@@ -39,6 +38,12 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+  // Premium is off sale. This answers before the billing check so a hand-crafted POST gets the same 400 in both states.
+  if (body.premium && !PREMIUM_VOICE_ON_SALE) {
+    return NextResponse.json({ error: "premium_not_available", message: PREMIUM_COMING_SOON }, { status: 400 });
+  }
+  const gate = billingGate();
+  if (gate) return gate;
   if (body.plan === "team" && body.seats === undefined) {
     return NextResponse.json({ error: "invalid_request", message: `Team needs at least ${TEAM_MIN_SEATS} seats.` }, { status: 400 });
   }
