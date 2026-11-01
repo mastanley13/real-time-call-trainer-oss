@@ -105,9 +105,8 @@ export const stripeApi = {
   expireCheckoutSession: (id: string) => request<{ id: string }>("POST", `checkout/sessions/${seg(id)}/expire`),
   /** The session as Stripe has it now: status is open, complete or expired. */
   retrieveCheckoutSession: (id: string) => request<unknown>("GET", `checkout/sessions/${seg(id)}`),
-  /** Active prices for these lookup keys, with each product expanded so its metadata can be checked. Prices are never addressed by id. */
-  listPricesByLookupKeys: (lookupKeys: string[]) =>
-    request<unknown>("GET", "prices", { lookup_keys: lookupKeys, active: true, limit: 100, expand: ["data.product"] }),
+  /** One allowlisted price by id, with its product expanded so its metadata can be checked. */
+  retrievePrice: (id: string) => request<unknown>("GET", `prices/${seg(id)}`, { expand: ["product"] }),
   createPortalSession: (params: StripeParams) => request<{ url: string }>("POST", "billing_portal/sessions", params),
   /** The subscription as Stripe has it now. Webhook payloads are snapshots and can arrive out of order. */
   retrieveSubscription: (id: string) => request<unknown>("GET", `subscriptions/${seg(id)}`, { expand: ["items.data.price.product"] }),
