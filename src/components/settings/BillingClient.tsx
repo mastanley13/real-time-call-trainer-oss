@@ -188,7 +188,7 @@ export default function BillingClient() {
 
       {u?.billing.enabled && (
         <section className="panel p-4 sm:p-5" aria-labelledby="plans-h">
-          <h2 id="plans-h" tabIndex={-1} className="text-lg font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Plans</h2>
+          <h2 id="plans-h" tabIndex={-1} className="text-lg font-bold focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary">Plans</h2>
           <div className="mt-3 flex flex-wrap items-center gap-4">
             <fieldset className="flex gap-2" aria-label="Billing period">
               {(["month", "year"] as const).map((v) => (

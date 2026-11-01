@@ -20,11 +20,11 @@ interface Props {
  * use the caution style, and past_due says so in words.
  */
 const BillingNotice = forwardRef<HTMLParagraphElement, Props>(function BillingNotice({ notice, failure, busy, disabled, onAction }, headlineRef) {
-  const tone = notice.role === "status" ? "banner-ok" : "banner-warn";
+  const tone = notice.role === "status" ? "rounded-lg border border-line bg-sunken p-3 text-sm text-ink" : "banner-warn";
   return (
     <div className={`${tone} flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between`} role={notice.role}>
       <div className="max-w-[70ch]">
-        <p ref={headlineRef} tabIndex={-1} className="font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{notice.headline}</p>
+        <p ref={headlineRef} tabIndex={-1} className="font-bold focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary">{notice.headline}</p>
         <p className="mt-1">{failure ?? notice.body}</p>
       </div>
       <div className="flex flex-col gap-2 sm:items-end">
