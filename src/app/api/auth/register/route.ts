@@ -6,6 +6,7 @@ import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { accessCode, hasValidAccessCookie } from "@/lib/access";
 import { generateOrgCode, isValidOrgCode } from "@/lib/orgCodes";
+import { sanitizeSignupIntent } from "@/lib/pricing";
 
 const RegisterSchema = z
   .object({
@@ -20,6 +21,11 @@ const RegisterSchema = z
     /// Exactly one of these two must be provided.
     joinOrgCode: z.string().regex(/^[0-9]{3,8}$/).optional(),
     newOrgName: z.string().trim().min(2).max(120).optional(),
+    /// Sign-up link context. Never rejects the request: bad values are dropped by sanitizeSignupIntent below.
+    plan: z.unknown().optional(),
+    interval: z.unknown().optional(),
+    src: z.unknown().optional(),
+    seg: z.unknown().optional(),
   })
   .refine(
     (v) => !!v.joinOrgCode !== !!v.newOrgName,
@@ -60,6 +66,7 @@ export async function POST(request: NextRequest) {
   }
 
   const emailLower = body.email.toLowerCase();
+  const intent = sanitizeSignupIntent(body);
 
   try {
     const existing = await prisma.user.findUnique({ where: { email: emailLower } });
@@ -106,6 +113,10 @@ export async function POST(request: NextRequest) {
           organizationId: orgId,
           role,
           lastLoginAt: new Date(),
+          signupPlanIntent: intent.plan,
+          signupInterval: intent.interval,
+          signupSrc: intent.src,
+          signupSeg: intent.seg,
         },
         include: { organization: true },
       });
