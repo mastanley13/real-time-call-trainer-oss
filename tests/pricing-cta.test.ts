@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -129,5 +130,13 @@ describe("pricing page", () => {
 
   it("prices are unchanged", () => {
     for (const s of ["$29", "$290", "$59", "$590", "3-seat"]) expect(html).toContain(s);
+  });
+});
+
+describe("landing hero line", () => {
+  it("describes the hosted product, not demo mode", () => {
+    const src = readFileSync("src/app/page.tsx", "utf8");
+    expect(src).not.toMatch(/demo mode/i);
+    expect(src).toContain("Hosted for you, no keys or setup");
   });
 });
