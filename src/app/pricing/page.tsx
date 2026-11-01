@@ -1,4 +1,5 @@
 import Link from "next/link";
+import ComparePlans from "@/components/landing/ComparePlans";
 import PricingCards from "@/components/landing/PricingCards";
 import PublicFooter from "@/components/landing/PublicFooter";
 import {
@@ -77,34 +78,7 @@ export default function PricingPage() {
       <section className="border-y border-line bg-surface" aria-labelledby="compare-h">
         <div className="page py-12">
           <h2 id="compare-h" className="text-2xl font-bold">Compare plans</h2>
-          <p className="mt-4 text-xs text-ink-muted sm:hidden">Swipe to compare</p>
-          <div className="relative mt-2 sm:mt-6">
-          <div className="overflow-x-auto rounded-panel border border-line">
-            <table className="w-full min-w-[640px] text-left text-sm">
-              <thead className="bg-sunken text-ink-muted">
-                <tr>
-                  <th scope="col" className="px-4 py-3 font-medium">Feature</th>
-                  <th scope="col" className="px-4 py-3 font-medium">Self-host (MIT)</th>
-                  <th scope="col" className="px-4 py-3 font-medium">Free</th>
-                  <th scope="col" className="px-4 py-3 font-medium">Pro</th>
-                  <th scope="col" className="px-4 py-3 font-medium">Team</th>
-                </tr>
-              </thead>
-              <tbody>
-                {COMPARE.map((r) => (
-                  <tr key={r.feature} className="border-t border-line align-top">
-                    <th scope="row" className="px-4 py-3 font-medium text-ink">{r.feature}</th>
-                    <td className="px-4 py-3 text-ink-soft">{r.self}</td>
-                    <td className="px-4 py-3 text-ink-soft">{r.free}</td>
-                    <td className="px-4 py-3 text-ink-soft">{r.pro}</td>
-                    <td className="px-4 py-3 text-ink-soft">{r.team}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-10 rounded-r-panel bg-gradient-to-l from-surface to-transparent sm:hidden" />
-          </div>
+          <ComparePlans rows={COMPARE} />
         </div>
       </section>
 

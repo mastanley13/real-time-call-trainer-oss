@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { LogOut, Search, Settings } from "lucide-react";
 import LogoMark from "@/components/LogoMark";
+import MobileMenu from "@/components/MobileMenu";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useAuth, type User } from "@/contexts/AuthContext";
 import { canManageTeam } from "@/lib/team";
@@ -111,10 +112,12 @@ export default function SiteHeader() {
             </>
           ) : (
             <>
-              <Link href="/login" className="btn-quiet !min-h-[36px]">Sign in</Link>
-              <Link href="/register" className="btn-primary !min-h-[36px]">Get started</Link>
+              <Link href="/login" className="btn-quiet !min-h-[36px] max-[427px]:hidden">Sign in</Link>
+              <Link href="/register" className="btn-primary !min-h-[36px] max-[427px]:hidden">Get started</Link>
             </>
           )}
+          <MobileMenu pathname={pathname} guest={!isAuthenticated}
+            items={[...(isAuthenticated ? links : []), PRICING_NAV].map((l) => ({ href: l.href, label: l.label, active: l.match(pathname) }))} />
         </div>
       </div>
     </header>
