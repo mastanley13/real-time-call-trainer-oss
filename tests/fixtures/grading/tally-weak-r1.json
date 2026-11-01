@@ -1,0 +1,27 @@
+{
+  "id": "tally-weak-r1",
+  "kind": "weak_no_contact",
+  "scenarioId": "home-services-inbound-lead",
+  "source": "tally hall-raw.md, run 1 (desktop)",
+  "notes": "Trainee never asked for contact details. Recorded debrief said the caller 'offered' information; she only asked 'Do you need my information'.",
+  "recorded": {
+    "score": 4,
+    "letter": "F",
+    "goal": "not_achieved",
+    "criteria": { "greeting": 12, "discovery": 3, "capture": 2, "fee": 0, "close": 5 },
+    "infoCapture": 2,
+    "grader": "claude-sonnet-5-5",
+    "graderVersion": "llm-v2"
+  },
+  "transcript": [
+    { "role": "assistant", "text": "Hi, yeah, my water heater is leaking all over the garage floor. Can someone come out today?" },
+    { "role": "user", "text": "Hi, how can I help?" },
+    { "role": "assistant", "text": "Um, my water heater is leaking. I found water pooling around it this morning, and I'm kind of worried it's getting worse. Is this the plumbing company?" },
+    { "role": "user", "text": "ok" },
+    { "role": "assistant", "text": "Hello? Sorry, is this the plumbing company? I really need someone to help me with this leak." },
+    { "role": "user", "text": "we can probably look at that" },
+    { "role": "assistant", "text": "Okay, thank you. Do you need my information, or should I do something about the water in the meantime? I haven't shut anything off since I'm not sure how." },
+    { "role": "user", "text": "alright, thanks, bye" },
+    { "role": "assistant", "text": "Wait, you're hanging up? I don't even know if anyone's coming or what to do about the water. Okay, I guess I'll call somewhere else. Bye." }
+  ]
+}

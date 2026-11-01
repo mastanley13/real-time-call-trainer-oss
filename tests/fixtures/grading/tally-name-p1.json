@@ -1,0 +1,27 @@
+{
+  "id": "tally-name-p1",
+  "kind": "name_only",
+  "scenarioId": "home-services-inbound-lead",
+  "source": "tally hall-raw.md, follow-up hall_p1 (desktop, name only)",
+  "notes": "Trainee asked only for the name. Partial info-capture credit is correct here, so this fixture is not part of rule (c). The source note abbreviates the caller's first line; it is restored from the note that every run opens with the same line. Recorded debrief said the caller mentioned not knowing how to shut the water off 'twice'; it was once.",
+  "recorded": {
+    "score": 7,
+    "letter": "F",
+    "goal": "not_achieved",
+    "criteria": { "greeting": 10, "discovery": 5, "capture": 15, "fee": 0, "close": 3 },
+    "infoCapture": 15,
+    "grader": "claude-sonnet-5-5",
+    "graderVersion": "llm-v2"
+  },
+  "transcript": [
+    { "role": "assistant", "text": "Hi, yeah, my water heater is leaking all over the garage floor. Can someone come out today?" },
+    { "role": "user", "text": "Can I get your name?" },
+    { "role": "assistant", "text": "It's Dana Whitfield. I just noticed the water this morning and I'm kind of worried it's going to get worse." },
+    { "role": "user", "text": "Thanks, Dana." },
+    { "role": "assistant", "text": "Sure. Is there anything I should be doing about the water in the meantime? It's spreading toward some boxes I have out here." },
+    { "role": "user", "text": "we can probably look at that" },
+    { "role": "assistant", "text": "Okay, but is there something I can do right now to stop it? I haven't touched anything yet, and I don't really know how to shut the water off." },
+    { "role": "user", "text": "alright, thanks, bye" },
+    { "role": "assistant", "text": "Wait, so is someone coming today? I still don't have an appointment or any idea what to do... okay, I guess I'll try someone else. Bye." }
+  ]
+}

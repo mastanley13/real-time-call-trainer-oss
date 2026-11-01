@@ -1,0 +1,27 @@
+{
+  "id": "tally-weak-m2",
+  "kind": "weak_no_contact",
+  "scenarioId": "home-services-inbound-lead",
+  "source": "tally hall-raw.md, follow-up hall_m2 (mobile width)",
+  "notes": "Trainee never asked for contact details. The source note abbreviates the caller's first line; it is restored from the note that every run opens with the same line. Recorded debrief gave Booking 5 for 'we can probably look at that'.",
+  "recorded": {
+    "score": 3,
+    "letter": "F",
+    "goal": "not_achieved",
+    "criteria": { "greeting": 10, "discovery": 3, "capture": 0, "fee": 0, "close": 5 },
+    "infoCapture": 0,
+    "grader": "claude-sonnet-5-5",
+    "graderVersion": "llm-v2"
+  },
+  "transcript": [
+    { "role": "assistant", "text": "Hi, yeah, my water heater is leaking all over the garage floor. Can someone come out today?" },
+    { "role": "user", "text": "Hi, how can I help?" },
+    { "role": "assistant", "text": "Um, my water heater is leaking. There's water pooling all over my garage floor and I noticed it this morning. Is this the plumbing company?" },
+    { "role": "user", "text": "ok" },
+    { "role": "assistant", "text": "Hello? Sorry, I'm not sure you heard me. Is someone able to come take a look at it today? It's really worrying me." },
+    { "role": "user", "text": "we can probably look at that" },
+    { "role": "assistant", "text": "Okay, thank you. Sorry, I didn't catch the company name, is this the right place? What do you need from me?" },
+    { "role": "user", "text": "alright, thanks, bye" },
+    { "role": "assistant", "text": "Wait, don't you need my address or number? Okay, I guess I'll try someone else. Bye." }
+  ]
+}

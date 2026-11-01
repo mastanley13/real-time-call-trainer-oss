@@ -1,0 +1,27 @@
+{
+  "id": "tally-weak-m3",
+  "kind": "weak_no_contact",
+  "scenarioId": "home-services-inbound-lead",
+  "source": "tally hall-raw.md, follow-up hall_m3 (mobile width)",
+  "notes": "Trainee never asked for contact details. The source note abbreviates the caller's first line; it is restored from the note that every run opens with the same line. Recorded debrief gave Info capture 2 with nothing collected and treated a question as an offer.",
+  "recorded": {
+    "score": 4,
+    "letter": "F",
+    "goal": "not_achieved",
+    "criteria": { "greeting": 12, "discovery": 3, "capture": 2, "fee": 0, "close": 4 },
+    "infoCapture": 2,
+    "grader": "claude-sonnet-5-5",
+    "graderVersion": "llm-v2"
+  },
+  "transcript": [
+    { "role": "assistant", "text": "Hi, yeah, my water heater is leaking all over the garage floor. Can someone come out today?" },
+    { "role": "user", "text": "Hi, how can I help?" },
+    { "role": "assistant", "text": "Um, I just said, my water heater is leaking all over the garage floor. I found water pooling around it this morning and I'm kind of worried. Can someone come out today?" },
+    { "role": "user", "text": "ok" },
+    { "role": "assistant", "text": "Okay... so can someone come out today? I'm not sure what I should be doing in the meantime, and the water's still pooling." },
+    { "role": "user", "text": "we can probably look at that" },
+    { "role": "assistant", "text": "Probably? I'm sorry, I'm just getting worried here, I don't really know what happens next. Do you need my information or something?" },
+    { "role": "user", "text": "alright, thanks, bye" },
+    { "role": "assistant", "text": "Wait, that's it? I don't even have an appointment or know what to do about the leak. I guess I'll call somebody else, bye." }
+  ]
+}
