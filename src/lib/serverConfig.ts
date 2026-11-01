@@ -17,6 +17,12 @@ export function meteringEnabled(env: Record<string, string | undefined> = proces
 /** True when plans can be paid for: Stripe is configured (a refused live key still counts, so it fails closed). */
 export const billingActive = (env: Record<string, string | undefined> = process.env): boolean => stripeStatus(env) !== "disabled";
 
+/**
+ * True when the pricing buttons may offer a paid start: the same check /api/config reports as `billing`. Only a Stripe
+ * test key counts, so a live key (or a missing one, or demo mode) reads as off and the buttons show the billing-off state.
+ */
+export const billingOn = (env: Record<string, string | undefined> = process.env): boolean => stripeStatus(env) === "ready";
+
 type Env = Record<string, string | undefined>;
 
 export const DEFAULT_STANDARD_REALTIME_MODEL = "gpt-realtime-mini";
@@ -58,7 +64,7 @@ export function getCapabilities() {
     llm: Boolean(llmKey()),
     database: Boolean(process.env.DATABASE_URL),
     /** Stripe test-mode billing: false when unset, in demo mode, or when the key is not an sk_test_ key. */
-    billing: stripeStatus() === "ready",
+    billing: billingOn(),
     /** Model used for the coach, grading, persona wizard and text caller. Shown in provenance chips. */
     model: llmModel(),
     /** "openai" when LLM_BASE_URL is unset or points at api.openai.com; the URL itself is never exposed. */

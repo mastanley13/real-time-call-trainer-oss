@@ -5,7 +5,7 @@ import { CLOSING, PARTNER_BENEFITS, PARTNER_RULES, type Landing } from "@/lib/la
 import { registerHref } from "@/lib/pricing";
 
 /** Shared layout for the /for/* vertical landing pages. Static; copy comes from src/lib/landing.ts. */
-export default function LandingPage({ l }: { l: Landing }) {
+export default function LandingPage({ l, billingEnabled }: { l: Landing; billingEnabled: boolean }) {
   const partner = l.slug === "coaches";
   const external = l.primaryHref.startsWith("mailto:");
   return (
@@ -96,7 +96,7 @@ export default function LandingPage({ l }: { l: Landing }) {
         </section>
       )}
 
-      <PricingSummary src={l.src} seg={l.seg} />
+      <PricingSummary src={l.src} seg={l.seg} billingEnabled={billingEnabled} />
 
       <section className="page pb-12" aria-labelledby="faq-h">
         <h2 id="faq-h" className="text-2xl font-bold">Questions</h2>

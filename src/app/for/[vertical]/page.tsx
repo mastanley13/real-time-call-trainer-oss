@@ -3,8 +3,11 @@ import LandingPage from "@/components/landing/LandingPage";
 import { LANDINGS, type VerticalSlug } from "@/lib/landing";
 import { VERTICAL_SLUGS } from "@/lib/publicPaths";
 import { pageMetadata } from "@/lib/seo";
+import { billingOn } from "@/lib/serverConfig";
 
 export const dynamicParams = false;
+// The plan buttons depend on whether billing is on, which is read from the server environment on each request.
+export const dynamic = "force-dynamic";
 
 export function generateStaticParams() {
   return VERTICAL_SLUGS.map((vertical) => ({ vertical }));
@@ -23,5 +26,5 @@ export default async function VerticalPage({ params }: Props) {
   const { vertical } = await params;
   const l = LANDINGS[vertical as VerticalSlug];
   if (!l) notFound();
-  return <LandingPage l={l} />;
+  return <LandingPage l={l} billingEnabled={billingOn()} />;
 }

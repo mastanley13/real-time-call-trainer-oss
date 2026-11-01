@@ -4,24 +4,21 @@ import Link from "next/link";
 import { useState } from "react";
 import { Check } from "lucide-react";
 import {
-  FREE_SUMMARY, PREMIUM_VOICE_CAP_PCT, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT,
+  FREE_SUMMARY, OPEN_SOON_LINE, PREMIUM_COMING_SOON, PREMIUM_VOICE_CAP_PCT, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT,
   registerHref, type Billing,
 } from "@/lib/pricing";
 
 const TIERS = [
   {
     id: "free", name: "Free", blurb: "Try it solo, no card.", cta: "Start free, no card",
-    href: registerHref({ src: "pricing" }),
     features: [FREE_SUMMARY, "Unlimited text sim", "Live coach channel", "Graded debriefs with transcript quotes", "Core persona library"],
   },
   {
     id: "pro", name: "Pro", blurb: "For individual reps who practice weekly.", cta: "Start Pro",
-    href: registerHref({ plan: "pro", src: "pricing" }),
     features: [`${PRO_VOICE_MIN} voice minutes per month`, "Everything in Free", "Full persona library across every sales role", "Reviewed persona packs (coming soon)", "Persona wizard for your own buyers", "Call history and score trends", "MFA"],
   },
   {
     id: "team", name: "Team", blurb: `Built for a manager plus reps: ${TEAM_MIN_SEATS}-seat minimum.`, cta: "Start with Team",
-    href: registerHref({ plan: "team", src: "pricing" }),
     features: [`${TEAM_VOICE_MIN_PER_SEAT} voice minutes per seat, pooled across the team`, "Everything in Pro", "Managed Team view: every rep's calls, scores and trends", "Assignments: give reps a persona and a due date", "Enforced MFA for the whole team", "Priority email support"],
   },
 ] as const;
@@ -33,8 +30,16 @@ function price(id: string, b: Billing) {
   return { main: `$${p[b]}`, unit: `${seat} /${b === "month" ? "month" : "year"}` };
 }
 
-/** Billing toggle, tier cards and the Premium AI voice add-on. */
-export default function PricingCards() {
+/** The sign-up link and label for a tier. Billing off sells nothing, so Pro and Team read "Start free". */
+export function tierAction(id: string, cta: string, billingEnabled: boolean, interval: Billing) {
+  if (id === "free") return { cta, href: registerHref({ src: "pricing" }), soon: false };
+  const plan = id === "pro" ? "pro" : "team";
+  if (billingEnabled) return { cta, href: registerHref({ plan, interval, src: "pricing" }), soon: false };
+  return { cta: "Start free", href: registerHref({ plan, src: "pricing" }), soon: true };
+}
+
+/** Billing toggle, tier cards and the Premium AI voice add-on. `billingEnabled` comes from the server. */
+export default function PricingCards({ billingEnabled }: { billingEnabled: boolean }) {
   const [billing, setBilling] = useState<Billing>("month");
   return (
     <div>
@@ -50,6 +55,7 @@ export default function PricingCards() {
       <div className="mt-6 grid gap-4 md:grid-cols-3 md:gap-y-0">
         {TIERS.map((t) => {
           const p = price(t.id, billing);
+          const a = tierAction(t.id, t.cta, billingEnabled, billing);
           return (
             <section key={t.id} className="card flex flex-col md:row-span-6 md:grid md:grid-rows-[subgrid]" aria-labelledby={`tier-${t.id}`}>
               <h3 id={`tier-${t.id}`} className="text-lg font-bold">{t.name}</h3>
@@ -68,14 +74,20 @@ export default function PricingCards() {
                   <li key={f} className="flex gap-2"><Check size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-ok" aria-hidden />{f}</li>
                 ))}
               </ul>
-              <Link href={t.href} className={`mt-6 ${t.id === "free" ? "btn-ghost" : "btn-primary"}`}>{t.cta}</Link>
+              <div className="mt-6 flex flex-col gap-2">
+                <Link href={a.href} className={t.id === "free" ? "btn-ghost" : "btn-primary"}>{a.cta}</Link>
+                {a.soon && <p className="text-center text-xs text-ink-muted">{OPEN_SOON_LINE}</p>}
+              </div>
             </section>
           );
         })}
       </div>
 
       <div className="panel mt-4 p-5">
-        <h3 className="text-base font-bold">Add-on: Premium AI voice</h3>
+        <div className="flex flex-wrap items-center gap-3">
+          <h3 className="text-base font-bold">Add-on: Premium AI voice</h3>
+          <span className="chip">{PREMIUM_COMING_SOON}</span>
+        </div>
         <p className="mt-2 flex items-baseline gap-1">
           <span className="font-heading text-2xl font-bold">+${PRICE.premium[billing]}</span>
           <span className="text-sm text-ink-muted">/seat /{billing === "month" ? "month" : "year"}</span>
