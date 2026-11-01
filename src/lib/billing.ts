@@ -316,8 +316,9 @@ type LiveSubscription = z.infer<typeof SubscriptionObject>;
 /** Stripe statuses that keep a paid plan. Anything else (canceled, unpaid, incomplete_expired, paused) is Free. */
 const ENTITLED = new Set(["active", "trialing", "past_due"]);
 
-/** True while Stripe is still billing a subscription in this status (active, trialing, past_due). */
-export const isBillingStatus = (status: string | null | undefined): boolean => !!status && ENTITLED.has(status);
+/** A linked subscription in one of these statuses blocks a new checkout (send the customer to the portal). */
+const CHECKOUT_BLOCKING = new Set(["active", "trialing", "past_due", "unpaid", "paused"]);
+export const blocksCheckout = (status: string | null | undefined): boolean => !!status && CHECKOUT_BLOCKING.has(status);
 
 interface Entitlement { plan: PlanTier; seats: number; premium: boolean; interval?: Interval }
 
@@ -343,9 +344,11 @@ const refuse = (reason: string, it?: SubscriptionItemInfo): null => {
  * 2. Any other price (archived or replaced) needs product metadata with ct_version=1 and a valid ct_plan.
  * Fails closed (null, so the account stays Free) on an unknown base price or product, a mismatch between an
  * allowlisted price and its product, a metered or non-recurring price, an unexpanded product, two different
- * base plans, or Team below the product's seat minimum. An add-on item (ct_plan=addon) that is not a valid
- * Premium add-on, or that sits on the Premium slot without being one, is skipped with a warning and the base
- * plan still grants. Premium counts only with quantity above 0 next to a base plan.
+ * base plans, or Team below the product's seat minimum. Any other item that is neither a valid base plan nor
+ * a valid Premium add-on, and does not declare ct_plan pro or team, is skipped with a warning and the base
+ * plan still grants (no valid base left still means null). A non-allowlisted item that declares ct_plan pro or
+ * team but is otherwise invalid refuses the whole subscription. Premium counts only with quantity above 0
+ * next to a base plan.
  */
 export function entitlementFromItems(items: SubscriptionItemInfo[], allowlist: PriceIds = priceAllowlist()): Entitlement | null {
   const plans = new Set<PaidPlan>();
@@ -361,8 +364,12 @@ export function entitlementFromItems(items: SubscriptionItemInfo[], allowlist: P
     const kind = productKind(meta);
     // The allowlisted slot is checked first, so no add-on skip can hide a mismatch on a base price.
     if (hit && hit.slot !== "premium" && kind !== hit.slot) return refuse("allowlisted price and product plan disagree", it);
-    if (kind !== "premium" && meta.ct_plan === "addon" && (!hit || hit.slot === "premium")) {
-      console.warn("[billing] add-on item is not a valid Premium add-on; skipped", it.priceId ?? "");
+    if (hit && hit.slot === "premium" && (kind === "pro" || kind === "team")) return refuse("allowlisted Premium price and product plan disagree", it);
+    // Anything that is not a valid base plan and does not claim to be one (ct_plan pro or team) is an add-on
+    // candidate: if it is not a valid Premium add-on it is skipped, and a valid base still grants.
+    const claimsBase = meta.ct_plan === "pro" || meta.ct_plan === "team";
+    if (kind !== "premium" && kind !== "pro" && kind !== "team" && !claimsBase) {
+      console.warn("[billing] item is not a valid base plan or Premium add-on; skipped", it.priceId ?? "");
       continue;
     }
     if (hit && hit.slot === "premium" && kind !== "premium") return refuse("allowlisted price and product plan disagree", it);

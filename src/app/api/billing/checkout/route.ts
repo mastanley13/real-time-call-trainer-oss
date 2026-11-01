@@ -4,7 +4,7 @@ import { requireAuth } from "@/lib/apiAuth";
 import { ipLimitResponse, userLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { billingGate, StripeApiError } from "@/lib/stripe";
-import { appBaseUrl, buildCheckoutParams, checkoutFingerprint, createOrReuseCheckout, CheckoutConfigError, isBillingStatus, resolvePriceIds } from "@/lib/billing";
+import { appBaseUrl, buildCheckoutParams, checkoutFingerprint, createOrReuseCheckout, CheckoutConfigError, blocksCheckout, resolvePriceIds } from "@/lib/billing";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "@/lib/usagePlan";
 import { CHECKOUT_UNAVAILABLE_MESSAGE } from "@/lib/billingUi";
 
@@ -52,9 +52,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "forbidden", message: "Only an organization owner or manager can buy a Team plan." }, { status: 403 });
   }
   const subject = body.plan === "team" && org ? org : user;
-  // A linked subscription that Stripe is still billing (active, trialing, past_due) blocks a second one, even
-  // when its items left the account on Free. Canceled or ended subscriptions may check out again.
-  if (subject.stripeSubscriptionId && isBillingStatus(subject.subscriptionStatus)) {
+  // A linked subscription in an active, trialing, past_due, unpaid or paused state blocks a second one, even
+  // when its items left the account on Free. Only canceled or incomplete_expired subscriptions may check out again.
+  if (subject.stripeSubscriptionId && blocksCheckout(subject.subscriptionStatus)) {
     return NextResponse.json({ error: "already_subscribed", message: "This account already has a paid plan. Use Manage billing to change it." }, { status: 409 });
   }
 
