@@ -306,7 +306,7 @@ describe("checkout route", () => {
       resetPriceCache();
       retrieveFrom(c.rows);
       const res = await post(c.body);
-      expect(res.status).toBe(503);
+      expect(res.status).toBe(422);
       expect((await res.json()).error).toBe("price_not_configured");
     }
     expect(create).not.toHaveBeenCalled();
@@ -319,7 +319,7 @@ describe("checkout route", () => {
     const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_x", url: "https://checkout.example/x" });
     vi.stubEnv(PRICE_ENV.pro.month, "");
     const res = await post({ plan: "pro", interval: "month" });
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(422);
     expect((await res.json()).error).toBe("price_not_configured");
     expect(create).not.toHaveBeenCalled();
   });
@@ -367,10 +367,19 @@ describe("checkout route", () => {
 
   it("409 while the linked subscription is active, trialing, past_due, unpaid or paused", async () => {
     const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_x", url: "https://checkout.example/x" });
-    fake.rows("user")[0].stripeSubscriptionId = "sub_test_1";
-    for (const status of ["active", "trialing", "past_due", "unpaid", "paused"]) {
-      fake.rows("user")[0].subscriptionStatus = status;
-      expect((await post({ plan: "pro", interval: "month" })).status, status).toBe(409);
+    const u = fake.rows("user")[0];
+    u.stripeSubscriptionId = "sub_test_1";
+    u.stripeCustomerId = "cus_test_1";
+    // The 409 body carries a plain status: past_due, or active for anything else (trialing too), and no Stripe ids.
+    const expected: Record<string, string> = { active: "active", trialing: "active", past_due: "past_due", unpaid: "active", paused: "active" };
+    for (const [sub, status] of Object.entries(expected)) {
+      u.subscriptionStatus = sub;
+      const res = await post({ plan: "pro", interval: "month" });
+      expect(res.status, sub).toBe(409);
+      const body = await res.json();
+      expect(body.error).toBe("already_subscribed");
+      expect(body.status, sub).toBe(status);
+      expect(JSON.stringify(body)).not.toMatch(/cus_|sub_|price_|cs_/);
     }
     expect(create).not.toHaveBeenCalled();
   });

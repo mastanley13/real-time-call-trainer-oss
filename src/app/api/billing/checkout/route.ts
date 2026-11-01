@@ -55,7 +55,9 @@ export async function POST(req: NextRequest) {
   // A linked subscription in an active, trialing, past_due, unpaid or paused state blocks a second one, even
   // when its items left the account on Free. Only canceled or incomplete_expired subscriptions may check out again.
   if (subject.stripeSubscriptionId && blocksCheckout(subject.subscriptionStatus)) {
-    return NextResponse.json({ error: "already_subscribed", message: "This account already has a paid plan. Use Manage billing to change it." }, { status: 409 });
+    // Plain status only: past_due is told apart so the page can ask for a new card; everything else reads as active.
+    const status = subject.subscriptionStatus === "past_due" ? "past_due" : "active";
+    return NextResponse.json({ error: "already_subscribed", status, message: "This account already has a paid plan. Use Manage billing to change it." }, { status: 409 });
   }
 
   try {
@@ -87,7 +89,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ url: outcome.url });
   } catch (e) {
     if (e instanceof CheckoutConfigError) {
-      return NextResponse.json({ error: e.code, message: e.message }, { status: e.code === "invalid_seats" ? 400 : 503 });
+      return NextResponse.json({ error: e.code, message: e.message }, { status: e.code === "invalid_seats" ? 400 : 422 });
     }
     console.error("[billing/checkout]", e instanceof StripeApiError ? `stripe status ${e.status}` : "unexpected error");
     return NextResponse.json({ error: "stripe_error", message: CHECKOUT_UNAVAILABLE_MESSAGE }, { status: 502 });

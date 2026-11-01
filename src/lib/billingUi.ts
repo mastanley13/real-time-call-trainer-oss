@@ -203,3 +203,54 @@ export function checkoutFailure(input: { status?: number; networkError?: boolean
   if (typeof status === "number" && status >= 400 && status < 500 && input.message) return { message: input.message, help: false };
   return { message: CHECKOUT_UNAVAILABLE_MESSAGE, help: true };
 }
+
+// ---- Checkout notices ----------------------------------------------------------------------------------
+
+/** What the billing page shows for a checkout that did not start. The page picks it by error code, never by status range. */
+export interface CheckoutNotice {
+  kind: "already_active" | "already_past_due" | "price_unavailable";
+  headline: string;
+  body: string;
+  button: string;
+  /** Adds the GitHub issues link under the button. */
+  help: boolean;
+  /** past_due and price_unavailable interrupt (alert); the active notice is polite (status). */
+  role: "status" | "alert";
+}
+
+export const ACTIVE_NOTICE: CheckoutNotice = {
+  kind: "already_active",
+  headline: "You already have a plan",
+  body: "Your subscription is active, so we did not start a new checkout and nothing was charged. Change your plan, seats or add-ons in Manage billing.",
+  button: "Manage billing",
+  help: false,
+  role: "status",
+};
+export const PAST_DUE_NOTICE: CheckoutNotice = {
+  kind: "already_past_due",
+  headline: "Last payment failed",
+  body: "Your plan is still active. Update your payment method in Manage billing to keep it. Nothing new was charged.",
+  button: "Update payment method",
+  help: false,
+  role: "alert",
+};
+export const PRICE_UNAVAILABLE_NOTICE: CheckoutNotice = {
+  kind: "price_unavailable",
+  headline: "This plan is not available to buy",
+  body: "Nothing was charged and your plan has not changed. Try a different plan or billing period.",
+  button: "Choose another plan",
+  help: true,
+  role: "alert",
+};
+/** Shown in the 409 banner when opening the portal failed. The button then reads "Try again". */
+export const PORTAL_FAILED_MESSAGE = "Could not open billing. Try again in a moment.";
+
+/**
+ * The notice for a checkout answer, chosen by its error code. An already_subscribed answer is past_due only when the
+ * server says so; a missing or unknown status uses the active copy. Null for any other answer.
+ */
+export function checkoutNotice(input: { code?: unknown; status?: unknown }): CheckoutNotice | null {
+  if (input.code === "already_subscribed") return input.status === "past_due" ? PAST_DUE_NOTICE : ACTIVE_NOTICE;
+  if (input.code === "price_not_configured") return PRICE_UNAVAILABLE_NOTICE;
+  return null;
+}

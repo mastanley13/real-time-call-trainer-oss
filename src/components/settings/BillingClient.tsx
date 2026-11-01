@@ -5,9 +5,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CreditCard, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageSkeleton } from "@/components/ui/Skeleton";
-import { checkoutFailure, formatMinutes, freeOverCapNotice, planPriceLine, premiumLabel, proButtonLabel, seatsOnBlur, teamButtonLabel, usageHeaderCopy } from "@/lib/billingUi";
+import { PORTAL_FAILED_MESSAGE, type CheckoutNotice, checkoutFailure, checkoutNotice, formatMinutes, freeOverCapNotice, planPriceLine, premiumLabel, proButtonLabel, seatsOnBlur, teamButtonLabel, usageHeaderCopy } from "@/lib/billingUi";
 import { TEAM_MIN_SEATS } from "@/lib/usagePlan";
 import BillingAlert from "./BillingAlert";
+import BillingNotice from "./BillingNotice";
 import SeatsField from "./SeatsField";
 import SettingsNav from "./SettingsNav";
 
@@ -44,6 +45,28 @@ export default function BillingClient() {
   const [premium, setPremium] = useState(false);
   // State updates are not instant, so two fast clicks could both pass a check on `busy`. The ref closes that gap.
   const busyRef = useRef<string | null>(null);
+  /** The 409 and unavailable-plan banner. It replaces the plain error banner for those answers. */
+  const [notice, setNotice] = useState<CheckoutNotice | null>(null);
+  const [portalFailure, setPortalFailure] = useState<string | null>(null);
+  const headlineRef = useRef<HTMLParagraphElement>(null);
+
+  // On show: scroll the banner into view (a jump when motion is reduced) and move focus to its headline.
+  useEffect(() => {
+    const el = headlineRef.current;
+    if (!notice || !el) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+    el.focus({ preventScroll: true });
+  }, [notice]);
+
+  function noticeAction() {
+    if (notice?.kind === "price_unavailable") {
+      setNotice(null);
+      document.getElementById("plans-h")?.focus();
+      return;
+    }
+    void go("portal");
+  }
 
   useEffect(() => {
     if (capabilities && !isLoading && !isAuthenticated) router.replace("/login");
@@ -72,11 +95,18 @@ export default function BillingClient() {
     busyRef.current = kind;
     setBusy(kind);
     setError(null);
+    // A retry from the 409 banner keeps the banner; starting a checkout clears it.
+    const fromNotice = kind === "portal" && notice?.kind !== "price_unavailable" && !!notice;
+    if (!fromNotice) { setNotice(null); setPortalFailure(null); }
     // Team seats are clamped here too, so a box that was never blurred still sends 3 or more.
     const left = seatsOnBlur(seatsText);
     const seats = Number(left.value);
     if (kind === "team") { setSeatsText(left.value); setSeatsNote(left.note); }
-    const fail = (e: { message: string; help: boolean }) => { setError(e); busyRef.current = null; setBusy(null); };
+    const fail = (e: { message: string; help: boolean }) => {
+      if (fromNotice) setPortalFailure(PORTAL_FAILED_MESSAGE); else setError(e);
+      busyRef.current = null;
+      setBusy(null);
+    };
 
     let res: Response;
     try {
@@ -92,6 +122,14 @@ export default function BillingClient() {
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.url) {
+      // The page maps by error code, not by status range, and never shows the server's text for these.
+      const shown = kind === "portal" ? null : checkoutNotice({ code: data.error, status: data.status });
+      if (shown) {
+        setNotice(shown);
+        busyRef.current = null;
+        setBusy(null);
+        return;
+      }
       return fail(kind === "portal"
         ? { message: data.message || "Could not open billing. Try again in a moment.", help: false }
         : checkoutFailure({ status: res.ok ? undefined : res.status, message: data.message }));
@@ -118,6 +156,7 @@ export default function BillingClient() {
 
       {checkout === "success" && <p className="banner-ok" role="status">Thanks. Your plan updates as soon as the payment is confirmed. Reload in a few seconds if it still shows the old plan.</p>}
       {error && <BillingAlert message={error.message} help={error.help} />}
+      {notice && <BillingNotice ref={headlineRef} notice={notice} failure={portalFailure} busy={busy === "portal"} disabled={!!busy} onAction={noticeAction} />}
 
       {u?.metered ? (
         <section className="panel p-4 sm:p-5" aria-labelledby="usage-h">
@@ -149,7 +188,7 @@ export default function BillingClient() {
 
       {u?.billing.enabled && (
         <section className="panel p-4 sm:p-5" aria-labelledby="plans-h">
-          <h2 id="plans-h" className="text-lg font-bold">Plans</h2>
+          <h2 id="plans-h" tabIndex={-1} className="text-lg font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Plans</h2>
           <div className="mt-3 flex flex-wrap items-center gap-4">
             <fieldset className="flex gap-2" aria-label="Billing period">
               {(["month", "year"] as const).map((v) => (

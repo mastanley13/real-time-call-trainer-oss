@@ -20,9 +20,11 @@ vi.mock("@/lib/apiAuth", async () => ({
 import Briefing from "@/components/call/Briefing";
 import MinutesLeft from "@/components/call/MinutesLeft";
 import BillingAlert from "@/components/settings/BillingAlert";
+import BillingNotice from "@/components/settings/BillingNotice";
 import SeatsField from "@/components/settings/SeatsField";
 import {
   ASK_ADMIN_MESSAGE, CAP_REACHED_MESSAGE, CHECKOUT_NETWORK_MESSAGE, CHECKOUT_UNAVAILABLE_MESSAGE, OUT_OF_MINUTES_MESSAGE, ROUND_UP_NOTE,
+  ACTIVE_NOTICE, PAST_DUE_NOTICE, PRICE_UNAVAILABLE_NOTICE, checkoutNotice,
   SEATS_CLAMPED_NOTE, SEATS_HELP, SUPPORT_URL, TEXT_UNLIMITED_MESSAGE, checkoutFailure, seatsOnBlur, usageHeaderCopy, usageSnapshotFromUsage,
   voiceMinutesLeftLabel, type UsageSnapshot,
 } from "@/lib/billingUi";
@@ -285,6 +287,53 @@ describe("2. checkout failure message", () => {
     expect(banner).toContain(SUPPORT_URL);
     // And no checkout was recorded for a purchase that never started.
     expect(mocks.fake.rows("user").find((x) => x.id === "free-1")!.stripeCheckoutSessionId ?? null).toBeNull();
+  });
+
+  it("the page maps checkout answers by error code, with the exact copy, whatever the status or server text", () => {
+    expect(checkoutNotice({ code: "already_subscribed", status: "active" })).toBe(ACTIVE_NOTICE);
+    expect(checkoutNotice({ code: "already_subscribed", status: "past_due" })).toBe(PAST_DUE_NOTICE);
+    // Missing, unknown and trialing statuses use the active copy.
+    for (const status of [undefined, "trialing", "weird", 5, null]) expect(checkoutNotice({ code: "already_subscribed", status })).toBe(ACTIVE_NOTICE);
+    expect(checkoutNotice({ code: "price_not_configured" })).toBe(PRICE_UNAVAILABLE_NOTICE);
+    expect(checkoutNotice({ code: "stripe_error" })).toBeNull();
+    expect(checkoutNotice({})).toBeNull();
+
+    expect([ACTIVE_NOTICE.headline, ACTIVE_NOTICE.body, ACTIVE_NOTICE.button]).toEqual([
+      "You already have a plan",
+      "Your subscription is active, so we did not start a new checkout and nothing was charged. Change your plan, seats or add-ons in Manage billing.",
+      "Manage billing",
+    ]);
+    expect([PAST_DUE_NOTICE.headline, PAST_DUE_NOTICE.body, PAST_DUE_NOTICE.button]).toEqual([
+      "Last payment failed",
+      "Your plan is still active. Update your payment method in Manage billing to keep it. Nothing new was charged.",
+      "Update payment method",
+    ]);
+    expect([PRICE_UNAVAILABLE_NOTICE.headline, PRICE_UNAVAILABLE_NOTICE.body, PRICE_UNAVAILABLE_NOTICE.button]).toEqual([
+      "This plan is not available to buy",
+      "Nothing was charged and your plan has not changed. Try a different plan or billing period.",
+      "Choose another plan",
+    ]);
+    expect([ACTIVE_NOTICE.role, PAST_DUE_NOTICE.role, PRICE_UNAVAILABLE_NOTICE.role]).toEqual(["status", "alert", "alert"]);
+    expect([ACTIVE_NOTICE.help, PAST_DUE_NOTICE.help, PRICE_UNAVAILABLE_NOTICE.help]).toEqual([false, false, true]);
+    // A 5xx stripe_error keeps today's copy.
+    expect(checkoutFailure({ status: 502, message: "x" })).toEqual({ message: CHECKOUT_UNAVAILABLE_MESSAGE, help: true });
+  });
+
+  it("the banner renders one role, no internal codes, and the GitHub link only for an unavailable plan", () => {
+    const render = (notice: typeof ACTIVE_NOTICE, failure?: string) => renderToStaticMarkup(createElement(BillingNotice, { notice, failure, busy: false, disabled: false, onAction: () => {} }));
+    const active = render(ACTIVE_NOTICE);
+    expect(active).toContain('role="status"');
+    expect(active).not.toContain('role="alert"');
+    expect(active).not.toContain("<a ");
+    const pastDue = render(PAST_DUE_NOTICE);
+    expect(pastDue).toContain('role="alert"');
+    expect(pastDue).not.toContain('role="status"');
+    const price = render(PRICE_UNAVAILABLE_NOTICE);
+    expect(price).toContain(`href="${SUPPORT_URL}"`);
+    for (const html of [active, pastDue, price]) expect(html).not.toMatch(/already_subscribed|price_not_configured|stripe_error/);
+    const failed = render(ACTIVE_NOTICE, "Could not open billing. Try again in a moment.");
+    expect(failed).toContain("Could not open billing. Try again in a moment.");
+    expect(failed).toContain("Try again");
   });
 
   it("the page uses it: a network failure and a bad answer take different paths", () => {
