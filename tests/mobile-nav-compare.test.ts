@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import MobileMenu from "@/components/MobileMenu";
 import ComparePlans, { CompareFades, CompareHint } from "@/components/landing/ComparePlans";
-import { FOCUSABLE_SELECTOR, MOBILE_MENU_ID, MOBILE_MENU_QUERY, closeMenu, dismissOutside, focusFirstLink, handleMenuKey, leaveMobileRange, menuButtonLabel } from "@/lib/mobileMenu";
+import { FOCUSABLE_SELECTOR, GUEST_LINKS_IN_BAR_QUERY, MOBILE_MENU_ID, MOBILE_MENU_QUERY, closeMenu, dismissOutside, focusFirstLink, handleMenuKey, leaveMobileRange, menuButtonLabel, refocusGuestLink } from "@/lib/mobileMenu";
 import { NO_SCROLL_CUE, scrollCue } from "@/lib/scrollCue";
 
 const items = [{ href: "/pricing", label: "Pricing", active: true }];
@@ -23,8 +23,9 @@ describe("mobile menu", () => {
     expect(html).toContain("focus-visible:outline-primary");
   });
 
-  it("only shows below 428px", () => {
-    expect(menu(true)).toContain("hidden max-[427px]:block");
+  it("only shows below md, the same breakpoint as the inline Pricing link", () => {
+    expect(menu(true)).toContain('<div class="md:hidden">');
+    expect(readFileSync("src/components/SiteHeader.tsx", "utf8")).toContain('className="hidden items-center gap-1 md:flex"');
   });
 
   it("lists Pricing, Sign in and Get started for guests", () => {
@@ -103,15 +104,52 @@ describe("mobile menu", () => {
     expect(() => leaveMobileRange(setOpen, true, null)).not.toThrow();
   });
 
+  it("moves focus from a hidden panel guest link to its bar twin when widening to sm", () => {
+    const login = { focus: vi.fn() };
+    const register = { focus: vi.fn() };
+    const button = { focus: vi.fn() };
+    const find = (href: string) => (href === "/login" ? login : href === "/register" ? register : null);
+
+    expect(refocusGuestLink("/register", find, button)).toBe(true);
+    expect(register.focus).toHaveBeenCalledTimes(1);
+    expect(login.focus).not.toHaveBeenCalled();
+
+    expect(refocusGuestLink("/login", find, button)).toBe(true);
+    expect(login.focus).toHaveBeenCalledTimes(1);
+    expect(button.focus).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the menu button, and ignores focus elsewhere, when widening to sm", () => {
+    const button = { focus: vi.fn() };
+    expect(refocusGuestLink("/login", () => null, button)).toBe(true);
+    expect(button.focus).toHaveBeenCalledTimes(1);
+
+    const find = vi.fn(() => ({ focus: vi.fn() }));
+    expect(refocusGuestLink(null, find, button)).toBe(false);
+    expect(find).not.toHaveBeenCalled();
+    expect(button.focus).toHaveBeenCalledTimes(1);
+    expect(() => refocusGuestLink("/login", () => null, null)).not.toThrow();
+  });
+
+  it("tags the panel guest links and watches the sm breakpoint", () => {
+    expect(GUEST_LINKS_IN_BAR_QUERY).toBe("(min-width: 640px)");
+    const html = menu(true);
+    expect(html).toContain('data-menu-guest="/login"');
+    expect(html).toContain('data-menu-guest="/register"');
+  });
+
   it("watches the same range the button is shown in", () => {
-    expect(MOBILE_MENU_QUERY).toBe("(max-width: 427px)");
-    expect(readFileSync("src/components/MobileMenu.tsx", "utf8")).toContain("max-[427px]:block");
+    expect(MOBILE_MENU_QUERY).toBe("(max-width: 767px)");
+    expect(readFileSync("src/components/MobileMenu.tsx", "utf8")).toContain('"md:hidden"');
   });
 
   it("is wired into the header with the guest buttons hidden at narrow widths", () => {
     const src = readFileSync("src/components/SiteHeader.tsx", "utf8");
     expect(src).toContain("<MobileMenu");
-    expect(src).toContain("max-[427px]:hidden");
+    // Guest buttons leave the bar below sm so they fit next to the menu button at 375px and 384px.
+    expect(src).toContain("btn-quiet !min-h-[36px] max-sm:hidden");
+    expect(src).toContain("btn-primary !min-h-[36px] max-sm:hidden");
+    expect(menu(true)).toContain("btn-primary !min-h-[44px] sm:hidden");
   });
 });
 

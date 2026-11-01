@@ -103,7 +103,7 @@ export default function SiteHeader() {
           <ThemeToggle />
           {isAuthenticated ? (
             <>
-              <span className="hidden max-w-[160px] truncate px-1 text-sm text-ink-muted sm:inline">{user?.firstName || user?.email}</span>
+              <span className="hidden max-w-[160px] truncate px-1 text-sm text-ink-muted md:inline">{user?.firstName || user?.email}</span>
               {!demo && (
                 <button className="btn-quiet !min-h-[36px] !px-2.5" onClick={() => { logout(); router.push("/"); }} aria-label="Sign out" title="Sign out">
                   <LogOut size={17} strokeWidth={1.75} aria-hidden />
@@ -112,8 +112,8 @@ export default function SiteHeader() {
             </>
           ) : (
             <>
-              <Link href="/login" className="btn-quiet !min-h-[36px] max-[427px]:hidden">Sign in</Link>
-              <Link href="/register" className="btn-primary !min-h-[36px] max-[427px]:hidden">Get started</Link>
+              <Link href="/login" className="btn-quiet !min-h-[36px] max-sm:hidden">Sign in</Link>
+              <Link href="/register" className="btn-primary !min-h-[36px] max-sm:hidden">Get started</Link>
             </>
           )}
           <MobileMenu pathname={pathname} guest={!isAuthenticated}

@@ -21,8 +21,8 @@ export function closeMenu(setOpen: (open: boolean) => void, button: Focusable | 
   button?.focus();
 }
 
-/** Matches Tailwind's `max-[427px]`, the range where the menu button is visible. */
-export const MOBILE_MENU_QUERY = "(max-width: 427px)";
+/** Matches Tailwind's `max-md` (below 768px), the range where the menu button is visible. */
+export const MOBILE_MENU_QUERY = "(max-width: 767px)";
 
 export const FOCUSABLE_SELECTOR = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex="-1"])';
 
@@ -43,6 +43,19 @@ export function dismissOutside(target: Closest | null, setOpen: (open: boolean) 
 export function leaveMobileRange(setOpen: (open: boolean) => void, focusWasInside: boolean, fallback: Focusable | null): void {
   setOpen(false);
   if (focusWasInside) fallback?.focus();
+}
+
+/** Matches Tailwind's `sm` (640px and up), where Sign in and Get started show in the bar and their panel copies are hidden. */
+export const GUEST_LINKS_IN_BAR_QUERY = "(min-width: 640px)";
+
+/**
+ * The panel copies of Sign in and Get started disappear when the viewport reaches `sm`. If one had focus, move it to the
+ * matching link in the bar, or to the menu button when that link is missing. Returns true when focus was moved.
+ */
+export function refocusGuestLink(activeGuestHref: string | null, findBarLink: (href: string) => Focusable | null, button: Focusable | null): boolean {
+  if (!activeGuestHref) return false;
+  (findBarLink(activeGuestHref) ?? button)?.focus();
+  return true;
 }
 
 /** Moves focus to the first link in the panel after it opens. */
