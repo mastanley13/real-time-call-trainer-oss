@@ -4,8 +4,9 @@ import { Prisma } from "@prisma/client";
 import { hashPassword, signSessionToken } from "@/lib/auth";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
-import { accessCode, hasValidAccessCookie } from "@/lib/access";
+import { ACCESS_COOKIE, accessGateEnabled, gateCookieValid, verifyInviteAccessToken } from "@/lib/access";
 import { generateOrgCode, isValidOrgCode } from "@/lib/orgCodes";
+import { consumeInvite, hashInviteCode, invalidInvite, invitesConfigured, setInviteAccessCookie } from "@/lib/invites";
 
 const RegisterSchema = z
   .object({
@@ -20,6 +21,8 @@ const RegisterSchema = z
     /// Exactly one of these two must be provided.
     joinOrgCode: z.string().regex(/^[0-9]{3,8}$/).optional(),
     newOrgName: z.string().trim().min(2).max(120).optional(),
+    /// Optional invite code. Without one, an invite gate cookie (from /access) is used.
+    inviteCode: z.string().trim().min(1).max(200).optional(),
   })
   .refine(
     (v) => !!v.joinOrgCode !== !!v.newOrgName,
@@ -27,8 +30,21 @@ const RegisterSchema = z
   );
 
 export async function POST(request: NextRequest) {
-  const code = accessCode();
-  if (code && !(await hasValidAccessCookie(request, code))) {
+  // Read once; validated against the schema below, after the gate and the rate limit.
+  let raw: unknown;
+  let rawOk = true;
+  try {
+    raw = await request.json();
+  } catch {
+    rawOk = false;
+  }
+
+  // While the access gate is on, signup needs a gate pass: the shared-code cookie (while the shared code is
+  // allowed), a signed invite cookie from /access, or an explicit invite code (checked and used up below).
+  const gateCookie = request.cookies.get(ACCESS_COOKIE)?.value ?? "";
+  const explicitInvite = typeof (raw as { inviteCode?: unknown } | null)?.inviteCode === "string" && Boolean((raw as { inviteCode: string }).inviteCode.trim());
+  const gatePassed = !accessGateEnabled() || (await gateCookieValid(gateCookie));
+  if (!gatePassed && !explicitInvite) {
     return NextResponse.json({ error: "invite code required" }, { status: 403 });
   }
 
@@ -49,7 +65,8 @@ export async function POST(request: NextRequest) {
 
   let body;
   try {
-    body = RegisterSchema.parse(await request.json());
+    if (!rawOk) throw new Error("invalid JSON");
+    body = RegisterSchema.parse(raw);
   } catch (e) {
     const issues =
       e instanceof z.ZodError ? e.issues.map((i) => i.message).join(", ") : "";
@@ -61,7 +78,29 @@ export async function POST(request: NextRequest) {
 
   const emailLower = body.email.toLowerCase();
 
+  if (body.inviteCode && !invitesConfigured()) {
+    return NextResponse.json(
+      { error: "invites_not_configured", message: "Invite codes need a database. Leave the invite code empty." },
+      { status: 503 },
+    );
+  }
+
   try {
+    // Invite attribution: an explicit code wins, else the invite the gate cookie was issued for.
+    let inviteId: string | null = null;
+    let inviteVia: "code" | "access_cookie" | null = null;
+    let inviteExpiresAt: Date | null = null;
+    if (body.inviteCode) {
+      const invite = await prisma.inviteCode.findUnique({ where: { codeHash: hashInviteCode(body.inviteCode) }, select: { id: true, expiresAt: true } });
+      if (!invite) return invalidInvite();
+      inviteId = invite.id;
+      inviteVia = "code";
+      inviteExpiresAt = invite.expiresAt;
+    } else if (invitesConfigured()) {
+      inviteId = await verifyInviteAccessToken(gateCookie);
+      if (inviteId) inviteVia = "access_cookie";
+    }
+
     const existing = await prisma.user.findUnique({ where: { email: emailLower } });
     if (existing) {
       return NextResponse.json(
@@ -96,6 +135,11 @@ export async function POST(request: NextRequest) {
         throw new Error("INVALID_REQUEST");
       }
 
+      // Takes one redemption atomically; a revoked, expired or used-up invite rolls the signup back.
+      if (inviteId && !(await consumeInvite(tx, inviteId))) {
+        throw new Error("INVALID_INVITE");
+      }
+
       const created = await tx.user.create({
         data: {
           email: emailLower,
@@ -105,6 +149,7 @@ export async function POST(request: NextRequest) {
           phone: body.phone,
           organizationId: orgId,
           role,
+          inviteCodeId: inviteId,
           lastLoginAt: new Date(),
         },
         include: { organization: true },
@@ -121,9 +166,16 @@ export async function POST(request: NextRequest) {
             role,
             organizationCode: created.organization?.code ?? null,
             joinOrCreate: body.newOrgName ? "create" : "join",
+            inviteCodeId: inviteId,
           } satisfies Prisma.InputJsonValue,
         },
       });
+
+      if (inviteId) {
+        await tx.auditEvent.create({
+          data: { userId: created.id, action: "invite.redeemed", resource: inviteId, ip: clientIp(request), metadata: { via: inviteVia } },
+        });
+      }
 
       return { user: created, organization: created.organization };
     });
@@ -154,8 +206,16 @@ export async function POST(request: NextRequest) {
       path: "/",
       maxAge: 60 * 60 * 12,
     });
+    // Signed up with an explicit invite code but no gate pass yet: hand out the invite's gate cookie, so the new
+    // account can reach the rest of the site.
+    if (inviteId && inviteVia === "code" && !gatePassed) {
+      await setInviteAccessCookie(res, { id: inviteId, expiresAt: inviteExpiresAt });
+    }
     return res;
   } catch (error) {
+    if (error instanceof Error && error.message === "INVALID_INVITE") {
+      return invalidInvite();
+    }
     if (error instanceof Error && error.message === "INVALID_ORG_CODE") {
       return NextResponse.json(
         { error: "Unknown organization code." },
