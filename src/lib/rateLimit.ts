@@ -111,6 +111,10 @@ export const IP_LIMITS = {
   coach: () => ({ limit: envInt("RATE_LIMIT_COACH_MAX", 120), windowMs: envInt("RATE_LIMIT_COACH_WINDOW_SEC", 600) * 1000 }),
   /** Persona wizard: generation and URL fetching. */
   wizard: () => ({ limit: envInt("RATE_LIMIT_WIZARD_MAX", 20), windowMs: envInt("RATE_LIMIT_WIZARD_WINDOW_SEC", 3600) * 1000 }),
+  /** Voice metering: one heartbeat every 10 seconds per call, plus end events and usage reads. */
+  usage: () => ({ limit: envInt("RATE_LIMIT_USAGE_MAX", 1200), windowMs: envInt("RATE_LIMIT_USAGE_WINDOW_SEC", 600) * 1000 }),
+  /** Stripe Checkout and Billing Portal sessions. */
+  billing: () => ({ limit: envInt("RATE_LIMIT_BILLING_MAX", 20), windowMs: envInt("RATE_LIMIT_BILLING_WINDOW_SEC", 3600) * 1000 }),
 } as const;
 
 /**
@@ -120,6 +124,10 @@ export const IP_LIMITS = {
 export const USER_LIMITS = {
   /** Shared by /api/persona/generate and /api/persona/fetch-url. */
   wizard: { limit: 20, windowMs: 3_600_000 },
+  /** Heartbeats (6 a minute per call), end events and usage reads. */
+  usage: { limit: 60, windowMs: 60_000 },
+  /** Checkout and portal sessions. */
+  billing: { limit: 20, windowMs: 3_600_000 },
 } as const;
 
 function limitedResponse(r: RateLimitResult): Response | null {

@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { LogOut, Search, Settings } from "lucide-react";
 import LogoMark from "@/components/LogoMark";
+import MobileMenu from "@/components/MobileMenu";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useAuth, type User } from "@/contexts/AuthContext";
 import { canManageTeam } from "@/lib/team";
@@ -14,6 +15,7 @@ export const NAV = [
   { href: "/library", label: "Library", match: (p: string) => p.startsWith("/library") || p.startsWith("/trainer/scenarios") },
   { href: "/dashboard", label: "Progress", match: (p: string) => p.startsWith("/dashboard") },
 ];
+export const PRICING_NAV = { href: "/pricing", label: "Pricing", match: (p: string) => p.startsWith("/pricing") };
 export const TEAM_NAV = { href: "/team", label: "Team", match: (p: string) => p.startsWith("/team") };
 
 /** Main links for this user. Team shows for managers, owners and platform admins; the server enforces access either way. */
@@ -63,9 +65,8 @@ export default function SiteHeader() {
           <span className="hidden rounded border border-line px-1.5 py-px font-mono text-[10px] font-medium text-ink-muted sm:inline">OSS</span>
         </Link>
 
-        {isAuthenticated && (
-          <nav className="hidden items-center gap-1 md:flex" aria-label="Main">
-            {links.map((l) => {
+        <nav className="hidden items-center gap-1 md:flex" aria-label="Main">
+            {[...(isAuthenticated ? links : []), PRICING_NAV].map((l) => {
               const on = l.match(pathname);
               return (
                 <Link key={l.href} href={l.href} aria-current={on ? "page" : undefined}
@@ -74,8 +75,7 @@ export default function SiteHeader() {
                 </Link>
               );
             })}
-          </nav>
-        )}
+        </nav>
 
         <div className="ml-auto flex items-center gap-1.5">
           {capabilities?.model && capabilities.llm && (
@@ -103,7 +103,7 @@ export default function SiteHeader() {
           <ThemeToggle />
           {isAuthenticated ? (
             <>
-              <span className="hidden max-w-[160px] truncate px-1 text-sm text-ink-muted sm:inline">{user?.firstName || user?.email}</span>
+              <span className="hidden max-w-[160px] truncate px-1 text-sm text-ink-muted md:inline">{user?.firstName || user?.email}</span>
               {!demo && (
                 <button className="btn-quiet !min-h-[36px] !px-2.5" onClick={() => { logout(); router.push("/"); }} aria-label="Sign out" title="Sign out">
                   <LogOut size={17} strokeWidth={1.75} aria-hidden />
@@ -112,10 +112,12 @@ export default function SiteHeader() {
             </>
           ) : (
             <>
-              <Link href="/login" className="btn-quiet !min-h-[36px]">Sign in</Link>
-              <Link href="/register" className="btn-primary !min-h-[36px]">Get started</Link>
+              <Link href="/login" className="btn-quiet !min-h-[36px] max-sm:hidden">Sign in</Link>
+              <Link href="/register" className="btn-primary !min-h-[36px] max-sm:hidden">Get started</Link>
             </>
           )}
+          <MobileMenu pathname={pathname} guest={!isAuthenticated}
+            items={[...(isAuthenticated ? links : []), PRICING_NAV].map((l) => ({ href: l.href, label: l.label, active: l.match(pathname) }))} />
         </div>
       </div>
     </header>

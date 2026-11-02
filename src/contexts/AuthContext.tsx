@@ -40,6 +40,8 @@ export interface Capabilities {
   realtimeModel?: string;
   llm: boolean;
   database: boolean;
+  /** Stripe test-mode billing is on. Absent or false hides the Billing tab. */
+  billing?: boolean;
   /** Model id for coach, grading and wizard (e.g. "gpt-4.1-mini"). */
   model?: string;
   provider?: "openai" | "custom";

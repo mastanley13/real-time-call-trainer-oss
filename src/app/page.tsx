@@ -1,7 +1,16 @@
 import Link from "next/link";
 import { ArrowRight, FileJson, GitPullRequest, KeyRound, LibraryBig, MessageSquareQuote, Radar } from "lucide-react";
 import HeroDeck from "@/components/landing/HeroDeck";
+import PublicFooter from "@/components/landing/PublicFooter";
 import { LIBRARY } from "@/lib/personas";
+import { pageMetadata } from "@/lib/seo";
+
+export const metadata = pageMetadata({
+  title: "Real-Time Call Trainer · Practice live calls with an AI coach",
+  description:
+    "Open-source voice practice for sales and service calls. A library of personas for every sales job, a live coach that whispers the next move, and rubric grading backed by transcript quotes.",
+  path: "/",
+});
 
 const families = new Set(LIBRARY.map((s) => s.role)).size;
 
@@ -15,7 +24,7 @@ const MODELS = [
   { job: "Live coach", model: "gpt-4.1-mini (default)", note: "Per-turn cues and rubric estimate, as validated JSON" },
   { job: "Grading", model: "gpt-4.1-mini (default)", note: "Full-transcript rubric grade with verbatim evidence checks" },
   { job: "Persona wizard", model: "gpt-4.1-mini (default)", note: "Builds a persona, objections and rubric from your context" },
-  { job: "Voice", model: "gpt-realtime-2.1-mini (default)", note: "OpenAI Realtime over WebRTC, the default when an OpenAI key is set. ElevenLabs Agents also supported" },
+  { job: "Voice", model: "gpt-realtime-2.1 / 2.1-mini (default)", note: "OpenAI Realtime over WebRTC, the default when an OpenAI key is set. ElevenLabs Agents also supported" },
 ];
 
 export default function Home() {
@@ -115,9 +124,9 @@ DEMO_MODE=true npm run dev`}</pre>
         </div>
       </section>
 
-      <footer className="border-t border-line py-8 text-center text-sm text-ink-muted">
-        MIT licensed · by Mykel Stanley · originally based on OpenAI&rsquo;s openai-realtime-agents demo
-      </footer>
+      <PublicFooter>
+        <p>MIT licensed · by Mykel Stanley · originally based on OpenAI&rsquo;s openai-realtime-agents demo</p>
+      </PublicFooter>
     </div>
   );
 }
