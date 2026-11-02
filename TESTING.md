@@ -137,7 +137,7 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 
 ### 15. API sanity
 1. `GET /api/config` returns capability flags and the model id only, never a key or base URL.
-2. `GET /api/health` reports each dependency.
+2. `GET /api/health` returns only `{ "ok": true }` (503 with `false` when the database or `JWT_SECRET` is missing in full mode). With `Authorization: Bearer $CRON_SECRET`, or signed in as a platform admin, it also lists each dependency. The demo user never sees the details.
 3. **Grade seal** (full mode): grade a call with `POST /api/evaluate-call`, then save it with `POST /api/transcripts`, sending the same transcript, the response minus its `seal` as `evaluation`, and the `seal` beside it. That saves with `"graded": true`. Change `overallScore` and save again: it saves with `"graded": false` and no score.
 
 ## Run a scenario end to end
