@@ -388,6 +388,54 @@ describe("registration with an invite", () => {
   });
 });
 
+describe("registration while the access gate is on", () => {
+  const SHARED = "test-shared-code-not-real";
+  const register = (extra: Record<string, unknown>, cookie?: string) =>
+    registerPost(post("/api/auth/register", { firstName: "Sam", lastName: "Lee", email: `sam${mocks.users.length}@example.test`, password: "test-password-123", joinOrgCode: "123", ...extra }, cookie));
+  beforeEach(() => {
+    process.env.TRAINER_ACCESS_CODE = SHARED;
+  });
+
+  it("refuses a signup with no gate pass and no invite code", async () => {
+    const res = await register({});
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "invite code required" });
+  });
+
+  it("accepts the shared-code cookie while the shared code is allowed, and refuses it once switched off", async () => {
+    const cookie = `${ACCESS_COOKIE}=${await accessToken(SHARED)}`;
+    expect((await register({}, cookie)).status).toBe(200);
+    process.env.ALLOW_SHARED_ACCESS_CODE = "false";
+    expect((await register({}, cookie)).status).toBe(403);
+  });
+
+  it("accepts an invite gate cookie, even invite-only, and attributes the account", async () => {
+    process.env.ALLOW_SHARED_ACCESS_CODE = "false";
+    delete process.env.TRAINER_ACCESS_CODE;
+    const { invite } = addInvite();
+    const token = (await inviteAccessToken(invite.id, Math.floor(Date.now() / 1000) + 3600))!;
+    const res = await register({}, `${ACCESS_COOKIE}=${token}`);
+    expect(res.status).toBe(200);
+    expect(mocks.users.at(-1)!.inviteCodeId).toBe(invite.id);
+  });
+
+  it("lets an explicit invite code stand in for the gate pass, and hands out that invite's gate cookie", async () => {
+    const { code, invite } = addInvite({ maxRedemptions: 1 });
+    const res = await register({ inviteCode: code });
+    expect(res.status).toBe(200);
+    expect(invite.redemptionCount).toBe(1);
+    expect(await verifyInviteAccessToken(gateCookie(res)!.value)).toBe(invite.id);
+  });
+
+  it("creates no account and hands out no cookie for an explicit code that is not valid", async () => {
+    const res = await register({ inviteCode: "NOT-A-REAL-CODE" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "invalid_invite" });
+    expect(gateCookie(res)).toBeUndefined();
+    expect(mocks.users.some((u) => String(u.email).startsWith("sam"))).toBe(false);
+  });
+});
+
 describe("admin invite routes", () => {
   const create = (body: unknown) => adminCreate(post("/api/admin/invites", body));
   const list = () => adminList(new NextRequest("http://localhost/api/admin/invites"));

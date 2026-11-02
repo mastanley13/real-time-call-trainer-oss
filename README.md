@@ -29,7 +29,7 @@ Browser (Next.js App Router, Tailwind, WebRTC, @elevenlabs/react)
   ├─ /trainer/debrief/[id]  black-box debrief, retry from turn N
   ├─ /dashboard             progress logbook, assignments for you
   ├─ /team                  team view for managers and owners
-  └─ /settings/models, /settings/security
+  └─ /settings/models, /settings/security, /settings/billing (when Stripe test mode is on)
 Server routes (src/app/api)
   ├─ coach/turn        live coach: estimate, talk-track steps, one cue (LLM or rules-based)
   ├─ persona/generate  persona wizard (LLM structured JSON, or a template draft)
@@ -44,6 +44,9 @@ Server routes (src/app/api)
   ├─ team/overview     team KPIs, roster, heatmap and coaching queue (org-scoped)
   ├─ team/assignments  create, list and remove persona assignments
   ├─ llm/check         one-token connection check for the Models page
+  ├─ usage, usage/heartbeat, usage/end, usage/credit   voice minute metering (on when `USAGE_CAPS=on` or Stripe is set): the ledger is the source of truth. Free is 10 voice minutes a month, checked only when a call starts (a started call runs to its end); text practice is never capped
+  ├─ billing/checkout, billing/portal   Stripe Checkout (subscription) and Billing Portal, test mode only
+  ├─ stripe/webhook    signature-verified, idempotent plan sync from Stripe's current subscription state (checkout completed, async payment succeeded and expired, subscription updated and deleted)
   └─ auth/*, access, invites/redeem, admin/invites, me, health, config, cron/purge-expired
 ```
 Design tokens (daylight, dark and the call "deck") live in `src/app/globals.css`; the coach contract is `src/lib/coach-types.ts`; the wizard contract is `src/lib/wizard-types.ts`.
@@ -64,18 +67,21 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `OPENAI_REALTIME_API_KEY` | For voice | OpenAI key for Realtime voice calls. Falls back to `OPENAI_API_KEY`, then to `LLM_API_KEY` when `LLM_BASE_URL` is api.openai.com |
 | `OPENAI_API_KEY` | Optional | Voice key when `OPENAI_REALTIME_API_KEY` is unset. Also stands in for `LLM_API_KEY`, but only while `LLM_BASE_URL` is unset or points at api.openai.com, so an OpenAI key is never sent to another provider |
 | `REALTIME_MODEL` | Optional | Default `gpt-realtime-1.5` |
+| `REALTIME_MODEL_STANDARD` | Optional | Model for accounts without Premium Voice, and for the next call once Premium has used 60% of the plan's minutes. Default `gpt-realtime-mini`. A running call is never switched or ended |
 | `REALTIME_VOICE` | Optional | Default `marin`. A persona's own `realtimeVoice` wins |
 | `REALTIME_TRANSCRIBE_MODEL` | Optional | Transcribes your side of a voice call. Default `gpt-4o-mini-transcribe` |
 | `VOICE_ENGINE` | Optional | `openai` (default) or `elevenlabs`: which engine the briefing picks first when both are set up |
 | `ELEVENLABS_API_KEY` | For ElevenLabs voice | Server-side key used to mint conversation tokens |
-| `ELEVENLABS_AGENT_ID` | For ElevenLabs voice | The agent to call |
+| `ELEVENLABS_AGENT_ID` | For ElevenLabs voice | The agent to call (the Premium tier) |
+| `ELEVENLABS_AGENT_ID_STANDARD` | Optional | Agent for the standard tier. Unset means only accounts with Premium Voice (and Premium minutes left) can start an ElevenLabs call; everyone else gets 503 `standard_voice_not_configured` |
 | `LLM_API_KEY` | Optional | Live coach, post-call grading, persona wizard and text simulation (any OpenAI-compatible API). With a custom `LLM_BASE_URL`, this is the only key sent. Without a key: rules-based coach and grader, template wizard, scripted caller |
 | `LLM_BASE_URL` | Optional | Default `https://api.openai.com/v1` |
 | `LLM_MODEL` | Optional | Default `gpt-4.1-mini` |
 | `DATABASE_URL` | For accounts | Postgres connection string |
 | `JWT_SECRET` | For accounts | 32+ random bytes (`node generate-jwt-secret.js`). Also keys the grade seal, the access-code cookie and invite gate cookies |
 | `CRON_SECRET` | Optional | Bearer secret for `/api/cron/purge-expired`. The route accepts only `Authorization: Bearer $CRON_SECRET` (Vercel Cron sends it when the variable is set) and returns 401 without it |
-| `TRAINER_ACCESS_CODE` | Optional | When set, every page and API route (except `/api/health` and `/api/cron/*`, which needs the `CRON_SECRET` bearer) requires this code via `/access`. Cookie is an HMAC keyed by `JWT_SECRET`, valid 30 days. Unset = no gate |
+| `APP_URL` | Optional | Public origin for canonical URLs, Open Graph images and the sitemap. Defaults to `https://calltrainer.tech`; `VERCEL_URL` and preview hosts are never used |
+| `TRAINER_ACCESS_CODE` | Optional | When set, every page and API route (except `/api/health`, `/api/stripe/webhook`, which checks the Stripe signature, and `/api/cron/*`, which needs the `CRON_SECRET` bearer) requires this code via `/access`. Cookie is an HMAC keyed by `JWT_SECRET`, valid 30 days. Unset = no gate |
 | `ALLOW_SHARED_ACCESS_CODE` | Optional | Migration flag for the shared code. Default `true`: `TRAINER_ACCESS_CODE` keeps working next to invite codes. `false` stops the shared code and the cookies made from it, and keeps the gate on even with `TRAINER_ACCESS_CODE` unset, so only invite codes get in. Invite-only needs `DATABASE_URL` and `JWT_SECRET`, or nobody gets in. See [Invite codes](#invite-codes) |
 | `TRUSTED_PROXY_HOPS` | Optional | Number of proxies in front of the app that append to `X-Forwarded-For`. The client IP for rate limits and audit rows is read that many entries from the right. Default 1, which fits Vercel and a single proxy that appends. The app needs at least one proxy that sets or appends the header, or clients can pick their own address; see [DEPLOY.md](DEPLOY.md#client-ip-behind-proxies) |
 | `RATE_LIMIT_CALLER_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/simulate/turn`. Default 30 per 300 s |
@@ -85,7 +91,16 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `RATE_LIMIT_COACH_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/coach/turn`. Default 120 per 600 s |
 | `RATE_LIMIT_WIZARD_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/persona/generate` and `/api/persona/fetch-url`. Default 20 per 3600 s |
 | `RATE_LIMIT_INVITES_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on platform admin invite writes (`POST /api/admin/invites`, `DELETE /api/admin/invites/[id]`). Default 60 per 3600 s |
-| `DEMO_MODE` | Optional | `true` skips login; sessions, assignments and notes stay in the browser and `/team` shows a sample team. Never on a public deployment |
+| `RATE_LIMIT_USAGE_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on the voice metering routes (`/api/usage/*`: a heartbeat every 10 s per call, plus end events). Default 1200 per 600 s |
+| `RATE_LIMIT_BILLING_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/billing/checkout` and `/api/billing/portal`. Default 20 per 3600 s |
+| `STRIPE_SECRET_KEY` | For billing | Stripe **test mode** key. Must start with `sk_test_`; any other key makes every Stripe call fail with `stripe_live_key_refused`. Unset, or `DEMO_MODE=true`: billing is off and the Billing tab is hidden. Setting it also turns voice minute metering on (see `USAGE_CAPS`); only an active Stripe subscription raises an account above Free |
+| `USAGE_CAPS` | Optional | `on` meters voice minutes for stored accounts (needs `DATABASE_URL`, not `DEMO_MODE`) without Stripe: everyone is Free, 10 voice minutes a month, resetting monthly, and voice is refused if the usage lookup fails. Default off, so self-hosted installs stay uncapped. A Stripe key also turns metering on. Text practice is never metered |
+| `STRIPE_WEBHOOK_SECRET` | For billing | Signing secret (`whsec_...`) for `/api/stripe/webhook`. From `stripe listen` locally, or the endpoint's page in the Stripe dashboard. Subscribe it to `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `customer.subscription.updated` and `customer.subscription.deleted` |
+| Stripe prices | For billing | No env vars. Prices are resolved at runtime with `stripe.prices.list({ lookup_keys })`: `calltrainer_pro_monthly` and `_annual` (Pro, $29 per user per month), `calltrainer_team_monthly` and `_annual` (Team, $59 per seat per month, 3 seats minimum, quantity = seats), `calltrainer_premium_monthly` and `_annual` (Premium Voice add-on, +$30 per seat per month, quantity = seats). Flat licensed prices only; a metered price is ignored |
+| `APP_BASE_URL` | Optional | Public origin used in Stripe return links, for example `https://app.example.com`. Defaults to the request origin |
+| `GHL_BILLING_EVENTS` | Optional | `true` lets the billing webhook emit upgrade, downgrade and churn events to the CRM hook (`src/lib/billingEvents.ts`). Off by default. See the TODO there for the STR-714 emitter |
+| `DEMO_MODE` | Optional | `true` skips login; sessions, assignments and notes stay in the browser and `/team` shows a sample team. Never on a public deployment. With `NODE_ENV=production` it is ignored (login stays required, the app refuses to boot, `/api/health` returns 503) unless `ALLOW_PUBLIC_DEMO=true` |
+| `ALLOW_PUBLIC_DEMO` | Optional | `true` lets `DEMO_MODE=true` take effect in production, for a deliberate public demo only. Any other value keeps the production guard on |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Optional | Used by `npm run db:seed` to create a platform admin. `ADMIN_FIRST_NAME` and `ADMIN_LAST_NAME` set its name (default Platform Admin) |
 
 ### Voice engines
@@ -118,8 +133,8 @@ Per-person invite codes replace the one shared `TRAINER_ACCESS_CODE`, so access 
 - **Create** (platform admins only): `POST /api/admin/invites` with `{ "label": "Acme pilot, Jordan", "maxRedemptions": 1, "expiresAt": "2026-12-31T00:00:00Z", "minuteQuota": 120 }`. Everything but `label` is optional; no `maxRedemptions` means unlimited. The response holds the plain code once. Only a SHA-256 hash is stored, so a lost code can't be shown again; revoke it and make a new one. `minuteQuota` is stored for a later change and not enforced yet.
 - **List**: `GET /api/admin/invites` returns each invite's label, limits, redemption count and status (`active`, `revoked`, `expired`, `exhausted`), never a code or hash.
 - **Revoke**: `DELETE /api/admin/invites/[id]`. The row stays, so accounts made with it stay attributed. New gate passes and redemptions stop at once. A gate cookie already issued for it lasts at most 7 days (or until the invite expires), because the edge middleware can't read the database.
-- **Use**: entering an invite code at `/access` passes the gate without using it up. An invite is used up when an account is created with it (`/api/auth/register` takes an optional `inviteCode`, or uses the invite the gate cookie came from) or when a signed-in account links to it with `POST /api/invites/redeem { "code": "..." }`. The count only goes up while the invite is unrevoked, unexpired and under its cap, checked in the same database update, so two people can't both take the last slot. Each account links to one invite (`User.inviteCodeId`), and each use writes an `invite.redeemed` audit row.
-- **Migrating off the shared code**: hand out invites while `ALLOW_SHARED_ACCESS_CODE` is unset, then set it to `false`. Needs the `20261030000000_invite_codes` migration.
+- **Use**: entering an invite code at `/access` passes the gate without using it up. An invite is used up when an account is created with it (`/api/auth/register` takes an optional `inviteCode`, or uses the invite the gate cookie came from; while the gate is on, signup needs a gate cookie or a valid `inviteCode`, and a signup with only the code also gets that invite's gate cookie) or when a signed-in account links to it with `POST /api/invites/redeem { "code": "..." }`. The count only goes up while the invite is unrevoked, unexpired and under its cap, checked in the same database update, so two people can't both take the last slot. Each account links to one invite (`User.inviteCodeId`), and each use writes an `invite.redeemed` audit row.
+- **Migrating off the shared code**: hand out invites while `ALLOW_SHARED_ACCESS_CODE` is unset, then set it to `false`. Needs the `20261101000000_invite_codes` migration.
 
 ### Database
 ```bash
@@ -128,7 +143,7 @@ createdb call_trainer
 npm run db:migrate        # prisma migrate deploy
 npm run db:seed           # optional platform admin
 ```
-Run `npm run db:migrate` again after pulling changes that add a migration. The team view needs `20261027000000_training_assignments`, and invite codes need `20261030000000_invite_codes`.
+Run `npm run db:migrate` again after pulling changes that add a migration. The team view needs `20261027000000_training_assignments`, and invite codes need `20261101000000_invite_codes`.
 
 ### Scripts
 | Script | What it does |
