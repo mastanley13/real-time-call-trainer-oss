@@ -34,6 +34,7 @@ export default function CheckoutStartClient() {
     started.current = true;
     setBusy(true);
     setError(null);
+    setRestored(false);
     const out = await startCheckout({ plan, interval, seats });
     if (out.kind === "redirect") {
       window.location.assign(out.url);
@@ -48,6 +49,20 @@ export default function CheckoutStartClient() {
     setBusy(false);
     setError({ message: out.message, help: out.help });
   }, [plan, interval, router]);
+
+  /** Set when the browser Back button restored this page from the back-forward cache after the Stripe redirect. */
+  const [restored, setRestored] = useState(false);
+  // Coming back from Stripe with Back restores this page as it was, busy and all. Free the button and offer a retry.
+  useEffect(() => {
+    const onShow = (e: PageTransitionEvent) => {
+      if (!e.persisted) return;
+      started.current = false;
+      setBusy(false);
+      setRestored(true);
+    };
+    window.addEventListener("pageshow", onShow);
+    return () => window.removeEventListener("pageshow", onShow);
+  }, []);
 
   // A link with no valid plan has nothing to buy: show the plans.
   useEffect(() => { if (!plan) router.replace("/pricing"); }, [plan, router]);
@@ -102,7 +117,7 @@ export default function CheckoutStartClient() {
       ) : (
         busy && <p className="flex items-center gap-2 text-sm text-ink-muted"><Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden />One moment.</p>
       )}
-      {error && plan === "pro" && <button type="button" className="btn-primary" onClick={() => void go()}>Try again</button>}
+      {(error || restored) && plan === "pro" && !busy && <button type="button" className="btn-primary" onClick={() => void go()}>Try again</button>}
       <p className="text-sm text-ink-muted"><Link href="/pricing" className="underline underline-offset-2 hover:text-ink">Back to pricing</Link></p>
     </div>
   );

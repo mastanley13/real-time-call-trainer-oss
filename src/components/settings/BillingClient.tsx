@@ -7,10 +7,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import { ALREADY_SUBSCRIBED_NOTICE } from "@/lib/checkoutStart";
 import { ACTIVE_NOTICE, PORTAL_FAILED_MESSAGE, type CheckoutNotice, checkoutFailure, checkoutNotice, formatMinutes, freeOverCapNotice, planPriceLine, proButtonLabel, seatsOnBlur, teamButtonLabel, usageHeaderCopy } from "@/lib/billingUi";
-import { PREMIUM_COMING_SOON } from "@/lib/pricing";
 import { TEAM_MIN_SEATS } from "@/lib/usagePlan";
 import BillingAlert from "./BillingAlert";
 import BillingNotice from "./BillingNotice";
+import PremiumVoiceControl from "./PremiumVoiceControl";
 import SeatsField from "./SeatsField";
 import SettingsNav from "./SettingsNav";
 
@@ -192,6 +192,8 @@ export default function BillingClient() {
         <p className="panel p-4 text-sm text-ink-soft">Voice minutes are not tracked in this environment.</p>
       )}
 
+      <PremiumVoiceControl />
+
       {u?.billing.enabled && (
         <section className="panel p-4 sm:p-5" aria-labelledby="plans-h">
           <h2 id="plans-h" tabIndex={-1} className="text-lg font-bold focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary">Plans</h2>
@@ -205,10 +207,6 @@ export default function BillingClient() {
                 </label>
               ))}
             </fieldset>
-            <label className="flex items-center gap-2 text-sm text-ink-muted">
-              <input type="checkbox" checked={false} disabled readOnly />
-              Premium AI voice: {PREMIUM_COMING_SOON}
-            </label>
           </div>
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
