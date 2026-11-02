@@ -34,3 +34,19 @@ export async function codeMatches(input: string, code: string): Promise<boolean>
   const [a, b] = await Promise.all([hmacHex("code-compare", input), hmacHex("code-compare", code)]);
   return safeEqual(a, b);
 }
+
+/**
+ * Where /access sends the user after a good code: `next` only when it resolves to this origin, as
+ * path + query + hash (the query keeps UTM tags). Resolving and comparing origins matters, because the
+ * URL parser reads "/\evil.com" and "/\t/evil.com" as protocol-relative. Anything else goes home.
+ */
+export function safeNextPath(next: string | null | undefined, origin: string): string {
+  if (!next) return "/";
+  try {
+    const u = new URL(next, origin);
+    if (u.origin === new URL(origin).origin) return u.pathname + u.search + u.hash;
+  } catch {
+    // Unparseable value: fall back to home.
+  }
+  return "/";
+}

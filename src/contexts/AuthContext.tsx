@@ -17,6 +17,13 @@ export interface RegisterFormData {
   /** Exactly one of these two is supplied. */
   joinOrgCode?: string;
   newOrgName?: string;
+  /** First-touch attribution (lib/firstTouch). All optional and sanitized again by the server. */
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  utmContent?: string;
+  utmTerm?: string;
+  referrer?: string;
 }
 
 export interface User {

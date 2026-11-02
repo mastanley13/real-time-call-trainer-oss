@@ -134,6 +134,7 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 1. Register a new team and land in the app. Sign out and back in. A wrong password shows an error.
 2. `/settings/security`: enrol TOTP MFA, sign out, and sign in with the code. A wrong code is rejected.
 3. Signed out, `/dashboard` redirects to `/login`. Sessions persist across devices.
+4. First touch: in a fresh browser open `/?utm_source=linkedin&utm_medium=dm&utm_campaign=launch-2026&utm_content=d1-dm01`; DevTools shows a `ct_ft` cookie (30 days). Open `/?utm_source=google` and the cookie is unchanged. Register: the user row has `utmSource=linkedin` and friends, and with GHL sync on the signup has `inbound_source=linkedin/launch-2026` and the `ct-outbound` tag.
 
 ### 15. API sanity
 1. `GET /api/config` returns capability flags and the model id only, never a key or base URL.
@@ -150,7 +151,7 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 ## Access code, rate limits and size caps
 
 ### Access code
-Run with `TRAINER_ACCESS_CODE=letmein`. Any page redirects to `/access`; `curl -i localhost:3000/api/config` returns 401 `access_code_required`; `/api/health` returns 200. A wrong code shows an error; the right one sets an httpOnly cookie and lands on the app. 11 wrong attempts within 15 minutes from one IP return 429. Unset the variable and the gate disappears.
+Run with `TRAINER_ACCESS_CODE=letmein`. Any page redirects to `/access`; `curl -i localhost:3000/api/config` returns 401 `access_code_required`; `/api/health` returns 200. A wrong code shows an error; the right one sets an httpOnly cookie and lands on the app. A tagged link such as `/trainer?utm_source=linkedin&utm_campaign=launch-2026` redirects to `/access?next=...` with the full path and query, sets the `ct_ft` first-touch cookie, and after the code returns to the tagged URL. 11 wrong attempts within 15 minutes from one IP return 429. Unset the variable and the gate disappears.
 
 ### Rate limits
 Every limit is a fixed window in memory, per server instance, and resets on restart. There are two kinds: per-IP limits, most of which you can tune with `RATE_LIMIT_*` variables, and fixed per-account limits, so a signed-in user can't get past a limit by switching networks. Both apply; whichever runs out first answers 429. The client IP is read from `X-Forwarded-For` as set by `TRUSTED_PROXY_HOPS` (see [DEPLOY.md](DEPLOY.md#client-ip-behind-proxies)). The `RATE_LIMIT_*` limits, `/api/access` and the Models check answer with a `Retry-After` header and `{ "error": "rate_limited", "message": ... }`, and the UI shows the message.

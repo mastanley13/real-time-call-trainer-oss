@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { OUTBOUND_MEDIUMS } from "@/lib/firstTouch";
 
 /** Lifecycle events the app reports to GoHighLevel. Pure and safe on both sides. */
 export const GHL_EVENTS = ["signup", "first_graded_call", "active_trial", "upgrade", "went_quiet"] as const;
@@ -28,6 +29,11 @@ export const GHL_FIELD_KEYS = [
   "referred_by_partner",
   "first_graded_call_date",
   "stripe_customer_id",
+  "ct_utm_source",
+  "ct_utm_medium",
+  "ct_utm_campaign",
+  "ct_utm_content",
+  "ct_referrer",
 ] as const;
 export type GhlFieldKey = (typeof GHL_FIELD_KEYS)[number];
 
@@ -40,9 +46,17 @@ export const GhlPayloadSchema = z.object({
   segment: z.enum(GHL_SEGMENTS).nullable(),
   minuteCap: z.number().int().nonnegative(),
   voiceMinutesUsed: z.number().nonnegative(),
-  source: z.string().max(120).nullable(),
+  /** GHL inbound_source. On signup: "<utm_source>/<utm_campaign>", utm_source, the referrer host or "direct". */
+  source: z.string().max(250).nullable(),
   referredByPartner: z.string().max(120).nullable(),
   stripeCustomerId: z.string().max(120).nullable(),
+  // First touch (lib/firstTouch), set on signup only. Optional so rows queued before these fields still parse.
+  utmSource: z.string().max(120).nullish(),
+  utmMedium: z.string().max(120).nullish(),
+  utmCampaign: z.string().max(120).nullish(),
+  utmContent: z.string().max(120).nullish(),
+  utmTerm: z.string().max(120).nullish(),
+  referrer: z.string().max(120).nullish(),
 });
 export type GhlPayload = z.infer<typeof GhlPayloadSchema>;
 
@@ -64,9 +78,22 @@ export type GhlActions = {
 
 const day = (iso: string) => iso.slice(0, 10);
 
+/** First-touch custom fields that have a value. Empty ones are left out so a value already on the contact is kept. */
+function touchFields(p: GhlPayload): GhlActions["fields"] {
+  const pairs: Array<[GhlFieldKey, string | null | undefined]> = [
+    ["ct_utm_source", p.utmSource],
+    ["ct_utm_medium", p.utmMedium],
+    ["ct_utm_campaign", p.utmCampaign],
+    ["ct_utm_content", p.utmContent],
+    ["ct_referrer", p.referrer],
+  ];
+  return Object.fromEntries(pairs.filter(([, v]) => !!v));
+}
+
 /**
  * What each event does in GHL. `segment` becomes a seg-<x> tag only when the payload carries one,
  * and the caller must pass a segment the user confirmed, never one inferred from a persona or page.
+ * A signup whose utm_medium is "dm" or "outbound" also gets the ct-outbound tag.
  * Nothing here sends email or SMS.
  */
 export function actionsFor(p: GhlPayload): GhlActions {
@@ -75,7 +102,7 @@ export function actionsFor(p: GhlPayload): GhlActions {
     case "signup":
       return {
         stage: GHL_STAGES.signup,
-        addTags: ["ct-trial", ...(p.segment ? [`seg-${p.segment}`] : [])],
+        addTags: ["ct-trial", ...(p.segment ? [`seg-${p.segment}`] : []), ...(p.utmMedium && OUTBOUND_MEDIUMS.has(p.utmMedium) ? ["ct-outbound"] : [])],
         removeTags: [],
         fields: {
           plan: p.plan,
@@ -85,6 +112,7 @@ export function actionsFor(p: GhlPayload): GhlActions {
           last_active_date: lastActive,
           inbound_source: p.source ?? "",
           referred_by_partner: p.referredByPartner ?? "",
+          ...touchFields(p),
         },
       };
     case "first_graded_call":

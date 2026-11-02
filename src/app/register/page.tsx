@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
+import { touchForRegister } from "@/lib/firstTouch";
 
 export default function RegisterPage() {
   const { register, isAuthenticated, capabilities } = useAuth();
@@ -31,6 +32,8 @@ export default function RegisterPage() {
         email: f.email,
         password: f.password,
         ...(mode === "create" ? { newOrgName: f.orgName } : { joinOrgCode: f.orgCode }),
+        // First touch: the ct_ft cookie when set, else UTM tags on this URL.
+        ...touchForRegister(document.cookie, window.location.search),
       });
       router.push("/trainer");
     } catch (err) {
