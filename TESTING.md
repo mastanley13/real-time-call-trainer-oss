@@ -165,6 +165,8 @@ Every limit is a fixed window in memory, per server instance, and resets on rest
 | `/api/persona/generate` + `/api/persona/fetch-url` (wizard, shared) | `RATE_LIMIT_WIZARD_MAX` (20 per 3600 s) | Set 2, import a URL twice, then **Draft persona** |
 | `/api/realtime/session` (OpenAI Realtime voice) | `RATE_LIMIT_REALTIME_MAX` (10 per 3600 s) | Set 1 and start two voice calls |
 | `/api/elevenlabs/token` (ElevenLabs voice) | `RATE_LIMIT_TOKEN_MAX` (10 per 3600 s) | Set 1 and start two ElevenLabs calls |
+| `/api/usage/heartbeat`, `/api/usage/end`, `/api/usage/credit` (voice metering) | `RATE_LIMIT_USAGE_MAX` (1200 per 600 s) | Full mode only. Set 3, then `curl` `/api/usage/end` four times with a signed-in cookie |
+| `/api/billing/checkout` + `/api/billing/portal` (Stripe, shared) | `RATE_LIMIT_BILLING_MAX` (20 per 3600 s) | Needs `STRIPE_SECRET_KEY=sk_test_...`. Set 2 and press **Choose Pro** three times |
 | `/api/llm/check` (Models page) | fixed, 6 per 10 min | Press **Check connection** seven times |
 | `/api/access` | fixed, 10 per 15 min | See Access code above |
 | `/api/auth/login`, `/api/auth/register`, `/api/auth/mfa/challenge` | fixed, 10, 5 and 10 per minute | Full mode only. These answer with their own error text |
@@ -183,6 +185,8 @@ Each `_MAX` has a matching `_WINDOW_SEC`.
 | `/api/simulate/turn` | 40 per minute |
 | `/api/realtime/session` | 6 per minute |
 | `/api/realtime/sdp` | 10 per minute |
+| `/api/usage/*` (heartbeat, end, credit) | 60 per minute |
+| `/api/billing/checkout` + `/api/billing/portal` (shared) | 20 per hour |
 | `/api/elevenlabs/token` | 20 per minute |
 | `POST /api/transcripts` (save a session) | 30 per minute |
 | `PUT /api/sessions/[sessionId]/notes` | 30 per minute |
@@ -208,3 +212,22 @@ done                              # 200, 200, 429
 node -e 'process.stdout.write(JSON.stringify({ url: "x".repeat(250000) }))' |
   curl -s -i -X POST localhost:3000/api/persona/fetch-url -H "content-type: application/json" --data-binary @-
 ```
+
+## Voice minute metering: limits and residual risk
+
+Full mode with `DATABASE_URL` only. `npx vitest run tests/usage-hardening.test.ts tests/usage-reconcile.test.ts` covers everything below without a database.
+
+- **Reservations.** A call reserves its minutes (up to 60) when it is minted, and that is its maximum billable length. Open calls reserve Premium minutes too, so concurrent calls cannot all pick Premium. A Premium call reserves only the Premium minutes it holds (its whole reservation, and so its `maxSeconds`), because a provider session cannot change engine mid-call: it is stopped when those run out and the next call is minted on the standard engine.
+- **A period reset mid-call.** The call's length is shared out between the old and the new period. The old part goes to the ledger as `voice_call_prior` and the new part to the current period, which holds the minutes for it from the moment of the reset.
+- **Rollover and settlement.** A rollover swaps only if the period and `version` it read are unchanged, and otherwise starts again. A settlement writes only if the period it was worked out for is still current, and otherwise rolls back and retries (`StaleAllowanceError`). Periods only move forward. `usage-reconcile.test.ts` replays both interleavings against the in-memory database.
+- **No standard engine.** With `ELEVENLABS_AGENT_ID_STANDARD` unset, only accounts with Premium Voice and Premium minutes left can start an ElevenLabs call. Everyone else gets 503 `standard_voice_not_configured`. Set the standard agent to serve them.
+
+**Residual risk: a running provider session is not ended by the server.** Neither OpenAI Realtime nor ElevenLabs is asked to end a live session from here. Both connect straight from the browser, and the ephemeral secret and token are only checked while the session is set up. I did not find a server-side termination call in either integration, and I did not confirm against the providers' current docs whether one exists. A modified client can therefore keep a session open after the server has stopped billing it, and the provider's own usage (not ours) is what grows. What is in place:
+
+1. Billing is clamped to the reservation, so the user is never charged for more than they reserved.
+2. A call is marked `abuseFlagged` and an `usage.abuse_flagged` audit event is written when the server sees it outlive its reservation: the client keeps sending heartbeats more than 60 seconds after a `cap_reached` or `max_duration` stop, or reports the end more than 60 seconds after the reservation ran out. Calls the server already settled as silent (`heartbeat_timeout`) are covered too: a heartbeat or end event for one after its reservation ran out is flagged, and so is a silent call that is only reaped after its reservation ran out.
+3. A flagged user gets 429 `voice_blocked` with `Retry-After` from both mint routes for 10 minutes.
+
+What this does not cover: a client that goes silent and never contacts the server again looks the same as a closed tab until something reaps it. A real closed tab that is only reaped more than a minute after its reservation would have ended is flagged too, so that user waits 10 minutes before the next call. Compare the provider's usage dashboard with the ledger if you see unexplained spend, and treat a provider-side session limit or sideband hang-up as the real fix.
+
+To check by hand: start a call, stop it from the server side by waiting out the reservation (lower `MAX_RESERVE_MINUTES` locally), keep heartbeating for more than a minute, and the next `/api/realtime/session` answers 429 `voice_blocked`.

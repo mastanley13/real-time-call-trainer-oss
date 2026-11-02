@@ -82,6 +82,29 @@ describe("GET /api/health", () => {
     expect(mocks.prisma.user.findUnique).not.toHaveBeenCalled();
   });
 
+  it("answers 503 publicly when DEMO_MODE reaches production, and names it only in the detailed checks", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("DEMO_MODE", "true");
+    vi.stubEnv("ALLOW_PUBLIC_DEMO", "");
+    const res = await GET(req());
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ ok: false });
+    const detailed = await GET(req({ authorization: "Bearer cron-test-secret" }));
+    expect(detailed.status).toBe(503);
+    expect((await detailed.json()).checks).toMatchObject({ demoMode: "error_demo_in_production" });
+  });
+
+  it("answers 503 publicly when production has no DATABASE_URL, and names it only in the detailed checks", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("DATABASE_URL", "");
+    const res = await GET(req());
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ ok: false });
+    const body = await (await GET(req({ authorization: "Bearer cron-test-secret" }))).json();
+    expect(body.ok).toBe(false);
+    expect(body.checks).toMatchObject({ db: "error_not_configured" });
+  });
+
   it("hides the checks when the admin lookup fails", async () => {
     mocks.prisma.user.findUnique.mockRejectedValue(new Error("db"));
     const body = await (await GET(req({ cookie: `authToken=${tokenFor("admin-1")}` }))).json();

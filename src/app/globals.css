@@ -163,6 +163,7 @@
   .hatched { background-image: repeating-linear-gradient(135deg, currentColor 0 3px, transparent 3px 6px) !important; background-color: transparent !important; }
 
   .banner-warn { @apply rounded-lg border border-caution/40 bg-caution-soft p-3 text-sm text-ink; }
+  .banner-ok { @apply rounded-lg border border-ok/40 bg-ok-soft p-3 text-sm text-ink; }
   .skeleton { @apply rounded-lg bg-[linear-gradient(90deg,rgb(var(--sunken))_25%,rgb(var(--surface))_50%,rgb(var(--sunken))_75%)] bg-[length:200%_100%] motion-safe:animate-shimmer; }
   .enter { @apply animate-fade-up; }
   .quote { @apply rounded-r-lg border-l-2 border-primary bg-sunken py-2.5 pl-4 pr-3 text-sm text-ink; }

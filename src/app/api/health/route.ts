@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { verifySessionToken } from "@/lib/auth";
-import { cronAuthorized, getCapabilities } from "@/lib/serverConfig";
+import { cronAuthorized, getCapabilities, productionGuard } from "@/lib/serverConfig";
 
 /**
  * Uptime check. The public answer is only { ok } (200, or 503 when a required
@@ -43,6 +43,16 @@ export async function GET(req: NextRequest) {
   }
   checks.jwtSecret = process.env.JWT_SECRET && process.env.JWT_SECRET.length >= 32 ? "ok" : "missing_or_weak";
   if (checks.jwtSecret !== "ok" && !caps.demoMode) ok = false;
+
+  // The production guard counts against the public { ok } too, so a misconfigured deploy reads 503 to uptime checks.
+  const guard = productionGuard(process.env);
+  const demoInProduction = guard.problems.includes("demo_in_production");
+  if (demoInProduction) ok = false;
+  if (guard.problems.includes("database_missing")) {
+    ok = false;
+    checks.db = "error_not_configured";
+  }
+
   const status = ok ? 200 : 503;
   const headers = { "Cache-Control": "no-store" };
 
@@ -51,6 +61,6 @@ export async function GET(req: NextRequest) {
   checks.elevenlabs = caps.elevenlabs ? "configured" : "not_configured";
   checks.realtime = caps.realtime ? "configured" : "not_configured";
   checks.llm = caps.llm ? "configured" : "not_configured";
-  checks.demoMode = caps.demoMode ? "on" : "off";
+  checks.demoMode = demoInProduction ? "error_demo_in_production" : caps.demoMode ? "on" : "off";
   return NextResponse.json({ ok, checks, timestamp: new Date().toISOString() }, { status, headers });
 }

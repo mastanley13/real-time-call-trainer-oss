@@ -8,6 +8,10 @@ import { CALL_TYPE_LABELS, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps, typ
 import { VOICE_ENGINE_LABELS, averageLevel, micErrorMessage, type VoiceEngine } from "@/lib/realtime";
 import type { Capabilities } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
+import { isCapMessage, type UsageSnapshot } from "@/lib/billingUi";
+import CallError from "./CallError";
+import MinutesLeft from "./MinutesLeft";
+import VoiceUnavailable, { VOICE_UNAVAILABLE_ID } from "./VoiceUnavailable";
 import { ModeDial, radioKeys } from "./CopilotRail";
 
 const MODE_HELP: Record<CoachMode, string> = {
@@ -120,7 +124,7 @@ function MicCheck({ onResult }: { onResult: (r: MicResult) => void }) {
   );
 }
 
-export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice }: {
+export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, usage, canUpgrade = true, usageUnavailable }: {
   scenario: Scenario;
   capabilities: Capabilities;
   mode: "voice" | "text";
@@ -135,6 +139,12 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
   error?: string;
   /** Shown when the link named a persona this browser doesn't have and another one opened instead. */
   notice?: string;
+  /** Voice minutes left and the plan's minutes this period; null or undefined when minutes are not metered (demo mode, no billing). */
+  usage?: UsageSnapshot | null;
+  /** False for a Team pool member who is not an owner or manager: they are told to ask their admin, with no Upgrade link. */
+  canUpgrade?: boolean;
+  /** True when the usage lookup failed on a stored account: voice is blocked (fail closed), text stays open. */
+  usageUnavailable?: boolean;
 }) {
   const p = scenario.aiPersona;
   const steps = talkTrackSteps(scenario.callScript);
@@ -147,6 +157,8 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
   const engines = capabilities.voiceEngines ?? (capabilities.elevenlabs ? ["elevenlabs" as const] : []);
   const voiceReady = !!engine && engines.includes(engine);
   const blocked = mode === "voice" && !voiceReady;
+  const voiceLookupFailed = mode === "voice" && !!usageUnavailable;
+  const outOfMinutes = mode === "voice" && !!usage && usage.remaining <= 0;
   const voiceDetail = !voiceReady ? "Voice isn't configured on this server."
     : engine === "openai" ? `${capabilities.realtimeModel ?? "OpenAI Realtime"} over WebRTC. Your browser asks for the mic when the call starts.`
     : "ElevenLabs Agents over WebRTC. Your browser asks for the mic when the call starts.";
@@ -177,7 +189,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
           {notice && <p className="banner-warn" role="status">{notice} <Link href="/library" className="font-semibold underline underline-offset-2">Open the Library</Link></p>}
 
           {retryFrom && (
-            <p className="flex items-start gap-2 rounded-panel border border-primary/40 bg-primary-soft/50 p-3 text-sm" role="status">
+            <p id="retry-reason" className="flex items-start gap-2 rounded-panel border border-primary/40 bg-primary-soft/50 p-3 text-sm" role="status">
               <RotateCcw size={16} className="mt-0.5 shrink-0 text-primary" aria-hidden />
               <span><strong>Retry from turn {retryFrom.turn}.</strong> The call picks up right after {p.name} says &ldquo;{retryFrom.line}&rdquo; Retries run in text mode.</span>
             </p>
@@ -250,7 +262,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
                 <Lamp state="ok" label="Persona loaded" detail={`${p.name} stays in character and never coaches you.`} />
                 <Lamp state={goalRead ? "ok" : "off"} label="Goal read" detail={goalRead ? "You know what a win looks like." : "Tick “Got it” once you've read your goal."} />
                 <Lamp state={capabilities.llm ? "ok" : "caution"} label="Coach" detail={capabilities.llm ? `AI coach on ${capabilities.model ?? "your model"}` : "Rules-based coach. Add an AI key for smarter cues and grading."} />
-                <Lamp state={mode === "text" ? "ok" : voiceReady ? "ok" : "caution"} label={mode === "voice" ? (voiceReady && engine ? `Voice · ${VOICE_ENGINE_LABELS[engine]}` : "Voice") : "Text simulation"} detail={mode === "voice" ? voiceDetail : capabilities.llm ? "Type your side; the caller replies in seconds." : "Scripted caller replies (no AI key)."} />
+                <Lamp state={mode === "text" ? "ok" : voiceLookupFailed ? "off" : voiceReady ? "ok" : "caution"} label={mode === "voice" ? (voiceReady && engine && !voiceLookupFailed ? `Voice · ${VOICE_ENGINE_LABELS[engine]}` : "Voice") : "Text simulation"} detail={mode === "voice" ? (voiceLookupFailed ? "Voice is unavailable right now. Text practice still works." : voiceDetail) : capabilities.llm ? "Type your side; the caller replies in seconds." : "Scripted caller replies (no AI key)."} />
                 {mode === "voice" && voiceReady && (
                   <Lamp state={mic === "ok" ? "ok" : mic ? "caution" : "off"} label="Mic"
                     detail={mic === "ok" ? "Your mic is picking you up." : mic === "quiet" ? "Very low level. Check your input device." : mic === "blocked" ? "The browser blocked the mic. Allow it to use voice." : "Optional: run a mic test below."} />
@@ -262,13 +274,13 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
               <p className="label">Call mode</p>
               <div className="grid grid-cols-2 gap-1 rounded-lg bg-sunken p-1" role="radiogroup" aria-label="Call mode" onKeyDown={radioKeys(CALL_MODES, mode, onModeChange, (m) => !!retryFrom && m === "voice")}>
                 {CALL_MODES.map((m) => (
-                  <button key={m} type="button" role="radio" aria-checked={mode === m} tabIndex={mode === m ? 0 : -1} disabled={!!retryFrom && m === "voice"} onClick={() => onModeChange(m)}
+                  <button key={m} type="button" role="radio" aria-checked={mode === m} tabIndex={mode === m ? 0 : -1} disabled={!!retryFrom && m === "voice"} aria-describedby={!!retryFrom && m === "voice" ? "retry-reason" : undefined} onClick={() => onModeChange(m)}
                     className={`flex min-h-[38px] items-center justify-center gap-2 rounded-md text-sm font-semibold transition disabled:opacity-40 ${mode === m ? "bg-surface text-ink shadow-card ring-1 ring-line" : "text-ink-muted hover:text-ink"}`}>
                     {m === "voice" ? <Mic size={15} aria-hidden /> : <Keyboard size={15} aria-hidden />}{m === "voice" ? "Voice" : "Text"}
                   </button>
                 ))}
               </div>
-              {blocked && <p className="mt-2 text-xs text-caution">Voice calls need an OpenAI key or ElevenLabs keys on the server. Switch to Text to practise now.</p>}
+              {blocked && <p id="voice-blocked-reason" className="mt-2 text-xs text-caution">Voice calls need an OpenAI key or ElevenLabs keys on the server. Switch to Text to practice now.</p>}
               {mode === "voice" && voiceReady && engines.length > 1 && (
                 <div className="mt-3">
                   <p className="label">Voice engine</p>
@@ -291,9 +303,18 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
               <p className="mt-2 text-xs text-ink-muted">{MODE_HELP[coachMode]}</p>
             </div>
 
-            {error && <p role="alert" className="rounded-lg border border-alert/40 bg-alert-soft p-3 text-sm">{error}</p>}
+            {/* A cap refusal while the usage panel shows no minutes left is not repeated: the panel has the count, the reset date and the right Upgrade link. */}
+            {error && !(outOfMinutes && isCapMessage(error)) && <CallError message={error} canUpgrade={canUpgrade} />}
 
-            <button className="btn-primary btn-xl w-full" onClick={onStart} disabled={blocked}>
+            {/* Minutes near Start, in every state: voice keys set up or not. */}
+            <MinutesLeft usage={usage ?? null} mode={mode} canUpgrade={canUpgrade} />
+
+            {voiceLookupFailed && <VoiceUnavailable onUseText={() => onModeChange("text")} />}
+            {outOfMinutes && !voiceLookupFailed && <button type="button" className="btn-ghost btn-sm w-full" onClick={() => onModeChange("text")}>Switch to text practice</button>}
+
+            {/* A disabled Start always has a visible reason, and aria-describedby points the button at it. */}
+            <button className="btn-primary btn-xl w-full" onClick={onStart} disabled={blocked || voiceLookupFailed || outOfMinutes}
+              aria-describedby={voiceLookupFailed ? VOICE_UNAVAILABLE_ID : outOfMinutes ? "minutes-out" : blocked ? "voice-blocked-reason" : undefined}>
               <PhoneCall size={18} aria-hidden /> Start call
             </button>
             <p className="text-center text-xs text-ink-muted">The coach only talks to you. {p.name} never hears it.</p>
