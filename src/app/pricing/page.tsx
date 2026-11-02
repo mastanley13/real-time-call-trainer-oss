@@ -1,6 +1,6 @@
-import Link from "next/link";
 import ComparePlans from "@/components/landing/ComparePlans";
 import PricingCards from "@/components/landing/PricingCards";
+import RegisterLink from "@/components/landing/RegisterLink";
 import PublicFooter from "@/components/landing/PublicFooter";
 import {
   FREE_SUMMARY, FREE_VOICE_MIN, MINUTES_ROUNDED_NOTE, PREMIUM_VOICE_CAP_PCT, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT, registerHref,
@@ -63,7 +63,7 @@ export default function PricingPage() {
             Talk to AI buyers who push back, get coached live, and get a graded debrief that quotes your own transcript. Hosted for you: no API keys, no database, no setup.
           </p>
           <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-            <Link href={registerHref({ src: "pricing" })} className="btn-primary btn-xl">Start free, no card</Link>
+            <RegisterLink href={registerHref({ src: "pricing" })} className="btn-primary btn-xl">Start free, no card</RegisterLink>
             <a href="#plans" className="btn-ghost btn-xl">Compare plans</a>
           </div>
           <p className="mt-5 text-sm text-ink-muted">Self-hosting stays free forever under the MIT license.</p>

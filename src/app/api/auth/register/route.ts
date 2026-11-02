@@ -7,6 +7,10 @@ import { prisma } from "@/lib/db";
 import { accessCode, hasValidAccessCookie } from "@/lib/access";
 import { generateOrgCode, isValidOrgCode } from "@/lib/orgCodes";
 import { emitSignup } from "@/lib/ghl/events";
+import { FT_COOKIE, parseTouchCookie, preferTouch, sanitizeTouch } from "@/lib/firstTouch";
+
+/** Optional first-touch tag, sanitized below (lowercase [a-z0-9-_.], 120 max). The page sends sanitized values; the cap only stops abuse. */
+const touchField = z.string().max(2048).nullish();
 
 const RegisterSchema = z
   .object({
@@ -21,6 +25,13 @@ const RegisterSchema = z
     /// Exactly one of these two must be provided.
     joinOrgCode: z.string().regex(/^[0-9]{3,8}$/).optional(),
     newOrgName: z.string().trim().min(2).max(120).optional(),
+    utmSource: touchField,
+    utmMedium: touchField,
+    utmCampaign: touchField,
+    utmContent: touchField,
+    utmTerm: touchField,
+    /// Referrer host only.
+    referrer: touchField,
   })
   .refine(
     (v) => !!v.joinOrgCode !== !!v.newOrgName,
@@ -61,6 +72,8 @@ export async function POST(request: NextRequest) {
   }
 
   const emailLower = body.email.toLowerCase();
+  // The first-touch cookie wins over what the page sent (normally the same values, read from that cookie).
+  const touch = preferTouch(parseTouchCookie(request.cookies.get(FT_COOKIE)?.value), sanitizeTouch(body));
 
   try {
     const existing = await prisma.user.findUnique({ where: { email: emailLower } });
@@ -107,6 +120,12 @@ export async function POST(request: NextRequest) {
           organizationId: orgId,
           role,
           lastLoginAt: new Date(),
+          utmSource: touch.utmSource,
+          utmMedium: touch.utmMedium,
+          utmCampaign: touch.utmCampaign,
+          utmContent: touch.utmContent,
+          utmTerm: touch.utmTerm,
+          referrer: touch.referrer,
         },
         include: { organization: true },
       });

@@ -6,6 +6,7 @@ import { ghlEnabled } from "./client";
 import { drainGhlOutbox, enqueueGhlEvent, prismaOutboxStore } from "./outbox";
 import { ghlLog } from "./log";
 import { GHL_SEGMENTS, type GhlEvent, type GhlPayload, type GhlSegment } from "./types";
+import { inboundSource, sanitizeTouch, type FirstTouch } from "@/lib/firstTouch";
 
 const DAY_MS = 86_400_000;
 export const ACTIVE_WINDOW_DAYS = 7;
@@ -72,7 +73,7 @@ export function runAfterResponse(task: () => Promise<unknown>): void {
 // ---- Per-user serialized allocation ----
 
 type Tx = Prisma.TransactionClient;
-type LockedUser = { id: string; email: string; firstName: string | null; createdAt: Date; plan: string };
+type LockedUser = { id: string; email: string; firstName: string | null; createdAt: Date; plan: string; touch: FirstTouch };
 
 /**
  * Runs `fn` in a transaction holding a per-user advisory lock, so two callbacks for one user never
@@ -103,15 +104,21 @@ function makePayload(user: { id: string; email: string; firstName: string | null
     source: extra.source ?? null,
     referredByPartner: extra.referredByPartner ?? null,
     stripeCustomerId: extra.stripeCustomerId ?? null,
+    ...(event === "signup"
+      ? { utmSource: extra.utmSource ?? null, utmMedium: extra.utmMedium ?? null, utmCampaign: extra.utmCampaign ?? null, utmContent: extra.utmContent ?? null, utmTerm: extra.utmTerm ?? null, referrer: extra.referrer ?? null }
+      : {}),
   };
 }
 
 async function loadLocked(tx: Tx, userId: string): Promise<LockedUser | null> {
   const u = await tx.user.findUnique({
     where: { id: userId },
-    select: { id: true, email: true, firstName: true, createdAt: true, organization: { select: { planTier: true } } },
+    select: {
+      id: true, email: true, firstName: true, createdAt: true, organization: { select: { planTier: true } },
+      utmSource: true, utmMedium: true, utmCampaign: true, utmContent: true, utmTerm: true, referrer: true,
+    },
   });
-  return u ? { id: u.id, email: u.email, firstName: u.firstName, createdAt: u.createdAt, plan: u.organization?.planTier ?? "free" } : null;
+  return u ? { id: u.id, email: u.email, firstName: u.firstName, createdAt: u.createdAt, plan: u.organization?.planTier ?? "free", touch: sanitizeTouch(u) } : null;
 }
 
 /** What has been issued to GHL for this user so far, oldest first. */
@@ -122,10 +129,23 @@ async function readState(tx: Tx, userId: string) {
 
 const voiceSeconds = async (tx: Tx, userId: string) => (await tx.trainerSession.aggregate({ where: { userId }, _sum: { durationSeconds: true } }))._sum.durationSeconds ?? 0;
 
+/** The signup's first-touch fields, from the user record, so a signup queued late by another event still carries them. */
+export function signupTouch(t: FirstTouch): Pick<GhlPayload, "source" | "utmSource" | "utmMedium" | "utmCampaign" | "utmContent" | "utmTerm" | "referrer"> {
+  return {
+    source: inboundSource(t),
+    utmSource: t.utmSource ?? null,
+    utmMedium: t.utmMedium ?? null,
+    utmCampaign: t.utmCampaign ?? null,
+    utmContent: t.utmContent ?? null,
+    utmTerm: t.utmTerm ?? null,
+    referrer: t.referrer ?? null,
+  };
+}
+
 /** Signup always precedes every other event, even when its own callback is late (that one then dedupes). */
 async function ensureSignup(tx: Tx, u: LockedUser, issued: ReadonlySet<string>, extras: SignupExtras = {}) {
   if (issued.has("signup")) return;
-  const payload = makePayload(u, "signup", "free", 0, { ...extras, segment: confirmedSegment(extras.segment), occurredAt: u.createdAt.toISOString() });
+  const payload = makePayload(u, "signup", "free", 0, { ...extras, ...signupTouch(u.touch), segment: confirmedSegment(extras.segment), occurredAt: u.createdAt.toISOString() });
   await enqueueGhlEvent(payload, { store: prismaOutboxStore(tx) });
 }
 
@@ -137,7 +157,8 @@ const enqueueAndDrain = async (enqueue: () => Promise<unknown>) => {
 
 // ---- Emitters. All return immediately; a GHL failure can never reach the caller. ----
 
-export type SignupExtras = { segment?: string | null; source?: string | null; referredByPartner?: string | null };
+/** inbound_source is not an extra: it comes from the user's first touch (signupTouch). */
+export type SignupExtras = { segment?: string | null; referredByPartner?: string | null };
 
 /** Queue signup (no delivery). Exported for tests; the app calls `emitSignup`. */
 export async function enqueueSignup(userId: string, extras: SignupExtras = {}): Promise<void> {

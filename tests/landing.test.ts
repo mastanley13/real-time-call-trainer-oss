@@ -20,7 +20,7 @@ describe("landing pages", () => {
 
   it("sends sign-up CTAs to /register with the spec query params", () => {
     expect(LANDINGS.insurance.primaryHref).toBe("/register?seg=insurance&src=insurance");
-    expect(LANDINGS["saas-sdr"].primaryHref).toBe("/register?seg=saas&src=saas-sdr");
+    expect(LANDINGS["saas-sdr"].primaryHref).toBe("/register?seg=saas-sdr&src=saas-sdr");
     expect(LANDINGS.coaches.secondary.href).toBe("/register?src=coaches");
     expect(registerHref({ plan: "team", src: "pricing" })).toBe("/register?plan=team&src=pricing");
     for (const l of Object.values(LANDINGS)) expect(l.primaryHref).not.toContain("/start");

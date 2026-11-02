@@ -174,9 +174,9 @@ export const LANDINGS: Record<VerticalSlug, Landing> = {
     hero: "Your SDR floor, coached on every call",
     subhead: "Cold calls, gatekeepers, referrals and discovery with AI prospects who push back. Live coaching on the dial, and a debrief that quotes the line where you lost them.",
     primaryLabel: "Start free, no card",
-    primaryHref: registerHref({ seg: "saas", src: "saas-sdr" }),
+    primaryHref: registerHref({ seg: "saas-sdr", src: "saas-sdr" }),
     secondary: sec(),
-    src: "saas-sdr", seg: "saas",
+    src: "saas-sdr", seg: "saas-sdr",
     pains: [
       { title: "Burning accounts to learn.", body: "New SDRs learn the opener on your best-fit accounts, and every bad first dial is hard to undo." },
       { title: "Managers cannot shadow every call.", body: "Role-play gets skipped when the floor is busy, so feedback comes too late or not at all." },

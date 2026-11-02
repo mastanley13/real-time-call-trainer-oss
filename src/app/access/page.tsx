@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import AuthShell from "@/components/AuthShell";
+import { safeNextPath } from "@/lib/access";
 
 export default function AccessPage() {
   const [code, setCode] = useState("");
@@ -19,16 +20,8 @@ export default function AccessPage() {
         body: JSON.stringify({ code }),
       });
       if (res.ok) {
-        // Full reload so the app boots with the new cookie. Resolve ?next= and compare origins,
-        // because the URL parser reads "/\evil.com" and "/\t/evil.com" as protocol-relative.
-        const next = new URLSearchParams(window.location.search).get("next");
-        let target = "/";
-        try {
-          const u = next ? new URL(next, window.location.origin) : null;
-          if (u && u.origin === window.location.origin) target = u.pathname + u.search + u.hash;
-        } catch {
-          // Unparseable value: fall back to home.
-        }
+        // Full reload so the app boots with the new cookie. safeNextPath keeps same-origin targets only.
+        const target = safeNextPath(new URLSearchParams(window.location.search).get("next"), window.location.origin);
         window.location.assign(target);
         return;
       }

@@ -101,6 +101,14 @@ model User {
   voiceBlockedUntil         DateTime?
   /// Monthly usage reset anchor for all plans. Defaults to signup time and never moves.
   usageAnchorAt    DateTime @default(now())
+  /// First-touch attribution captured at sign-up (ct_ft cookie, else URL tags). Sanitized: lowercase
+  /// [a-z0-9-_.], at most 120 characters. `referrer` is a host only.
+  utmSource        String?
+  utmMedium        String?
+  utmCampaign      String?
+  utmContent       String?
+  utmTerm          String?
+  referrer         String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

@@ -1,8 +1,8 @@
-import Link from "next/link";
 import PricingSummary from "@/components/landing/PricingSummary";
 import PublicFooter from "@/components/landing/PublicFooter";
 import { CLOSING, PARTNER_BENEFITS, PARTNER_RULES, type Landing } from "@/lib/landing";
 import { registerHref } from "@/lib/pricing";
+import RegisterLink from "@/components/landing/RegisterLink";
 
 /** Shared layout for the /for/* vertical landing pages. Static; copy comes from src/lib/landing.ts. */
 export default function LandingPage({ l }: { l: Landing }) {
@@ -18,8 +18,8 @@ export default function LandingPage({ l }: { l: Landing }) {
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             {external
               ? <a href={l.primaryHref} className="btn-primary btn-xl">{l.primaryLabel}</a>
-              : <Link href={l.primaryHref} className="btn-primary btn-xl">{l.primaryLabel}</Link>}
-            <Link href={l.secondary.href} className="btn-ghost btn-xl">{l.secondary.label}</Link>
+              : <RegisterLink href={l.primaryHref} className="btn-primary btn-xl">{l.primaryLabel}</RegisterLink>}
+            <RegisterLink href={l.secondary.href} className="btn-ghost btn-xl">{l.secondary.label}</RegisterLink>
           </div>
         </div>
       </section>
@@ -113,7 +113,7 @@ export default function LandingPage({ l }: { l: Landing }) {
       <section className="deck">
         <div className="page py-14 text-center">
           <p className="mx-auto max-w-2xl font-heading text-2xl font-bold sm:text-3xl">{CLOSING}</p>
-          <Link href={partner ? registerHref({ src: "coaches" }) : l.primaryHref} className="btn-primary btn-xl mt-6">Start free, no card</Link>
+          <RegisterLink href={partner ? registerHref({ src: "coaches" }) : l.primaryHref} className="btn-primary btn-xl mt-6">Start free, no card</RegisterLink>
         </div>
       </section>
 

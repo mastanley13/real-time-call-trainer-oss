@@ -23,7 +23,7 @@ const payload = (event: GhlEvent, over: Partial<GhlPayload> = {}): GhlPayload =>
   ...over,
 });
 
-const FIELD_KEYS = ["plan", "signup_date", "minute_cap", "voice_minutes_used", "last_active_date", "inbound_source", "referred_by_partner", "first_graded_call_date", "stripe_customer_id"];
+const FIELD_KEYS = ["plan", "signup_date", "minute_cap", "voice_minutes_used", "last_active_date", "inbound_source", "referred_by_partner", "first_graded_call_date", "stripe_customer_id", "ct_utm_source", "ct_utm_medium", "ct_utm_campaign", "ct_utm_content", "ct_referrer"];
 const STAGES = ["Signed Up", "First Graded Call", "Active Trial", "Upgraded (Paid)", "Went Quiet"];
 
 type Call = { method: string; url: string; body: any; headers: Record<string, string> }; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -62,6 +62,8 @@ afterEach(() => {
 describe("per-event GHL calls", () => {
   const cases: Array<{ event: GhlEvent; over?: Partial<GhlPayload>; stage: string; tags: string[]; fields: string[] }> = [
     { event: "signup", over: { segment: "insurance" }, stage: "Signed Up", tags: ["ct-trial", "seg-insurance"], fields: ["plan", "signup_date", "minute_cap", "voice_minutes_used", "last_active_date", "inbound_source", "referred_by_partner"] },
+    { event: "signup", over: { source: "linkedin/launch-2026", utmSource: "linkedin", utmMedium: "dm", utmCampaign: "launch-2026", utmContent: "d1-dm01", utmTerm: "sdr" }, stage: "Signed Up", tags: ["ct-trial", "ct-outbound"], fields: ["plan", "signup_date", "minute_cap", "voice_minutes_used", "last_active_date", "inbound_source", "referred_by_partner", "ct_utm_source", "ct_utm_medium", "ct_utm_campaign", "ct_utm_content"] },
+    { event: "signup", over: { source: "news.ycombinator.com", utmMedium: "email", referrer: "news.ycombinator.com" }, stage: "Signed Up", tags: ["ct-trial"], fields: ["plan", "signup_date", "minute_cap", "voice_minutes_used", "last_active_date", "inbound_source", "referred_by_partner", "ct_utm_medium", "ct_referrer"] },
     { event: "first_graded_call", over: { voiceMinutesUsed: 6.5 }, stage: "First Graded Call", tags: ["ct-activated"], fields: ["first_graded_call_date", "voice_minutes_used", "last_active_date"] },
     { event: "active_trial", over: { voiceMinutesUsed: 12 }, stage: "Active Trial", tags: [], fields: ["voice_minutes_used", "last_active_date"] },
     { event: "upgrade", over: { plan: "pro", minuteCap: 300, stripeCustomerId: "cus_test" }, stage: "Upgraded (Paid)", tags: ["ct-paid-pro"], fields: ["plan", "minute_cap", "stripe_customer_id"] },
@@ -70,7 +72,7 @@ describe("per-event GHL calls", () => {
   ];
 
   for (const c of cases) {
-    it(`${c.event}${c.over?.plan ? ` (${c.over.plan})` : ""}: stage, tags and fields`, async () => {
+    it(`${c.event}${c.over?.plan ? ` (${c.over.plan})` : ""}${c.over?.utmMedium ? ` (utm_medium=${c.over.utmMedium})` : ""}: stage, tags and fields`, async () => {
       const g = fakeGhl();
       await createGhlClient({ env: ENV, fetchImpl: g.fetchImpl, sleep }).send(payload(c.event, c.over), META);
 
