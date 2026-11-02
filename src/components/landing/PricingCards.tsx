@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import RegisterLink from "@/components/landing/RegisterLink";
 import { useState } from "react";
 import { Check } from "lucide-react";
 import {
@@ -68,7 +68,7 @@ export default function PricingCards() {
                   <li key={f} className="flex gap-2"><Check size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-ok" aria-hidden />{f}</li>
                 ))}
               </ul>
-              <Link href={t.href} className={`mt-6 ${t.id === "free" ? "btn-ghost" : "btn-primary"}`}>{t.cta}</Link>
+              <RegisterLink href={t.href} className={`mt-6 ${t.id === "free" ? "btn-ghost" : "btn-primary"}`}>{t.cta}</RegisterLink>
             </section>
           );
         })}

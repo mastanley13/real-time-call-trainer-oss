@@ -1,4 +1,5 @@
 import Link from "next/link";
+import RegisterLink from "@/components/landing/RegisterLink";
 import {
   FREE_VOICE_MIN, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT, registerHref,
 } from "@/lib/pricing";
@@ -33,7 +34,7 @@ export default function PricingSummary({ src, seg }: { src: string; seg?: string
             <p className="mt-2 font-heading text-2xl font-bold">{p.price}</p>
             <p className="min-h-[1.25rem] font-mono text-xs text-ink-muted">{p.note}</p>
             <p className="mt-3 flex-1 text-sm text-ink-soft">{p.body}</p>
-            <Link href={p.href} className="btn-ghost mt-5">{p.cta}</Link>
+            <RegisterLink href={p.href} className="btn-ghost mt-5">{p.cta}</RegisterLink>
           </div>
         ))}
       </div>

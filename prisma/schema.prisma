@@ -101,6 +101,14 @@ model User {
   voiceBlockedUntil         DateTime?
   /// Monthly usage reset anchor for all plans. Defaults to signup time and never moves.
   usageAnchorAt    DateTime @default(now())
+  /// First-touch attribution captured at sign-up (ct_ft cookie, else URL tags). Sanitized: lowercase
+  /// [a-z0-9-_.], at most 120 characters. `referrer` is a host only.
+  utmSource        String?
+  utmMedium        String?
+  utmCampaign      String?
+  utmContent       String?
+  utmTerm          String?
+  referrer         String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -301,6 +309,44 @@ model TrainingAssignment {
   @@index([organizationId, archivedAt])
   @@index([assigneeId])
   @@index([assignedById])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  GoHighLevel outbox
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Durable queue of lifecycle events bound for GoHighLevel. `idempotencyKey` is
+/// unique, so the same event is never queued twice. Rows are drained after the
+/// response and by /api/cron/ghl-sync. Not tied to User by a relation on purpose:
+/// a GHL failure or a deleted user must never block anything.
+model GhlOutbox {
+  id             String    @id @default(cuid())
+  idempotencyKey String    @unique
+  /// Monotonic across the table, so it is monotonic per user. Rows of one user are
+  /// delivered in `seq` order and the number is sent to the receiver as `sequence`.
+  seq            Int       @unique @default(autoincrement())
+  event          String
+  userId         String
+  payload        Json
+  /// pending | done | dead
+  status         String    @default("pending")
+  attempts       Int       @default(0)
+  nextAttemptAt  DateTime  @default(now())
+  /// HTTP status code or short error code only, never a provider body.
+  lastError      String?
+  createdAt      DateTime  @default(now())
+  sentAt         DateTime?
+
+  @@index([status, nextAttemptAt])
+  @@index([userId, event])
+}
+
+/// Where the daily went-quiet scan stopped, so a backlog bigger than one run's page budget
+/// advances across runs instead of restarting at the same users. lastId "" means start over.
+model GhlScanCursor {
+  name      String   @id
+  lastId    String
+  updatedAt DateTime @updatedAt
 }
 
 // ─────────────────────────────────────────────────────────────────────────
