@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
     trainerSession: { findUnique: vi.fn(), update: vi.fn() },
     user: { findUnique: vi.fn() },
     auditEvent: { create: vi.fn() },
+    // The spend kill switch reads its durable row on every paid route; clear here.
+    spendState: { findUnique: async () => null },
     $transaction: vi.fn(),
   },
 }));

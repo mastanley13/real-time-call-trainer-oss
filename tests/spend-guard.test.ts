@@ -85,7 +85,7 @@ describe("daily voice-minute cap", () => {
     expect(paidFeaturesAvailable(DAY)).toBe(true);
   });
 
-  it("refuses a call that would go over and turns paid routes off once reached", () => {
+  it("refuses a call that would go over and turns paid routes off once reached", async () => {
     vi.stubEnv("DAILY_REALTIME_MINUTES_CAP", String(REALTIME_MINUTES_PER_CALL * 2 + 5));
     expect(reserveRealtimeCall(DAY)).not.toBeNull();
     expect(reserveRealtimeCall(DAY)).not.toBeNull();
@@ -95,7 +95,7 @@ describe("daily voice-minute cap", () => {
 
     vi.stubEnv("DAILY_REALTIME_MINUTES_CAP", String(REALTIME_MINUTES_PER_CALL * 2));
     expect(paidFeaturesAvailable(DAY)).toBe(false);
-    expect(paidFeaturesGuard(DAY)?.status).toBe(503);
+    expect((await paidFeaturesGuard(DAY))?.status).toBe(503);
   });
 
   it("gives a reservation back when the call never started", () => {

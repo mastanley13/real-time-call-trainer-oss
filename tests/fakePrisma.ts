@@ -16,6 +16,7 @@ const UNIQUE: Record<string, string[][]> = {
   trainerSession: [["id"]],
   stripeEvent: [["id"]],
   auditEvent: [["id"]],
+  spendState: [["id"]],
 };
 
 const NO_CHECKOUT = { stripeCheckoutSessionId: null, stripeCheckoutFingerprint: null, stripeCheckoutUrl: null, stripeCheckoutExpiresAt: null };
@@ -28,6 +29,7 @@ const DEFAULTS: Record<string, () => Record<string, unknown>> = {
   trainerSession: () => ({ connectedAt: null, endedAt: null, endReason: null, lastHeartbeatAt: null, degradedAt: null, billableSeconds: 0, billedMinutes: 0, durationSeconds: 0, allowanceId: null, allowancePeriodStart: null, reservedMinutes: 0, engineTier: "standard", premiumReservedMinutes: 0, carriedMinutes: 0, carriedPremiumMinutes: 0, abuseFlagged: false, capEnforced: true, createdAt: new Date() }),
   stripeEvent: () => ({ processedAt: new Date() }),
   auditEvent: () => ({}),
+  spendState: () => ({ tripped: false, dailyCapDay: null, alertedThresholds: [] }),
 };
 
 const isDate = (v: unknown): v is Date => v instanceof Date;
@@ -127,6 +129,16 @@ export function createFakePrisma() {
         apply(r, args.data);
         return { ...r };
       },
+      upsert: async (args: { where: Where; create: Record<string, unknown>; update: Record<string, unknown> }) => {
+        const r = find(args.where);
+        if (!r) {
+          const row = { id: `${name}-${++seq}`, ...DEFAULTS[name](), ...args.create } as Row;
+          rows().push(row);
+          return { ...row };
+        }
+        apply(r, args.update);
+        return { ...r };
+      },
       updateMany: async (args: { where: Where; data: Record<string, unknown> }) => {
         await fire(name, "updateMany", args);
         const hit = rows().filter((r) => matches(r, args.where));
@@ -155,6 +167,7 @@ export function createFakePrisma() {
     trainerSession: table("trainerSession"),
     stripeEvent: table("stripeEvent"),
     auditEvent: table("auditEvent"),
+    spendState: table("spendState"),
     /** Runs fn on the same store; a throw restores the data as it was, like a rolled-back transaction. */
     $transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
       const entry = { snapshot: structuredClone(data) };

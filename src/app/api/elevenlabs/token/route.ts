@@ -14,7 +14,7 @@ import { capReached, minutesReserved, standardVoiceUnavailable, voiceBlocked, vo
 export async function GET(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
-  const paused = paidFeaturesGuard();
+  const paused = await paidFeaturesGuard();
   if (paused) return paused;
 
   const ipLimited = ipLimitResponse(req, "token");

@@ -1,4 +1,6 @@
 import "server-only";
+import { creditExpiredBlock } from "@/lib/spendConfig";
+import { readSpendTrip, recordDailyCeiling } from "@/lib/spendState";
 
 /**
  * Hard spend kill switch for the routes that call paid providers (OpenAI Realtime, ElevenLabs,
@@ -16,6 +18,12 @@ import "server-only";
  *
  * NOTE: like rateLimit.ts, the counter is in memory and per server instance, so on serverless
  * hosts the cap is best-effort. PAID_FEATURES_ENABLED=false is the switch that always holds.
+ *
+ * The spend monitor (STR-691, src/lib/spendMonitor.ts) adds a durable runtime switch, since a job cannot
+ * flip an env var: the SpendState row. paidFeaturesGuard also refuses when that row is tripped (90% of the
+ * OpenAI budget, or the credit expired), when any instance recorded today's voice ceiling there, or when
+ * the credit expiry date has passed on a server running the monitor. Those checks are async (a cached
+ * database read, see spendState.ts), which is why the guards return promises.
  */
 
 /** Minutes reserved per voice call. Calls run longer than the 10-minute secret, so this is an estimate. */
@@ -77,6 +85,8 @@ export function reserveRealtimeCall(now = Date.now()): RealtimeReservation | nul
   const cap = dailyRealtimeMinutesCap();
   if (cap !== null && reservedMinutes + REALTIME_MINUTES_PER_CALL > cap) return null;
   reservedMinutes += REALTIME_MINUTES_PER_CALL;
+  // This call used the last of today's minutes: tell the other instances through the SpendState row.
+  if (cap !== null && reservedMinutes >= cap) void recordDailyCeiling(day, now);
   return { day, minutes: REALTIME_MINUTES_PER_CALL, released: false };
 }
 
@@ -93,9 +103,12 @@ export function releaseRealtimeCall(reservation: RealtimeReservation, now = Date
   reservedMinutes = Math.max(0, reservedMinutes - reservation.minutes);
 }
 
+/** Why paid routes are refusing: the kill switch ("off") or today's voice ceiling ("cap"). */
+export type PaidBlock = "off" | "cap";
+
 /** The 503 every paid route returns while the switch is off or the day's cap is used up. */
-export function paidFeaturesOffResponse(): Response {
-  const off = !paidFeaturesEnabled();
+export function paidFeaturesOffResponse(block: PaidBlock = paidFeaturesEnabled() ? "cap" : "off"): Response {
+  const off = block === "off";
   return Response.json(
     {
       error: off ? "paid_features_off" : "daily_cap_reached",
@@ -107,17 +120,37 @@ export function paidFeaturesOffResponse(): Response {
   );
 }
 
-/** Returns the 503 when paid routes are off, else null. Same calling style as ipLimitResponse. */
-export function paidFeaturesGuard(now = Date.now()): Response | null {
-  return paidFeaturesAvailable(now) ? null : paidFeaturesOffResponse();
+/** The kill switch alone: the env var, the credit expiry and the durable trip. */
+async function switchBlock(now: number): Promise<boolean> {
+  if (!paidFeaturesEnabled() || creditExpiredBlock(now)) return true;
+  return (await readSpendTrip(now)).tripped;
+}
+
+/** Why paid routes must refuse right now, or null when they may call their provider. */
+export async function paidFeaturesBlock(now = Date.now()): Promise<PaidBlock | null> {
+  if (await switchBlock(now)) return "off";
+  if (capReached(now)) return "cap";
+  const { dailyCapDay } = await readSpendTrip(now);
+  return dailyCapDay === utcDay(now) ? "cap" : null;
+}
+
+/** True when paid routes may call their provider right now, durable switch included. */
+export async function paidFeaturesReady(now = Date.now()): Promise<boolean> {
+  return (await paidFeaturesBlock(now)) === null;
+}
+
+/** Returns the 503 when paid routes are off, else null. Same calling style as ipLimitResponse, but awaited. */
+export async function paidFeaturesGuard(now = Date.now()): Promise<Response | null> {
+  const block = await paidFeaturesBlock(now);
+  return block ? paidFeaturesOffResponse(block) : null;
 }
 
 /**
  * The kill switch alone, without the daily cap. Only for steps that finish a voice call whose
  * minutes are already reserved (the SDP exchange), so the call that used the last minutes connects.
  */
-export function paidFeaturesSwitchGuard(): Response | null {
-  return paidFeaturesEnabled() ? null : paidFeaturesOffResponse();
+export async function paidFeaturesSwitchGuard(now = Date.now()): Promise<Response | null> {
+  return (await switchBlock(now)) ? paidFeaturesOffResponse("off") : null;
 }
 
 /** Test hook: forget today's reservations. */

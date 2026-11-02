@@ -23,7 +23,7 @@ const Body = z.object({
 export async function POST(request: NextRequest) {
   const auth = requireAuth(request);
   if (auth instanceof NextResponse) return auth;
-  const paused = paidFeaturesGuard();
+  const paused = await paidFeaturesGuard();
   if (paused) return paused;
 
   const ipLimited = ipLimitResponse(request, "grading");

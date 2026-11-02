@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCapabilities, productionGuard } from "@/lib/serverConfig";
+import { spendMonitorConfigured } from "@/lib/spendConfig";
 
 export async function GET() {
   const caps = getCapabilities();
@@ -25,6 +26,8 @@ export async function GET() {
   checks.realtime = caps.realtime ? "configured" : "not_configured";
   checks.llm = caps.llm ? "configured" : "not_configured";
   checks.demoMode = caps.demoMode ? "on" : "off";
+  // Informational only: the OpenAI spend monitor (/api/cron/spend-monitor) is optional and never fails health.
+  checks.spendMonitor = spendMonitorConfigured() ? "configured" : "not_configured";
 
   const guard = productionGuard(process.env);
   if (guard.problems.includes("demo_in_production")) {
