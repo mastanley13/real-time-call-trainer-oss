@@ -5,7 +5,7 @@ import { rateLimit, ipLimitResponse, readJsonLimited, MAX_TURNS, MAX_TRANSCRIPT_
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { chatFull } from "@/lib/llm";
 import { scriptedReply } from "@/lib/scriptedCaller";
-import { llmKey } from "@/lib/serverConfig";
+import { openAiKeyFor } from "@/lib/openaiKeys";
 
 const Body = z.object({
   scenario: ScenarioSchema,
@@ -54,7 +54,9 @@ export async function POST(req: NextRequest) {
   }
   const { scenario, history } = body;
 
-  if (llmKey()) {
+  // The key comes from the user's plan on the server (free or paid project, or the team's own key).
+  const route = await openAiKeyFor(auth.id, "llm");
+  if (route) {
     try {
       const { text, truncated } = await chatFull(
         [
@@ -65,6 +67,7 @@ export async function POST(req: NextRequest) {
           ...mergeTurns(history),
         ],
         { maxTokens: 500, temperature: 0.8 },
+        route,
       );
       const hadEnd = text.includes(END_TOKEN);
       let reply = text.replace(END_TOKEN, "").trim();

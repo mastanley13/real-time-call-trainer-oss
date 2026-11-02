@@ -51,7 +51,7 @@ export interface VoiceEngineRow {
 const KNOWN = ["realtime", "elevenlabs"] as const;
 const VOICE_LABELS: Record<string, string> = { realtime: "OpenAI Realtime", elevenlabs: "ElevenLabs voice agent" };
 const VOICE_SETUP: Record<string, string> = {
-  realtime: "Set OPENAI_API_KEY (or OPENAI_REALTIME_API_KEY) on the server.",
+  realtime: "Set OPENAI_API_KEY_FREE and OPENAI_API_KEY_PAID (or one OPENAI_API_KEY) on the server.",
   elevenlabs: "Add ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID to the server environment.",
 };
 /** "openai", "openai-realtime" and "realtime" all name the same engine. */

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/apiAuth";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
-import { llmBaseUrl, llmKey, llmModel } from "@/lib/serverConfig";
+import { llmBaseUrl, llmModel } from "@/lib/serverConfig";
+import { openAiKeyFor } from "@/lib/openaiKeys";
 import { CHECK_TIMEOUT_MS, checkHint, type CheckFailure, type LlmCheckResult } from "../hints";
 
 const CHECK_LIMIT = 6;
@@ -24,7 +25,7 @@ function result(r: Omit<LlmCheckResult, "hint">, failure?: CheckFailure) {
 }
 
 /**
- * Makes one minimal chat completion (max_tokens 1) with the configured key and
+ * Makes one minimal chat completion (max_tokens 1) with the signed-in user's plan key and
  * model and reports what happened in plain language. The provider's error body
  * is never read or echoed, and neither the key nor the endpoint URL is returned.
  */
@@ -38,7 +39,8 @@ export async function POST(req: NextRequest) {
   if (!userLimit.allowed) return limited(userLimit.retryAfterMs, `${USER_CHECK_LIMIT} times in the last hour`);
 
   const model = llmModel();
-  const key = llmKey();
+  // Checks the key this user's plan would actually use (free or paid project, or the team's own key).
+  const key = (await openAiKeyFor(auth.id, "llm"))?.key;
   if (!key) return result({ ok: false, latencyMs: null, model, status: null }, "no_key");
 
   const started = Date.now();

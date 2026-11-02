@@ -5,7 +5,8 @@ import { APOLOGY_STEP_RE, isApology } from "./apology";
 import { detectSlotOffer, gradeHeuristically } from "./grader";
 import { chat, extractJson } from "./llm";
 import { normalizeWeights, talkTrackSteps, type Objection, type ObjectionType, type RubricCriterion, type Scenario } from "./scenarios";
-import { llmKey, llmModel } from "./serverConfig";
+import { llmModel } from "./serverConfig";
+import type { KeyRoute } from "./openaiKeys";
 
 /**
  * Live coach. Called after every finished turn of a practice call; returns a
@@ -609,12 +610,12 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptions): Promise<Omit<CoachResult, "latencyMs">> {
+async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptions, route: KeyRoute): Promise<Omit<CoachResult, "latencyMs">> {
   const rubric = normalizeWeights(scenario.rubric);
   const steps = talkTrackSteps(scenario.callScript);
   const { system, user } = buildPrompt(scenario, spoken, steps, rubric, opts);
   const text = await withTimeout(
-    chat([{ role: "system", content: system }, { role: "user", content: user }], { json: true, maxTokens: 700, temperature: 0.2 }),
+    chat([{ role: "system", content: system }, { role: "user", content: user }], { json: true, maxTokens: 700, temperature: 0.2 }, route),
     LLM_TIMEOUT_MS,
   );
   const out = LlmCoachOutput.parse(extractJson(text));
@@ -643,13 +644,16 @@ async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptio
   };
 }
 
-/** One live-coach update for the transcript so far. Never throws for LLM problems; falls back to the heuristic. */
-export async function coachTurn(scenario: Scenario, transcript: CoachTurnInput[], opts: CoachOptions): Promise<CoachResult> {
+/**
+ * One live-coach update for the transcript so far. Never throws for LLM problems; falls back to the heuristic.
+ * `route` is the key openAiKeyFor resolved for the user's plan; without one the rules-based coach runs.
+ */
+export async function coachTurn(scenario: Scenario, transcript: CoachTurnInput[], opts: CoachOptions, route?: KeyRoute | null): Promise<CoachResult> {
   const t0 = Date.now();
   const spoken = spokenLines(transcript, opts.lineOffset);
-  if (llmKey() && spoken.length) {
+  if (route && spoken.length) {
     try {
-      const result = await coachWithLlm(scenario, spoken, opts);
+      const result = await coachWithLlm(scenario, spoken, opts, route);
       return { ...result, latencyMs: Date.now() - t0 };
     } catch (e) {
       console.error("[coach] LLM coach failed, falling back to heuristic:", (e as Error).message);

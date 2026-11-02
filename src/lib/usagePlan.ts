@@ -51,6 +51,16 @@ export function effectivePlan(tier: unknown, billingOn: boolean): PlanTier {
 }
 
 /**
+ * The plan a user is on right now, and whether it comes from their organization's Team pool. A Team organization
+ * (only while billing is on) wins over the user's own row; otherwise the user's own tier, through effectivePlan.
+ * This is the one definition both metering (usage.ts) and OpenAI key routing (openaiKeys.ts) use.
+ */
+export function currentPlan(user: { planTier?: string | null }, org: { planTier?: string | null } | null | undefined, billingOn: boolean): { plan: PlanTier; pooled: boolean } {
+  const pooled = !!org && org.planTier === "team" && billingOn;
+  return { plan: pooled ? "team" : effectivePlan(user.planTier, billingOn), pooled };
+}
+
+/**
  * True only when the organization's planTier is "team". That value is written solely by the Stripe
  * webhook sync in billing.ts, so this is the one check the Team MFA enforcement toggle should use.
  */

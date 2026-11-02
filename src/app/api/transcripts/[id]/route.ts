@@ -9,7 +9,8 @@ import { LIBRARY } from "@/lib/personas";
 import { evaluateCall } from "@/lib/grader";
 import type { Evaluation } from "@/lib/grader-types";
 import { canRegrade, gradable, gradedNote, isAiGrade } from "@/lib/gradable";
-import { getCapabilities, llmKey } from "@/lib/serverConfig";
+import { getCapabilities } from "@/lib/serverConfig";
+import { anyKeyFor, openAiKeyFor } from "@/lib/openaiKeys";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -65,7 +66,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (isDemoUser(auth) || !getCapabilities().database) {
     return fail(400, "server_sessions_unavailable", "This server keeps sessions in the browser, so it has no stored session to re-grade.");
   }
-  if (!llmKey()) {
+  if (!anyKeyFor("llm")) {
     return fail(503, "llm_not_configured", "AI grading isn't set up on this server. Add LLM_API_KEY to the server environment, then try again.");
   }
 
@@ -119,9 +120,15 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   // Long calls are graded on their opening turns and the note says so, the same way /api/evaluate-call grades them.
   const graded = gradable(turns);
 
+  // Billed to the plan of the rep whose call this is (not the manager re-grading it), like any other work done on their behalf.
+  const route = await openAiKeyFor(session.userId, "llm");
+  if (!route) {
+    return fail(503, "llm_not_configured", "AI grading isn't available for this rep's plan on this server. Ask the server admin to add the OpenAI key for that plan, then try again.");
+  }
+
   let evaluation: Evaluation;
   try {
-    evaluation = await evaluateCall(scenario, graded);
+    evaluation = await evaluateCall(scenario, graded, route);
   } catch (error) {
     console.error("[/api/transcripts/[id]] regrade error:", error);
     return fail(500, "Failed to evaluate call", "Grading failed on the server. Try again in a minute.");

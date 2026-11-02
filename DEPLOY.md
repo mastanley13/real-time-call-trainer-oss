@@ -5,12 +5,12 @@ Any Node 22+ host works (Vercel, Fly, Render, a VPS). You need a Postgres databa
 ## Checklist
 1. **Database**: provision Postgres; set `DATABASE_URL`. Run `npm run db:migrate` (use the direct, non-pooled URL for migrations on Neon/Supabase). Run it again on every deploy that adds a migration; the team view needs `20261027000000_training_assignments`.
 2. **Secrets**: `JWT_SECRET` (`node generate-jwt-secret.js`; it also keys the grade seal and the access-code cookie, so rotating it signs everyone out), `CRON_SECRET`.
-3. **Voice**: OpenAI Realtime needs only an OpenAI key (`OPENAI_REALTIME_API_KEY`, or `OPENAI_API_KEY`). ElevenLabs is optional: `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`, with overrides enabled on the agent (see README). With both, `VOICE_ENGINE` picks the default.
+3. **Voice**: OpenAI Realtime needs only an OpenAI key (`OPENAI_REALTIME_API_KEY`, or `OPENAI_API_KEY`). A hosted deployment with paying customers sets the per-plan keys instead; see [OpenAI projects per plan](#openai-projects-per-plan). ElevenLabs is optional: `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`, with overrides enabled on the agent (see README). With both, `VOICE_ENGINE` picks the default.
 4. **Coach, grading and wizard** (optional): `LLM_API_KEY` (+ `LLM_BASE_URL`, `LLM_MODEL`). Check it from Settings, Models after deploying. `OPENAI_API_KEY` stands in for `LLM_API_KEY` only while `LLM_BASE_URL` points at OpenAI; a custom base URL needs its own `LLM_API_KEY`.
 5. **Do not set `DEMO_MODE`**. It disables authentication. With `NODE_ENV=production`, `DEMO_MODE=true` is ignored and login stays required unless `ALLOW_PUBLIC_DEMO=true` is also set for a deliberate public demo. As extra layers, the app refuses to boot in that state, and `/api/health` falls back to returning 503 if it does run. `/api/health` also returns 503 in production without demo when `DATABASE_URL` is missing.
 6. Build and start: `npm run build && npm start`.
 7. **Retention**: `vercel.json` schedules `/api/cron/purge-expired` daily on Vercel, and Vercel Cron sends `Authorization: Bearer $CRON_SECRET` when the variable is set. Elsewhere, call it with that header. The route accepts nothing else (the `x-vercel-cron` header is ignored) and returns 401 when `CRON_SECRET` is unset. Per-org retention is set in the database (`Organization.sessionRetentionDays`).
-8. **Health**: `GET /api/health` reports DB, secrets and provider configuration (`elevenlabs`, `realtime`, `llm`).
+8. **Health**: `GET /api/health` reports DB, secrets and provider configuration (`elevenlabs`, `realtime`, `llm`), and `openai: { free, paid, shared, byokEncryption }` as booleans.
 9. **Proxies**: run the app behind at least one proxy that sets or appends `X-Forwarded-For`. If more than one sits in front of the app, set `TRUSTED_PROXY_HOPS` (see below).
 
 ## Neon Postgres
@@ -49,6 +49,19 @@ Too low, and every visitor shares the CDN's address and its rate-limit bucket. T
 - Security headers and a CSP are set in `next.config.ts`; the CSP `connect-src` allows ElevenLabs and LiveKit. OpenAI Realtime needs no entry: the WebRTC offer goes through `/api/realtime/sdp` on your own origin. Adjust it if you use a regional ElevenLabs endpoint (LLM calls are server-side and unaffected).
 - Auth cookies are `httpOnly`, `sameSite=lax` and `secure` in production. Serve over HTTPS.
 - Transcripts may contain personal data. Set retention windows and review your privacy obligations.
+
+## OpenAI projects per plan
+Free and paid traffic run on separate OpenAI projects so each has its own spend limit and rate limits, and spend shows separately per project in OpenAI. The routing is in code (`src/lib/openaiKeys.ts`); the projects and their limits are dashboard settings.
+
+1. OpenAI dashboard, Projects: create `calltrainer-free` and `calltrainer-paid`.
+2. In each project create one API key (Restricted, with only the model endpoints the app uses: Realtime and Chat Completions).
+3. In each project, Limits: set a hard monthly budget so the project stops when it is reached, and set per-model rate limits. Give `calltrainer-free` the lower ones.
+4. Host env (Production, encrypted): `OPENAI_API_KEY_FREE` and `OPENAI_API_KEY_PAID`. Never put either in code, a pull request or a ticket.
+5. Optional, for Team BYOK: `BYOK_ENCRYPTION_KEY` (`openssl rand -base64 32`). Back it up in the secret store; losing or rotating it makes saved team keys unreadable (those teams fall back to the paid project until an owner saves the key again).
+6. Redeploy, then check `GET /api/health`: `openai.free` and `openai.paid` should be `true`.
+7. After a few calls on each plan, Usage in the OpenAI dashboard shows spend under each project.
+
+Rules: the plan is read on the server (Pro or Team with an active, trialing or past-due Stripe subscription is paid; everything else, including demo and a failed lookup, is Free). Free never gets the paid key: if `OPENAI_API_KEY_FREE` is unset, Free uses the shared `OPENAI_API_KEY` chain only when that differs from the paid key, otherwise voice is unavailable for Free and the coach, grader, wizard and text caller use their rules-based fallbacks. Paid never spends on the free project. With neither tier key set, everything uses the shared key as before. Rotating a key: create the new key in the same project, update the env var, redeploy, then revoke the old one.
 
 ## Voice minutes without Stripe
 - Voice caps are off by default, so a self-hosted install is uncapped. Set `USAGE_CAPS=on` (with `DATABASE_URL` set and `DEMO_MODE` off) to meter voice with no Stripe key: everyone is on Free, 10 voice minutes a month, resetting monthly. Leave it unset to disable the cap.

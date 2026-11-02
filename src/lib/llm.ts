@@ -1,5 +1,6 @@
 import "server-only";
-import { llmBaseUrl, llmKey, llmModel } from "./serverConfig";
+import { llmBaseUrl, llmModel } from "./serverConfig";
+import type { KeyRoute } from "./openaiKeys";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -8,23 +9,27 @@ export interface ChatMessage {
 
 /**
  * Minimal OpenAI-compatible chat completion call (works with OpenAI, Azure,
- * OpenRouter, Ollama, vLLM...). Configure with LLM_API_KEY (or OPENAI_API_KEY),
- * LLM_BASE_URL and LLM_MODEL. Used for the coach, grading, the persona wizard
- * and the text simulation; voice goes through OpenAI Realtime or ElevenLabs.
+ * OpenRouter, Ollama, vLLM...). LLM_BASE_URL and LLM_MODEL pick the endpoint and
+ * model. The key is never read here: callers pass the route openAiKeyFor resolved
+ * for the user's plan (openaiKeys.ts), so the free and paid projects stay apart.
+ * Used for the coach, grading, the persona wizard and the text simulation; voice
+ * goes through OpenAI Realtime or ElevenLabs.
  */
 export async function chat(
   messages: ChatMessage[],
-  opts: { json?: boolean; maxTokens?: number; temperature?: number } = {},
+  opts: { json?: boolean; maxTokens?: number; temperature?: number },
+  route: KeyRoute,
 ): Promise<string> {
-  return (await chatFull(messages, opts)).text;
+  return (await chatFull(messages, opts, route)).text;
 }
 
 /** Like chat(), but also reports whether the model stopped because it hit max_tokens. */
 export async function chatFull(
   messages: ChatMessage[],
-  opts: { json?: boolean; maxTokens?: number; temperature?: number } = {},
+  opts: { json?: boolean; maxTokens?: number; temperature?: number },
+  route: KeyRoute,
 ): Promise<{ text: string; truncated: boolean }> {
-  const key = llmKey();
+  const key = route?.key;
   if (!key) throw new Error("LLM_NOT_CONFIGURED");
   const base = llmBaseUrl();
   // Anthropic's OpenAI-compatible endpoint ignores response_format, so we

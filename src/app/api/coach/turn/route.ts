@@ -5,6 +5,7 @@ import { rateLimit, ipLimitResponse, readJsonLimited, MAX_TURNS, MAX_TRANSCRIPT_
 import { ScenarioSchema } from "@/lib/scenarios";
 import { CoachTurnSchema } from "@/lib/coach-types";
 import { coachTurn, trailingWindow } from "@/lib/coach";
+import { openAiKeyFor } from "@/lib/openaiKeys";
 
 const Body = z.object({
   scenario: ScenarioSchema,
@@ -43,7 +44,9 @@ export async function POST(req: NextRequest) {
   // Over the limits, coach on the most recent turns instead of rejecting the call: a 400 here froze the rail for the rest of a long call.
   const win = trailingWindow(body.transcript, MAX_TURNS, MAX_TRANSCRIPT_CHARS);
   try {
-    const result = await coachTurn(body.scenario, win.turns, { allowCue: body.allowCue, recentCueKeys: body.recentCueKeys, lineOffset: body.lineOffset + win.dropped });
+    // The key comes from the user's plan on the server (free or paid project, or the team's own key).
+    const route = await openAiKeyFor(auth.id, "llm");
+    const result = await coachTurn(body.scenario, win.turns, { allowCue: body.allowCue, recentCueKeys: body.recentCueKeys, lineOffset: body.lineOffset + win.dropped }, route);
     return NextResponse.json(result);
   } catch (error) {
     console.error("[/api/coach/turn] error:", error);

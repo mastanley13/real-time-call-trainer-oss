@@ -2,7 +2,8 @@ import "server-only";
 import { z } from "zod";
 import { APOLOGY_STEP_RE, isApology } from "./apology";
 import { chat, extractJson } from "./llm";
-import { llmKey, llmModel } from "./serverConfig";
+import { llmModel } from "./serverConfig";
+import type { KeyRoute } from "./openaiKeys";
 import { Scenario, normalizeWeights } from "./scenarios";
 
 export interface Turn {
@@ -62,7 +63,7 @@ function dropContradictions(rationale: string, evidence: CriterionResult["eviden
   return kept.length ? kept.join(" ") : "You made a real attempt at this; see the quotes below.";
 }
 
-async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluation> {
+async function gradeWithLlm(scenario: Scenario, turns: Turn[], route: KeyRoute): Promise<Evaluation> {
   const rubric = normalizeWeights(scenario.rubric);
   const system = [
     "You are an exacting sales/phone-call coach grading a trainee's practice call against a rubric.",
@@ -87,7 +88,7 @@ async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluati
 
   // Read the model before the call so the stored provenance names what actually graded this transcript.
   const model = llmModel();
-  const out = LlmOutput.parse(extractJson(await chat([{ role: "system", content: system }, { role: "user", content: user }], { json: true })));
+  const out = LlmOutput.parse(extractJson(await chat([{ role: "system", content: system }, { role: "user", content: user }], { json: true }, route)));
   // Line numbers/speakers come from the transcript itself, not from the model.
   const haystack = turns.map((t) => norm(t.text));
 
@@ -283,10 +284,11 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
   };
 }
 
-export async function evaluateCall(scenario: Scenario, turns: Turn[]): Promise<Evaluation> {
-  if (!llmKey()) return gradeHeuristically(scenario, turns);
+/** `route` is the key openAiKeyFor resolved for the plan the grade is billed to; without one the rules-based grader runs. */
+export async function evaluateCall(scenario: Scenario, turns: Turn[], route?: KeyRoute | null): Promise<Evaluation> {
+  if (!route) return gradeHeuristically(scenario, turns);
   try {
-    return await gradeWithLlm(scenario, turns);
+    return await gradeWithLlm(scenario, turns, route);
   } catch (e) {
     console.error("[grader] LLM grading failed, falling back to heuristic:", (e as Error).message);
     return gradeHeuristically(scenario, turns, "AI grading failed for this call, so this is a rules-based estimate. Re-grade with AI to try again.");

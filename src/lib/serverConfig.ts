@@ -1,6 +1,6 @@
 import "server-only";
 import { safeEqual } from "./access";
-import { orderVoiceEngines, realtimeKey, realtimeModel } from "./realtime";
+import { orderVoiceEngines, realtimeKey, realtimeModel, resolveRealtimeKey } from "./realtime";
 import { stripeStatus } from "./stripe";
 
 /**
@@ -42,10 +42,42 @@ export function elevenLabsAgentFor(engine: "premium" | "standard", env: Env = pr
   return { agentId: engine === "standard" && standard ? standard : main, standardAvailable: Boolean(standard) };
 }
 
+/**
+ * The per-plan OpenAI project keys (STR-690). OPENAI_API_KEY_FREE is the `calltrainer-free` project and
+ * OPENAI_API_KEY_PAID the `calltrainer-paid` project. Which one a request uses is decided server-side by
+ * openAiKeyFor in openaiKeys.ts; this only reads them.
+ */
+export function openAiTierKeys(env: Env = process.env): { free: string | undefined; paid: string | undefined } {
+  const k = (v: string | undefined) => (v && v.trim()) || undefined;
+  return { free: k(env.OPENAI_API_KEY_FREE), paid: k(env.OPENAI_API_KEY_PAID) };
+}
+
+/**
+ * Which key tiers this server has, as booleans only (for /api/health). `shared` is the single-key fallback
+ * (OPENAI_API_KEY and friends) that a tier without its own key uses. `byokEncryption` is true when a Team
+ * owner can store their own OpenAI key (BYOK_ENCRYPTION_KEY decodes to 32 bytes).
+ */
+export function openAiTierStatus(env: Env = process.env): { free: boolean; paid: boolean; shared: boolean; byokEncryption: boolean } {
+  const tiers = openAiTierKeys(env);
+  const raw = env.BYOK_ENCRYPTION_KEY?.trim();
+  let byokEncryption = false;
+  if (raw) {
+    try {
+      byokEncryption = Buffer.from(raw, "base64").length === 32;
+    } catch {
+      byokEncryption = false;
+    }
+  }
+  return { free: Boolean(tiers.free), paid: Boolean(tiers.paid), shared: Boolean(resolveRealtimeKey(env) || resolveLlmKey(env)), byokEncryption };
+}
+
 /** Runtime capability flags. Everything is optional; the UI degrades gracefully. */
 export function getCapabilities() {
   const elevenlabs = Boolean(process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_AGENT_ID);
-  const realtime = Boolean(realtimeKey());
+  const tiers = openAiTierKeys();
+  // On when any plan could get a key. Whether this viewer's plan has one is decided per request by openAiKeyFor.
+  const realtime = Boolean(realtimeKey() || tiers.free || tiers.paid);
+  const llmTier = isOpenAiBaseUrl(llmBaseUrl()) && Boolean(tiers.free || tiers.paid);
   return {
     /** Fails closed: false whenever the production guard blocks demo mode, so requireAuth never yields DEMO_USER. */
     demoMode: process.env.DEMO_MODE === "true" && !productionGuard(process.env).problems.includes("demo_in_production"),
@@ -55,7 +87,7 @@ export function getCapabilities() {
     /** Voice engines in preference order: OpenAI first unless VOICE_ENGINE=elevenlabs. Empty means text only. */
     voiceEngines: orderVoiceEngines({ openai: realtime, elevenlabs }, process.env.VOICE_ENGINE),
     ...(realtime ? { realtimeModel: realtimeModel() } : {}),
-    llm: Boolean(llmKey()),
+    llm: Boolean(llmKey()) || llmTier,
     database: Boolean(process.env.DATABASE_URL),
     /** Stripe test-mode billing: false when unset, in demo mode, or when the key is not an sk_test_ key. */
     billing: stripeStatus() === "ready",
@@ -67,7 +99,7 @@ export function getCapabilities() {
 }
 
 /** Exact host match: \b alone would also accept api.openai.com.attacker.example. */
-const isOpenAiBaseUrl = (url: string) => /^https:\/\/api\.openai\.com(?::443)?(?:\/|$)/i.test(url.trim());
+export const isOpenAiBaseUrl = (url: string) => /^https:\/\/api\.openai\.com(?::443)?(?:\/|$)/i.test(url.trim());
 
 /**
  * LLM_API_KEY, else OPENAI_API_KEY only while LLM_BASE_URL points at OpenAI. An OpenAI key

@@ -28,6 +28,7 @@ npx tsx scripts/coach-smoke.ts    # no-key coach, template wizard and URL guard
 | **Demo, no keys** | `DEMO_MODE=true` | Every page. Scripted caller, rules-based coach, template wizard, heuristic grading, sample team data, history in this browser. No login. |
 | **Demo + AI** | add `LLM_API_KEY` (any OpenAI-compatible API) | AI caller in text mode, AI coach cues, AI wizard drafts, quote-backed AI grading, Models page check. |
 | **Voice: OpenAI Realtime** | add `OPENAI_REALTIME_API_KEY` or `OPENAI_API_KEY` (or `LLM_API_KEY` when `LLM_BASE_URL` is api.openai.com) | Voice calls. OpenAI Realtime is the default voice engine whenever an OpenAI key is available. |
+| **OpenAI projects per plan** | add `OPENAI_API_KEY_FREE` and `OPENAI_API_KEY_PAID` (full mode, with `STRIPE_SECRET_KEY=sk_test_...` so paid plans exist); optional `BYOK_ENCRYPTION_KEY` | Free users run on the free project, Pro and Team on the paid project, a Team with a saved key on that key. See section 16. |
 | **Voice: ElevenLabs** | add `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID` | Voice calls through an ElevenLabs agent with overrides enabled (see README). |
 | **Full** | add `DATABASE_URL`, `JWT_SECRET`, `npm run db:migrate`; remove `DEMO_MODE` | Registration, login, MFA, server-stored sessions, real team data and assignments. |
 
@@ -140,6 +141,15 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 2. `GET /api/health` reports each dependency.
 3. **Grade seal** (full mode): grade a call with `POST /api/evaluate-call`, then save it with `POST /api/transcripts`, sending the same transcript, the response minus its `seal` as `evaluation`, and the `seal` beside it. That saves with `"graded": true`. Change `overallScore` and save again: it saves with `"graded": false` and no score.
 
+### 16. OpenAI projects per plan (full mode)
+Use obviously fake keys for the routing checks (for example `sk-test-free-...` and `sk-test-paid-...`) and real keys from the two projects only on a deployment.
+1. `GET /api/health` shows `openai.free`, `openai.paid`, `openai.shared` and `openai.byokEncryption` as booleans, and no key.
+2. Sign in as a Free user and start a voice call, then as a Pro user. In the OpenAI dashboard, Usage, the first call appears under `calltrainer-free` and the second under `calltrainer-paid`. The automated version is `tests/openai-keys.test.ts`, which checks the `Authorization` header sent upstream for each plan.
+3. Unset `OPENAI_API_KEY_FREE` and `OPENAI_API_KEY` but keep `OPENAI_API_KEY_PAID`: a Free user's voice call returns 503 `realtime_not_configured` and text calls use the scripted caller; a Pro user still gets voice. Free never gets the paid key.
+4. Unset both tier keys and set only `OPENAI_API_KEY`: every plan works on that key, as before.
+5. Team BYOK, as the org owner on a Team plan with `BYOK_ENCRYPTION_KEY` set: `PUT /api/team/openai-key` with `{"apiKey":"sk-..."}` returns `{ set: true, last4, updatedAt }` and never the key. `GET` returns the same. A manager or trainee gets 403; an org not on Team gets 403 `team_plan_required`; a malformed key gets 400 without the key echoed. `DELETE` clears it. The database column holds only `v1.` ciphertext.
+6. Server logs never contain a key, during any of the above or when OpenAI rejects one.
+
 ## Run a scenario end to end
 1. `DEMO_MODE=true npm run dev` and open `/library`.
 2. Open **Inbound lead: leaking water heater** and press **Pre-flight**.
@@ -167,6 +177,7 @@ Every limit is a fixed window in memory, per server instance, and resets on rest
 | `/api/elevenlabs/token` (ElevenLabs voice) | `RATE_LIMIT_TOKEN_MAX` (10 per 3600 s) | Set 1 and start two ElevenLabs calls |
 | `/api/usage/heartbeat`, `/api/usage/end`, `/api/usage/credit` (voice metering) | `RATE_LIMIT_USAGE_MAX` (1200 per 600 s) | Full mode only. Set 3, then `curl` `/api/usage/end` four times with a signed-in cookie |
 | `/api/billing/checkout` + `/api/billing/portal` (Stripe, shared) | `RATE_LIMIT_BILLING_MAX` (20 per 3600 s) | Needs `STRIPE_SECRET_KEY=sk_test_...`. Set 2 and press **Choose Pro** three times |
+| `PUT` and `DELETE /api/team/openai-key` (Team BYOK, shares the billing bucket) | `RATE_LIMIT_BILLING_MAX` (20 per 3600 s) | Full mode, as an org owner. Set 2 and `curl -X DELETE` three times |
 | `/api/llm/check` (Models page) | fixed, 6 per 10 min | Press **Check connection** seven times |
 | `/api/access` | fixed, 10 per 15 min | See Access code above |
 | `/api/auth/login`, `/api/auth/register`, `/api/auth/mfa/challenge` | fixed, 10, 5 and 10 per minute | Full mode only. These answer with their own error text |
@@ -186,7 +197,7 @@ Each `_MAX` has a matching `_WINDOW_SEC`.
 | `/api/realtime/session` | 6 per minute |
 | `/api/realtime/sdp` | 10 per minute |
 | `/api/usage/*` (heartbeat, end, credit) | 60 per minute |
-| `/api/billing/checkout` + `/api/billing/portal` (shared) | 20 per hour |
+| `/api/billing/checkout` + `/api/billing/portal` + `PUT`/`DELETE /api/team/openai-key` (shared) | 20 per hour |
 | `/api/elevenlabs/token` | 20 per minute |
 | `POST /api/transcripts` (save a session) | 30 per minute |
 | `PUT /api/sessions/[sessionId]/notes` | 30 per minute |

@@ -5,7 +5,7 @@ import { billingActive } from "./serverConfig";
 import {
   CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, MAX_CONNECT_LAG_SECONDS, MAX_RESERVE_MINUTES,
   OVERRUN_GRACE_SECONDS, VOICE_BLOCK_SECONDS,
-  capFor, effectivePlan, isPlanTier, maxMinutesAfter, midCallCapApplies, periodFor, premiumVoiceCap, settleCall, splitAcrossBoundary,
+  capFor, currentPlan, effectivePlan, isPlanTier, maxMinutesAfter, midCallCapApplies, periodFor, premiumVoiceCap, settleCall, splitAcrossBoundary,
   type CallEndReasonId, type CallOutcome, type PlanTier,
 } from "./usagePlan";
 
@@ -173,9 +173,8 @@ export async function resolveAllowance(db: Tx, userId: string, now: Date): Promi
   const user = await db.user.findUnique({ where: { id: userId }, include: { organization: true } });
   if (!user) return null;
   const org = user.organization;
-  const pooled = !!org && org.planTier === "team" && billingActive();
-  const allowance = await ensureAllowance(db, pooled ? { organizationId: org.id } : { userId }, now);
-  const plan: PlanTier = pooled ? "team" : effectivePlan(user.planTier, billingActive());
+  const { plan, pooled } = currentPlan(user, org, billingActive());
+  const allowance = await ensureAllowance(db, pooled && org ? { organizationId: org.id } : { userId }, now);
   // A member whose Team ended (cancelled or unpaid) now has the Free allowance. Minutes they already used from the
   // pool this month still count against its cap, so leaving the pool is not a fresh 10 minutes.
   const usedElsewhere = !pooled && plan === "free" ? await usedInOtherAllowances(db, userId, allowance) : 0;
@@ -184,7 +183,7 @@ export async function resolveAllowance(db: Tx, userId: string, now: Date): Promi
     allowance,
     pooled,
     plan,
-    premiumVoice: pooled ? org.premiumVoice : user.premiumVoice,
+    premiumVoice: pooled && org ? org.premiumVoice : user.premiumVoice,
     usedElsewhere,
     remaining: roundMinutes(Math.max(0, allowance.minutesCap - used)),
     available: roundMinutes(Math.max(0, allowance.minutesCap - used - allowance.minutesReserved)),

@@ -6,7 +6,8 @@ import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { meteringEnabled, realtimeModelFor } from "@/lib/serverConfig";
 import { beginCall, endCall, type VoiceEngine } from "@/lib/usage";
 import { capReached, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
-import { realtimeKey, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
+import { realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
+import { openAiKeyFor } from "@/lib/openaiKeys";
 
 const Body = z.object({ scenario: ScenarioSchema });
 
@@ -25,10 +26,12 @@ export async function POST(req: NextRequest) {
   const ipLimited = ipLimitResponse(req, "realtime");
   if (ipLimited) return ipLimited;
 
-  const apiKey = realtimeKey();
+  // The key comes from the user's plan on the server: the free or paid OpenAI project, or the team's own key.
+  // The client never chooses it. Free never falls back to the paid key (openaiKeys.ts).
+  const apiKey = (await openAiKeyFor(auth.id, "realtime"))?.key;
   if (!apiKey) {
     return NextResponse.json(
-      { error: "realtime_not_configured", message: "Voice with OpenAI Realtime needs an OpenAI key. Set OPENAI_API_KEY on the server, or switch to Text." },
+      { error: "realtime_not_configured", message: "Voice with OpenAI Realtime needs an OpenAI key for your plan. Set OPENAI_API_KEY_FREE and OPENAI_API_KEY_PAID (or OPENAI_API_KEY) on the server, or switch to Text." },
       { status: 503 },
     );
   }

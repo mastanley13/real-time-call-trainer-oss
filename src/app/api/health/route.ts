@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { getCapabilities, productionGuard } from "@/lib/serverConfig";
+import { getCapabilities, openAiTierStatus, productionGuard } from "@/lib/serverConfig";
 
 export async function GET() {
   const caps = getCapabilities();
@@ -36,5 +36,8 @@ export async function GET() {
     checks.db = "error_not_configured";
   }
 
-  return NextResponse.json({ ok, checks, timestamp: new Date().toISOString() }, { status: ok ? 200 : 503 });
+  // Which OpenAI key tiers are configured, as booleans only: never a key, a prefix or a length.
+  const openai = openAiTierStatus(process.env);
+
+  return NextResponse.json({ ok, checks, openai, timestamp: new Date().toISOString() }, { status: ok ? 200 : 503 });
 }
