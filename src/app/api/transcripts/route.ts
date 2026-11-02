@@ -6,6 +6,7 @@ import { rateLimit, readJsonLimited } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { verifySeal } from "@/lib/gradeSeal";
 import { HAS_TRANSCRIPT } from "@/lib/usage";
+import { emitGradedCall } from "@/lib/ghl/events";
 
 const Body = z.object({
   sessionId: z.string().min(1).max(128),
@@ -87,6 +88,8 @@ export async function POST(req: NextRequest) {
         metadata: { scenarioId: body.scenario.id, overallScore: ev?.overallScore ?? null, ...(body.evaluation && !ev ? { gradeRejected: true } : {}) },
       },
     });
+    // Graded and stored: tell GHL after the response. Ungraded saves do not count.
+    if (ev) emitGradedCall(dbUser.id, { id: created.id, createdAt: created.createdAt });
     return NextResponse.json({ id: created.id, graded: !!ev });
   } catch (error) {
     console.error("[/api/transcripts] error:", error);
