@@ -6,7 +6,7 @@ import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { chatFull } from "@/lib/llm";
 import { scriptedReply } from "@/lib/scriptedCaller";
 import { llmKey } from "@/lib/serverConfig";
-import { paidFeaturesAvailable } from "@/lib/spendGuard";
+import { paidFeaturesReady } from "@/lib/spendGuard";
 
 const Body = z.object({
   scenario: ScenarioSchema,
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
   const { scenario, history } = body;
 
   // With paid features off or today's cap used up, text calls keep going on the scripted caller.
-  if (llmKey() && paidFeaturesAvailable()) {
+  if (llmKey() && (await paidFeaturesReady())) {
     try {
       const { text, truncated } = await chatFull(
         [

@@ -4,6 +4,8 @@ import { NextRequest } from "next/server";
 const beginCall = vi.fn();
 vi.mock("@/lib/usage", () => ({ beginCall: (...a: unknown[]) => beginCall(...a), endCall: vi.fn(async () => null) }));
 vi.mock("@/lib/apiAuth", () => ({ requireAuth: () => ({ id: "u1" }) }));
+// The spend kill switch reads its durable row with a database configured; nothing is tripped here.
+vi.mock("@/lib/db", () => ({ prisma: { spendState: { findUnique: async () => null } } }));
 
 import { GET as elToken } from "@/app/api/elevenlabs/token/route";
 import { meteringEnabled } from "@/lib/serverConfig";

@@ -322,3 +322,27 @@ model AuditEvent {
   @@index([action])
   @@index([createdAt])
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Spend monitor (one row, id "global")
+// ─────────────────────────────────────────────────────────────────────────
+
+// Durable state for the hourly OpenAI spend monitor (/api/cron/spend-monitor) and the runtime half of the
+// kill switch in src/lib/spendGuard.ts. `tripped` turns every paid route off on every server instance until
+// a platform admin clears it (POST /api/spend/reset). `dailyCapDay` is a UTC day ("2026-11-02") whose voice
+// ceiling was reached; paid routes stay off for the rest of that day only.
+model SpendState {
+  id                String    @id @default("global")
+  tripped           Boolean   @default(false)
+  trippedAt         DateTime?
+  tripReason        String?
+  dailyCapDay       String?
+  // Budget period the alerted thresholds belong to ("<SPEND_BUDGET_START>|<SPEND_BUDGET_USD>"); a new period starts over.
+  budgetPeriod      String?
+  alertedThresholds Int[]     @default([])
+  lastCheckedAt     DateTime?
+  lastStatus        String?
+  periodCostUsd     Float?
+  todayCostUsd      Float?
+  updatedAt         DateTime  @updatedAt
+}

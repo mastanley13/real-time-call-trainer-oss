@@ -25,7 +25,7 @@ const Body = z.object({
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
-  const paused = paidFeaturesGuard();
+  const paused = await paidFeaturesGuard();
   if (paused) return paused;
 
   const ipLimited = ipLimitResponse(req, "coach");

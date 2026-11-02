@@ -63,6 +63,8 @@ src/app/                          App Router pages and API routes
     transcripts/[id]              GET one session; PATCH re-grades the stored transcript (canRegrade, capped by gradable)
     sessions/[sessionId]/notes    Supervisor notes (Postgres, org-scoped); PUT with expectedNotesAt gets 409 conflict on a stale save
     auth/*, me, access, config, health, cron/purge-expired
+    cron/spend-monitor            Hourly OpenAI Costs check (CRON_SECRET): alerts at 50/75/90%, trips SpendState at 90% or credit expiry
+    spend/reset                   Platform admin clears the spend trip (audit event)
 src/components/
   call/Deck.tsx                   Live call deck (dark .deck scope): transcript, composer, phone coach sheet
   call/CopilotRail.tsx            Rubric tapes, talk track, cues, "Use line", coach mode dial
@@ -89,7 +91,9 @@ src/lib/
   serverConfig.ts                 Capability flags; the only place that reads provider env vars for the UI
   apiAuth.ts, auth.ts, mfa.ts     requireAuth, JWT sessions, bcrypt, TOTP
   rateLimit.ts                    clientIp (TRUSTED_PROXY_HOPS), IP_LIMITS, USER_LIMITS, body and transcript caps
-  spendGuard.ts                   PAID_FEATURES_ENABLED kill switch, DAILY_REALTIME_MINUTES_CAP, paidFeaturesGuard (503)
+  spendGuard.ts                   PAID_FEATURES_ENABLED kill switch, DAILY_REALTIME_MINUTES_CAP, await paidFeaturesGuard() (503)
+  spendState.ts, spendConfig.ts   Durable SpendState trip (15 s cache, fails closed) and the spend monitor's env settings
+  spendMonitor.ts                 OpenAI Costs/Usage reads, threshold alerts, trips (OPENAI_ADMIN_KEY never logged)
   access.ts + src/middleware.ts   Optional TRAINER_ACCESS_CODE gate
   realtime.ts                     OpenAI Realtime helpers shared by server and client (see Secrets below)
   team.ts                         Team view logic (pure): KPIs, matrix, queue, assignment progress

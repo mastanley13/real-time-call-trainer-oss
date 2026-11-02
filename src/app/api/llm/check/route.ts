@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   // Even one token is a paid completion, so the check is off with the rest.
-  const paused = paidFeaturesGuard();
+  const paused = await paidFeaturesGuard();
   if (paused) return paused;
 
   const ipLimit = rateLimit({ key: `llmcheck:${clientIp(req)}`, limit: CHECK_LIMIT, windowMs: CHECK_WINDOW_MS });

@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
   if (auth instanceof NextResponse) return auth;
   // Kill switch only: the secret's minutes were reserved when /api/realtime/session minted it, so a call that
   // took the day's last minutes still connects. New calls are refused at the mint, not here.
-  const paused = paidFeaturesSwitchGuard();
+  const paused = await paidFeaturesSwitchGuard();
   if (paused) return paused;
 
   const limit = rateLimit({ key: `realtime-sdp:${auth.id}`, limit: 10, windowMs: 60_000 });

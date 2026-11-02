@@ -63,7 +63,7 @@ const notAllowed = () => fail(403, "regrade_not_allowed", "This call already has
 export async function PATCH(req: NextRequest, { params }: Params) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
-  const paused = paidFeaturesGuard();
+  const paused = await paidFeaturesGuard();
   if (paused) return paused;
   if (isDemoUser(auth) || !getCapabilities().database) {
     return fail(400, "server_sessions_unavailable", "This server keeps sessions in the browser, so it has no stored session to re-grade.");

@@ -216,6 +216,26 @@ curl -s -i -X POST localhost:3000/api/coach/turn -H "content-type: application/j
 
 With `DAILY_REALTIME_MINUTES_CAP=10`, start one voice call: it connects, the second answers 503 and a text call uses the scripted caller.
 
+### Spend monitor
+`/api/cron/spend-monitor` runs hourly (`vercel.json`) and accepts only `Authorization: Bearer $CRON_SECRET`. Each run sums the OpenAI Costs API for `OPENAI_PROJECT_ID` since `SPEND_BUDGET_START` (every page), reads today's Completions usage for context, and:
+
+- alerts once per budget period at 50, 75 and 90% of `SPEND_BUDGET_USD` (default $500: $250, $375, $450): a structured log line, plus a JSON POST to `SPEND_ALERT_WEBHOOK_URL` when set;
+- at 90% sets `SpendState.tripped`. Every paid route then answers 503 `paid_features_off` on every instance (each caches the row for 15 s). A database read error also counts as tripped;
+- after `SPEND_CREDIT_EXPIRES_AT` (default 2026-11-29) trips with reason `credit_expired`, unless `SPEND_ALLOW_CARD_CHARGES=true`. The guard also refuses from that moment without waiting for the run;
+- with `SPEND_DAILY_CEILING_USD` set, marks today when today's cost reaches it (503 `daily_cap_reached` until midnight UTC).
+
+Without `OPENAI_ADMIN_KEY`, `OPENAI_PROJECT_ID`, `SPEND_BUDGET_START` or a database it answers `{ "status": "not_configured", "missing": [...] }` and changes nothing. A Costs API failure answers 502 with a fixed code (`costs_http_500`, never the provider body) and alerts once per outage.
+
+Clearing a trip is manual: a platform admin calls `POST /api/spend/reset` with `{ "reason": "..." }` (writes a `spend.trip_cleared` audit event). If the cause still holds, the next run trips again. Without the app, the same thing in SQL: `UPDATE "SpendState" SET "tripped" = false, "trippedAt" = NULL, "tripReason" = NULL, "dailyCapDay" = NULL WHERE "id" = 'global';`
+
+`tests/spend-monitor.test.ts` covers it with mocked costs: each threshold alerts once and not on the next run, the 90% trip makes the guard and a paid route answer 503, credit expiry, the daily ceiling, pagination, not-configured, cron auth and the reset route.
+
+```bash
+CRON_SECRET=dev-secret npm run dev
+curl -s -H "Authorization: Bearer dev-secret" localhost:3000/api/cron/spend-monitor   # {"ok":true,"status":"not_configured",...}
+curl -s -o /dev/null -w "%{http_code}\n" localhost:3000/api/cron/spend-monitor        # 401
+```
+
 ### Size caps
 - The text caller rejects a history over 200 turns or 20,000 characters with 400. The live coach sends only the most recent turns of a long call, so it keeps working. Grading and re-grades read the first 1,000 turns and 120,000 characters, and the debrief notes when a call was longer instead of refusing it.
 - A request body over 200 KB is rejected with 400:
