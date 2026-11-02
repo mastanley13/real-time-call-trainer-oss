@@ -1,6 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
+
+// Per-account voice metering (main's USAGE_CAPS) is off in demo mode; these switches turn it on for the tests
+// that check a metering refusal gives the server-wide reservation back.
+const metering = vi.hoisted(() => ({ on: false, beginCall: vi.fn(), endCall: vi.fn() }));
+vi.mock("@/lib/serverConfig", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/serverConfig")>();
+  return { ...real, meteringEnabled: (...a: Parameters<typeof real.meteringEnabled>) => metering.on || real.meteringEnabled(...a) };
+});
+vi.mock("@/lib/usage", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/usage")>();
+  return {
+    ...real,
+    beginCall: (...a: Parameters<typeof real.beginCall>) => (metering.on ? metering.beginCall(...a) : real.beginCall(...a)),
+    endCall: (...a: Parameters<typeof real.endCall>) => (metering.on ? metering.endCall(...a) : real.endCall(...a)),
+  };
+});
 import {
   REALTIME_MINUTES_PER_CALL, dailyRealtimeMinutesCap, paidFeaturesAvailable, paidFeaturesEnabled, paidFeaturesGuard,
   realtimeMinutesReserved, releaseRealtimeCall, reserveRealtimeCall, resetSpendGuard,
@@ -30,6 +46,9 @@ const SDP_ANSWER = "v=0\r\no=- 3 4 IN IP4 192.0.2.1\r\ns=-\r\n";
 
 beforeEach(() => {
   resetSpendGuard();
+  metering.on = false;
+  metering.beginCall.mockReset();
+  metering.endCall.mockReset().mockResolvedValue(undefined);
   // Demo mode signs every request in, so the guard runs right after a real requireAuth.
   vi.stubEnv("DEMO_MODE", "true");
   vi.stubEnv("PAID_FEATURES_ENABLED", "");
@@ -274,6 +293,63 @@ describe("paid routes", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect((await elevenLabsGET(getReq("/api/elevenlabs/token"))).status).toBe(502);
     expect(realtimeMinutesReserved()).toBe(0);
+  });
+});
+
+describe("spend guard with per-account metering", () => {
+  const sessionCall = () => sessionPOST(req("/api/realtime/session", { scenario }));
+  const tokenCall = () => elevenLabsGET(getReq("/api/elevenlabs/token?scenarioId=s-1"));
+  // The per-account start limits (6 sessions, 20 tokens a minute) are shared with the tests above, so each test
+  // here runs in a later minute.
+  let clock = Date.now() + 86_400_000;
+  beforeEach(() => {
+    clock += 3_600_000;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(clock);
+    metering.on = true;
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    vi.stubEnv("ELEVENLABS_API_KEY", "el-test");
+    vi.stubEnv("ELEVENLABS_AGENT_ID", "agent-test");
+    vi.stubEnv("DAILY_REALTIME_MINUTES_CAP", String(REALTIME_MINUTES_PER_CALL));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it.each([
+    ["realtime/session", sessionCall],
+    ["elevenlabs/token", tokenCall],
+  ])("%s gives the server-wide minutes back when the account's own metering refuses the call", async (_label, call) => {
+    const fetchMock = vi.fn(async () => Response.json({}));
+    vi.stubGlobal("fetch", fetchMock);
+    metering.beginCall.mockResolvedValueOnce({ ok: false, error: "cap_reached" });
+    expect((await call()).status).toBe(402);
+    expect(realtimeMinutesReserved()).toBe(0);
+    metering.beginCall.mockRejectedValueOnce(new Error("db down"));
+    expect((await call()).status).toBe(503);
+    expect(realtimeMinutesReserved()).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["realtime/session", sessionCall],
+    ["elevenlabs/token", tokenCall],
+  ])("%s refuses at the server-wide cap before opening a metered call", async (_label, call) => {
+    expect(reserveRealtimeCall()).not.toBeNull();
+    const res = await call();
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toBe("daily_cap_reached");
+    expect(metering.beginCall).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["realtime/session", sessionCall],
+    ["elevenlabs/token", tokenCall],
+  ])("%s gives the minutes back and ends the metered call when the provider fails", async (_label, call) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 500 })));
+    metering.beginCall.mockResolvedValueOnce({ ok: true, callId: "call-1", engine: "premium", maxSeconds: 600 });
+    expect((await call()).status).toBe(502);
+    expect(realtimeMinutesReserved()).toBe(0);
+    expect(metering.endCall).toHaveBeenCalledWith(expect.anything(), "call-1", "failed_connect");
   });
 });
 

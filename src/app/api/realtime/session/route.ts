@@ -4,7 +4,10 @@ import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { paidFeaturesOffResponse, paidFeaturesGuard, releaseRealtimeCall, reserveRealtimeCall } from "@/lib/spendGuard";
-import { realtimeKey, realtimeModel, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
+import { meteringEnabled, realtimeModelFor } from "@/lib/serverConfig";
+import { beginCall, endCall, type VoiceEngine } from "@/lib/usage";
+import { capReached, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
+import { realtimeKey, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
 
 const Body = z.object({ scenario: ScenarioSchema });
 
@@ -45,7 +48,37 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_scenario", message: "That persona could not be loaded for a voice call. Reload the page and try again." }, { status: 400 });
   }
 
-  const model = realtimeModel();
+  // Server-wide daily voice cap first (in memory, no database write), given back if the call is refused below or
+  // OpenAI never mints the secret. Then the per-account cap check before minting (rule 11). The returned callId keys every later metering write for this call.
+  // The engine is chosen here, per session: Premium until its 60% share of the minutes is used, then standard
+  // for the next session. A running call is never switched to another engine, but a Premium call may use only the
+  // Premium minutes it reserved, so it ends when those run out (maxSeconds) and the next call starts on standard.
+  let callId: string | undefined;
+  let engine: VoiceEngine = "premium";
+  let maxSeconds = SECRET_TTL_SEC;
+  const reservation = reserveRealtimeCall();
+  if (!reservation) return paidFeaturesOffResponse();
+  const refuse = (response: Response) => {
+    releaseRealtimeCall(reservation);
+    return response;
+  };
+  if (meteringEnabled()) {
+    // A failed lookup refuses voice (fail closed); text practice never reaches this route.
+    const begun = await beginCall(auth.id, scenario).catch((e) => {
+      console.error("[realtime/session] usage lookup failed", e instanceof Error ? e.name : "unknown");
+      return null;
+    });
+    if (!begun) return refuse(voiceUnavailable());
+    if (!begun.ok && begun.error === "cap_reached") return refuse(capReached());
+    if (!begun.ok && begun.error === "minutes_reserved") return refuse(minutesReserved());
+    if (!begun.ok && begun.error === "voice_blocked") return refuse(voiceBlocked(begun.retryAfterSeconds));
+    if (!begun.ok) return refuse(voiceUnavailable());
+    callId = begun.callId;
+    engine = begun.engine;
+    maxSeconds = begun.maxSeconds;
+  }
+
+  const model = realtimeModelFor(engine);
   const voice = realtimeVoice(scenario.aiPersona.realtimeVoice);
   const session = {
     type: "realtime",
@@ -65,15 +98,13 @@ export async function POST(req: NextRequest) {
     },
   };
 
-  // Reserved only once the request is valid, and given back if OpenAI never mints the secret.
-  const reservation = reserveRealtimeCall();
-  if (!reservation) return paidFeaturesOffResponse();
-
   try {
     const res = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ expires_after: { anchor: "created_at", seconds: SECRET_TTL_SEC }, session }),
+      // The secret never outlives the call's reserved minutes. OpenAI only checks it while the session is
+      // being set up, so this limits starting a late call, not a running one; billing is settled on the server.
+      body: JSON.stringify({ expires_after: { anchor: "created_at", seconds: Math.max(10, Math.min(SECRET_TTL_SEC, maxSeconds)) }, session }),
       cache: "no-store",
       signal: AbortSignal.timeout(15_000),
     });
@@ -81,6 +112,7 @@ export async function POST(req: NextRequest) {
       // Status only: the upstream body can echo request details and is never forwarded or logged.
       console.error("[realtime/session] upstream status", res.status);
       releaseRealtimeCall(reservation);
+      if (callId) await endCall(auth.id, callId, "failed_connect").catch(() => null);
       return NextResponse.json(
         { error: "realtime_upstream_error", message: realtimeUpstreamMessage(res.status, model) },
         { status: res.status === 429 ? 429 : 502 },
@@ -89,10 +121,11 @@ export async function POST(req: NextRequest) {
     const data = (await res.json().catch(() => null)) as { value?: unknown; expires_at?: unknown } | null;
     if (!data || typeof data.value !== "string" || !data.value) throw new Error("no client secret in response");
     const expiresAt = typeof data.expires_at === "number" ? data.expires_at : Math.floor(Date.now() / 1000) + SECRET_TTL_SEC;
-    return NextResponse.json({ clientSecret: data.value, expiresAt, model, voice }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ clientSecret: data.value, expiresAt, model, voice, ...(callId ? { callId, maxSeconds } : {}) }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     releaseRealtimeCall(reservation);
     console.error("[realtime/session]", e instanceof Error ? e.message : "unknown error");
+    if (callId) await endCall(auth.id, callId, "failed_connect").catch(() => null);
     return NextResponse.json({ error: "realtime_upstream_error", message: "Could not reach OpenAI to start the voice call. Check the server's network, then try again." }, { status: 502 });
   }
 }

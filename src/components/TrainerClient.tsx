@@ -13,9 +13,11 @@ import type { AgentState } from "@/components/CallOrb";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import Briefing from "@/components/call/Briefing";
 import Deck from "@/components/call/Deck";
+import { CallMeter } from "@/lib/callMeter";
 import RealtimeVoiceSession, { type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
+import { canUpgradeFromUsage, usageSnapshotFromUsage, type UsageSnapshot } from "@/lib/billingUi";
 
 type Mode = "voice" | "text";
 type Phase = "idle" | "live" | "grading";
@@ -40,24 +42,40 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, reg
   registerEnd: (fn: () => void) => void;
   render: (v: { orbState: AgentState; status: { label: string; tone: "ok" | "signal" | "caution" }; muted: boolean; toggleMute: () => void; end: () => void; getInputVolume: () => number; getOutputVolume: () => number }) => React.ReactNode;
 }) {
+  // Server-side voice metering (see lib/callMeter.ts). Replaced per call once the token route returns a callId.
+  const meterRef = useRef<CallMeter>(new CallMeter(undefined, { onStop: () => {}, onGiveUp: () => {} }));
+  const userEndedRef = useRef(false);
+  const endRef = useRef<() => void>(() => {});
   const conv = useConversation({
-    onMessage: ({ message, role }) => onTurn({ role: role === "user" ? "user" : "assistant", text: message }),
-    onError: (m: unknown) => onError(typeof m === "string" ? m : "Voice connection error"),
-    onDisconnect: () => onEnded(),
+    onConnect: () => meterRef.current.open(),
+    onMessage: ({ message, role }) => {
+      // ElevenLabs has no packet-level event; the first agent message is the first remote audio.
+      if (role !== "user") meterRef.current.audio();
+      onTurn({ role: role === "user" ? "user" : "assistant", text: message });
+    },
+    onError: (m: unknown) => { meterRef.current.end("provider_error"); onError(typeof m === "string" ? m : "Voice connection error"); },
+    onDisconnect: () => { meterRef.current.end(userEndedRef.current ? "user_hangup" : "network_drop"); onEnded(); },
   });
   const { startSession, endSession, status, isSpeaking, isMuted, setMuted, getInputVolume, getOutputVolume } = conv;
   const startedRef = useRef(false);
+  useEffect(() => { endRef.current = () => { void endSession(); }; }, [endSession]);
 
-  useEffect(() => registerEnd(() => endSession()), [endSession, registerEnd]);
+  useEffect(() => registerEnd(() => { userEndedRef.current = true; endSession(); }), [endSession, registerEnd]);
 
   useEffect(() => {
     if (!active || startedRef.current) return;
     startedRef.current = true;
     (async () => {
       try {
-        const res = await fetch("/api/elevenlabs/token");
+        userEndedRef.current = false;
+        const res = await fetch(`/api/elevenlabs/token?${new URLSearchParams({ scenarioId: scenario.id, title: scenario.title })}`);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.message || "Could not get a voice token.");
+        meterRef.current = new CallMeter(data.callId, {
+          // The server has already stopped and billed the call.
+          onStop: (m) => { userEndedRef.current = true; endRef.current(); onError(m); },
+          onGiveUp: () => endRef.current(),
+        });
         startSession({
           conversationToken: data.token,
           connectionType: "webrtc",
@@ -101,6 +119,11 @@ export default function TrainerClient() {
   const [inserted, setInserted] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  /** Voice minutes left this period, shown on the briefing. Null when minutes are not metered. */
+  const [usage, setUsage] = useState<UsageSnapshot | null>(null);
+  /** False for a Team pool member who is not an owner or manager, who is sent to their admin instead of the billing page. */
+  const [canUpgrade, setCanUpgrade] = useState(true);
+  const [usageUnavailable, setUsageUnavailable] = useState(false);
   /** Who wrote the latest text-call reply: the configured model, or the scripted fallback. */
   const [callerSource, setCallerSource] = useState<"llm" | "scripted" | null>(null);
   const [busy, setBusy] = useState(false);
@@ -185,6 +208,19 @@ export default function TrainerClient() {
   useEffect(() => {
     if (!isLoading && capabilities && !isAuthenticated) router.replace("/login");
   }, [isLoading, capabilities, isAuthenticated, router]);
+
+  // Read the minutes left each time the briefing shows, so it is right after a call and after an upgrade.
+  const stored = !!capabilities?.database && !capabilities?.demoMode;
+  useEffect(() => {
+    if (phase !== "idle" || !isAuthenticated || !stored) { setUsage(null); setUsageUnavailable(false); return; }
+    let live = true;
+    // Any failed lookup on a stored account blocks voice (fail closed); text practice stays open.
+    fetch("/api/usage", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("usage lookup failed"))))
+      .then((d) => { if (live) { setUsage(usageSnapshotFromUsage(d)); setCanUpgrade(canUpgradeFromUsage(d)); setUsageUnavailable(false); } })
+      .catch(() => { if (live) { setUsage(null); setUsageUnavailable(true); } });
+    return () => { live = false; };
+  }, [phase, isAuthenticated, stored]);
 
   // Voice engine: the viewer's last pick if the server still offers it, else the server's first (OpenAI when a key is set).
   useEffect(() => {
@@ -364,12 +400,12 @@ export default function TrainerClient() {
     return (
       // Keyed by persona: revealed prep answers, "Got it" and the mic test belong to one buyer.
       <Briefing key={scenario.id} scenario={scenario} capabilities={capabilities} mode={mode} onModeChange={setMode} engine={engine} onEngineChange={setEngine} coachMode={coachMode} onCoachModeChange={setCoachMode}
-        onStart={begin} retryFrom={retry ? { turn: retry.turn, line: retry.line } : null} error={error} notice={notice} />
+        onStart={begin} retryFrom={retry ? { turn: retry.turn, line: retry.line } : null} error={error} notice={notice} usage={usage} canUpgrade={canUpgrade} usageUnavailable={usageUnavailable} />
     );
   }
 
   const gradingLabel = capabilities.llm ? `Graded by ${capabilities.model ?? "your model"} after the call` : "Rules-based estimate (no AI key)";
-  const shared = { scenario, turns, startedAt: startedAt.current, elapsed, grading, gradingLabel, coach, coachMode, onCoachModeChange: setCoachMode, coachLabel, inserted, onInsert: insertCue, error };
+  const shared = { scenario, turns, startedAt: startedAt.current, elapsed, grading, gradingLabel, coach, coachMode, onCoachModeChange: setCoachMode, coachLabel, inserted, onInsert: insertCue, error, canUpgrade };
 
   if (mode === "voice" && engine) {
     const voiceProps = {

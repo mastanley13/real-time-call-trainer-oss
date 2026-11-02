@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { hashPassword, signSessionToken } from "@/lib/auth";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
+import { accessCode, hasValidAccessCookie } from "@/lib/access";
 import { generateOrgCode, isValidOrgCode } from "@/lib/orgCodes";
 
 const RegisterSchema = z
@@ -26,6 +27,11 @@ const RegisterSchema = z
   );
 
 export async function POST(request: NextRequest) {
+  const code = accessCode();
+  if (code && !(await hasValidAccessCookie(request, code))) {
+    return NextResponse.json({ error: "invite code required" }, { status: 403 });
+  }
+
   const limit = rateLimit({
     key: `register:${clientIp(request)}`,
     limit: 5,
@@ -54,15 +60,16 @@ export async function POST(request: NextRequest) {
   }
 
   const emailLower = body.email.toLowerCase();
-  const existing = await prisma.user.findUnique({ where: { email: emailLower } });
-  if (existing) {
-    return NextResponse.json(
-      { error: "An account with this email already exists" },
-      { status: 409 },
-    );
-  }
 
   try {
+    const existing = await prisma.user.findUnique({ where: { email: emailLower } });
+    if (existing) {
+      return NextResponse.json(
+        { error: "An account with this email already exists" },
+        { status: 409 },
+      );
+    }
+
     const hashedPassword = await hashPassword(body.password);
 
     const { user, organization } = await prisma.$transaction(async (tx) => {
