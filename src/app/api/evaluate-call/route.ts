@@ -7,6 +7,7 @@ import { LIBRARY } from "@/lib/personas";
 import { evaluateCall } from "@/lib/grader";
 import { sealEvaluation } from "@/lib/gradeSeal";
 import { gradable, gradedNote } from "@/lib/gradable";
+import { paidFeaturesGuard } from "@/lib/spendGuard";
 
 const TurnSchema = z.object({
   role: z.enum(["user", "assistant", "system"]),
@@ -22,6 +23,8 @@ const Body = z.object({
 export async function POST(request: NextRequest) {
   const auth = requireAuth(request);
   if (auth instanceof NextResponse) return auth;
+  const paused = paidFeaturesGuard();
+  if (paused) return paused;
 
   const ipLimited = ipLimitResponse(request, "grading");
   if (ipLimited) return ipLimited;

@@ -5,6 +5,7 @@ import { rateLimit, ipLimitResponse, readJsonLimited, MAX_TURNS, MAX_TRANSCRIPT_
 import { ScenarioSchema } from "@/lib/scenarios";
 import { CoachTurnSchema } from "@/lib/coach-types";
 import { coachTurn, trailingWindow } from "@/lib/coach";
+import { paidFeaturesGuard } from "@/lib/spendGuard";
 
 const Body = z.object({
   scenario: ScenarioSchema,
@@ -24,6 +25,8 @@ const Body = z.object({
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
+  const paused = paidFeaturesGuard();
+  if (paused) return paused;
 
   const ipLimited = ipLimitResponse(req, "coach");
   if (ipLimited) return ipLimited;

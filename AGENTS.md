@@ -89,6 +89,7 @@ src/lib/
   serverConfig.ts                 Capability flags; the only place that reads provider env vars for the UI
   apiAuth.ts, auth.ts, mfa.ts     requireAuth, JWT sessions, bcrypt, TOTP
   rateLimit.ts                    clientIp (TRUSTED_PROXY_HOPS), IP_LIMITS, USER_LIMITS, body and transcript caps
+  spendGuard.ts                   PAID_FEATURES_ENABLED kill switch, DAILY_REALTIME_MINUTES_CAP, paidFeaturesGuard (503)
   access.ts + src/middleware.ts   Optional TRAINER_ACCESS_CODE gate
   realtime.ts                     OpenAI Realtime helpers shared by server and client (see Secrets below)
   team.ts                         Team view logic (pure): KPIs, matrix, queue, assignment progress

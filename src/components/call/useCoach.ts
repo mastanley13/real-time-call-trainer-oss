@@ -147,7 +147,7 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(res.status === 429 ? data.message || "The coach is taking a breather. It will pick up again shortly." : "The coach couldn't update this turn.");
+        setError(res.status === 429 || res.status === 503 ? data.message || "The coach is taking a breather. It will pick up again shortly." : "The coach couldn't update this turn.");
         return;
       }
       setError("");
