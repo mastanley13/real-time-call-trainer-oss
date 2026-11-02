@@ -44,6 +44,8 @@ function RegisterForm() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    // The billing state decides where a new account goes, so wait until /api/config has answered.
+    if (!capabilities) return;
     setError("");
     setBusy(true);
     try {
@@ -89,7 +91,7 @@ function RegisterForm() {
           <div><label htmlFor="code" className="label">Team code</label><input id="code" className="input" inputMode="numeric" pattern="[0-9]{3,8}" value={f.orgCode} onChange={set("orgCode")} required /></div>
         )}
         {error && <p role="alert" className="text-sm text-alert">{error}</p>}
-        <button className="btn-primary w-full" disabled={busy}>{busy ? "Creating…" : "Create account"}</button>
+        <button className="btn-primary w-full" disabled={busy || !capabilities}>{busy ? "Creating…" : "Create account"}</button>
       </form>
       <p className="mt-5 text-center text-sm text-ink-muted">Already registered? <Link href="/login" className="font-semibold text-primary">Sign in</Link></p>
     </AuthShell>

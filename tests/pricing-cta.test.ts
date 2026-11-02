@@ -82,6 +82,7 @@ describe("PricingSummary", () => {
     expect(html).toContain("Start Pro");
     expect(html).toContain("Start with Team");
     expect(html).not.toContain(OPEN_SOON_LINE);
+    expect(hrefs(html)).toEqual(expect.arrayContaining(["/register?plan=pro&interval=month&seg=saas&src=pricing", "/register?plan=team&interval=month&seg=saas&src=pricing"]));
   });
 });
 
