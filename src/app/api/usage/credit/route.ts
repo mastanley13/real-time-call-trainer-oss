@@ -22,9 +22,9 @@ export async function POST(req: NextRequest) {
   const actor = await prisma.user.findUnique({ where: { id: auth.id }, select: { isPlatformAdmin: true } });
   if (!actor?.isPlatformAdmin) return NextResponse.json({ error: "forbidden", message: "Only platform admins can credit minutes." }, { status: 403 });
 
-  const ipLimited = ipLimitResponse(req, "usage");
+  const ipLimited = await ipLimitResponse(req, "usage");
   if (ipLimited) return ipLimited;
-  const userLimited = userLimitResponse(auth.id, "usage");
+  const userLimited = await userLimitResponse(auth.id, "usage");
   if (userLimited) return userLimited;
 
   let body: z.infer<typeof Body>;

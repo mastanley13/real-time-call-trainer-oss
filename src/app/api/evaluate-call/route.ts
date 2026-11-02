@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
-import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
+import { sharedRateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema } from "@/lib/scenarios";
 import { LIBRARY } from "@/lib/personas";
 import { evaluateCall } from "@/lib/grader";
@@ -23,9 +23,9 @@ export async function POST(request: NextRequest) {
   const auth = requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
-  const ipLimited = ipLimitResponse(request, "grading");
+  const ipLimited = await ipLimitResponse(request, "grading");
   if (ipLimited) return ipLimited;
-  const limit = rateLimit({ key: `evaluate:${auth.id}`, limit: 10, windowMs: 60_000 });
+  const limit = await sharedRateLimit({ key: `evaluate:${auth.id}`, limit: 10, windowMs: 60_000 });
   if (!limit.allowed) {
     const retryAfter = Math.max(1, Math.ceil(limit.retryAfterMs / 1000));
     return NextResponse.json(

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
-import { rateLimit, ipLimitResponse, readJsonLimited, MAX_TURNS, MAX_TRANSCRIPT_CHARS } from "@/lib/rateLimit";
+import { sharedRateLimit, ipLimitResponse, readJsonLimited, MAX_TURNS, MAX_TRANSCRIPT_CHARS } from "@/lib/rateLimit";
 import { ScenarioSchema } from "@/lib/scenarios";
 import { CoachTurnSchema } from "@/lib/coach-types";
 import { coachTurn, trailingWindow } from "@/lib/coach";
@@ -25,9 +25,9 @@ export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 
-  const ipLimited = ipLimitResponse(req, "coach");
+  const ipLimited = await ipLimitResponse(req, "coach");
   if (ipLimited) return ipLimited;
-  const limit = rateLimit({ key: `coach:${auth.id}`, limit: 60, windowMs: 60_000 });
+  const limit = await sharedRateLimit({ key: `coach:${auth.id}`, limit: 60, windowMs: 60_000 });
   if (!limit.allowed) return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
 
   let body: z.infer<typeof Body>;

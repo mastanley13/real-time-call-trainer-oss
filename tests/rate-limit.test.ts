@@ -55,9 +55,9 @@ describe("clientIp", () => {
 });
 
 describe("ipLimitResponse", () => {
-  it("can't be skipped by rotating a spoofed first entry", () => {
+  it("can't be skipped by rotating a spoofed first entry", async () => {
     const codes: (number | null)[] = [];
-    for (let i = 0; i < 11; i++) codes.push(ipLimitResponse(req({ "x-forwarded-for": `9.9.9.${i}, 203.0.113.50` }), "access")?.status ?? null);
+    for (let i = 0; i < 11; i++) codes.push((await ipLimitResponse(req({ "x-forwarded-for": `9.9.9.${i}, 203.0.113.50` }), "access"))?.status ?? null);
     expect(codes.slice(0, 10).every((c) => c === null)).toBe(true);
     expect(codes[10]).toBe(429);
   });
@@ -66,12 +66,12 @@ describe("ipLimitResponse", () => {
 describe("userLimitResponse", () => {
   it("allows the wizard limit per account, then returns the shared 429 shape", async () => {
     const { id } = signIn();
-    for (let i = 0; i < USER_LIMITS.wizard.limit; i++) expect(userLimitResponse(id, "wizard")).toBeNull();
-    const res = userLimitResponse(id, "wizard")!;
+    for (let i = 0; i < USER_LIMITS.wizard.limit; i++) expect(await userLimitResponse(id, "wizard")).toBeNull();
+    const res = (await userLimitResponse(id, "wizard"))!;
     expect(res.status).toBe(429);
     expect(Number(res.headers.get("Retry-After"))).toBeGreaterThan(0);
     expect(await res.json()).toMatchObject({ error: "rate_limited", message: expect.stringMatching(/Please wait \d+ minutes and try again\./), retryAfter: expect.any(Number) });
-    expect(userLimitResponse(signIn().id, "wizard")).toBeNull();
+    expect(await userLimitResponse(signIn().id, "wizard")).toBeNull();
   });
 });
 

@@ -18,9 +18,9 @@ export async function POST(req: NextRequest) {
   if (auth instanceof NextResponse) return auth;
   if (!meteringEnabled()) return NextResponse.json({ error: "metering_off" }, { status: 404 });
 
-  const ipLimited = ipLimitResponse(req, "usage");
+  const ipLimited = await ipLimitResponse(req, "usage");
   if (ipLimited) return ipLimited;
-  const userLimited = userLimitResponse(auth.id, "usage");
+  const userLimited = await userLimitResponse(auth.id, "usage");
   if (userLimited) return userLimited;
 
   let body: z.infer<typeof Body>;

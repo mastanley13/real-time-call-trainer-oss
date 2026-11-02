@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
-import { rateLimit, ipLimitResponse, readJsonLimited, MAX_TURNS, MAX_TRANSCRIPT_CHARS } from "@/lib/rateLimit";
+import { sharedRateLimit, ipLimitResponse, readJsonLimited, MAX_TURNS, MAX_TRANSCRIPT_CHARS } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { chatFull } from "@/lib/llm";
 import { scriptedReply } from "@/lib/scriptedCaller";
@@ -41,9 +41,9 @@ function mergeTurns(h: { role: "user" | "assistant"; text: string }[]) {
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
-  const ipLimited = ipLimitResponse(req, "caller");
+  const ipLimited = await ipLimitResponse(req, "caller");
   if (ipLimited) return ipLimited;
-  const limit = rateLimit({ key: `simulate:${auth.id}`, limit: 40, windowMs: 60_000 });
+  const limit = await sharedRateLimit({ key: `simulate:${auth.id}`, limit: 40, windowMs: 60_000 });
   if (!limit.allowed) return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
 
   let body: z.infer<typeof Body>;

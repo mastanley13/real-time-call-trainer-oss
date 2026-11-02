@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
-import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
+import { sharedRateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { meteringEnabled, realtimeModelFor } from "@/lib/serverConfig";
 import { beginCall, endCall, type VoiceEngine } from "@/lib/usage";
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 
-  const ipLimited = ipLimitResponse(req, "realtime");
+  const ipLimited = await ipLimitResponse(req, "realtime");
   if (ipLimited) return ipLimited;
 
   const apiKey = realtimeKey();
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const limit = rateLimit({ key: `realtime:${auth.id}`, limit: 6, windowMs: 60_000 });
+  const limit = await sharedRateLimit({ key: `realtime:${auth.id}`, limit: 6, windowMs: 60_000 });
   if (!limit.allowed) {
     return NextResponse.json({ error: "rate_limited", message: "You started several calls in a row. Wait a minute, then try again." }, { status: 429 });
   }

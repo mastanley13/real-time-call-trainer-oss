@@ -3,7 +3,7 @@ import { ACCESS_COOKIE, ACCESS_MAX_AGE, accessCode, accessToken, codeMatches } f
 import { ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 
 export async function POST(req: NextRequest) {
-  const limited = ipLimitResponse(req, "access");
+  const limited = await ipLimitResponse(req, "access");
   if (limited) return limited;
 
   const code = accessCode();

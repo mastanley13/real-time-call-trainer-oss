@@ -322,3 +322,18 @@ model AuditEvent {
   @@index([action])
   @@index([createdAt])
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Rate limits
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Fixed-window rate-limit counters shared by every app instance (src/lib/rateLimit.ts).
+/// One row per limit key, e.g. "ip:access:<ip>" or "realtime:<userId>". Expired rows are
+/// pruned by the app; nothing else reads them.
+model RateLimitBucket {
+  key     String   @id
+  count   Int
+  resetAt DateTime
+
+  @@index([resetAt])
+}

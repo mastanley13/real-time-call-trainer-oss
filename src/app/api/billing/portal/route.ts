@@ -15,9 +15,9 @@ export async function POST(req: NextRequest) {
 
   const gate = billingGate();
   if (gate) return gate;
-  const ipLimited = ipLimitResponse(req, "billing");
+  const ipLimited = await ipLimitResponse(req, "billing");
   if (ipLimited) return ipLimited;
-  const userLimited = userLimitResponse(auth.id, "billing");
+  const userLimited = await userLimitResponse(auth.id, "billing");
   if (userLimited) return userLimited;
 
   const user = await prisma.user.findUnique({ where: { id: auth.id }, include: { organization: true } });

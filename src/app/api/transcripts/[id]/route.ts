@@ -3,7 +3,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { isDemoUser, requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
-import { clientIp, ipLimitResponse, rateLimit, readJsonLimited } from "@/lib/rateLimit";
+import { clientIp, ipLimitResponse, sharedRateLimit, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema } from "@/lib/scenarios";
 import { LIBRARY } from "@/lib/personas";
 import { evaluateCall } from "@/lib/grader";
@@ -69,9 +69,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return fail(503, "llm_not_configured", "AI grading isn't set up on this server. Add LLM_API_KEY to the server environment, then try again.");
   }
 
-  const ipLimited = ipLimitResponse(req, "grading");
+  const ipLimited = await ipLimitResponse(req, "grading");
   if (ipLimited) return ipLimited;
-  const limit = rateLimit({ key: `regrade:${auth.id}`, limit: REGRADE_LIMIT, windowMs: REGRADE_WINDOW_MS });
+  const limit = await sharedRateLimit({ key: `regrade:${auth.id}`, limit: REGRADE_LIMIT, windowMs: REGRADE_WINDOW_MS });
   if (!limit.allowed) {
     const retryAfter = Math.max(1, Math.ceil(limit.retryAfterMs / 1000));
     const mins = Math.ceil(retryAfter / 60);
