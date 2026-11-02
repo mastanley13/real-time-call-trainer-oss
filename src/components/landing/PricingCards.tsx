@@ -34,8 +34,9 @@ function price(id: string, b: Billing) {
 export function tierAction(id: string, cta: string, billingEnabled: boolean, interval: Billing) {
   if (id === "free") return { cta, href: registerHref({ src: "pricing" }), soon: false };
   const plan = id === "pro" ? "pro" : "team";
-  if (billingEnabled) return { cta, href: registerHref({ plan, interval, src: "pricing" }), soon: false };
-  return { cta: "Start free", href: registerHref({ plan, src: "pricing" }), soon: true };
+  // The link carries the selected period in both states, so sign-up stores it either way.
+  const href = registerHref({ plan, interval, src: "pricing" });
+  return billingEnabled ? { cta, href, soon: false } : { cta: "Start free", href, soon: true };
 }
 
 /** Billing toggle, tier cards and the Premium AI voice add-on. `billingEnabled` comes from the server. */

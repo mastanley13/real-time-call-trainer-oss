@@ -17,12 +17,12 @@ export default function PricingSummary({ src, seg, billingEnabled }: { src: stri
     {
       name: "Pro", price: `$${PRICE.pro.month}/mo`, note: `or $${PRICE.pro.year}/yr`,
       body: `${PRO_VOICE_MIN} voice minutes a month, full library, persona wizard, score trends, MFA. Reviewed persona packs: coming soon.`,
-      href: registerHref({ plan: "pro", interval: billingEnabled ? "month" : undefined, seg, src }), cta: billingEnabled ? "Start Pro" : "Start free", soon: !billingEnabled,
+      href: registerHref({ plan: "pro", interval: "month", seg, src }), cta: billingEnabled ? "Start Pro" : "Start free", soon: !billingEnabled,
     },
     {
       name: "Team", price: `$${PRICE.team.month}/seat/mo`, note: `or $${PRICE.team.year}/seat/yr, ${TEAM_MIN_SEATS}-seat minimum`,
       body: `${TEAM_VOICE_MIN_PER_SEAT} pooled voice minutes per seat, Team view, assignments, enforced MFA.`,
-      href: registerHref({ plan: "team", interval: billingEnabled ? "month" : undefined, seg, src }), cta: billingEnabled ? "Start with Team" : "Start free", soon: !billingEnabled,
+      href: registerHref({ plan: "team", interval: "month", seg, src }), cta: billingEnabled ? "Start with Team" : "Start free", soon: !billingEnabled,
     },
   ];
   return (

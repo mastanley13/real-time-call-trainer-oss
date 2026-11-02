@@ -25,9 +25,8 @@ describe("PricingCards, billing off", () => {
     expect(count(html, OPEN_SOON_LINE)).toBe(2);
   });
 
-  it("links to /register with plan and src, and no interval", () => {
-    expect(hrefs(html)).toEqual(expect.arrayContaining(["/register?plan=pro&src=pricing", "/register?plan=team&src=pricing"]));
-    expect(html).not.toContain("interval=");
+  it("links to /register with plan, interval and src", () => {
+    expect(hrefs(html)).toEqual(expect.arrayContaining(["/register?plan=pro&interval=month&src=pricing", "/register?plan=team&interval=month&src=pricing"]));
     expect(html).not.toContain("/checkout/start");
   });
 
@@ -54,7 +53,9 @@ describe("PricingCards, billing on", () => {
     expect(tierAction("pro", "Start Pro", true, "year").href).toBe("/register?plan=pro&interval=year&src=pricing");
     expect(tierAction("team", "Start with Team", true, "year").href).toBe("/register?plan=team&interval=year&src=pricing");
     expect(tierAction("team", "Start with Team", true, "month").href).toBe("/register?plan=team&interval=month&src=pricing");
-    expect(tierAction("pro", "Start Pro", false, "year")).toMatchObject({ cta: "Start free", href: "/register?plan=pro&src=pricing", soon: true });
+    // Billing off keeps the selected period in the link too, so sign-up stores it.
+    expect(tierAction("pro", "Start Pro", false, "year")).toMatchObject({ cta: "Start free", href: "/register?plan=pro&interval=year&src=pricing", soon: true });
+    expect(tierAction("team", "Start with Team", false, "month")).toMatchObject({ cta: "Start free", href: "/register?plan=team&interval=month&src=pricing", soon: true });
   });
 });
 
@@ -74,7 +75,7 @@ describe("PricingSummary", () => {
     expect(html).not.toContain("Start Pro");
     expect(html).not.toContain("Start with Team");
     expect(count(html, OPEN_SOON_LINE)).toBe(2);
-    expect(hrefs(html)).toEqual(expect.arrayContaining(["/register?plan=pro&seg=saas&src=pricing", "/register?plan=team&seg=saas&src=pricing"]));
+    expect(hrefs(html)).toEqual(expect.arrayContaining(["/register?plan=pro&interval=month&seg=saas&src=pricing", "/register?plan=team&interval=month&seg=saas&src=pricing"]));
   });
 
   it("billing on: the paid labels", () => {

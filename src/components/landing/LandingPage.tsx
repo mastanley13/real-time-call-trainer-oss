@@ -96,7 +96,7 @@ export default function LandingPage({ l, billingEnabled }: { l: Landing; billing
         </section>
       )}
 
-      <PricingSummary src={l.src} seg={l.seg} billingEnabled={billingEnabled} />
+      <PricingSummary src={`for-${l.slug}`} seg={l.seg} billingEnabled={billingEnabled} />
 
       <section className="page pb-12" aria-labelledby="faq-h">
         <h2 id="faq-h" className="text-2xl font-bold">Questions</h2>

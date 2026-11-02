@@ -146,6 +146,14 @@ describe("POST /api/auth/register sign-up intent", () => {
     expect(created).not.toHaveBeenCalled();
   });
 
+  it("never overwrites intent: a repeat sign-up for an existing email is a 409 with no write", async () => {
+    mocks.prisma.user.findUnique.mockResolvedValue({ id: "u-1", signupPlanIntent: "pro", signupSrc: "pricing" });
+    const res = await register({ plan: "team", interval: "year", src: "other", seg: "other" });
+    expect(res.status).toBe(409);
+    expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+    expect(created).not.toHaveBeenCalled();
+  });
+
   it("a join with intent creates a trainee that carries the intent", async () => {
     const res = await register({ joinOrgCode: "654321", plan: "pro", src: "pricing" }, joinBase);
     expect(res.status).toBe(200);

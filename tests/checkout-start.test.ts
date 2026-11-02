@@ -17,7 +17,7 @@ describe("startCheckout", () => {
   it("never follows a non-https or missing url", async () => {
     for (const url of ["http://evil.example/x", "javascript:alert(1)", undefined]) {
       const out = await startCheckout({ plan: "pro", interval: "month" }, answer(200, { url }) as unknown as typeof fetch);
-      expect(out.kind).toBe("error");
+      expect(out).toEqual({ kind: "unavailable" });
     }
   });
 
@@ -32,13 +32,18 @@ describe("startCheckout", () => {
     expect(await startCheckout({ plan: "team", interval: "month" }, answer(422, { error: "price_not_configured" }) as unknown as typeof fetch)).toEqual({ kind: "unavailable" });
   });
 
-  it("other answers become an error with a message, never a throw", async () => {
-    const out = await startCheckout({ plan: "pro", interval: "month" }, answer(502, { error: "stripe_error" }) as unknown as typeof fetch);
-    expect(out).toMatchObject({ kind: "error", help: true });
+  it("every other non-2xx falls back to Free, whatever the body", async () => {
+    for (const [status, error] of [[400, "invalid_request"], [400, "premium_not_available"], [401, "unauthorized"], [403, "forbidden"], [409, "checkout_in_progress"], [429, "rate_limited"], [500, "boom"], [502, "stripe_error"]] as const) {
+      const out = await startCheckout({ plan: "team", interval: "month", seats: 3 }, answer(status, { error, message: "x" }) as unknown as typeof fetch);
+      expect(out, `${status} ${error}`).toEqual({ kind: "unavailable" });
+    }
+    // A 409 that is not already_subscribed is not the "you already have a plan" case.
+    expect(await startCheckout({ plan: "pro", interval: "month" }, answer(409, {}) as unknown as typeof fetch)).toEqual({ kind: "unavailable" });
+  });
+
+  it("a request that got no answer at all keeps the page with a retry", async () => {
     const net = await startCheckout({ plan: "pro", interval: "month" }, vi.fn().mockRejectedValue(new Error("offline")) as unknown as typeof fetch);
     expect(net).toMatchObject({ kind: "error", help: false });
-    const forbidden = await startCheckout({ plan: "team", interval: "month", seats: 3 }, answer(403, { error: "forbidden", message: "Only an organization owner or manager can buy a Team plan." }) as unknown as typeof fetch);
-    expect(forbidden).toMatchObject({ kind: "error", message: "Only an organization owner or manager can buy a Team plan." });
   });
 
   it("sends premium:false always, and seats 3 for Team by default", async () => {

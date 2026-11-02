@@ -89,8 +89,8 @@ const isHttps = (u: unknown): u is string => {
 
 /**
  * Calls POST /api/billing/checkout and maps the answer. 200 with an https url redirects. 409 already_subscribed goes to
- * billing settings. 503 (billing not configured) and 422 (price not configured) fall back to Free. Anything else is an
- * error the page shows with a way back, never a blank page.
+ * billing settings. Every other answer falls back to Free with the open-soon notice, never an error page. Only a
+ * request that got no answer at all (offline) keeps the page, with a retry.
  */
 export async function startCheckout(input: CheckoutStartInput, fetchFn: typeof fetch = fetch): Promise<CheckoutStartOutcome> {
   let res: Response;
@@ -107,6 +107,6 @@ export async function startCheckout(input: CheckoutStartInput, fetchFn: typeof f
   const data = (await res.json().catch(() => ({}))) as { url?: unknown; error?: unknown; message?: unknown };
   if (res.ok && isHttps(data.url)) return { kind: "redirect", url: data.url };
   if (res.status === 409 && data.error === "already_subscribed") return { kind: "already_subscribed" };
-  if (res.status === 503 || res.status === 422) return { kind: "unavailable" };
-  return { kind: "error", ...checkoutFailure({ status: res.ok ? undefined : res.status, message: typeof data.message === "string" ? data.message : undefined }) };
+  // Every other answer (400, 403, 422, 429, 500, 503, a 200 with no usable address) sells nothing: stay on Free.
+  return { kind: "unavailable" };
 }
