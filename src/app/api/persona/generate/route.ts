@@ -13,9 +13,9 @@ import { generatePersona } from "@/lib/personaWizard";
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
-  const ipLimited = ipLimitResponse(req, "wizard");
+  const ipLimited = await ipLimitResponse(req, "wizard");
   if (ipLimited) return ipLimited;
-  const userLimited = userLimitResponse(auth.id, "wizard");
+  const userLimited = await userLimitResponse(auth.id, "wizard");
   if (userLimited) return userLimited;
 
   let input: z.infer<typeof WizardInputSchema>;

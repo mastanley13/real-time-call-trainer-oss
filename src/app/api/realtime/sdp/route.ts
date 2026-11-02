@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
-import { rateLimit, readJsonLimited } from "@/lib/rateLimit";
+import { sharedRateLimit, readJsonLimited } from "@/lib/rateLimit";
 
 const Body = z.object({
   // Only the short-lived ek_ secret minted by /api/realtime/session; printable ASCII so it cannot break the header.
@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 
-  const limit = rateLimit({ key: `realtime-sdp:${auth.id}`, limit: 10, windowMs: 60_000 });
+  const limit = await sharedRateLimit({ key: `realtime-sdp:${auth.id}`, limit: 10, windowMs: 60_000 });
   if (!limit.allowed) {
     return NextResponse.json({ error: "rate_limited", message: "Too many connection attempts. Wait a minute, then start the call again." }, { status: 429 });
   }

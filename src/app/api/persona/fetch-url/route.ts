@@ -13,9 +13,9 @@ const Body = z.object({ url: z.string().trim().min(1).max(2048) });
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
-  const ipLimited = ipLimitResponse(req, "wizard");
+  const ipLimited = await ipLimitResponse(req, "wizard");
   if (ipLimited) return ipLimited;
-  const userLimited = userLimitResponse(auth.id, "wizard");
+  const userLimited = await userLimitResponse(auth.id, "wizard");
   if (userLimited) return userLimited;
 
   let body: z.infer<typeof Body>;

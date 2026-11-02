@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/apiAuth";
-import { rateLimit, ipLimitResponse } from "@/lib/rateLimit";
+import { sharedRateLimit, ipLimitResponse } from "@/lib/rateLimit";
 import { elevenLabsAgentFor, meteringEnabled } from "@/lib/serverConfig";
 import { beginCall, endCall } from "@/lib/usage";
 import { capReached, minutesReserved, standardVoiceUnavailable, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
 
-  const ipLimited = ipLimitResponse(req, "token");
+  const ipLimited = await ipLimitResponse(req, "token");
   if (ipLimited) return ipLimited;
 
   const apiKey = process.env.ELEVENLABS_API_KEY;
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const limit = rateLimit({ key: `el-token:${auth.id}`, limit: 20, windowMs: 60_000 });
+  const limit = await sharedRateLimit({ key: `el-token:${auth.id}`, limit: 20, windowMs: 60_000 });
   if (!limit.allowed) {
     return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
   }
