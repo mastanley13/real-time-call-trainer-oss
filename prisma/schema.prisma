@@ -45,6 +45,12 @@ model Organization {
   stripeCheckoutFingerprint String?
   stripeCheckoutUrl         String?
   stripeCheckoutExpiresAt   DateTime?
+  /// Team bring-your-own OpenAI key (STR-690): AES-256-GCM ciphertext under BYOK_ENCRYPTION_KEY, bound to this
+  /// organization's id. Used only for this team's members while it is on Team. Never returned to a client; the
+  /// API shows only the last four characters and when it was set.
+  openaiKeyCiphertext String?
+  openaiKeyLast4      String?
+  openaiKeyUpdatedAt  DateTime?
   /// Nullable = keep training records indefinitely. When set, the nightly
   /// purge job deletes TrainerSession rows older than this many days.
   sessionRetentionDays Int?

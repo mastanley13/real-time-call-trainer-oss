@@ -5,6 +5,7 @@ import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema } from "@/lib/scenarios";
 import { LIBRARY } from "@/lib/personas";
 import { evaluateCall } from "@/lib/grader";
+import { openAiKeyFor } from "@/lib/openaiKeys";
 import { sealEvaluation } from "@/lib/gradeSeal";
 import { gradable, gradedNote } from "@/lib/gradable";
 
@@ -50,7 +51,7 @@ export async function POST(request: NextRequest) {
   const turns = gradable(body.transcript);
 
   try {
-    const evaluation = await evaluateCall(scenario, turns);
+    const evaluation = await evaluateCall(scenario, turns, await openAiKeyFor(auth.id, "llm"));
     const note = gradedNote(evaluation.note, turns.length, body.transcript.length);
     const out = { evaluatedAt: new Date().toISOString(), ...evaluation, ...(note ? { note } : {}) };
     // The seal lets POST /api/transcripts store this score; a grade the client edits or invents won't verify.

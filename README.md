@@ -64,8 +64,11 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 ### Environment variables
 | Variable | Required | Purpose |
 |---|---|---|
+| `OPENAI_API_KEY_FREE` | Recommended for hosted | Key from the `calltrainer-free` OpenAI project. Free, demo and signed-out traffic (voice and every LLM job) runs on it. Free never falls back to `OPENAI_API_KEY_PAID`; without this key, Free uses the shared `OPENAI_API_KEY` chain below unless that is the same value as the paid key, else voice is unavailable for Free and the LLM jobs use their rules-based fallbacks. See [OpenAI projects per plan](#openai-projects-per-plan) |
+| `OPENAI_API_KEY_PAID` | Recommended for hosted | Key from the `calltrainer-paid` OpenAI project. Pro and Team (plan read on the server from Stripe state, never from the client) run on it. Without it, paid plans use the shared key chain, never the free key |
+| `BYOK_ENCRYPTION_KEY` | For Team BYOK | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts a Team's own OpenAI key at rest (AES-256-GCM). Unset: teams can't store a key. Rotating it makes stored team keys unreadable; those teams fall back to the paid project until an owner saves the key again |
 | `OPENAI_REALTIME_API_KEY` | For voice | OpenAI key for Realtime voice calls. Falls back to `OPENAI_API_KEY`, then to `LLM_API_KEY` when `LLM_BASE_URL` is api.openai.com |
-| `OPENAI_API_KEY` | Optional | Voice key when `OPENAI_REALTIME_API_KEY` is unset. Also stands in for `LLM_API_KEY`, but only while `LLM_BASE_URL` is unset or points at api.openai.com, so an OpenAI key is never sent to another provider |
+| `OPENAI_API_KEY` | Optional | Shared single key: what a plan uses when its own `OPENAI_API_KEY_FREE` / `_PAID` is unset, so a single-key install keeps working with no change. Voice key when `OPENAI_REALTIME_API_KEY` is unset. Also stands in for `LLM_API_KEY`, but only while `LLM_BASE_URL` is unset or points at api.openai.com, so an OpenAI key is never sent to another provider |
 | `REALTIME_MODEL` | Optional | Default `gpt-realtime-1.5` |
 | `REALTIME_MODEL_STANDARD` | Optional | Model for accounts without Premium Voice, and for the next call once Premium has used 60% of the plan's minutes. Default `gpt-realtime-mini`. A running call is never switched or ended |
 | `REALTIME_VOICE` | Optional | Default `marin`. A persona's own `realtimeVoice` wins |
@@ -101,6 +104,26 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `ALLOW_PUBLIC_DEMO` | Optional | `true` lets `DEMO_MODE=true` take effect in production, for a deliberate public demo only. Any other value keeps the production guard on |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Optional | Used by `npm run db:seed` to create a platform admin. `ADMIN_FIRST_NAME` and `ADMIN_LAST_NAME` set its name (default Platform Admin) |
 
+
+### OpenAI projects per plan
+Paying customers run on their own OpenAI project so free usage can't spend their budget or hit their rate limits. Every server call to OpenAI (voice session minting, live coach, text caller, grading and re-grades, persona wizard, the Models check) takes its key from `openAiKeyFor` in `src/lib/openaiKeys.ts`, which reads the user's plan on the server. The client never picks a key.
+
+| Who | Key used |
+|---|---|
+| Free, demo, signed out | `OPENAI_API_KEY_FREE`, else the shared key (unless it equals the paid key), else none |
+| Pro or Team (an active, trialing or past-due Stripe subscription, as metering defines it) | `OPENAI_API_KEY_PAID`, else the shared key, else none |
+| Team with its own key saved | That key (decrypted on the server), for that team's members only, while the team is on Team |
+| Background work for a user (re-grades) | The plan of the rep whose call it is |
+
+The shared key is the existing chain: `OPENAI_REALTIME_API_KEY`, then `OPENAI_API_KEY`, then `LLM_API_KEY` for voice; `LLM_API_KEY`, then `OPENAI_API_KEY` for the LLM jobs. A tier key is never used for the other tier. With a custom `LLM_BASE_URL`, the LLM jobs keep using `LLM_API_KEY` and no OpenAI key (tier or team) is sent there; voice still routes by plan. A failed plan lookup counts as Free. `GET /api/health` reports `openai: { free, paid, shared, byokEncryption }` as booleans.
+
+Team owners store their own key with `PUT /api/team/openai-key` (`{ "apiKey": "sk-..." }`), check it with `GET` (returns `set`, `last4`, `updatedAt` only) and remove it with `DELETE`. The key is never returned, logged or written to the audit trail.
+
+Dashboard setup (done once by the operator, not in code):
+1. In the OpenAI dashboard create two projects, `calltrainer-free` and `calltrainer-paid`, and one API key in each (restrict it to the models the app uses).
+2. In each project's Limits page set a hard monthly budget (the project stops at it) and rate limits. Keep the free project's lower.
+3. Put the keys in the host's secret store as `OPENAI_API_KEY_FREE` and `OPENAI_API_KEY_PAID`. Never commit them, or paste them into tickets or pull requests.
+4. Spend then shows per project under Usage in the OpenAI dashboard.
 ### Voice engines
 OpenAI Realtime is used whenever an OpenAI key is available. The server mints a 10-minute client secret per call and relays the WebRTC offer through `/api/realtime/sdp`, so the browser never sees your key and the page only connects to its own origin. When ElevenLabs is also set up, the briefing lets each trainee choose, and `VOICE_ENGINE` sets which one is picked first. With neither, calls run in text, which needs no voice keys.
 

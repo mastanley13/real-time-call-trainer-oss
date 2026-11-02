@@ -13,7 +13,8 @@ import {
   type RubricCriterion,
   type Scenario,
 } from "./scenarios";
-import { llmKey, llmModel } from "./serverConfig";
+import { llmModel } from "./serverConfig";
+import type { KeyRoute } from "./openaiKeys";
 import { CONTEXT_LABELS, type FieldSource, type WizardInput, type WizardOutput } from "./wizard-types";
 
 /**
@@ -303,7 +304,7 @@ function llmPrompt(input: WizardInput, family: string | null) {
   return { system, user };
 }
 
-async function generateWithLlm(input: WizardInput): Promise<WizardOutput> {
+async function generateWithLlm(input: WizardInput, route: KeyRoute): Promise<WizardOutput> {
   const family = regulatedFamily(input);
   const { system, user } = llmPrompt(input, family);
   const { text, truncated } = await chatFull(
@@ -312,6 +313,7 @@ async function generateWithLlm(input: WizardInput): Promise<WizardOutput> {
       { role: "user", content: user },
     ],
     { json: true, maxTokens: 3000, temperature: 0.7 },
+    route,
   );
   if (truncated) throw new Error("LLM_TRUNCATED");
   const out = LlmScenario.parse(extractJson(text));
@@ -797,10 +799,11 @@ export function templatePersona(input: WizardInput): WizardOutput {
 // Entry point
 // ---------------------------------------------------------------------------
 
-export async function generatePersona(input: WizardInput): Promise<WizardOutput> {
-  if (llmKey()) {
+/** `route` is the key openAiKeyFor resolved for the user's plan; without one the template draft runs. */
+export async function generatePersona(input: WizardInput, route?: KeyRoute | null): Promise<WizardOutput> {
+  if (route) {
     try {
-      return await generateWithLlm(input);
+      return await generateWithLlm(input, route);
     } catch (e) {
       console.error("[personaWizard] LLM generation failed, using the template:", (e as Error).message);
     }

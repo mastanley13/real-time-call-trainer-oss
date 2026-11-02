@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/apiAuth";
 import { ipLimitResponse, readJsonLimited, userLimitResponse } from "@/lib/rateLimit";
 import { WizardInputSchema } from "@/lib/wizard-types";
 import { generatePersona } from "@/lib/personaWizard";
+import { openAiKeyFor } from "@/lib/openaiKeys";
 
 /**
  * AI persona wizard: WizardInput (chips, product line, up to 5 contexts) ->
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    return NextResponse.json(await generatePersona(input));
+    return NextResponse.json(await generatePersona(input, await openAiKeyFor(auth.id, "llm")));
   } catch (error) {
     console.error("[/api/persona/generate] error:", error);
     return NextResponse.json({ error: "Failed to generate persona" }, { status: 500 });

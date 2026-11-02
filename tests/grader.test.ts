@@ -26,6 +26,8 @@ import type { LlmCheckResult } from "@/app/api/llm/hints";
 import { jobRows, voiceEngines } from "@/components/settings/models";
 
 const scenario = BUILT_IN_SCENARIOS.find((s) => s.id === "home-services-inbound-lead")!;
+/** The key route a route handler resolves with openAiKeyFor; evaluateCall itself never reads a key from the env. */
+const ROUTE = { key: "sk-test-free", project: "free" as const, shared: false };
 const OFFER = "How about a 2 to 4 pm window this afternoon?";
 const FEE = "The diagnostic fee is $89, and it's credited toward the repair.";
 
@@ -178,7 +180,7 @@ describe("LLM grader", () => {
   it("records the grading model and keeps only quotes found in the transcript", async () => {
     withKey();
     mocks.chat.mockResolvedValue(llmReply());
-    const ev = await evaluateCall(scenario, CALL);
+    const ev = await evaluateCall(scenario, CALL, ROUTE);
     expect(mocks.chat).toHaveBeenCalledOnce();
     expect(ev).toMatchObject({ method: "llm", model: "gpt-test-mini", graderVersion: GRADER_VERSIONS.llm });
     for (const c of ev.criteria) expect(c.evidence).toEqual([{ speaker: "trainee", quote: OFFER, line: OFFER_LINE }]);
@@ -188,7 +190,7 @@ describe("LLM grader", () => {
   it("falls back to the rules-based grader, without a model, when the model call fails", async () => {
     withKey();
     mocks.chat.mockRejectedValue(new Error("LLM_HTTP_500"));
-    const ev = await evaluateCall(scenario, CALL);
+    const ev = await evaluateCall(scenario, CALL, ROUTE);
     expect(ev.method).toBe("heuristic");
     expect(ev.model).toBeUndefined();
     expect(ev.note).toMatch(/rules-based estimate/);

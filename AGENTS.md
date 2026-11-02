@@ -59,6 +59,7 @@ src/app/                          App Router pages and API routes
     realtime/sdp                  Relays the browser's WebRTC offer to OpenAI, so the CSP stays same-origin
     llm/check                     One-token connection check for the Models page
     team/                         Team overview, roster and assignments (org-scoped; sample team in demo mode)
+    team/openai-key               Team BYOK: owner-only GET/PUT/DELETE of the team's own OpenAI key (encrypted; last 4 only)
     transcripts                   Saved sessions; POST stores a score only with a valid grade seal
     transcripts/[id]              GET one session; PATCH re-grades the stored transcript (canRegrade, capped by gradable)
     sessions/[sessionId]/notes    Supervisor notes (Postgres, org-scoped); PUT with expectedNotesAt gets 409 conflict on a stale save
@@ -84,7 +85,9 @@ src/lib/
   gradable.ts                     Grader turn/char caps, cap note, and who may re-grade (pure, client-safe)
   debrief.ts                      retryPoint and nextDrill (pure)
   scriptedCaller.ts               No-key caller replies driven by a pack's sampleReplies
-  llm.ts                          OpenAI-compatible chat client (LLM_API_KEY, LLM_BASE_URL, LLM_MODEL)
+  llm.ts                          OpenAI-compatible chat client (LLM_BASE_URL, LLM_MODEL); the key route is passed in
+  openaiKeys.ts                   openAiKeyFor: plan -> OpenAI key (free, paid or team BYOK project), server-only
+  byok.ts                         AES-256-GCM encryption of a Team's own OpenAI key (BYOK_ENCRYPTION_KEY)
   sessionStore.ts, scenarioStore.ts    Client-side persistence (API when signed in, localStorage in demo)
   serverConfig.ts                 Capability flags; the only place that reads provider env vars for the UI
   apiAuth.ts, auth.ts, mfa.ts     requireAuth, JWT sessions, bcrypt, TOTP
@@ -124,8 +127,10 @@ Every route in `src/app/api` follows the same order. Copy `src/app/api/coach/tur
 6. Any route that calls a provider has a no-key fallback or returns 503 with a clear `*_not_configured` error. Demo mode must keep working.
 
 ### Secrets and server-only code
-- Modules that read secrets or call providers start with `import "server-only"` (`coach.ts`, `personaWizard.ts`, `safeFetch.ts`, `serverConfig.ts`, `llm.ts`, `mfa.ts`, `gradeSeal.ts`). Client components never import them; shared contracts live in `*-types.ts` files that are safe on both sides. Route handlers and middleware also read secrets directly; that is fine.
+- Modules that read secrets or call providers start with `import "server-only"` (`coach.ts`, `personaWizard.ts`, `safeFetch.ts`, `serverConfig.ts`, `llm.ts`, `openaiKeys.ts`, `byok.ts`, `mfa.ts`, `gradeSeal.ts`). Client components never import them; shared contracts live in `*-types.ts` files that are safe on both sides. Route handlers and middleware also read secrets directly; that is fine.
 - Exception: `src/lib/realtime.ts` is isomorphic on purpose. The call UI imports its pure helpers, and its env readers (`realtimeKey()` and friends) evaluate to `undefined` in the browser because Next.js inlines only `NEXT_PUBLIC_*` variables. Only server code may call those readers. Do not flag this file for a missing `server-only` marker, and do not add new secret readers to it. `auth.ts` and `access.ts` are imported only by server code.
+- OpenAI keys are chosen per plan on the server: every OpenAI or LLM call gets its key from `openAiKeyFor(userId, "realtime" | "llm")` in `openaiKeys.ts` (Free on `OPENAI_API_KEY_FREE`, Pro and Team on `OPENAI_API_KEY_PAID`, a Team's own encrypted key when saved; shared `OPENAI_API_KEY` chain as fallback). `chat`/`chatFull` take that route as an argument and never read a key; `coachTurn`, `evaluateCall` and `generatePersona` run their fallbacks without one. Free must never get the paid key. Do not call `llmKey()` or `realtimeKey()` from a route; `tests/openai-keys.test.ts` fails if you do. Work done for another user (a re-grade) uses that user's plan.
+- Team BYOK keys are AES-256-GCM ciphertext under `BYOK_ENCRYPTION_KEY` (`byok.ts`), bound to the organization id. Only `set`, `last4` and `updatedAt` ever leave the server.
 - `OPENAI_API_KEY` stands in for `LLM_API_KEY` only while `LLM_BASE_URL` points at api.openai.com (`resolveLlmKey` in `serverConfig.ts`). Never send an OpenAI key to a custom base URL.
 - Never log, return or embed API keys, JWTs, the access code, `CRON_SECRET`, voice tokens or provider response bodies. `/api/config` exposes booleans, the model id and `provider: "openai" | "custom"`, never the base URL.
 - Voice credentials are minted server-side per call; the browser never sees `ELEVENLABS_API_KEY` or `OPENAI_API_KEY`.
