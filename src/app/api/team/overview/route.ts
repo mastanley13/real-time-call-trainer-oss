@@ -6,6 +6,7 @@ import { LIBRARY } from "@/lib/personas";
 import { buildOverview, canManageTeam, gradeOf, memberName, parseWindow, type TeamSession } from "@/lib/team";
 import { buildSampleOverview } from "@/lib/teamSample";
 import { seesWholeOrg } from "@/lib/teamScope";
+import { HAS_TRANSCRIPT } from "@/lib/usage";
 import { forbidden, limitFor, loadActor, loadAssignmentViews, managerScope, noOrganization, scopedMembers, serverError, teamIsLocal } from "../_lib/server";
 
 /**
@@ -54,19 +55,19 @@ export async function GET(req: NextRequest) {
       prisma.organization.findUnique({ where: { id: orgId }, select: { id: true, name: true } }),
       // Evaluations are only read for the window: they drive the matrix, weakest criterion and queue.
       prisma.trainerSession.findMany({
-        where: { organizationId: orgId, ...people, createdAt: { gte: since } },
+        where: { organizationId: orgId, ...people, createdAt: { gte: since }, ...HAS_TRANSCRIPT },
         orderBy: { createdAt: "desc" },
         take: 2000,
         select: { id: true, userId: true, scenarioId: true, scenarioTitle: true, overallScore: true, goalAchieved: true, evaluation: true, createdAt: true, supervisorNotes: true },
       }),
       // Older scores feed sparklines and the last-session column only.
       prisma.trainerSession.findMany({
-        where: { organizationId: orgId, ...people, createdAt: { gte: historySince, lt: since } },
+        where: { organizationId: orgId, ...people, createdAt: { gte: historySince, lt: since }, ...HAS_TRANSCRIPT },
         orderBy: { createdAt: "desc" },
         take: 2000,
         select: { id: true, userId: true, scenarioId: true, scenarioTitle: true, overallScore: true, goalAchieved: true, createdAt: true },
       }),
-      prisma.trainerSession.groupBy({ by: ["userId"], where: { organizationId: orgId, ...people }, _max: { createdAt: true } }),
+      prisma.trainerSession.groupBy({ by: ["userId"], where: { organizationId: orgId, ...people, ...HAS_TRANSCRIPT }, _max: { createdAt: true } }),
     ]);
 
     const title = (id: string, t: string | null) => t ?? titles.get(id) ?? id;

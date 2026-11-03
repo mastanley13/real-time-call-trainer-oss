@@ -113,6 +113,10 @@ export const IP_LIMITS = {
   wizard: () => ({ limit: envInt("RATE_LIMIT_WIZARD_MAX", 20), windowMs: envInt("RATE_LIMIT_WIZARD_WINDOW_SEC", 3600) * 1000 }),
   /** Google sign-in: /api/auth/google/start and /callback, shared. */
   google: () => ({ limit: envInt("RATE_LIMIT_GOOGLE_MAX", 30), windowMs: envInt("RATE_LIMIT_GOOGLE_WINDOW_SEC", 900) * 1000 }),
+  /** Voice metering: one heartbeat every 10 seconds per call, plus end events and usage reads. */
+  usage: () => ({ limit: envInt("RATE_LIMIT_USAGE_MAX", 1200), windowMs: envInt("RATE_LIMIT_USAGE_WINDOW_SEC", 600) * 1000 }),
+  /** Stripe Checkout and Billing Portal sessions. */
+  billing: () => ({ limit: envInt("RATE_LIMIT_BILLING_MAX", 20), windowMs: envInt("RATE_LIMIT_BILLING_WINDOW_SEC", 3600) * 1000 }),
 } as const;
 
 /**
@@ -126,6 +130,10 @@ export const USER_LIMITS = {
   personas: { limit: 30, windowMs: 600_000 },
   /** Roster changes: role and manager moves. */
   roster: { limit: 60, windowMs: 600_000 },
+  /** Heartbeats (6 a minute per call), end events and usage reads. */
+  usage: { limit: 60, windowMs: 60_000 },
+  /** Checkout and portal sessions. */
+  billing: { limit: 20, windowMs: 3_600_000 },
 } as const;
 
 function limitedResponse(r: RateLimitResult): Response | null {
