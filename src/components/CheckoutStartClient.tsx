@@ -18,7 +18,7 @@ import { TEAM_MIN_SEATS } from "@/lib/usagePlan";
  * Free with a notice, and an existing plan goes to billing settings.
  */
 export default function CheckoutStartClient() {
-  const { isAuthenticated, isLoading, capabilities } = useAuth();
+  const { isAuthenticated, isLoading, capabilities, capabilitiesFailed } = useAuth();
   const router = useRouter();
   const params = useSearchParams();
   const { plan, interval = "month" } = intentFromQuery(params);
@@ -68,16 +68,30 @@ export default function CheckoutStartClient() {
   useEffect(() => { if (!plan) router.replace("/pricing"); }, [plan, router]);
 
   useEffect(() => {
-    if (!capabilities || isLoading || !plan) return;
+    if (isLoading || !plan || (!capabilities && !capabilitiesFailed)) return;
     if (!isAuthenticated) return router.replace(registerHref({ plan, interval, src: "checkout" }));
+    // Capabilities unknown (the config request failed): never start checkout, the page offers a retry instead.
+    if (!capabilities) return;
     if (!capabilities.billing) {
       rememberNotice("paid_soon");
       return router.replace("/trainer");
     }
     if (plan === "pro") void go();
-  }, [capabilities, isLoading, isAuthenticated, plan, interval, router, go]);
+  }, [capabilities, capabilitiesFailed, isLoading, isAuthenticated, plan, interval, router, go]);
 
-  if (!capabilities || !isAuthenticated || !plan) return <PageSkeleton rows={2} />;
+  if (isLoading || !isAuthenticated || !plan || (!capabilities && !capabilitiesFailed)) return <PageSkeleton rows={2} />;
+
+  if (!capabilities) {
+    return (
+      <div className="page enter max-w-xl space-y-4 py-10">
+        <p className="eyebrow">Checkout</p>
+        <h1 className="text-3xl font-bold">Checkout could not load right now</h1>
+        <p className="text-ink-soft">We could not reach the server to check your plan options. Nothing was charged. Please try again.</p>
+        <button type="button" className="btn-primary" onClick={() => window.location.reload()}>Try again</button>
+        <p className="text-sm text-ink-muted"><Link href="/pricing" className="underline underline-offset-2 hover:text-ink">Back to pricing</Link></p>
+      </div>
+    );
+  }
 
   const name = plan === "pro" ? "Pro" : "Team";
   return (
