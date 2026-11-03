@@ -22,7 +22,8 @@ export async function middleware(req: NextRequest) {
   const url = req.nextUrl.clone();
   url.pathname = "/access";
   url.search = "";
-  url.searchParams.set("next", pathname);
+  // Keep the query string so a link like /checkout/start?plan=pro&interval=year survives the access gate.
+  url.searchParams.set("next", pathname + req.nextUrl.search);
   return NextResponse.redirect(url);
 }
 

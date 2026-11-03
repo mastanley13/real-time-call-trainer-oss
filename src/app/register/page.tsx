@@ -17,7 +17,10 @@ export default function RegisterPage() {
 }
 
 function RegisterForm() {
-  const { register, isAuthenticated, capabilities } = useAuth();
+  const { register, isAuthenticated, capabilities, capabilitiesFailed } = useAuth();
+  // The billing state is known once /api/config answers. If it answers with an error (no access cookie behind the
+  // access gate), billing reads as off and sign-up stays possible; the register API still enforces the gate.
+  const configKnown = capabilities !== null || capabilitiesFailed;
   const router = useRouter();
   // The link's plan, period, src and seg, whitelisted. Anything else in the query is dropped.
   const intent = intentFromQuery(useSearchParams());
@@ -36,16 +39,16 @@ function RegisterForm() {
 
   // Already signed in: record nothing new, follow the billing state. Wait for the capabilities so the state is known.
   useEffect(() => {
-    if (isAuthenticated && capabilities) goAfterSignin();
+    if (isAuthenticated && configKnown) goAfterSignin();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, capabilities]);
+  }, [isAuthenticated, configKnown]);
 
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     // The billing state decides where a new account goes, so wait until /api/config has answered.
-    if (!capabilities) return;
+    if (!configKnown) return;
     setError("");
     setBusy(true);
     try {
@@ -91,7 +94,7 @@ function RegisterForm() {
           <div><label htmlFor="code" className="label">Team code</label><input id="code" className="input" inputMode="numeric" pattern="[0-9]{3,8}" value={f.orgCode} onChange={set("orgCode")} required /></div>
         )}
         {error && <p role="alert" className="text-sm text-alert">{error}</p>}
-        <button className="btn-primary w-full" disabled={busy || !capabilities}>{busy ? "Creating…" : "Create account"}</button>
+        <button className="btn-primary w-full" disabled={busy || !configKnown}>{busy ? "Creating…" : "Create account"}</button>
       </form>
       <p className="mt-5 text-center text-sm text-ink-muted">Already registered? <Link href="/login" className="font-semibold text-primary">Sign in</Link></p>
     </AuthShell>

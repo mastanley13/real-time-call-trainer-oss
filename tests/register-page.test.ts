@@ -23,6 +23,11 @@ describe("register page before /api/config answers", () => {
     expect(submitDisabled(html())).toBe(true);
   });
 
+  it("stays enabled when /api/config answered with an error (access gate, no cookie), so sign-up is not blocked", () => {
+    mocks.auth = { ...mocks.auth, capabilities: null, capabilitiesFailed: true } as typeof mocks.auth;
+    expect(submitDisabled(html())).toBe(false);
+  });
+
   it("enables it once capabilities are loaded, billing on or off", () => {
     for (const billing of [true, false]) {
       mocks.auth = { ...mocks.auth, capabilities: { billing, database: true, demoMode: false } };
