@@ -1,6 +1,7 @@
 import "server-only";
 import { safeEqual } from "./access";
 import { orderVoiceEngines, realtimeKey, realtimeModel } from "./realtime";
+import { googleEnabled } from "./googleAuth";
 import { stripeStatus } from "./stripe";
 
 /**
@@ -57,6 +58,8 @@ export function getCapabilities() {
     ...(realtime ? { realtimeModel: realtimeModel() } : {}),
     llm: Boolean(llmKey()),
     database: Boolean(process.env.DATABASE_URL),
+    /** "Continue with Google" is offered (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set, and not demo mode). */
+    google: googleEnabled() && Boolean(process.env.DATABASE_URL),
     /** Stripe test-mode billing: false when unset, in demo mode, or when the key is not an sk_test_ key. */
     billing: stripeStatus() === "ready",
     /** Model used for the coach, grading, persona wizard and text caller. Shown in provenance chips. */

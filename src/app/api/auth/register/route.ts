@@ -20,6 +20,8 @@ const RegisterSchema = z
     /// Exactly one of these two must be provided.
     joinOrgCode: z.string().regex(/^[0-9]{3,8}$/).optional(),
     newOrgName: z.string().trim().min(2).max(120).optional(),
+    /// From a manager's invite link: put the new rep on that manager's team.
+    managerId: z.string().trim().min(1).max(64).optional(),
   })
   .refine(
     (v) => !!v.joinOrgCode !== !!v.newOrgName,
@@ -75,6 +77,7 @@ export async function POST(request: NextRequest) {
     const { user, organization } = await prisma.$transaction(async (tx) => {
       let orgId: string;
       let role: "owner" | "trainee";
+      let managerId: string | null = null;
 
       if (body.newOrgName) {
         const code = await generateOrgCode();
@@ -92,6 +95,14 @@ export async function POST(request: NextRequest) {
         }
         orgId = org.id;
         role = "trainee";
+        if (body.managerId) {
+          // Ignored unless the invite names a manager or owner of the same org.
+          const lead = await tx.user.findFirst({
+            where: { id: body.managerId, organizationId: org.id, role: { in: ["manager", "owner"] } },
+            select: { id: true },
+          });
+          managerId = lead?.id ?? null;
+        }
       } else {
         throw new Error("INVALID_REQUEST");
       }
@@ -105,6 +116,7 @@ export async function POST(request: NextRequest) {
           phone: body.phone,
           organizationId: orgId,
           role,
+          managerId,
           lastLoginAt: new Date(),
         },
         include: { organization: true },
@@ -146,6 +158,7 @@ export async function POST(request: NextRequest) {
         ? { id: organization.id, name: organization.name, code: organization.code }
         : null,
       token,
+      needsOnboarding: true,
     });
     res.cookies.set("authToken", token, {
       httpOnly: true,

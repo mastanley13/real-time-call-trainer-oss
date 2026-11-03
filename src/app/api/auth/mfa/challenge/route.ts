@@ -6,6 +6,7 @@ import {
   type SessionRole,
 } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { needsOnboarding } from "@/lib/session";
 import { verifyTotp } from "@/lib/mfa";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 
@@ -100,6 +101,7 @@ export async function POST(req: NextRequest) {
         }
       : null,
     token,
+    needsOnboarding: needsOnboarding(user),
   });
   res.cookies.set("authToken", token, {
     httpOnly: true,

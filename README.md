@@ -79,6 +79,8 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `LLM_MODEL` | Optional | Default `gpt-4.1-mini` |
 | `DATABASE_URL` | For accounts | Postgres connection string |
 | `JWT_SECRET` | For accounts | 32+ random bytes (`node generate-jwt-secret.js`). Also keys the grade seal and the access-code cookie |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Optional | Turn on "Continue with Google" (needs a database). OAuth client of type Web application with the redirect URI `<APP_URL>/api/auth/google/callback`. Both server-side only |
+| `APP_URL` | With Google | Public base URL, e.g. `https://calltrainer.tech`. Pins the Google callback; falls back to the request origin when unset |
 | `CRON_SECRET` | Optional | Bearer secret for `/api/cron/purge-expired`. The route accepts only `Authorization: Bearer $CRON_SECRET` (Vercel Cron sends it when the variable is set) and returns 401 without it |
 | `APP_URL` | Optional | Public origin for canonical URLs, Open Graph images and the sitemap. Defaults to `https://calltrainer.tech`; `VERCEL_URL` and preview hosts are never used |
 | `TRAINER_ACCESS_CODE` | Optional | When set, every page and API route (except `/api/health`, `/api/stripe/webhook`, which checks the Stripe signature, and `/api/cron/*`, which needs the `CRON_SECRET` bearer) requires this code via `/access`. Cookie is an HMAC keyed by `JWT_SECRET`, valid 30 days. Unset = no gate |
@@ -89,6 +91,7 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `RATE_LIMIT_REALTIME_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/realtime/session` (one per voice call). Default 10 per 3600 s |
 | `RATE_LIMIT_COACH_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/coach/turn`. Default 120 per 600 s |
 | `RATE_LIMIT_WIZARD_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/persona/generate` and `/api/persona/fetch-url`. Default 20 per 3600 s |
+| `RATE_LIMIT_GOOGLE_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/auth/google/start` and `/callback`. Default 30 per 900 s |
 | `RATE_LIMIT_USAGE_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on the voice metering routes (`/api/usage/*`: a heartbeat every 10 s per call, plus end events). Default 1200 per 600 s |
 | `RATE_LIMIT_BILLING_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/billing/checkout` and `/api/billing/portal`. Default 20 per 3600 s |
 | `STRIPE_SECRET_KEY` | For billing | Stripe **test mode** key. Must start with `sk_test_`; any other key makes every Stripe call fail with `stripe_live_key_refused`. Unset, or `DEMO_MODE=true`: billing is off and the Billing tab is hidden. Setting it also turns voice minute metering on (see `USAGE_CAPS`); only an active Stripe subscription raises an account above Free |

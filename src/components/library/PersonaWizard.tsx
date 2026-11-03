@@ -6,7 +6,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, Copy, Globe, Loader2, Play, Plus, Save, Sparkles, Trash2 } from "lucide-react";
 import { CALL_TYPES, CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, OBJECTION_TYPES, ScenarioSchema, type CallType, type ObjectionType, type Scenario } from "@/lib/scenarios";
 import { CONTEXT_KINDS, CONTEXT_LABELS, type ContextKind, type FetchedPage, type FieldSource, type WizardInput, type WizardOutput } from "@/lib/wizard-types";
-import { saveCustomScenario } from "@/lib/scenarioStore";
+import { loadTeamCache, saveCustomScenario, saveTeamPersona } from "@/lib/scenarioStore";
 import { useAuth } from "@/contexts/AuthContext";
 import { radioKeys } from "@/components/call/CopilotRail";
 import { packJson } from "./LibraryClient";
@@ -98,6 +98,12 @@ export default function PersonaWizard() {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [teamSaving, setTeamSaving] = useState(false);
+  const [teamSaved, setTeamSaved] = useState(false);
+  const [teamError, setTeamError] = useState("");
+  // Managers and owners on a database install can share the persona with their whole team.
+  const [canShare, setCanShare] = useState(false);
+  useEffect(() => { setCanShare(!!capabilities?.database && !capabilities.demoMode && loadTeamCache().canEdit); }, [capabilities]);
 
   useEffect(() => {
     if (!isLoading && capabilities && !isAuthenticated) router.replace("/login");
@@ -176,6 +182,20 @@ export default function PersonaWizard() {
     saveCustomScenario({ ...validation.data, builtIn: false });
     setSaved(true);
     if (thenPractise) router.push(`/trainer?scenario=${encodeURIComponent(draft.id)}`);
+  }
+
+  async function saveToTeam() {
+    if (!draft || !validation?.success || teamSaving) return;
+    setTeamSaving(true);
+    setTeamError("");
+    try {
+      await saveTeamPersona({ ...validation.data, builtIn: false });
+      setTeamSaved(true);
+    } catch (e) {
+      setTeamError(e instanceof Error ? e.message : "Could not save the persona to your team. Try again.");
+    } finally {
+      setTeamSaving(false);
+    }
   }
 
   async function copyPack() {
@@ -362,6 +382,14 @@ export default function PersonaWizard() {
                     <button className="btn-ghost" onClick={() => savePrivate(false)} disabled={!validation?.success}><Save size={15} aria-hidden /> {saved ? "Saved" : "Save only"}</button>
                   </div>
                 </div>
+                {canShare && (
+                  <div className="border-t border-line pt-5">
+                    <h2 className="text-lg font-bold">Share it with your team</h2>
+                    <p className="mt-1 text-sm text-ink-soft">Adds it to your team&rsquo;s persona list so every rep sees it in their library.</p>
+                    <button className="btn-ghost mt-3" onClick={saveToTeam} disabled={!validation?.success || teamSaving || teamSaved}><Save size={15} aria-hidden /> {teamSaved ? "Saved to team" : teamSaving ? "Saving…" : "Save to team"}</button>
+                    {teamError && <p role="alert" className="mt-2 text-sm text-alert">{teamError}</p>}
+                  </div>
+                )}
                 <div className="border-t border-line pt-5">
                   <h2 className="text-lg font-bold">Contribute it as a pack</h2>
                   <p className="mt-1 text-sm text-ink-soft">Copy the pack file, add it to <span className="mono text-[13px]">src/lib/personas/{draft.role}.ts</span>, and open a pull request. It starts as a draft until a maintainer reviews it; CI checks it against the same schema.</p>

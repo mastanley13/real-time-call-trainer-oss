@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { rateLimit } from "@/lib/rateLimit";
 import { getCapabilities } from "@/lib/serverConfig";
 import { assignmentProgress, memberName, progressFor, teamIdsOf, toAssignmentView, withRetention, type Assignment, type AssignmentView, type TeamMember, type TeamRole } from "@/lib/team";
+import { membersInScope, seesWholeOrg, teamAssignmentReaches } from "@/lib/teamScope";
 
 /** Demo mode and database-less installs use the sample team and the browser-only assignment store. */
 export function teamIsLocal(): boolean {
@@ -16,7 +17,7 @@ export function teamIsLocal(): boolean {
 export async function loadActor(userId: string) {
   return prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, role: true, isPlatformAdmin: true, organizationId: true, firstName: true, lastName: true, email: true },
+    select: { id: true, role: true, isPlatformAdmin: true, organizationId: true, managerId: true, firstName: true, lastName: true, email: true },
   });
 }
 export type Actor = NonNullable<Awaited<ReturnType<typeof loadActor>>>;
@@ -41,20 +42,41 @@ export function limitFor(key: string, limit: number, windowMs: number): NextResp
   );
 }
 
-export async function orgMembers(organizationId: string): Promise<TeamMember[]> {
+/** A team member plus who they report to. Extra fields are fine wherever a TeamMember is expected. */
+export type ScopedMember = TeamMember & { managerId: string | null };
+
+export async function orgMembers(organizationId: string): Promise<ScopedMember[]> {
   const users = await prisma.user.findMany({
     where: { organizationId },
-    select: { id: true, firstName: true, lastName: true, email: true, role: true },
+    select: { id: true, firstName: true, lastName: true, email: true, role: true, managerId: true },
     orderBy: { createdAt: "asc" },
     take: 1000,
   });
-  return users.map((u) => ({ id: u.id, name: memberName(u), role: u.role as TeamRole }));
+  return users.map((u) => ({ id: u.id, name: memberName(u), role: u.role as TeamRole, managerId: u.managerId ?? null }));
+}
+
+/**
+ * The people a manager-level actor sees: owners and platform admins get the
+ * whole org (or one manager's team with `managerFilter`), managers get
+ * themselves and their own reps.
+ */
+export async function scopedMembers(actor: Actor, managerFilter?: string | null): Promise<ScopedMember[]> {
+  if (!actor.organizationId) return [];
+  return membersInScope(actor, await orgMembers(actor.organizationId), managerFilter);
 }
 
 export const toAssignment = (a: TrainingAssignment): Assignment => ({
   id: a.id, assignedById: a.assignedById, assigneeId: a.assigneeId, scenarioId: a.scenarioId, scenarioTitle: a.scenarioTitle,
   note: a.note, dueAt: a.dueAt?.toISOString() ?? null, createdAt: a.createdAt.toISOString(), archivedAt: a.archivedAt?.toISOString() ?? null,
+  teamOfId: a.teamOfId ?? null,
 });
+
+export interface AssignmentScope {
+  /** Assignee view: that person's own and whole-team assignments that reach them. */
+  forUser?: { id: string; managerId: string | null };
+  /** Manager view: assignments they made, their team-wide ones and any for their reps. */
+  managedBy?: { id: string; memberIds: string[] };
+}
 
 /**
  * Active assignments with derived completion. `forUserId` switches to the
@@ -62,13 +84,31 @@ export const toAssignment = (a: TrainingAssignment): Assignment => ({
  * for that person alone. The completing session is the rep's latest graded one
  * on that persona after the assignment was made.
  */
-export async function loadAssignmentViews(organizationId: string, members: TeamMember[], forUserId?: string): Promise<AssignmentView[]> {
+export async function loadAssignmentViews(organizationId: string, members: ScopedMember[], scope: AssignmentScope = {}): Promise<AssignmentView[]> {
+  const forUserId = scope.forUser?.id;
   const [rows, org] = await Promise.all([
     prisma.trainingAssignment.findMany({
       where: {
         organizationId,
         archivedAt: null,
-        ...(forUserId ? { OR: [{ assigneeId: forUserId }, { assigneeId: null }] } : {}),
+        ...(scope.forUser
+          ? {
+              OR: [
+                { assigneeId: scope.forUser.id },
+                { assigneeId: null, teamOfId: null },
+                ...(scope.forUser.managerId ? [{ assigneeId: null, teamOfId: scope.forUser.managerId }] : []),
+              ],
+            }
+          : {}),
+        ...(scope.managedBy
+          ? {
+              OR: [
+                { assignedById: scope.managedBy.id },
+                { teamOfId: scope.managedBy.id },
+                { assigneeId: { in: scope.managedBy.memberIds } },
+              ],
+            }
+          : {}),
       },
       orderBy: { createdAt: "desc" },
       take: 200,
@@ -95,10 +135,16 @@ export async function loadAssignmentViews(organizationId: string, members: TeamM
   });
   const done = sessions.map((s) => ({ ...s, createdAt: s.createdAt.toISOString() }));
   const names = new Map(members.map((m) => [m.id, m.name]));
-  const team = teamIdsOf(members);
+  // A manager's team-wide assignment counts only their reps.
+  const teamFor = (a: Assignment) => teamIdsOf(members.filter((m) => teamAssignmentReaches(a.teamOfId ?? null, m)));
   const now = new Date();
   return list.map((a) => {
-    const progress = forUserId ? progressFor(a, forUserId, done) : assignmentProgress(a, done, team);
+    const progress = forUserId ? progressFor(a, forUserId, done) : assignmentProgress(a, done, teamFor(a));
     return toAssignmentView(a, names, withRetention(progress, a.createdAt, org?.sessionRetentionDays, now));
   });
+}
+
+/** Assignment scope for the team view: none for owners, the manager's own team otherwise. */
+export function managerScope(actor: Actor, members: ScopedMember[]): AssignmentScope {
+  return seesWholeOrg(actor) ? {} : { managedBy: { id: actor.id, memberIds: members.map((m) => m.id) } };
 }

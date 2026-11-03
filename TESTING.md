@@ -164,6 +164,7 @@ Every limit is a fixed window in memory, per server instance, and resets on rest
 | `/api/coach/turn` (live coach) | `RATE_LIMIT_COACH_MAX` (120 per 600 s) | Set 3 and keep talking: after the third turn the rail shows the wait message, and the call itself carries on |
 | `/api/persona/generate` + `/api/persona/fetch-url` (wizard, shared) | `RATE_LIMIT_WIZARD_MAX` (20 per 3600 s) | Set 2, import a URL twice, then **Draft persona** |
 | `/api/realtime/session` (OpenAI Realtime voice) | `RATE_LIMIT_REALTIME_MAX` (10 per 3600 s) | Set 1 and start two voice calls |
+| `/api/auth/google/start` + `/callback` (Google sign-in, shared) | `RATE_LIMIT_GOOGLE_MAX` (30 per 900 s) | Full mode with Google keys. Set 1 and press **Continue with Google** twice |
 | `/api/elevenlabs/token` (ElevenLabs voice) | `RATE_LIMIT_TOKEN_MAX` (10 per 3600 s) | Set 1 and start two ElevenLabs calls |
 | `/api/usage/heartbeat`, `/api/usage/end`, `/api/usage/credit` (voice metering) | `RATE_LIMIT_USAGE_MAX` (1200 per 600 s) | Full mode only. Set 3, then `curl` `/api/usage/end` four times with a signed-in cookie |
 | `/api/billing/checkout` + `/api/billing/portal` (Stripe, shared) | `RATE_LIMIT_BILLING_MAX` (20 per 3600 s) | Needs `STRIPE_SECRET_KEY=sk_test_...`. Set 2 and press **Choose Pro** three times |
@@ -178,6 +179,8 @@ Each `_MAX` has a matching `_WINDOW_SEC`.
 | Route | Limit |
 |---|---|
 | `/api/persona/generate` + `/api/persona/fetch-url` (wizard, shared) | 20 per hour |
+| `/api/onboarding` + `/api/personas` + `/api/personas/import` (writes, shared) | 30 per 10 minutes |
+| `PATCH /api/team/members` (roles and managers) | 60 per 10 minutes |
 | `/api/evaluate-call` | 10 per minute |
 | `PATCH /api/transcripts/[id]` (re-grade) | 5 per 10 minutes |
 | `/api/llm/check` | 20 per hour |
@@ -231,3 +234,15 @@ Full mode with `DATABASE_URL` only. `npx vitest run tests/usage-hardening.test.t
 What this does not cover: a client that goes silent and never contacts the server again looks the same as a closed tab until something reaps it. A real closed tab that is only reaped more than a minute after its reservation would have ended is flagged too, so that user waits 10 minutes before the next call. Compare the provider's usage dashboard with the ledger if you see unexplained spend, and treat a provider-side session limit or sideband hang-up as the real fix.
 
 To check by hand: start a call, stop it from the server side by waiting out the reservation (lower `MAX_RESERVE_MINUTES` locally), keep heartbeating for more than a minute, and the next `/api/realtime/session` answers 429 `voice_blocked`.
+
+## Accounts, teams and onboarding (full mode)
+
+Needs `DATABASE_URL`, `JWT_SECRET` and `npm run db:migrate` (migration `20261103000000_accounts_teams_personas`).
+
+1. **Sign up as an owner.** Register with email (or **Sign up with Google** when the Google keys are set). You land on `/onboarding`: pick industries, untick a few suggested personas, **Import**. The library shows them under "Your team's personas".
+2. **Invite a manager.** On the done step or the Team page, copy the invite link and sign up a second account with it in a private window. As the owner, open Team, Members and managers, and set that person's role to Manager.
+3. **Invite reps to a manager.** Signed in as the manager, copy the Team page invite link (it carries `&manager=`). Reps who sign up with it show "reports to <manager>". A rep who joined with the plain code shows **Add to my team** for every manager.
+4. **Scope.** The manager's Team page lists only their reps; another manager's rep is absent, and opening that rep's debrief by URL returns 403. The owner sees everyone and can pick one manager's team from the **Everyone** menu.
+5. **Assignments.** A manager's "whole team" assignment reaches only their reps (check **Assigned to you** on a rep of another manager: it isn't there). An owner's reaches everyone.
+6. **Google.** With `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `APP_URL=http://localhost:3000`, **Continue with Google** signs in; a Google account whose email matches an existing password account is linked to it, and an account with MFA still asks for the authenticator code. Cancelling at Google returns to `/login` with a message.
+7. **Custom team personas.** As a manager, build a persona in the wizard and press **Save to team**. Reps see it with a Team badge.

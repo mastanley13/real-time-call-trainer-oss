@@ -4,13 +4,20 @@ import { Prisma } from "@prisma/client";
 import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
+import { canCoachMember } from "@/lib/teamScope";
+
+/** The rep's manager link, for the manager-scope check. */
+async function repOf(userId: string) {
+  const rep = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, managerId: true } });
+  return { managerId: rep?.managerId ?? null };
+}
 
 /**
  * Supervisor notes on a training session.
  *
- * Visible to the trainee (who owns the session) and to managers/owners of
- * the same org. Writable only by managers/owners of the same org or by a
- * platform admin.
+ * Visible to the trainee (who owns the session), the rep's own manager and
+ * owners of the same org. Writable by that manager, org owners or a platform
+ * admin (canCoachMember in teamScope.ts).
  */
 
 const BodySchema = z.object({
@@ -59,9 +66,7 @@ export async function GET(
   const canRead =
     user.id === session.userId ||
     (!!actor &&
-      (actor.isPlatformAdmin ||
-        ((actor.role === "manager" || actor.role === "owner") &&
-          actor.organizationId === session.organizationId)));
+      canCoachMember(actor, { id: session.userId, organizationId: session.organizationId, ...(await repOf(session.userId)) }));
   if (!canRead) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -106,14 +111,11 @@ export async function PUT(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const canWrite =
-    actor.isPlatformAdmin ||
-    ((actor.role === "manager" || actor.role === "owner") &&
-      actor.organizationId === session.organizationId);
+  const canWrite = canCoachMember(actor, { id: session.userId, organizationId: session.organizationId, ...(await repOf(session.userId)) });
 
   if (!canWrite) {
     return NextResponse.json(
-      { error: "Only managers or owners of this organization can post supervisor notes." },
+      { error: "Only the rep's manager or an owner of this organization can post supervisor notes." },
       { status: 403 },
     );
   }

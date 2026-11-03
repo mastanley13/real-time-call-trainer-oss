@@ -12,6 +12,7 @@ import CriterionHeatmap from "@/components/team/CriterionHeatmap";
 import RosterTable from "@/components/team/RosterTable";
 import AssignmentsPanel from "@/components/team/AssignmentsPanel";
 import AssignSheet from "@/components/team/AssignSheet";
+import MembersPanel, { type Lead } from "@/components/team/MembersPanel";
 import { localTeamViews } from "@/components/team/localAssignments";
 import { useAuth } from "@/contexts/AuthContext";
 import { archiveLocalAssignment, ASSIGNMENTS_CHANGED, localNoteIds } from "@/lib/assignmentStore";
@@ -37,6 +38,9 @@ export default function TeamPage() {
   const [assignError, setAssignError] = useState("");
   const [sheet, setSheet] = useState<{ assigneeId: string | null } | null>(null);
   const [notice, setNotice] = useState("");
+  /** Owners only: narrow the view to one manager's team ("" = everyone). */
+  const [managerFilter, setManagerFilter] = useState("");
+  const [leads, setLeads] = useState<Lead[]>([]);
   const local = !!capabilities && (capabilities.demoMode || !capabilities.database);
   const viewer = useMemo(() => (user ? { id: user.id, name: memberName(user) } : null), [user]);
 
@@ -50,7 +54,7 @@ export default function TeamPage() {
     if (!isAuthenticated) { router.replace("/login"); return; }
     let live = true;
     setRefreshing(true);
-    fetch(`/api/team/overview?days=${days}`)
+    fetch(`/api/team/overview?days=${days}${managerFilter ? `&manager=${encodeURIComponent(managerFilter)}` : ""}`)
       .then(async (r) => {
         const body = await r.json().catch(() => ({}));
         if (!live) return;
@@ -70,7 +74,7 @@ export default function TeamPage() {
       .catch((e: Error) => { if (live) { setError(e.message); setGate((g) => (g === "ready" ? g : "error")); } })
       .finally(() => { if (live) setRefreshing(false); });
     return () => { live = false; };
-  }, [capabilities, isLoading, isAuthenticated, router, days, reload]);
+  }, [capabilities, isLoading, isAuthenticated, router, days, reload, managerFilter]);
 
   // Assignments: the API with a database, the browser store in demo mode.
   useEffect(() => {
@@ -153,8 +157,8 @@ export default function TeamPage() {
       <div className="page enter">
         <div className="panel mx-auto max-w-lg">
           <EmptyState icon={Building2} title="You're not on a team yet">
-            <p>Your account is not part of an organization. Register with your team&rsquo;s org code, or ask the org owner to add you.</p>
-            <Link href="/dashboard" className="btn-ghost btn-pill mt-4">Go to Progress</Link>
+            <p>Your account is not part of an organization yet. Start a team, or join one with your team&rsquo;s code.</p>
+            <Link href="/onboarding" className="btn-primary btn-pill mt-4">Set up your team</Link>
           </EmptyState>
         </div>
       </div>
@@ -191,6 +195,15 @@ export default function TeamPage() {
               </button>
             ))}
           </div>
+          {leads.length > 0 && (
+            <>
+              <label htmlFor="mgr-filter" className="sr-only">Show team</label>
+              <select id="mgr-filter" className="input !h-9 !w-auto !py-1 text-sm" value={managerFilter} onChange={(e) => setManagerFilter(e.target.value)}>
+                <option value="">Everyone</option>
+                {leads.map((l) => <option key={l.id} value={l.id}>{l.name}&rsquo;s team</option>)}
+              </select>
+            </>
+          )}
           {refreshing && <Loader2 size={16} strokeWidth={1.75} className="animate-spin text-ink-muted" aria-label="Updating" />}
           <button type="button" className="btn-ghost" onClick={exportCsv}><Download size={16} strokeWidth={1.75} aria-hidden /> Export CSV</button>
           <button type="button" className="btn-primary" onClick={() => setSheet({ assigneeId: null })}><ClipboardPlus size={16} strokeWidth={1.75} aria-hidden /> Assign persona</button>
@@ -230,6 +243,8 @@ export default function TeamPage() {
         </div>
         <RosterTable rows={data.roster} days={data.days} viewerId={viewer.id} onAssign={(id) => setSheet({ assigneeId: id })} />
       </section>
+
+      {!local && <MembersPanel viewerId={viewer.id} onChanged={() => setReload((n) => n + 1)} onLeads={setLeads} />}
 
       {sheet && (
         <AssignSheet members={data.members} viewer={viewer} defaultAssigneeId={sheet.assigneeId} local={local}

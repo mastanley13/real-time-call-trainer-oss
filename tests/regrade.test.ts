@@ -111,8 +111,9 @@ describe("PATCH /api/transcripts/[id] (server re-grade)", () => {
   /** Signs in as a new user with this role; the trainee who made the call when `self` is set. */
   const actAs = (role: string, organizationId: string | null, opts: { isPlatformAdmin?: boolean; self?: boolean } = {}) => {
     const { id } = opts.self ? signIn(trainee) : signIn();
+    // The trainee reports to the signed-in user, so a manager here is the rep's own manager.
     mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
-      where.id === id ? { id, role, organizationId, isPlatformAdmin: !!opts.isPlatformAdmin } : null);
+      where.id === id ? { id, role, organizationId, isPlatformAdmin: !!opts.isPlatformAdmin } : where.id === trainee ? { id: trainee, managerId: id } : null);
   };
 
   beforeEach(() => {

@@ -52,7 +52,9 @@ beforeEach(() => {
   for (const fn of [mocks.prisma.trainerSession.findUnique, mocks.prisma.trainerSession.update, mocks.prisma.trainerSession.updateMany, mocks.prisma.user.findUnique, mocks.prisma.auditEvent.create, mocks.prisma.$transaction, mocks.rateLimit]) fn.mockReset();
 
   mocks.rateLimit.mockReturnValue({ allowed: true, remaining: 29, retryAfterMs: 0 });
-  mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => (actor && where.id === actor.id ? actor : null));
+  // The rep reports to whoever is signed in, so "manager" here means the rep's own manager.
+  mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+    actor && where.id === actor.id ? actor : where.id === row.userId ? { id: row.userId, managerId: actor?.id ?? null } : null);
   mocks.prisma.trainerSession.findUnique.mockImplementation(async ({ where, select }: { where: { id: string }; select?: Record<string, boolean> }) =>
     where.id === row.id ? pick(row, select) : null);
   mocks.prisma.trainerSession.update.mockImplementation(async ({ where, data, select }: { where: { id: string }; data: Partial<Row>; select?: Record<string, boolean> }) => {
@@ -156,12 +158,20 @@ describe("PUT /api/sessions/[sessionId]/notes with expectedNotesAt", () => {
       }
       return out;
     };
-    const forbidden = { status: 403, body: { error: "Only managers or owners of this organization can post supervisor notes." } };
+    const forbidden = { status: 403, body: { error: "Only the rep's manager or an owner of this organization can post supervisor notes." } };
 
     signIn("trainee", "org-1", false, "rep-1"); // the rep who owns the session can read the note but not write it
     expect(await responses()).toEqual(variants.map(() => forbidden));
     signIn("manager", "org-2");
     expect(await responses()).toEqual(variants.map(() => forbidden));
+    // A manager in the same org who doesn't lead this rep.
+    signIn("manager", "org-1");
+    const other = actor;
+    mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+      where.id === other?.id ? other : where.id === row.userId ? { id: row.userId, managerId: "someone-else" } : null);
+    expect(await responses()).toEqual(variants.map(() => forbidden));
+    mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+      actor && where.id === actor.id ? actor : where.id === row.userId ? { id: row.userId, managerId: actor?.id ?? null } : null);
     signIn("manager", "org-1");
     expect(await responses("missing")).toEqual(variants.map(() => ({ status: 404, body: { error: "Not found" } })));
     signIn("manager", "org-1");
