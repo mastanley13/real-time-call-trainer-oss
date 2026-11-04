@@ -5,7 +5,7 @@ import {
 
 /**
  * Compact plan summary for landing pages. `src` and `seg` tag the sign-up links. With billing off, Pro and Team read
- * "Start free" with the open-soon line, because there is nothing to buy yet.
+ * "Start free" with the open-soon line, because checkout is not configured on this server.
  */
 export default function PricingSummary({ src, seg, billingEnabled }: { src: string; seg?: string; billingEnabled: boolean }) {
   const plans = [

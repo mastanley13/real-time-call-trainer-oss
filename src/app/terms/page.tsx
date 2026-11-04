@@ -4,7 +4,7 @@ import SiteFooter from "@/components/SiteFooter";
 
 export const metadata: Metadata = {
   title: "Terms of service",
-  description: "The terms for using the Call Trainer hosted service: early access, acceptable use and liability.",
+  description: "The terms for using the Call Trainer hosted service: plans, billing, cancellation and refunds, acceptable use and liability.",
 };
 
 export default function TermsPage() {
@@ -28,7 +28,18 @@ export default function TermsPage() {
 
         <section aria-labelledby="billing-h">
           <h2 id="billing-h" className="text-xl font-bold text-ink">Plans and billing</h2>
-          <p className="mt-2">Free accounts include 10 voice minutes a month and unlimited text practice. Paid plans are listed at /pricing and are not on sale yet. Before we charge for anything, we will open checkout and update these terms. There are no overage charges.</p>
+          <p className="mt-2">Free accounts include 10 voice minutes a month and unlimited text practice. Paid plans (Pro and Team) are available by monthly or annual subscription at the prices on /pricing. There are no overage charges. There are no refunds. You can cancel anytime and keep access until the end of the period you have paid for. See Billing, cancellation and refunds below.</p>
+        </section>
+
+        <section aria-labelledby="cancel-h">
+          <h2 id="cancel-h" className="text-xl font-bold text-ink">Billing, cancellation and refunds</h2>
+          <ul className="mt-2 list-disc space-y-2 pl-5">
+            <li>Subscriptions renew automatically, monthly or annually depending on the plan you choose.</li>
+            <li>You can cancel anytime from Settings &gt; Billing.</li>
+            <li>After you cancel, you keep access until the end of the period you have paid for.</li>
+            <li>Payments to StrategixAI LLC are non-refundable except where the law requires.</li>
+          </ul>
+          <p className="mt-2">Questions about a charge: support@calltrainer.tech.</p>
         </section>
 
         <section aria-labelledby="use-h">
