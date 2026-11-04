@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { NOTICE_TEXT, takeNotice, type NoticeKind } from "@/lib/checkoutStart";
 
 /**
- * A one-time plan notice for /trainer ("You're on Free. Pro and Team open soon."). The notice is left in
+ * A one-time plan notice for /trainer ("You're on Free. Pro and Team checkout is not set up on this server."). The notice is left in
  * sessionStorage by sign-up or by a checkout that fell back to Free, and cleared the first time this renders.
  * Renders nothing when there is none, so the page layout is untouched.
  */

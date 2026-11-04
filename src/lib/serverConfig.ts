@@ -66,6 +66,8 @@ export function getCapabilities() {
     database: Boolean(process.env.DATABASE_URL),
     /** Stripe test-mode billing: false when unset, in demo mode, or when the key is not an sk_test_ key. */
     billing: billingOn(),
+    /** Hosted build: Stripe is configured (billingActive). The header hides the model chip from non-admins. */
+    hosted: billingActive(),
     /** Model used for the coach, grading, persona wizard and text caller. Shown in provenance chips. */
     model: llmModel(),
     /** "openai" when LLM_BASE_URL is unset or points at api.openai.com; the URL itself is never exposed. */

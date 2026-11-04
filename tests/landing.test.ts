@@ -68,6 +68,31 @@ describe("copy rules", () => {
   });
 });
 
+describe("billing, cancellation and refund copy", () => {
+  const pricing = readFileSync("src/app/pricing/page.tsx", "utf8");
+  const terms = readFileSync("src/app/terms/page.tsx", "utf8");
+  it("pricing FAQ says cancel from Settings > Billing, access to period end, no refunds except by law", () => {
+    expect(pricing).toContain("Cancel anytime from Settings > Billing");
+    expect(pricing).toContain("until the end of the period you paid for");
+    expect(pricing).toContain("non-refundable except where the law requires");
+  });
+  it("terms has the billing, cancellation and refunds section", () => {
+    expect(terms).toContain("Billing, cancellation and refunds");
+    expect(terms).toContain("renew automatically, monthly or annually");
+    expect(terms).toContain("cancel anytime from Settings &gt; Billing");
+    expect(terms).toContain("non-refundable except where the law requires");
+    expect(terms).toContain("Last updated: November 4, 2026");
+  });
+  it("terms says no refunds up top and keeps the legal carve-out in one place", () => {
+    expect(terms).toContain("There are no refunds.");
+    expect(terms.split("except where the law requires").length - 1).toBe(1);
+  });
+  it("neither page promises a money-back guarantee", () => {
+    expect(pricing + terms).not.toMatch(/money[- ]back|guarantee/i);
+    expect(terms).not.toMatch(/[–—]/);
+  });
+});
+
 describe("site origin", () => {
   const prev = { APP_URL: process.env.APP_URL, VERCEL_URL: process.env.VERCEL_URL };
   afterEach(() => {

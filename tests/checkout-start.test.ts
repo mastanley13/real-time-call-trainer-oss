@@ -134,7 +134,7 @@ describe("one-time notice", () => {
   });
 
   it("uses the approved wording", () => {
-    expect(NOTICE_TEXT.plans_soon).toBe("You're on Free. Pro and Team open soon.");
-    expect(NOTICE_TEXT.paid_soon).toBe("Paid plans open soon. You're on Free.");
+    expect(NOTICE_TEXT.plans_soon).toBe("You're on Free. Pro and Team checkout is not set up on this server.");
+    expect(NOTICE_TEXT.paid_soon).toBe("Checkout is not available right now. You're on Free. Try again later.");
   });
 });
