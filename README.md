@@ -44,7 +44,7 @@ Server routes (src/app/api)
   ├─ team/overview     team KPIs, roster, heatmap and coaching queue (org-scoped)
   ├─ team/assignments  create, list and remove persona assignments
   ├─ llm/check         one-token connection check for the Models page
-  ├─ usage, usage/heartbeat, usage/end, usage/credit   voice minute metering (on when `USAGE_CAPS=on` or Stripe is set): the ledger is the source of truth. Free is 10 voice minutes a month, checked only when a call starts (a started call runs to its end); text practice is never capped
+  ├─ usage, usage/heartbeat, usage/end, usage/credit   voice minute metering (on when `USAGE_CAPS=on` or Stripe is set): the ledger is the source of truth. Free is 10 voice minutes a month, checked only when a call starts (a started call runs to its end); text practice is never capped. Per user, 3 uncharged failed calls (quick drops or never-connected calls) and 20 voice sessions per rolling 24 hours
   ├─ billing/checkout, billing/portal   Stripe Checkout (subscription) and Billing Portal, test mode only
   ├─ stripe/webhook    signature-verified, idempotent plan sync from Stripe's current subscription state (checkout completed, async payment succeeded and expired, subscription updated and deleted)
   └─ auth/*, access, me, health, config, cron/purge-expired
@@ -115,6 +115,7 @@ OpenAI Realtime is used whenever an OpenAI key is available. The server mints a 
 3. Copy the agent id into `ELEVENLABS_AGENT_ID`, and create an API key (with Agents access) for `ELEVENLABS_API_KEY`.
 4. If the agent requires authentication (recommended), the app uses a server-minted token, so nothing public is exposed.
 5. Optional: set a `voiceId` per scenario in the editor.
+6. On every ElevenLabs agent (standard and premium), set **Max conversation duration** (`conversation_config.conversation.max_duration_seconds`) to 3600, which matches the longest call the server reserves. Leave the duration override disabled in the Security tab. The server cannot end an ElevenLabs call, and a per-call duration sent by the browser is not trusted, so this agent setting is the only hard stop on provider spend.
 
 ### Grading and re-grades
 - `/api/evaluate-call` grades the transcript against the persona's rubric with `LLM_MODEL`. Without a key, or when the model call fails, a rules-based grader scores rubric coverage and the debrief marks it "Estimate. Rules-based grade, not AI-graded."
