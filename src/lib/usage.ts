@@ -81,19 +81,34 @@ const planOf = (v: unknown): PlanTier => (isPlanTier(v) ? v : "free");
  * immediately) and rolls the period when the anchor date has passed. The anchor itself never moves,
  * and a plan change keeps minutesUsed; only a new period resets it, with no rollover.
  */
+/**
+ * A past_due row with no recorded start (accounts that were past_due before pastDueSince existed) starts its grace
+ * window now, and the start is saved so the window can run out without another webhook. Returns the effective row.
+ */
+async function stampPastDue<T extends { subscriptionStatus: string | null; pastDueSince: Date | null }>(
+  db: Tx, kind: "user" | "organization", id: string, row: T, now: Date,
+): Promise<T> {
+  if (row.subscriptionStatus !== "past_due" || row.pastDueSince) return row;
+  if (kind === "user") await db.user.update({ where: { id }, data: { pastDueSince: now } });
+  else await db.organization.update({ where: { id }, data: { pastDueSince: now } });
+  return { ...row, pastDueSince: now };
+}
+
 export async function ensureAllowance(db: Tx, subject: Subject, now: Date, depth = 0): Promise<UsageAllowance> {
   let plan: PlanTier;
   let cap: number;
   let anchor: Date;
   let existing: UsageAllowance | null;
   if ("userId" in subject) {
-    const user = await db.user.findUniqueOrThrow({ where: { id: subject.userId }, select: { planTier: true, subscriptionStatus: true, pastDueSince: true, usageAnchorAt: true } });
+    const loaded = await db.user.findUniqueOrThrow({ where: { id: subject.userId }, select: { planTier: true, subscriptionStatus: true, pastDueSince: true, usageAnchorAt: true } });
+    const user = await stampPastDue(db, "user", subject.userId, loaded, now);
     plan = effectivePlan(storedPlanEntitled(user, now) ? user.planTier : "free", billingActive());
     cap = capFor(plan);
     anchor = user.usageAnchorAt;
     existing = await db.usageAllowance.findUnique({ where: { userId: subject.userId } });
   } else {
-    const org = await db.organization.findUniqueOrThrow({ where: { id: subject.organizationId }, select: { planTier: true, subscriptionStatus: true, pastDueSince: true, seatCount: true, createdAt: true } });
+    const loadedOrg = await db.organization.findUniqueOrThrow({ where: { id: subject.organizationId }, select: { planTier: true, subscriptionStatus: true, pastDueSince: true, seatCount: true, createdAt: true } });
+    const org = await stampPastDue(db, "organization", subject.organizationId, loadedOrg, now);
     plan = org.planTier === "team" && storedPlanEntitled(org, now) && billingActive() ? "team" : "free";
     cap = capFor(plan, org.seatCount);
     anchor = org.createdAt;
@@ -171,9 +186,10 @@ async function ensureAllowanceById(db: Tx, allowanceId: string, now: Date): Prom
 
 /** Who pays for this user's minutes, and how many are left right now. Null when the user does not exist. */
 export async function resolveAllowance(db: Tx, userId: string, now: Date): Promise<Resolved | null> {
-  const user = await db.user.findUnique({ where: { id: userId }, include: { organization: true } });
-  if (!user) return null;
-  const org = user.organization;
+  const found = await db.user.findUnique({ where: { id: userId }, include: { organization: true } });
+  if (!found) return null;
+  const user = await stampPastDue(db, "user", userId, found, now);
+  const org = found.organization ? await stampPastDue(db, "organization", found.organization.id, found.organization, now) : null;
   const pooled = !!org && org.planTier === "team" && storedPlanEntitled(org, now) && billingActive();
   const allowance = await ensureAllowance(db, pooled ? { organizationId: org.id } : { userId }, now);
   const plan: PlanTier = pooled ? "team" : effectivePlan(storedPlanEntitled(user, now) ? user.planTier : "free", billingActive());
@@ -185,7 +201,9 @@ export async function resolveAllowance(db: Tx, userId: string, now: Date): Promi
     allowance,
     pooled,
     plan,
-    premiumVoice: pooled ? org.premiumVoice : user.premiumVoice,
+    // The add-on follows paid access: once the plan is Free (grace ran out, or the status is not entitled) it is off,
+    // even though the stored flag stays true until the next webhook.
+    premiumVoice: pooled ? org.premiumVoice : plan === "pro" && user.premiumVoice,
     usedElsewhere,
     remaining: roundMinutes(Math.max(0, allowance.minutesCap - used)),
     available: roundMinutes(Math.max(0, allowance.minutesCap - used - allowance.minutesReserved)),
