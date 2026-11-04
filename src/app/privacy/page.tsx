@@ -13,19 +13,21 @@ export default function PrivacyPage() {
     <div className="page max-w-3xl py-12 sm:py-16">
       <p className="eyebrow">Legal</p>
       <h1 className="mt-1 text-3xl font-bold sm:text-4xl">Privacy policy</h1>
-      <p className="mt-2 font-mono text-xs text-ink-muted">Last updated: October 31, 2026</p>
+      <p className="mt-2 font-mono text-xs text-ink-muted">Last updated: November 3, 2026</p>
 
       <div className="mt-8 space-y-8 text-ink-soft">
         <section aria-labelledby="who-h">
           <h2 id="who-h" className="text-xl font-bold text-ink">Who we are</h2>
-          <p className="mt-2">[LEGAL ENTITY] operates calltrainer.tech. This policy explains what personal data the service collects and how it is used.</p>
+          <p className="mt-2">StrategixAI LLC operates calltrainer.tech. This policy explains what personal data the service collects and how it is used.</p>
         </section>
 
         <section aria-labelledby="collect-h">
           <h2 id="collect-h" className="text-xl font-bold text-ink">What we collect</h2>
           <ul className="mt-2 list-disc space-y-2 pl-5">
-            <li>Account data: your name, email address and a password hash. If you sign in with Google, we receive your name and email address from Google.</li>
+            <li>Account data: your name, email address and a password hash.</li>
             <li>If you turn on two-factor sign-in, we store the authenticator secret needed to check your codes.</li>
+            <li>Billing data, if you buy a plan: your plan, seat count, subscription status and Stripe customer id.</li>
+            <li>Usage records: the voice minutes each call used and when it ran. We keep these after transcripts are deleted so monthly minute limits and billing stay correct.</li>
             <li>Practice call transcripts, scores, coaching notes and any scenario details you enter, including text you give the persona wizard about what you sell and your industry. We keep them until an admin sets a retention window for the organization.</li>
             <li>Team data, if your organization uses the team view: training assignments that managers give you, your progress on them, and supervisor notes about your sessions. Managers and owners in your organization can see this data.</li>
             <li>Security logs: the IP address and browser details (user agent) for sign-in and account events.</li>
@@ -39,7 +41,7 @@ export default function PrivacyPage() {
             <li>OpenAI and ElevenLabs run the voice calls and the AI that plays the buyer, coaches and grades you. Live call audio, transcripts, and wizard and scenario text go to them for that purpose.</li>
             <li>Vercel hosts the site.</li>
             <li>Neon stores the database.</li>
-            <li>Google provides sign-in if you choose Sign in with Google.</li>
+            <li>Stripe will process payments when paid plans open. We store your Stripe customer and subscription ids and your plan, not your card details.</li>
           </ul>
         </section>
 
@@ -50,7 +52,7 @@ export default function PrivacyPage() {
 
         <section aria-labelledby="cookies-h">
           <h2 id="cookies-h" className="text-xl font-bold text-ink">Cookies and local storage</h2>
-          <p className="mt-2">We use cookies only to keep you signed in and to secure the sign-in flow. Your browser also stores display settings, such as light or dark theme, on your device. These settings do not leave your device.</p>
+          <p className="mt-2">We use cookies to keep you signed in, to secure the sign-in flow and, while the site is invite only, to remember for 30 days that you entered a valid invite code. Your browser&apos;s local storage also keeps your sign-in token and basic profile so you stay signed in, along with display preferences such as light or dark theme, your last scenario and your Team view date range. Display preferences do not leave your device.</p>
         </section>
 
         <section aria-labelledby="children-h">
@@ -60,12 +62,12 @@ export default function PrivacyPage() {
 
         <section aria-labelledby="rights-h">
           <h2 id="rights-h" className="text-xl font-bold text-ink">Export and deletion</h2>
-          <p className="mt-2">Email [SUPPORT EMAIL] and we will send a copy of your data or delete your account within 30 days.</p>
+          <p className="mt-2">Email support@calltrainer.tech and we will send a copy of your data or delete your account within 30 days.</p>
         </section>
 
         <section aria-labelledby="contact-h">
           <h2 id="contact-h" className="text-xl font-bold text-ink">Contact</h2>
-          <p className="mt-2">Questions about this policy: [SUPPORT EMAIL].</p>
+          <p className="mt-2">Questions about this policy: support@calltrainer.tech.</p>
         </section>
       </div>
     </div>

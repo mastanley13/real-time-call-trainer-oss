@@ -13,17 +13,17 @@ export default function TermsPage() {
     <div className="page max-w-3xl py-12 sm:py-16">
       <p className="eyebrow">Legal</p>
       <h1 className="mt-1 text-3xl font-bold sm:text-4xl">Terms of service</h1>
-      <p className="mt-2 font-mono text-xs text-ink-muted">Last updated: October 31, 2026</p>
+      <p className="mt-2 font-mono text-xs text-ink-muted">Last updated: November 3, 2026</p>
 
       <div className="mt-8 space-y-8 text-ink-soft">
         <section aria-labelledby="service-h">
           <h2 id="service-h" className="text-xl font-bold text-ink">The service</h2>
-          <p className="mt-2">Call Trainer at calltrainer.tech is a hosted service run by [LEGAL ENTITY]. By using it you agree to these terms.</p>
+          <p className="mt-2">Call Trainer at calltrainer.tech is a hosted service run by StrategixAI LLC. By using it you agree to these terms.</p>
         </section>
 
         <section aria-labelledby="billing-h">
           <h2 id="billing-h" className="text-xl font-bold text-ink">Plans and billing</h2>
-          <p className="mt-2">The service is currently free while in early access. Before we charge for anything, we will post plans and prices on the site and update these terms. There are no overage charges.</p>
+          <p className="mt-2">Free accounts include 10 voice minutes a month and unlimited text practice. Paid plans are listed at /pricing and are not on sale yet. Before we charge for anything, we will open checkout and update these terms. There are no overage charges.</p>
         </section>
 
         <section aria-labelledby="use-h">
@@ -47,12 +47,12 @@ export default function TermsPage() {
 
         <section aria-labelledby="liability-h">
           <h2 id="liability-h" className="text-xl font-bold text-ink">Limitation of liability</h2>
-          <p className="mt-2">To the extent the law allows, [LEGAL ENTITY] is not liable for indirect, incidental or consequential damages arising from your use of the service.</p>
+          <p className="mt-2">To the extent the law allows, StrategixAI LLC is not liable for indirect, incidental or consequential damages arising from your use of the service.</p>
         </section>
 
         <section aria-labelledby="law-h">
           <h2 id="law-h" className="text-xl font-bold text-ink">Governing law</h2>
-          <p className="mt-2">These terms are governed by the laws of [STATE].</p>
+          <p className="mt-2">These terms are governed by the laws of North Carolina.</p>
         </section>
 
         <section aria-labelledby="oss-h">
@@ -67,7 +67,7 @@ export default function TermsPage() {
 
         <section aria-labelledby="contact-h">
           <h2 id="contact-h" className="text-xl font-bold text-ink">Contact</h2>
-          <p className="mt-2">Questions about these terms: [SUPPORT EMAIL].</p>
+          <p className="mt-2">Questions about these terms: support@calltrainer.tech.</p>
         </section>
       </div>
     </div>
