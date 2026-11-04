@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { Prisma } from "@prisma/client";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { NextRequest } from "next/server";
 import { createFakePrisma } from "./fakePrisma";
@@ -1129,6 +1130,26 @@ describe("a deleted older subscription cannot revoke a newer one", () => {
     expect(cancelSpy).toHaveBeenCalledWith("sub_test_dupe");
     expect(user().stripeSubscriptionId).toBe("sub_test_first");
   });
+
+  it("a failed cancel of a duplicate subscription answers 500, drops the event id, and cancels on Stripe's retry", async () => {
+    await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_first", metadata: { plan: "pro", userId: "owner-1" } }));
+    liveSub({ id: "sub_test_dupe", customer: "cus_test_1", pro: true, metadata: { userId: "owner-1" } });
+    cancelSpy.mockRejectedValueOnce(new StripeApiError(500));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const e = event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_dupe", payment_status: "paid", metadata: { plan: "pro", userId: "owner-1" } }, "evt_test_dupe_cancel");
+    const first = await deliverRaw(e);
+    expect(first.status).toBe(500);
+    expect(await first.json()).toEqual({ error: "webhook_failed" });
+    expect(fake.rows("stripeEvent").some((r) => r.id === "evt_test_dupe_cancel")).toBe(false);
+    expect(user().stripeSubscriptionId).toBe("sub_test_first");
+    cancelSpy.mockResolvedValue({ id: "sub_test_dupe" });
+    const retry = await deliverRaw(e);
+    expect(retry.status).toBe(200);
+    expect((await retry.json()).result).toBe("processed");
+    expect(cancelSpy).toHaveBeenCalledWith("sub_test_dupe");
+    expect(cancelSpy.mock.calls.filter((c) => c[0] === "sub_test_dupe")).toHaveLength(2);
+    expect(user().stripeSubscriptionId).toBe("sub_test_first");
+  });
 });
 
 describe("one outstanding Checkout Session per billing subject", () => {
@@ -1517,5 +1538,126 @@ describe("a new purchase that fails item validation", () => {
       expect(org()).toMatchObject({ planTier: "free", stripeSubscriptionId: "sub_test_live" });
       expect((await tryCheckout()).status).toBe(409);
     });
+  });
+});
+
+describe("webhook durability", () => {
+  const oversized = async (init: { length?: number; body?: string }) => {
+    const body = init.body ?? "{}";
+    const headers: Record<string, string> = { "stripe-signature": sign(body) };
+    if (init.length !== undefined) headers["content-length"] = String(init.length);
+    return webhook(new NextRequest("http://localhost/api/stripe/webhook", { method: "POST", body, headers }));
+  };
+
+  it("rejects a payload whose content-length is over the cap before verifying the signature", async () => {
+    const res = await oversized({ length: 1_000_001, body: "{}" });
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "payload_too_large" });
+    expect(fake.rows("stripeEvent")).toHaveLength(0);
+    expect(user().planTier).toBe("free");
+  });
+
+  it("rejects a signed body over the cap and never records the event", async () => {
+    const raw = `${"{\"pad\":\""}${"x".repeat(1_000_001)}"}`;
+    const res = await webhook(new NextRequest("http://localhost/api/stripe/webhook", {
+      method: "POST", body: raw, headers: { "stripe-signature": sign(raw) },
+    }));
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "payload_too_large" });
+    expect(fake.rows("stripeEvent")).toHaveLength(0);
+  });
+
+  it("a signed payload that is not JSON is 400 and touches nothing", async () => {
+    const raw = "{not-json";
+    const res = await webhook(new NextRequest("http://localhost/api/stripe/webhook", {
+      method: "POST", body: raw, headers: { "stripe-signature": sign(raw) },
+    }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_event" });
+    expect(fake.rows("stripeEvent")).toHaveLength(0);
+    expect(user().planTier).toBe("free");
+  });
+
+  it("a signed payload missing id or type is 400 and grants nothing", async () => {
+    for (const body of [{ type: "checkout.session.completed", data: { object: {} } }, { id: "evt_no_type", data: { object: {} } }]) {
+      const raw = JSON.stringify(body);
+      const res = await webhook(new NextRequest("http://localhost/api/stripe/webhook", {
+        method: "POST", body: raw, headers: { "stripe-signature": sign(raw) },
+      }));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid_event" });
+    }
+    expect(fake.rows("stripeEvent")).toHaveLength(0);
+  });
+
+  it("a lost insert race (P2002) answers duplicate and does not apply a second grant", async () => {
+    const e = event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata: { plan: "pro", userId: "owner-1" } }, "evt_test_race");
+    mirrorSnapshot(e);
+    fake.db.stripeEvent.create = async () => {
+      throw new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" });
+    };
+    const res = await deliverRaw(e);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: true, result: "duplicate" });
+    expect(user().planTier).toBe("free");
+    expect(user().stripeSubscriptionId ?? null).toBeNull();
+  });
+
+  it("a database error before the transaction answers 500, grants nothing, and names no Stripe ids", async () => {
+    fake.db.stripeEvent.findUnique = async () => { throw new Error("db down"); };
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const e = event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata: { plan: "pro", userId: "owner-1" } }, "evt_test_db");
+    const res = await deliver(e);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "webhook_failed" });
+    expect(user().planTier).toBe("free");
+    expect(fake.rows("stripeEvent")).toHaveLength(0);
+  });
+
+  it("a Stripe retrieve timeout (not an HTTP status) answers 500 and records nothing so Stripe retries", async () => {
+    retrieveSpy.mockRejectedValueOnce(new Error("aborted"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const e = event("customer.subscription.updated", sub({ pro: true }), "evt_test_timeout");
+    const res = await deliverRaw(e);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "webhook_failed" });
+    expect(fake.rows("stripeEvent").some((r) => r.id === "evt_test_timeout")).toBe(false);
+    expect(user().planTier).toBe("free");
+  });
+
+  it("a signed event whose object cannot be applied answers 500 and rolls the event id back", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const e = event("customer.subscription.deleted", { not: "a subscription" }, "evt_test_malformed");
+    const res = await deliverRaw(e);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "webhook_failed" });
+    expect(fake.rows("stripeEvent")).toHaveLength(0);
+    expect(user().planTier).toBe("free");
+  });
+
+  it("checkout.session.expired after a grant clears no plan and leaves the subscription linked", async () => {
+    await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata: { plan: "pro", userId: "owner-1" } }));
+    expect(user()).toMatchObject({ planTier: "pro", stripeSubscriptionId: "sub_test_1" });
+    const res = await deliverRaw(event("checkout.session.expired", { id: "cs_test_stale" }, "evt_test_expired_after"));
+    expect((await res.json()).result).toBe("processed");
+    expect(user()).toMatchObject({ planTier: "pro", stripeSubscriptionId: "sub_test_1", subscriptionStatus: "active" });
+    expect(allowance("userId", "owner-1")?.minutesCap).toBe(200);
+  });
+
+  it("async_payment_failed does not revoke an entitled plan; only the subscription state can", async () => {
+    await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata: { plan: "pro", userId: "owner-1" } }));
+    const res = await deliverRaw(event("checkout.session.async_payment_failed", { id: "cs_test_1" }, "evt_test_async_fail"));
+    expect((await res.json()).result).toBe("processed");
+    expect(user()).toMatchObject({ planTier: "pro", stripeSubscriptionId: "sub_test_1" });
+  });
+
+  it("a second event id for the same checkout reconciles again and does not double the plan or cap", async () => {
+    const obj = { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata: { plan: "pro", userId: "owner-1" } };
+    await deliver(event("checkout.session.completed", obj, "evt_test_first"));
+    const again = await deliverRaw(event("checkout.session.completed", obj, "evt_test_second"));
+    expect((await again.json()).result).toBe("processed");
+    expect(user()).toMatchObject({ planTier: "pro", stripeSubscriptionId: "sub_test_1" });
+    expect(allowance("userId", "owner-1")).toMatchObject({ minutesCap: 200, minutesUsed: 0 });
+    expect(fake.rows("stripeEvent").map((r) => r.id).sort()).toEqual(["evt_test_first", "evt_test_second"]);
   });
 });
