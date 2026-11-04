@@ -94,14 +94,25 @@ describe("nextPastDueSince", () => {
 });
 
 describe("storedPlanEntitled", () => {
-  it("trusts a plan that was never synced from Stripe, and otherwise follows isEntitled", () => {
-    expect(storedPlanEntitled({ subscriptionStatus: null }, NOW)).toBe(true);
-    expect(storedPlanEntitled({}, NOW)).toBe(true);
-    expect(storedPlanEntitled({ subscriptionStatus: "active" }, NOW)).toBe(true);
-    expect(storedPlanEntitled({ subscriptionStatus: "past_due", pastDueSince: daysAgo(6) }, NOW)).toBe(true);
-    expect(storedPlanEntitled({ subscriptionStatus: "past_due", pastDueSince: daysAgo(8) }, NOW)).toBe(false);
-    for (const status of ["unpaid", "paused", "incomplete", "incomplete_expired", "canceled", "weird"]) {
-      expect(storedPlanEntitled({ subscriptionStatus: status }, NOW), status).toBe(false);
+  const linked = "sub_test_1";
+
+  it("keeps a plan set by hand when there is no Stripe subscription and no status", () => {
+    expect(storedPlanEntitled({ subscriptionStatus: null, stripeSubscriptionId: null }, NOW)).toBe(true);
+  });
+
+  it("a linked subscription with a missing status is not entitled", () => {
+    expect(storedPlanEntitled({ subscriptionStatus: null, stripeSubscriptionId: linked }, NOW)).toBe(false);
+    expect(storedPlanEntitled({ subscriptionStatus: null, stripeSubscriptionId: linked, pastDueSince: daysAgo(1) }, NOW)).toBe(false);
+  });
+
+  it("any recorded status follows isEntitled, linked or not", () => {
+    for (const stripeSubscriptionId of [linked, null]) {
+      expect(storedPlanEntitled({ subscriptionStatus: "active", stripeSubscriptionId }, NOW)).toBe(true);
+      expect(storedPlanEntitled({ subscriptionStatus: "past_due", stripeSubscriptionId, pastDueSince: daysAgo(6) }, NOW)).toBe(true);
+      expect(storedPlanEntitled({ subscriptionStatus: "past_due", stripeSubscriptionId, pastDueSince: daysAgo(8) }, NOW)).toBe(false);
+      for (const status of ["unpaid", "paused", "incomplete", "incomplete_expired", "canceled", "weird"]) {
+        expect(storedPlanEntitled({ subscriptionStatus: status, stripeSubscriptionId }, NOW), status).toBe(false);
+      }
     }
   });
 });

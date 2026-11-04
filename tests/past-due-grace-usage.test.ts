@@ -72,8 +72,38 @@ describe("paid plan resolution follows the entitlement helper", () => {
     expect(chooseEngine(r!, 10)).toEqual({ engine: "standard", premiumMinutes: 0 });
   });
 
-  it("an account never synced from Stripe keeps its stored plan", async () => {
+  it("a comped account (no Stripe subscription, no status) keeps its stored plan", async () => {
     seedPro(null, null);
     expect((await resolveAllowance(mocks.fake.db as never, "u-1", NOW))?.plan).toBe("pro");
+  });
+
+  it("a linked account with a missing status is Free, for a user and for a Team pool", async () => {
+    mocks.fake.seed("user", { id: "u-1", email: "u-1@example.test", planTier: "pro", stripeSubscriptionId: "sub_test_1", subscriptionStatus: null, usageAnchorAt: daysAgo(40) });
+    expect((await resolveAllowance(mocks.fake.db as never, "u-1", NOW))?.plan).toBe("free");
+    mocks.fake.seed("organization", { id: "org-1", code: "123", planTier: "team", seatCount: 3, stripeSubscriptionId: "sub_test_team", subscriptionStatus: null, createdAt: daysAgo(90) });
+    mocks.fake.seed("user", { id: "m-1", email: "m-1@example.test", organizationId: "org-1", usageAnchorAt: daysAgo(40) });
+    expect(await resolveAllowance(mocks.fake.db as never, "m-1", NOW)).toMatchObject({ pooled: false, plan: "free" });
+  });
+
+  it("a stale stamp never overwrites a webhook that moved the status on, and the next past_due episode gets a fresh start", async () => {
+    seedPro("past_due", null);
+    const row = () => mocks.fake.rows("user").find((u) => u.id === "u-1")!;
+    // The webhook commits active (clearing pastDueSince) between this request's read and its write.
+    mocks.fake.interleave("user", "updateMany", async () => {
+      await mocks.fake.db.user.update({ where: { id: "u-1" }, data: { subscriptionStatus: "active", pastDueSince: null } });
+    });
+    expect((await resolveAllowance(mocks.fake.db as never, "u-1", NOW))?.plan).toBe("pro");
+    expect(row()).toMatchObject({ subscriptionStatus: "active", pastDueSince: null });
+    // A later past_due episode is stamped when it is first seen, not with the old time.
+    const later = new Date(NOW.getTime() + 30 * DAY);
+    row().subscriptionStatus = "past_due";
+    expect((await resolveAllowance(mocks.fake.db as never, "u-1", later))?.plan).toBe("pro");
+    expect((row().pastDueSince as Date).getTime()).toBe(later.getTime());
+  });
+
+  it("the stamp is a conditional write and keeps an existing start", async () => {
+    seedPro("past_due", daysAgo(3));
+    await resolveAllowance(mocks.fake.db as never, "u-1", NOW);
+    expect((mocks.fake.rows("user")[0].pastDueSince as Date).getTime()).toBe(daysAgo(3).getTime());
   });
 });

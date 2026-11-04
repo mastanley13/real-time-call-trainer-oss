@@ -55,9 +55,14 @@ export function nextPastDueSince(status: string | null | undefined, existing: Da
 }
 
 /**
- * Whether a stored plan row still grants paid access. A row with no subscription status was never synced from
- * Stripe (a seeded or hand-set plan), so its plan tier is trusted as before; any recorded status goes through isEntitled.
+ * Whether a stored plan row still grants paid access. The only row that keeps its plan tier without a status is one
+ * with no Stripe subscription at all (a comped or seeded account an admin set by hand). Anything linked to a
+ * subscription goes through isEntitled, so a linked row with a missing status is not entitled.
  */
-export function storedPlanEntitled(row: { subscriptionStatus?: string | null; pastDueSince?: Date | null }, now: Date): boolean {
-  return row.subscriptionStatus == null ? true : isEntitled(row.subscriptionStatus, row.pastDueSince, now);
+export function storedPlanEntitled(
+  row: { subscriptionStatus: string | null; stripeSubscriptionId: string | null; pastDueSince?: Date | null },
+  now: Date,
+): boolean {
+  if (row.subscriptionStatus == null && !row.stripeSubscriptionId) return true;
+  return isEntitled(row.subscriptionStatus, row.pastDueSince, now);
 }
