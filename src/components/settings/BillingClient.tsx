@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CreditCard, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageSkeleton } from "@/components/ui/Skeleton";
-import { ALREADY_SUBSCRIBED_NOTICE } from "@/lib/checkoutStart";
+import { ALREADY_SUBSCRIBED_NOTICE, noticeStatus } from "@/lib/checkoutStart";
 import { ACTIVE_NOTICE, PORTAL_FAILED_MESSAGE, type CheckoutNotice, checkoutFailure, checkoutNotice, formatMinutes, freeOverCapNotice, planPriceLine, proButtonLabel, seatsOnBlur, teamButtonLabel, usageHeaderCopy } from "@/lib/billingUi";
 import { TEAM_MIN_SEATS } from "@/lib/usagePlan";
 import BillingAlert from "./BillingAlert";
@@ -71,7 +71,9 @@ export default function BillingClient() {
 
   // A checkout started from the pricing page found a plan already on the account.
   useEffect(() => {
-    if (params.get("notice") === ALREADY_SUBSCRIBED_NOTICE) setNotice(ACTIVE_NOTICE);
+    if (params.get("notice") === ALREADY_SUBSCRIBED_NOTICE) {
+      setNotice(checkoutNotice({ code: ALREADY_SUBSCRIBED_NOTICE, status: noticeStatus(params.get("status")) }) ?? ACTIVE_NOTICE);
+    }
   }, [params]);
 
   useEffect(() => {

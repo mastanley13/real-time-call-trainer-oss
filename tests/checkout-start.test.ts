@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
-  BILLING_NOTICE_PATH, NOTICE_TEXT, afterSignin, checkoutBody, intentFromQuery, rememberNotice, startCheckout, takeNotice,
+  BILLING_NOTICE_PATH, NOTICE_TEXT, afterSignin, billingNoticeHref, checkoutBody, intentFromQuery, noticeStatus, rememberNotice, startCheckout, takeNotice,
 } from "@/lib/checkoutStart";
+import { ACTIVE_NOTICE, INCOMPLETE_NOTICE, PAST_DUE_NOTICE, PAUSED_NOTICE, UNPAID_NOTICE, checkoutNotice } from "@/lib/billingUi";
 
 const answer = (status: number, body: unknown) => vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
 const sentBody = (f: ReturnType<typeof vi.fn>) => JSON.parse(f.mock.calls[0][1].body as string);
@@ -23,8 +24,31 @@ describe("startCheckout", () => {
 
   it("409 already_subscribed goes to billing settings", async () => {
     const out = await startCheckout({ plan: "pro", interval: "month" }, answer(409, { error: "already_subscribed", status: "active" }) as unknown as typeof fetch);
-    expect(out).toEqual({ kind: "already_subscribed" });
+    expect(out).toEqual({ kind: "already_subscribed", status: "active" });
     expect(BILLING_NOTICE_PATH).toBe("/settings/billing?notice=already_subscribed");
+  });
+
+  const statusNotice = { active: ACTIVE_NOTICE, trialing: ACTIVE_NOTICE, past_due: PAST_DUE_NOTICE, unpaid: UNPAID_NOTICE, paused: PAUSED_NOTICE, incomplete: INCOMPLETE_NOTICE } as const;
+  for (const [status, notice] of Object.entries(statusNotice)) {
+    it(`409 already_subscribed with ${status} carries the status to the billing notice`, async () => {
+      const out = await startCheckout({ plan: "pro", interval: "month" }, answer(409, { error: "already_subscribed", status }) as unknown as typeof fetch);
+      expect(out).toEqual({ kind: "already_subscribed", status });
+      const href = billingNoticeHref(status);
+      expect(href).toBe(`/settings/billing?notice=already_subscribed&status=${status}`);
+      const q = new URL(href, "http://x").searchParams;
+      expect(checkoutNotice({ code: q.get("notice"), status: noticeStatus(q.get("status")) })).toBe(notice);
+    });
+  }
+
+  it("409 already_subscribed with an unknown or missing status carries no status and shows the generic notice", async () => {
+    for (const body of [{ error: "already_subscribed", status: "canceled" }, { error: "already_subscribed", status: 5 }, { error: "already_subscribed" }]) {
+      const out = await startCheckout({ plan: "pro", interval: "month" }, answer(409, body) as unknown as typeof fetch);
+      expect(out).toStrictEqual({ kind: "already_subscribed" });
+    }
+    expect(billingNoticeHref("canceled")).toBe(BILLING_NOTICE_PATH);
+    expect(billingNoticeHref()).toBe(BILLING_NOTICE_PATH);
+    expect(noticeStatus("constructor")).toBeUndefined();
+    expect(checkoutNotice({ code: "already_subscribed", status: noticeStatus("bogus") })).toBe(ACTIVE_NOTICE);
   });
 
   it("503 billing_not_configured and 422 price_not_configured fall back to Free", async () => {
