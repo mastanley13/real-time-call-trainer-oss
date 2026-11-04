@@ -19,6 +19,21 @@ export const ALREADY_SUBSCRIBED_NOTICE = "already_subscribed";
 
 export const BILLING_NOTICE_PATH = `/settings/billing?notice=${ALREADY_SUBSCRIBED_NOTICE}`;
 
+/** The subscription statuses a 409 may carry to the billing notice. Anything else is dropped. */
+export const NOTICE_STATUSES = ["active", "trialing", "past_due", "unpaid", "paused", "incomplete"] as const;
+export type NoticeStatus = (typeof NOTICE_STATUSES)[number];
+
+/** Returns the status only when it is one of the six known values. */
+export function noticeStatus(value: unknown): NoticeStatus | undefined {
+  return NOTICE_STATUSES.find((s) => s === value);
+}
+
+/** The billing settings link for an existing plan, with the allowlisted status when there is one. */
+export function billingNoticeHref(status?: unknown): string {
+  const s = noticeStatus(status);
+  return s ? `${BILLING_NOTICE_PATH}&status=${s}` : BILLING_NOTICE_PATH;
+}
+
 const NOTICE_KEY = "ct.notice";
 
 type Store = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -67,7 +82,7 @@ export interface CheckoutStartInput {
 
 export type CheckoutStartOutcome =
   | { kind: "redirect"; url: string }
-  | { kind: "already_subscribed" }
+  | { kind: "already_subscribed"; status?: NoticeStatus }
   | { kind: "unavailable" }
   | { kind: "error"; message: string; help: boolean };
 
@@ -104,9 +119,12 @@ export async function startCheckout(input: CheckoutStartInput, fetchFn: typeof f
   } catch {
     return { kind: "error", ...checkoutFailure({ networkError: true }) };
   }
-  const data = (await res.json().catch(() => ({}))) as { url?: unknown; error?: unknown; message?: unknown };
+  const data = (await res.json().catch(() => ({}))) as { url?: unknown; error?: unknown; message?: unknown; status?: unknown };
   if (res.ok && isHttps(data.url)) return { kind: "redirect", url: data.url };
-  if (res.status === 409 && data.error === "already_subscribed") return { kind: "already_subscribed" };
+  if (res.status === 409 && data.error === "already_subscribed") {
+    const status = noticeStatus(data.status);
+    return status ? { kind: "already_subscribed", status } : { kind: "already_subscribed" };
+  }
   // Every other answer (400, 403, 422, 429, 500, 503, a 200 with no usable address) sells nothing: stay on Free.
   return { kind: "unavailable" };
 }

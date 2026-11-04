@@ -8,7 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import SeatsField from "@/components/settings/SeatsField";
 import { SUPPORT_URL, seatsOnBlur } from "@/lib/billingUi";
-import { BILLING_NOTICE_PATH, intentFromQuery, rememberNotice, startCheckout } from "@/lib/checkoutStart";
+import { billingNoticeHref, intentFromQuery, rememberNotice, startCheckout } from "@/lib/checkoutStart";
 import { registerHref } from "@/lib/pricing";
 import { TEAM_MIN_SEATS } from "@/lib/usagePlan";
 
@@ -69,7 +69,7 @@ export default function CheckoutStartClient() {
       window.location.assign(out.url);
       return;
     }
-    if (out.kind === "already_subscribed") return router.replace(BILLING_NOTICE_PATH);
+    if (out.kind === "already_subscribed") return router.replace(billingNoticeHref(out.status));
     if (out.kind === "unavailable") {
       rememberNotice("paid_soon");
       return router.replace("/trainer");
