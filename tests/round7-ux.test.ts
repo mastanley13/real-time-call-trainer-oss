@@ -293,7 +293,7 @@ describe("2. checkout failure message", () => {
     expect(checkoutNotice({ code: "already_subscribed", status: "active" })).toBe(ACTIVE_NOTICE);
     expect(checkoutNotice({ code: "already_subscribed", status: "past_due" })).toBe(PAST_DUE_NOTICE);
     // Missing, unknown and trialing statuses use the active copy.
-    for (const status of [undefined, "trialing", "weird", 5, null]) expect(checkoutNotice({ code: "already_subscribed", status })).toBe(ACTIVE_NOTICE);
+    for (const status of [undefined, "trialing", "weird", "constructor", 5, null]) expect(checkoutNotice({ code: "already_subscribed", status })).toBe(ACTIVE_NOTICE);
     expect(checkoutNotice({ code: "price_not_configured" })).toBe(PRICE_UNAVAILABLE_NOTICE);
     expect(checkoutNotice({ code: "stripe_error" })).toBeNull();
     expect(checkoutNotice({})).toBeNull();
@@ -305,7 +305,7 @@ describe("2. checkout failure message", () => {
     ]);
     expect([PAST_DUE_NOTICE.headline, PAST_DUE_NOTICE.body, PAST_DUE_NOTICE.button]).toEqual([
       "Last payment failed",
-      "Your plan is still active. Update your payment method in Manage billing to keep it. Nothing new was charged.",
+      "We could not collect your last payment and will try again. Update your card in Manage billing to keep your plan. Nothing new was charged.",
       "Update payment method",
     ]);
     expect([PRICE_UNAVAILABLE_NOTICE.headline, PRICE_UNAVAILABLE_NOTICE.body, PRICE_UNAVAILABLE_NOTICE.button]).toEqual([
