@@ -9,6 +9,7 @@ import { generateOrgCode, isValidOrgCode } from "@/lib/orgCodes";
 import { sanitizeSignupIntent } from "@/lib/pricing";
 import { emailsMatch, INVITE_TOKEN_RE, inviteStatus } from "@/lib/invites";
 import { hashInviteToken } from "@/lib/inviteToken";
+import { passFrom, passMatchesToken } from "@/lib/invitePass";
 
 const RegisterSchema = z
   .object({
@@ -38,7 +39,9 @@ const RegisterSchema = z
 
 export async function POST(request: NextRequest) {
   const code = accessCode();
-  if (code && !(await hasValidAccessCookie(request, code))) {
+  // Without the access code, the only way in is a team invite pass, and then only to sign up for that invite.
+  const invitePass = code && !(await hasValidAccessCookie(request, code)) ? await passFrom(request) : undefined;
+  if (invitePass === null) {
     return NextResponse.json({ error: "invite code required" }, { status: 403 });
   }
 
@@ -67,6 +70,10 @@ export async function POST(request: NextRequest) {
       { error: issues || "Invalid registration data" },
       { status: 400 },
     );
+  }
+
+  if (invitePass && !(body.inviteToken && (await passMatchesToken(invitePass, body.inviteToken)))) {
+    return NextResponse.json({ error: "invite code required" }, { status: 403 });
   }
 
   const emailLower = body.email.toLowerCase();

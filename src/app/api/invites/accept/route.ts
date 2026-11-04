@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { readJsonLimited } from "@/lib/rateLimit";
 import { emailsMatch, fitsSeats, inviteStatus, joinBlock, maskEmail, TokenBodySchema, type InviteStatus } from "@/lib/invites";
 import { hashInviteToken } from "@/lib/inviteToken";
+import { gateAllowsInvite, hasSiteAccess, INVITE_PASS_COOKIE, invitePassCookie, passRequired } from "@/lib/invitePass";
 import { SAMPLE_ORG } from "@/lib/teamSample";
 import { teamIsLocal } from "../../team/_lib/server";
 import { badRequest, invitesLimit, inviteLinkProblem, lockOrgs, lockUser, seatsFull, seatUsage, serverError } from "../../team/_lib/members";
@@ -30,6 +31,8 @@ export async function POST(req: NextRequest) {
   } catch {
     return badRequest("The request body was not valid JSON.");
   }
+  // Behind the access gate without the code, only the invite this request's pass was issued for.
+  if (!(await gateAllowsInvite(req, token))) return passRequired();
 
   if (teamIsLocal()) return NextResponse.json({ ok: true, team: { name: SAMPLE_ORG.name }, sample: true });
 
@@ -124,8 +127,12 @@ export async function POST(req: NextRequest) {
       role: result.user.role as "trainee" | "manager" | "owner",
     };
     const session = signSessionToken(sessionUser);
-    const res = NextResponse.json({ ok: true, team: { name: result.org.name }, user: { ...sessionUser, isPlatformAdmin: result.user.isPlatformAdmin }, token: session });
+    // Joining a team does not grant the site-wide access code. The page says so when it is still needed.
+    const accessCodeRequired = !(await hasSiteAccess(req));
+    const res = NextResponse.json({ ok: true, team: { name: result.org.name }, user: { ...sessionUser, isPlatformAdmin: result.user.isPlatformAdmin }, token: session, accessCodeRequired });
     res.cookies.set("authToken", session, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 60 * 60 * 12 });
+    // The invite is used, so its pass has nothing left to open.
+    res.cookies.set(INVITE_PASS_COOKIE, "", invitePassCookie(0));
     return res;
   } catch (error) {
     console.error("[/api/invites/accept] POST error:", error instanceof Error ? error.name : "unknown");

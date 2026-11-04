@@ -11,7 +11,7 @@ import { INVITE_ROLE_LABEL, isInviteToken, type InvitePreview } from "@/lib/invi
 type State =
   | { kind: "loading" }
   | { kind: "ready"; preview: InvitePreview }
-  | { kind: "joined"; teamName: string }
+  | { kind: "joined"; teamName: string; accessCodeRequired: boolean }
   | { kind: "problem"; message: string };
 
 const BAD_LINK = "This invite link is not valid. Check that you copied the whole link, or ask the team owner for a new one.";
@@ -38,7 +38,12 @@ export default function InviteAccept({ token }: { token: string }) {
         const res = await fetch("/api/invites/preview", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
         const body = await res.json().catch(() => ({}));
         if (!live) return;
-        if (res.status === 401) { setState({ kind: "problem", message: "Your session expired. Sign in again to see this invite." }); return; }
+        if (res.status === 401) {
+          // The access gate's invite pass ran out (it lasts 30 minutes); opening the link again issues a new one.
+          const message = body.error === "access_code_required" ? "Your time to finish this invite ran out. Open your invite link again to continue." : "Your session expired. Sign in again to see this invite.";
+          setState({ kind: "problem", message });
+          return;
+        }
         if (!res.ok) { setState({ kind: "problem", message: body.message || BAD_LINK }); return; }
         setState({ kind: "ready", preview: body as InvitePreview });
       } catch {
@@ -58,7 +63,7 @@ export default function InviteAccept({ token }: { token: string }) {
       if (!res.ok) { setError(body.message || "Could not accept the invite. Try again in a minute."); return; }
       // The server sent a new session with the new role; pick it up so the header and tabs match.
       if (!body.sample) await adoptSession().catch(() => {});
-      setState({ kind: "joined", teamName: body.team?.name ?? "the team" });
+      setState({ kind: "joined", teamName: body.team?.name ?? "the team", accessCodeRequired: body.accessCodeRequired === true });
     } catch {
       setError("Your browser couldn't reach this server. Check your connection and try again.");
     } finally {
@@ -113,7 +118,14 @@ export default function InviteAccept({ token }: { token: string }) {
   if (state.kind === "joined") {
     return (
       <AuthShell title={`You joined ${state.teamName}`} subtitle="Your practice now counts toward the team, and you share its voice minutes.">
-        <Link href="/trainer" className="btn-primary w-full">Start practising</Link>
+        {state.accessCodeRequired ? (
+          <div className="space-y-3">
+            <p className="text-sm text-ink-soft">This site also asks for an access code. Get it from your team owner, then enter it to start practising.</p>
+            <Link href="/access?next=%2Ftrainer" className="btn-primary w-full">Enter access code</Link>
+          </div>
+        ) : (
+          <Link href="/trainer" className="btn-primary w-full">Start practising</Link>
+        )}
       </AuthShell>
     );
   }

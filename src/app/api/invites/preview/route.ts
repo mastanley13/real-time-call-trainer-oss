@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { readJsonLimited } from "@/lib/rateLimit";
 import { emailsMatch, inviteStatus, maskEmail, TokenBodySchema, type InvitePreview, type InviteRole } from "@/lib/invites";
 import { hashInviteToken } from "@/lib/inviteToken";
+import { gateAllowsInvite, passRequired } from "@/lib/invitePass";
 import { SAMPLE_ORG } from "@/lib/teamSample";
 import { teamIsLocal } from "../../team/_lib/server";
 import { badRequest, invitesLimit, inviteLinkProblem, serverError } from "../../team/_lib/members";
@@ -26,6 +27,8 @@ export async function POST(req: NextRequest) {
   } catch {
     return badRequest("The request body was not valid JSON.");
   }
+  // Behind the access gate without the code, only the invite this request's pass was issued for.
+  if (!(await gateAllowsInvite(req, token))) return passRequired();
 
   if (teamIsLocal()) {
     const preview: InvitePreview = { teamName: SAMPLE_ORG.name, role: "trainee", expiresAt: new Date(Date.now() + 5 * 86_400_000).toISOString(), emailMatches: true, alreadyMember: false, sample: true };

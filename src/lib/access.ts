@@ -9,7 +9,7 @@ export function accessCode(): string | null {
 
 const enc = new TextEncoder();
 
-async function hmacHex(key: string, msg: string): Promise<string> {
+export async function hmacHex(key: string, msg: string): Promise<string> {
   const k = await crypto.subtle.importKey("raw", enc.encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const sig = new Uint8Array(await crypto.subtle.sign("HMAC", k, enc.encode(msg)));
   return Array.from(sig, (b) => b.toString(16).padStart(2, "0")).join("");
