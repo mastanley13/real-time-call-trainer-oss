@@ -614,6 +614,8 @@ async function fetchLive(id: string | null, deps: StripeDeps): Promise<Live> {
  * Handles one verified Stripe event once. The event id and the plan changes commit in one transaction, so
  * a failure rolls both back and Stripe's retry is processed, while a redelivery of a handled event is a no-op.
  * Updates and completed checkouts are applied from the subscription's current state, not the event body.
+ * Cancelling a duplicate subscription happens after commit; if that call fails the event id is dropped so
+ * Stripe's 500 retry can cancel again.
  */
 export async function handleStripeEvent(event: StripeEventLike, now = new Date(), deps: StripeDeps = liveDeps): Promise<EventResult> {
   if ((await prisma.stripeEvent.findUnique({ where: { id: event.id } })) !== null) return "duplicate";
@@ -638,14 +640,27 @@ export async function handleStripeEvent(event: StripeEventLike, now = new Date()
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return "duplicate";
     throw e;
   }
-  await afterApplied(applied, deps);
+  try {
+    await afterApplied(applied, deps);
+  } catch (e) {
+    // Cancel runs after commit. Drop the event id so Stripe's 500 retry can cancel again.
+    if (applied?.cancelSubscriptionId) {
+      await prisma.stripeEvent.deleteMany({ where: { id: event.id } }).catch(() => undefined);
+    }
+    throw e;
+  }
   return applied ? "processed" : "ignored";
 }
 
 /** The work that must wait until the transaction has committed: dropping a duplicate subscription, then the lifecycle event. */
 async function afterApplied(applied: Applied | null, deps: StripeDeps): Promise<void> {
   if (applied?.cancelSubscriptionId) {
-    await deps.cancelSubscription(applied.cancelSubscriptionId).catch((e) => console.error("[stripe] duplicate subscription cancel failed", e instanceof StripeApiError ? `status ${e.status}` : "error"));
+    try {
+      await deps.cancelSubscription(applied.cancelSubscriptionId);
+    } catch (e) {
+      console.error("[stripe] duplicate subscription cancel failed", e instanceof StripeApiError ? `status ${e.status}` : "error");
+      throw e;
+    }
   }
   if (applied?.event) await emitBillingLifecycle(applied.event);
 }
