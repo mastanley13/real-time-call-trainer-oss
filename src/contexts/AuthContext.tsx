@@ -17,6 +17,11 @@ export interface RegisterFormData {
   /** Exactly one of these two is supplied. */
   joinOrgCode?: string;
   newOrgName?: string;
+  /** Sign-up link context, already whitelisted by the register page. The server whitelists it again. */
+  plan?: "pro" | "team";
+  interval?: "month" | "year";
+  src?: string;
+  seg?: string;
 }
 
 export interface User {
@@ -66,6 +71,8 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   capabilities: Capabilities | null;
+  /** /api/config answered with an error (for example 401 behind the access gate), so capabilities stay null. */
+  capabilitiesFailed: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -102,6 +109,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
+  const [capabilitiesFailed, setCapabilitiesFailed] = useState(false);
 
   useEffect(() => {
     setIsLoading(true);
@@ -109,12 +117,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       .then((r) => (r.ok ? r.json() : null))
       .then((caps: Capabilities | null) => {
         setCapabilities(caps);
+        setCapabilitiesFailed(caps === null);
         if (caps?.demoMode) {
           setUser({ id: "demo-user", email: "demo@example.local", firstName: "Demo", lastName: "User", role: "owner" });
           setIsAuthenticated(true);
         }
       })
-      .catch(() => setCapabilities({ demoMode: false, elevenlabs: false, realtime: false, voiceEngines: [], llm: false, database: true }));
+      // A rejected fetch (offline, blocked) is a failed config load, the same as an HTTP error: never guess defaults.
+      .catch(() => {
+        setCapabilities(null);
+        setCapabilitiesFailed(true);
+      });
     try {
       const token = localStorage.getItem("authToken");
       const storedUser = localStorage.getItem("userData");
@@ -260,6 +273,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         isLoading,
         isAuthenticated,
         capabilities,
+        capabilitiesFailed,
       }}
     >
       {children}

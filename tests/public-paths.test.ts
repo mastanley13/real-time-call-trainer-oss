@@ -59,6 +59,19 @@ describe("middleware with TRAINER_ACCESS_CODE set", () => {
     expect(new URL(res.headers.get("location")!).pathname).toBe("/access");
   });
 
+  it("keeps the checkout query through the access gate, so plan and interval survive", async () => {
+    const res = await run("/checkout/start?plan=team&interval=year");
+    expect(res.status).toBe(307);
+    const to = new URL(res.headers.get("location")!);
+    expect(to.pathname).toBe("/access");
+    expect(to.searchParams.get("next")).toBe("/checkout/start?plan=team&interval=year");
+  });
+
+  it("a path with no query still sends just the path", async () => {
+    const res = await run("/trainer");
+    expect(new URL(res.headers.get("location")!).searchParams.get("next")).toBe("/trainer");
+  });
+
   it("still returns 401 for gated API routes", async () => {
     const res = await run("/api/config");
     expect(res.status).toBe(401);

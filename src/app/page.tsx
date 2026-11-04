@@ -45,7 +45,7 @@ export default function Home() {
               <Link href="/library" className="btn-primary btn-xl">Browse {LIBRARY.length} personas <ArrowRight size={18} aria-hidden /></Link>
               <Link href="/trainer" className="btn-ghost btn-xl">Start a practice call</Link>
             </div>
-            <p className="mt-5 font-mono text-xs text-ink-muted">Works with no keys in demo mode · text or voice · runs on your own OpenAI-compatible key</p>
+            <p className="mt-5 font-mono text-xs text-ink-muted">Hosted for you, no keys or setup · text or voice · self-host with your own OpenAI-compatible key</p>
           </div>
           <div className="enter [animation-delay:120ms]"><HeroDeck /></div>
         </div>

@@ -19,11 +19,52 @@ export const PRICE = {
 
 export type Billing = "month" | "year";
 
+/** Premium AI voice is held off sale. The label shows on the card, the comparison table and the FAQ. */
+export const PREMIUM_COMING_SOON = "Coming soon (not on sale yet)";
+/** The checkout route rejects premium:true while this is false. Flip it only when Premium goes on sale. */
+export const PREMIUM_VOICE_ON_SALE = false;
+/** Under "Start free" on Pro and Team while billing is off. */
+export const OPEN_SOON_LINE = "Pro and Team open soon. Free is live today, no card.";
+
+export type PlanIntent = "pro" | "team";
+
+/** What a sign-up link may carry. Every field is optional and already whitelisted. */
+export interface SignupIntent {
+  plan?: PlanIntent;
+  interval?: Billing;
+  src?: string;
+  seg?: string;
+}
+
+const TAG = /^[a-z0-9_-]{1,40}$/;
+
+/**
+ * Whitelists sign-up link values: plan is pro or team, interval is month or year, src and seg are 1 to 40 chars of
+ * [a-z0-9_-] (lowercased first). Anything else is dropped. Used by the register page and the register route.
+ */
+export function sanitizeSignupIntent(raw: { plan?: unknown; interval?: unknown; src?: unknown; seg?: unknown }): SignupIntent {
+  const tag = (v: unknown) => (typeof v === "string" && TAG.test(v.toLowerCase()) ? v.toLowerCase() : undefined);
+  const out: SignupIntent = {};
+  if (raw.plan === "pro" || raw.plan === "team") out.plan = raw.plan;
+  if (raw.interval === "month" || raw.interval === "year") out.interval = raw.interval;
+  const src = tag(raw.src);
+  if (src) out.src = src;
+  const seg = tag(raw.seg);
+  if (seg) out.seg = seg;
+  return out;
+}
+
 /** Sign-up link for a CTA. Query params are kept in a fixed order. */
-export function registerHref(params: { plan?: "pro" | "team"; seg?: string; src: string }): string {
+export function registerHref(params: { plan?: PlanIntent; interval?: Billing; seg?: string; src: string }): string {
   const q = new URLSearchParams();
   if (params.plan) q.set("plan", params.plan);
+  if (params.plan && params.interval) q.set("interval", params.interval);
   if (params.seg) q.set("seg", params.seg);
   q.set("src", params.src);
   return `/register?${q.toString()}`;
+}
+
+/** The checkout step for a plan and period. Team seats are chosen on that page. */
+export function checkoutStartHref(plan: PlanIntent, interval: Billing = "month"): string {
+  return `/checkout/start?plan=${plan}&interval=${interval}`;
 }

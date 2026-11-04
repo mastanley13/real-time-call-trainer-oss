@@ -330,15 +330,39 @@ describe("checkout route", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it("creates a Team session with the requested seats and the Premium add-on at the same quantity", async () => {
+  it("creates a Team session with the requested seats and no Premium line item", async () => {
     const spy = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_1", url: "https://checkout.example/test" });
-    const res = await post({ plan: "team", interval: "year", seats: 6, premium: true });
+    const res = await post({ plan: "team", interval: "year", seats: 6, premium: false });
     expect(res.status).toBe(200);
     expect((await res.json()).url).toBe("https://checkout.example/test");
     const params = spy.mock.calls[0][0];
-    expect(params.line_items).toEqual([{ price: "price_test_team_y", quantity: 6 }, { price: "price_test_prem_y", quantity: 6 }]);
+    expect(params.line_items).toEqual([{ price: "price_test_team_y", quantity: 6 }]);
     // Team anchors to the organization's creation date (Feb 20), not the user's.
     expect((params.subscription_data as { billing_cycle_anchor: number }).billing_cycle_anchor).toBe(Math.floor(new Date("2026-11-20T00:00:00Z").getTime() / 1000));
+  });
+
+  it("premium:true is a 400 premium_not_available while Premium is off sale, with billing on", async () => {
+    const create = vi.spyOn(stripeApi, "createCheckoutSession");
+    for (const body of [{ plan: "pro", interval: "month", premium: true }, { plan: "team", interval: "year", seats: 3, premium: true }]) {
+      const res = await post(body);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe("premium_not_available");
+      expect(data.url).toBeUndefined();
+    }
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("premium:true is the same 400 with billing off, and a plain body is still a 503", async () => {
+    vi.stubEnv("STRIPE_SECRET_KEY", "");
+    const create = vi.spyOn(stripeApi, "createCheckoutSession");
+    const gated = await post({ plan: "pro", interval: "month", premium: true });
+    expect(gated.status).toBe(400);
+    expect((await gated.json()).error).toBe("premium_not_available");
+    const off = await post({ plan: "pro", interval: "month" });
+    expect(off.status).toBe(503);
+    expect((await off.json()).url).toBeUndefined();
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("rejects fewer than 3 seats and a missing seat count with a 400, without calling Stripe", async () => {

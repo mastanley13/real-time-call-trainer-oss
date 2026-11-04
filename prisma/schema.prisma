@@ -108,6 +108,12 @@ model User {
   voiceBlockedUntil         DateTime?
   /// Monthly usage reset anchor for all plans. Defaults to signup time and never moves.
   usageAnchorAt    DateTime @default(now())
+  /// What the sign-up link asked for (pro | team, month | year, source and segment tags). Set once at creation from
+  /// whitelisted values, never overwritten, and never used to grant a plan.
+  signupPlanIntent String?
+  signupInterval   String?
+  signupSrc        String?
+  signupSeg        String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

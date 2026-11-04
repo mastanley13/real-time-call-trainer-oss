@@ -13,12 +13,17 @@ export default function TermsPage() {
     <div className="page max-w-3xl py-12 sm:py-16">
       <p className="eyebrow">Legal</p>
       <h1 className="mt-1 text-3xl font-bold sm:text-4xl">Terms of service</h1>
-      <p className="mt-2 font-mono text-xs text-ink-muted">Last updated: November 3, 2026</p>
+      <p className="mt-2 font-mono text-xs text-ink-muted">Last updated: November 4, 2026</p>
 
       <div className="mt-8 space-y-8 text-ink-soft">
         <section aria-labelledby="service-h">
           <h2 id="service-h" className="text-xl font-bold text-ink">The service</h2>
           <p className="mt-2">Call Trainer at calltrainer.tech is a hosted service run by StrategixAI LLC. By using it you agree to these terms.</p>
+        </section>
+
+        <section aria-labelledby="account-h">
+          <h2 id="account-h" className="text-xl font-bold text-ink">Your account</h2>
+          <p className="mt-2">You can sign in with an email and password or with Google. If you use Google, Google&apos;s own terms apply to your Google account, and you are responsible for keeping it secure. Keep your sign-in details to yourself.</p>
         </section>
 
         <section aria-labelledby="billing-h">

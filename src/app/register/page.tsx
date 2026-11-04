@@ -1,29 +1,56 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
 import GoogleButton from "@/components/GoogleButton";
+import { afterSignin, intentFromQuery, rememberNotice } from "@/lib/checkoutStart";
 import LegalLinks from "@/components/LegalLinks";
 
 export default function RegisterPage() {
-  const { register, isAuthenticated, capabilities } = useAuth();
+  // useSearchParams needs a Suspense boundary in the App Router.
+  return (
+    <Suspense fallback={null}>
+      <RegisterForm />
+    </Suspense>
+  );
+}
+
+function RegisterForm() {
+  const { register, isAuthenticated, capabilities, capabilitiesFailed } = useAuth();
+  // The billing state is known once /api/config answers. If it answers with an error (no access cookie behind the
+  // access gate), billing reads as off and sign-up stays possible; the register API still enforces the gate.
+  const configKnown = capabilities !== null || capabilitiesFailed;
   const router = useRouter();
+  // The link's plan, period, src and seg, whitelisted. Anything else in the query is dropped.
+  const intent = intentFromQuery(useSearchParams());
+  const billingEnabled = capabilities?.billing === true;
+
+  /** Billing on with a plan goes to checkout; otherwise /trainer, with a one-time notice when a plan was asked for. */
+  function goAfterSignin() {
+    const next = afterSignin(billingEnabled, intent);
+    if (next.notice) rememberNotice(next.notice);
+    router.replace(next.path);
+  }
   const [mode, setMode] = useState<"create" | "join">("create");
   const [f, setF] = useState({ firstName: "", lastName: "", email: "", password: "", orgName: "", orgCode: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Already signed in: record nothing new, follow the billing state. Wait for the capabilities so the state is known.
   useEffect(() => {
-    if (isAuthenticated) router.replace("/trainer");
-  }, [isAuthenticated, router]);
+    if (isAuthenticated && configKnown) goAfterSignin();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, configKnown]);
 
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    // The billing state decides where a new account goes, so wait until /api/config has answered.
+    if (!configKnown) return;
     setError("");
     setBusy(true);
     try {
@@ -33,8 +60,9 @@ export default function RegisterPage() {
         email: f.email,
         password: f.password,
         ...(mode === "create" ? { newOrgName: f.orgName } : { joinOrgCode: f.orgCode }),
+        ...intent,
       });
-      router.push("/trainer");
+      goAfterSignin();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {
@@ -69,7 +97,7 @@ export default function RegisterPage() {
           <div><label htmlFor="code" className="label">Team code</label><input id="code" className="input" inputMode="numeric" pattern="[0-9]{3,8}" value={f.orgCode} onChange={set("orgCode")} required /></div>
         )}
         {error && <p role="alert" className="text-sm text-alert">{error}</p>}
-        <button className="btn-primary w-full" disabled={busy}>{busy ? "Creating…" : "Create account"}</button>
+        <button className="btn-primary w-full" disabled={busy || !configKnown}>{busy ? "Creating…" : "Create account"}</button>
       </form>
       <p className="mt-5 text-center text-sm text-ink-muted">Already registered? <Link href="/login" className="font-semibold text-primary">Sign in</Link></p>
       <LegalLinks />

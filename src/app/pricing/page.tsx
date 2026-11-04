@@ -3,9 +3,13 @@ import ComparePlans from "@/components/landing/ComparePlans";
 import PricingCards from "@/components/landing/PricingCards";
 import PublicFooter from "@/components/landing/PublicFooter";
 import {
-  FREE_SUMMARY, FREE_VOICE_MIN, MINUTES_ROUNDED_NOTE, PREMIUM_VOICE_CAP_PCT, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT, registerHref,
+  FREE_SUMMARY, FREE_VOICE_MIN, MINUTES_ROUNDED_NOTE, PREMIUM_VOICE_CAP_PCT, PREMIUM_COMING_SOON, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT, registerHref,
 } from "@/lib/pricing";
 import { GITHUB_URL, pageMetadata } from "@/lib/seo";
+import { billingOn } from "@/lib/serverConfig";
+
+// The plan buttons depend on whether billing is on, which is read from the server environment on each request.
+export const dynamic = "force-dynamic";
 
 export const metadata = pageMetadata({
   title: "Pricing: Free, Pro and Team Plans | Call Trainer",
@@ -27,7 +31,7 @@ const COMPARE: { feature: string; self: string; free: string; pro: string; team:
   { feature: "Team view for managers", self: "You host it", free: "No", pro: "No", team: "Managed" },
   { feature: "Assignments", self: "You host it", free: "No", pro: "No", team: "Yes" },
   { feature: "MFA", self: "You configure it", free: "Yes", pro: "Yes", team: "Enforced for team" },
-  { feature: "Premium AI voice", self: "Your keys", free: "No", pro: "Add-on", team: "Add-on" },
+  { feature: "Premium AI voice", self: "Your keys", free: "No", pro: "No", team: PREMIUM_COMING_SOON },
   { feature: "Updates and backups", self: "You handle them", free: "Automatic", pro: "Automatic", team: "Automatic" },
   { feature: "Support", self: "GitHub community", free: "Community", pro: "Email", team: "Priority email" },
   { feature: "Overage charges", self: "None", free: "None", pro: "None", team: "None" },
@@ -46,7 +50,7 @@ const FAQ: { q: string; a: string }[] = [
   { q: "How do Team minutes work?", a: `Each seat adds ${TEAM_VOICE_MIN_PER_SEAT} voice minutes to one shared pool. A rep who practices more can use minutes a lighter user does not. When the pool runs out, voice pauses for the team and the text sim stays on.` },
   { q: "Why a 3-seat minimum on Team?", a: "Team view and assignments are built for a manager coaching several reps. Solo reps get the best value on Pro." },
   { q: "What are reviewed persona packs?", a: "Industry buyer sets, like final expense, Medicare, P&C insurance and residential solar, with realistic objections and grading tuned to that sale. Each pack is reviewed before release. They are coming soon to Pro and Team." },
-  { q: "What does Premium AI voice add?", a: `The full realtime voice model for your buyers, more natural and expressive. It can use up to ${PREMIUM_VOICE_CAP_PCT}% of your plan minutes. After that, calls fall back to standard voice and never stop. It costs +$${PRICE.premium.month} per seat per month ($${PRICE.premium.year} per seat per year).` },
+  { q: "What does Premium AI voice add?", a: `${PREMIUM_COMING_SOON}. It will be a Team add-on first. The full realtime voice model for your buyers, more natural and expressive. It can use up to ${PREMIUM_VOICE_CAP_PCT}% of your plan minutes. After that, calls fall back to standard voice and never stop. It costs +$${PRICE.premium.month} per seat per month ($${PRICE.premium.year} per seat per year).` },
   { q: "How does annual billing work?", a: `Pay for 10 months, get 12. Pro is $${PRICE.pro.year} a year. Team is $${PRICE.team.year} per seat per year.` },
   { q: "Can I cancel anytime?", a: "Yes. Cancel from the billing portal and your plan stays active until the end of the period you paid for." },
   { q: "What happens to my data?", a: "Transcripts are kept until an admin sets a retention window. No call audio is stored on our servers." },
@@ -71,7 +75,7 @@ export default function PricingPage() {
       </section>
 
       <section id="plans" className="page py-12 sm:py-14" aria-label="Plans">
-        <PricingCards />
+        <PricingCards billingEnabled={billingOn()} />
         <p className="mt-4 text-sm text-ink-muted">No overage charges on any plan. Free has no card and resets monthly from your signup date, with no rollover.</p>
       </section>
 
