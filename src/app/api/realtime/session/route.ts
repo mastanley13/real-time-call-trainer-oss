@@ -5,7 +5,7 @@ import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { meteringEnabled, realtimeModelFor } from "@/lib/serverConfig";
 import { beginCall, endCall, type VoiceEngine } from "@/lib/usage";
-import { capReached, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
+import { capReached, dailySessionLimit, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
 import { realtimeKey, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
 
 const Body = z.object({ scenario: ScenarioSchema });
@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
     if (!begun.ok && begun.error === "cap_reached") return capReached();
     if (!begun.ok && begun.error === "minutes_reserved") return minutesReserved();
     if (!begun.ok && begun.error === "voice_blocked") return voiceBlocked(begun.retryAfterSeconds);
+    if (!begun.ok && begun.error === "daily_session_limit") return dailySessionLimit();
     if (!begun.ok) return voiceUnavailable();
     callId = begun.callId;
     engine = begun.engine;
@@ -101,7 +102,7 @@ export async function POST(req: NextRequest) {
     if (!res.ok) {
       // Status only: the upstream body can echo request details and is never forwarded or logged.
       console.error("[realtime/session] upstream status", res.status);
-      if (callId) await endCall(auth.id, callId, "failed_connect").catch(() => null);
+      if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
       return NextResponse.json(
         { error: "realtime_upstream_error", message: realtimeUpstreamMessage(res.status, model) },
         { status: res.status === 429 ? 429 : 502 },
@@ -113,7 +114,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ clientSecret: data.value, expiresAt, model, voice, ...(callId ? { callId, maxSeconds } : {}) }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     console.error("[realtime/session]", e instanceof Error ? e.message : "unknown error");
-    if (callId) await endCall(auth.id, callId, "failed_connect").catch(() => null);
+    if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
     return NextResponse.json({ error: "realtime_upstream_error", message: "Could not reach OpenAI to start the voice call. Check the server's network, then try again." }, { status: 502 });
   }
 }

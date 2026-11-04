@@ -44,7 +44,7 @@ Server routes (src/app/api)
   ├─ team/overview     team KPIs, roster, heatmap and coaching queue (org-scoped)
   ├─ team/assignments  create, list and remove persona assignments
   ├─ llm/check         one-token connection check for the Models page
-  ├─ usage, usage/heartbeat, usage/end, usage/credit   voice minute metering (on when `USAGE_CAPS=on` or Stripe is set): the ledger is the source of truth. Free is 10 voice minutes a month, checked only when a call starts (a started call runs to its end); text practice is never capped
+  ├─ usage, usage/heartbeat, usage/end, usage/credit   voice minute metering (on when `USAGE_CAPS=on` or Stripe is set): the ledger is the source of truth. Free is 10 voice minutes a month, checked only when a call starts (a started call runs to its end); text practice is never capped. Per user, 3 uncharged failed calls (quick drops or never-connected calls) and 20 voice sessions per rolling 24 hours
   ├─ billing/checkout, billing/portal   Stripe Checkout (subscription) and Billing Portal, test mode only
   ├─ stripe/webhook    signature-verified, idempotent plan sync from Stripe's current subscription state (checkout completed, async payment succeeded and expired, subscription updated and deleted)
   └─ auth/*, access, me, health, config, cron/purge-expired

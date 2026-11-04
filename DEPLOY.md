@@ -54,6 +54,7 @@ Too low, and every visitor shares the CDN's address and its rate-limit bucket. T
 ## Voice minutes without Stripe
 - Voice caps are off by default, so a self-hosted install is uncapped. Set `USAGE_CAPS=on` (with `DATABASE_URL` set and `DEMO_MODE` off) to meter voice with no Stripe key: everyone is on Free, 10 voice minutes a month, resetting monthly. Leave it unset to disable the cap.
 - Setting `STRIPE_SECRET_KEY` also turns metering on. Paid plans only come from an active Stripe subscription; an account with none is Free.
+- With metering on, each user also gets at most 3 uncharged failed calls per rolling 24 hours (a quick drop, or a call that never reported "connected"; later ones bill one minute) and at most 20 voice sessions minted per rolling 24 hours (the 21st gets a 429). Both are fixed in `src/lib/usagePlan.ts`; there are no env vars.
 - When metering is on and the usage lookup fails (for example the database is down), voice is refused and text practice stays open. Text practice is never metered.
 - Hosted Production: set `USAGE_CAPS=on` in Vercel Production before `DEMO_MODE` comes off, then confirm `/api/usage` reports metered with cap 10.
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { CAP_REACHED_MESSAGE, VOICE_UNAVAILABLE_MESSAGE } from "./billingUi";
+import { DAILY_SESSION_MINT_CAP } from "./usagePlan";
 
 /** The 409 when the plan has minutes left but open calls have reserved them all. */
 export function minutesReserved(): NextResponse {
@@ -14,6 +15,14 @@ export function voiceBlocked(retryAfterSeconds: number): NextResponse {
   return NextResponse.json(
     { error: "voice_blocked", message: "Your last voice call ran past its time limit. Wait a few minutes, then start a new call, or switch to Text." },
     { status: 429, headers: { "Retry-After": String(Math.max(1, retryAfterSeconds)) } },
+  );
+}
+
+/** The 429 when the user has minted the most voice sessions allowed in 24 hours. Text practice stays open. */
+export function dailySessionLimit(): NextResponse {
+  return NextResponse.json(
+    { error: "daily_session_limit", message: `You've reached today's limit of ${DAILY_SESSION_MINT_CAP} practice calls. Try again tomorrow, or switch to Text to practice now.` },
+    { status: 429 },
   );
 }
 

@@ -60,7 +60,16 @@ describe("settleCall", () => {
     expect(drop({ recentCreditedDrops: 3, endedAt: T }).netMinutes).toBe(1);
     expect(drop({ endedAt: T })).toMatchObject({ outcome: "dropped_credited", grossMinutes: 0, netMinutes: 0 });
     expect(drop({ heartbeatSeen: true, endedAt: T, remainingMinutes: 0 }).netMinutes).toBe(0);
-    expect(settleCall({ connectedAt: null, endedAt: after(5), reason: "failed_connect", remainingMinutes: 100, heartbeatSeen: true, recentCreditedDrops: 9 }).outcome).toBe("failed_connect");
+  });
+
+  it("B1: a call that never connected is free under the daily cap, then bills one minute (never past what is left)", () => {
+    const never = (extra: { reason?: CallEndReasonId; recentCreditedDrops?: number; remainingMinutes?: number }) =>
+      settleCall({ connectedAt: null, endedAt: after(5), reason: "user_hangup", remainingMinutes: 100, ...extra });
+    expect(never({ recentCreditedDrops: 2 })).toMatchObject({ outcome: "failed_connect", netMinutes: 0 });
+    expect(never({ recentCreditedDrops: 3 })).toMatchObject({ outcome: "billed", grossMinutes: 1, netMinutes: 1, endReason: "failed_connect" });
+    expect(never({ recentCreditedDrops: 3, remainingMinutes: 0 }).netMinutes).toBe(0);
+    // A server mint failure is waived in settle() (it skips the count, so recentCreditedDrops is 0): free.
+    expect(never({ reason: "failed_connect", recentCreditedDrops: 0 })).toMatchObject({ outcome: "failed_connect", netMinutes: 0, endReason: "failed_connect" });
   });
 
   it("4: a network drop at 31s is billed", () => {

@@ -21,8 +21,17 @@ export const PREMIUM_VOICE_SHARE = 0.6;
 export const MAX_CALL_SECONDS = 24 * 60 * 60;
 /** A failure that ends a call this early is credited back. */
 export const DROP_CREDIT_SECONDS = 30;
-/** At most this many calls per user may be credited as dropped in any rolling 24 hours; later ones bill normally. */
+/**
+ * At most this many calls per user may go uncharged for a failure in any rolling 24 hours; later ones bill normally.
+ * Two kinds share the count: a credited drop (connected, then dropped within 30 s, no heartbeat after connect) and a
+ * call that never connected (no "connected" heartbeat, ended by the client before the connect cutoff). Without the
+ * second, a modified client could skip "connected", hang up early and keep WebRTC open for free, unlimited times.
+ * A failure on the server's own mint is settled by the mint route itself (`endCall` with `serverMintFailure`): it is
+ * never charged, but its row still counts toward this cap for later calls, because no stored column can tell it apart.
+ */
 export const DAILY_DROP_CREDIT_CAP = 3;
+/** At most this many voice sessions may be minted per user in any rolling 24 hours (server clock). Further mints get 429. */
+export const DAILY_SESSION_MINT_CAP = 20;
 /** Last heartbeat plus this long ends a call whose client went silent. */
 export const HEARTBEAT_TIMEOUT_SECONDS = 30;
 /** How long a client has to open the data channel after the server minted the session. */
@@ -127,14 +136,17 @@ export function settleCall(input: {
   remainingMinutes: number;
   /** The server recorded a heartbeat after the call connected: the client was alive, so it is not a drop. */
   heartbeatSeen?: boolean;
-  /** Calls this user already had credited as dropped in the last 24 hours. */
+  /** Calls this user already had uncharged (credited drops and never-connected calls) in the last 24 hours. */
   recentCreditedDrops?: number;
 }): CallSettlement {
   const { connectedAt, endedAt, reason } = input;
   const heartbeatSeen = input.heartbeatSeen ?? false;
   const recentCreditedDrops = input.recentCreditedDrops ?? 0;
   if (!connectedAt) {
-    return { outcome: "failed_connect", billableSeconds: 0, grossMinutes: 0, creditMinutes: 0, netMinutes: 0, endReason: "failed_connect" };
+    // A call that never connected is free while the user is under the daily cap, then costs one minute (never more
+    // than is left), like an uncredited drop. This closes the loop of minting, withholding "connected" and hanging up.
+    const charged = recentCreditedDrops >= DAILY_DROP_CREDIT_CAP && Math.floor(input.remainingMinutes) >= 1 ? 1 : 0;
+    return { outcome: charged ? "billed" : "failed_connect", billableSeconds: 0, grossMinutes: charged, creditMinutes: 0, netMinutes: charged, endReason: "failed_connect" };
   }
   let seconds = billableSecondsBetween(connectedAt, endedAt);
   let endReason = reason;
