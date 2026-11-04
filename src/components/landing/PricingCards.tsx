@@ -15,11 +15,11 @@ const TIERS = [
   },
   {
     id: "pro", name: "Pro", blurb: "For individual reps who practice weekly.", cta: "Start with Pro",
-    features: [`${PRO_VOICE_MIN} voice minutes per month`, "Everything in Free", "Full persona library across every sales role", "Reviewed persona packs (coming soon)", "Persona wizard for your own buyers", "Call history and score trends", "MFA"],
+    features: [`${PRO_VOICE_MIN} voice minutes per month`, "Everything in Free", "Full persona library across every sales role", "Reviewed persona packs (coming soon)", "Persona wizard for your own buyers", "Call history and score trends", "Two-factor sign-in (MFA)"],
   },
   {
     id: "team", name: "Team", blurb: `Built for a manager plus reps: ${TEAM_MIN_SEATS}-seat minimum.`, cta: "Start with Team",
-    features: [`${TEAM_VOICE_MIN_PER_SEAT} voice minutes per seat, pooled across the team`, "Everything in Pro", "Managed Team view: every rep's calls, scores and trends", "Assignments: give reps a persona and a due date", "Enforced MFA for the whole team", "Priority email support"],
+    features: [`${TEAM_VOICE_MIN_PER_SEAT} voice minutes per seat, pooled across the team`, "Everything in Pro", "Managed Team view: every rep's calls, scores and trends", "Assignments: give reps a persona and a due date", "Two-factor sign-in (MFA) enforced for the whole team", "Priority email support"],
   },
 ] as const;
 
