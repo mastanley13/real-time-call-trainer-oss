@@ -13,11 +13,22 @@ const mono = JetBrains_Mono({ subsets: ["latin"], display: "swap", variable: "--
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl()),
-  title: "Real-Time Call Trainer · Practice live calls with an AI coach",
+  title: "Real-Time Call Trainer · Hosted AI sales call practice, no setup",
   description:
-    "Open-source voice practice for sales and service calls. A library of personas for every sales job, a live coach that whispers the next move, and rubric grading backed by transcript quotes.",
-  openGraph: { images: shareImages("/").openGraph },
-  twitter: { card: "summary_large_image", images: shareImages("/").twitter },
+    "Hosted AI sales call practice. Talk to AI buyers who push back, get a live coach on every turn, and finish with a graded debrief that quotes your transcript. Start free, no setup. Also open source.",
+  openGraph: {
+    title: "Real-Time Call Trainer · Hosted AI sales call practice, no setup",
+    description:
+      "Hosted AI sales call practice. Talk to AI buyers who push back, get a live coach on every turn, and finish with a graded debrief that quotes your transcript. Start free, no setup. Also open source.",
+    images: shareImages("/").openGraph,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Real-Time Call Trainer · Hosted AI sales call practice, no setup",
+    description:
+      "Hosted AI sales call practice. Talk to AI buyers who push back, get a live coach on every turn, and finish with a graded debrief that quotes your transcript. Start free, no setup. Also open source.",
+    images: shareImages("/").twitter,
+  },
 };
 
 export const viewport: Viewport = {
