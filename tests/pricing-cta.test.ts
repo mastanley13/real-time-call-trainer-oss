@@ -19,7 +19,7 @@ describe("PricingCards, billing off", () => {
   const html = cards(false);
 
   it("reads Start free on Pro and Team with the open-soon line under each", () => {
-    expect(html).not.toContain("Start Pro");
+    expect(html).not.toContain("Start with Pro");
     expect(html).not.toContain("Start with Team");
     expect(count(html, ">Start free<")).toBe(2);
     expect(count(html, OPEN_SOON_LINE)).toBe(2);
@@ -39,8 +39,8 @@ describe("PricingCards, billing on", () => {
   const html = cards(true);
 
   it("keeps the paid labels and drops the open-soon line", () => {
-    expect(html).toContain("Start Pro");
-    expect(html).toContain("Start with Team");
+    expect(html).toContain(">Start with Pro</a>");
+    expect(html).toContain(">Start with Team</a>");
     expect(html).not.toContain(OPEN_SOON_LINE);
   });
 
@@ -50,11 +50,11 @@ describe("PricingCards, billing on", () => {
 
   it("the toggle drives the interval in the hrefs", () => {
     // Static markup cannot click, so check the link builder the toggle state feeds.
-    expect(tierAction("pro", "Start Pro", true, "year").href).toBe("/register?plan=pro&interval=year&src=pricing");
+    expect(tierAction("pro", "Start with Pro", true, "year").href).toBe("/register?plan=pro&interval=year&src=pricing");
     expect(tierAction("team", "Start with Team", true, "year").href).toBe("/register?plan=team&interval=year&src=pricing");
     expect(tierAction("team", "Start with Team", true, "month").href).toBe("/register?plan=team&interval=month&src=pricing");
     // Billing off keeps the selected period in the link too, so sign-up stores it.
-    expect(tierAction("pro", "Start Pro", false, "year")).toMatchObject({ cta: "Start free", href: "/register?plan=pro&interval=year&src=pricing", soon: true });
+    expect(tierAction("pro", "Start with Pro", false, "year")).toMatchObject({ cta: "Start free", href: "/register?plan=pro&interval=year&src=pricing", soon: true });
     expect(tierAction("team", "Start with Team", false, "month")).toMatchObject({ cta: "Start free", href: "/register?plan=team&interval=month&src=pricing", soon: true });
   });
 });
@@ -72,7 +72,7 @@ describe("Premium add-on card", () => {
 describe("PricingSummary", () => {
   it("billing off: Start free with the open-soon line on Pro and Team", () => {
     const html = summary(false);
-    expect(html).not.toContain("Start Pro");
+    expect(html).not.toContain("Start with Pro");
     expect(html).not.toContain("Start with Team");
     expect(count(html, OPEN_SOON_LINE)).toBe(2);
     expect(hrefs(html)).toEqual(expect.arrayContaining(["/register?plan=pro&interval=month&seg=saas&src=pricing", "/register?plan=team&interval=month&seg=saas&src=pricing"]));
@@ -80,7 +80,7 @@ describe("PricingSummary", () => {
 
   it("billing on: the paid labels", () => {
     const html = summary(true);
-    expect(html).toContain("Start Pro");
+    expect(html).toContain("Start with Pro");
     expect(html).toContain("Start with Team");
     expect(html).not.toContain(OPEN_SOON_LINE);
     expect(hrefs(html)).toEqual(expect.arrayContaining(["/register?plan=pro&interval=month&seg=saas&src=pricing", "/register?plan=team&interval=month&seg=saas&src=pricing"]));
@@ -99,10 +99,10 @@ describe("billing state", () => {
   it("the page renders the billing-off UI with a live key and the billing-on UI with a test key", () => {
     vi.stubEnv("DEMO_MODE", "");
     vi.stubEnv("STRIPE_SECRET_KEY", "sk_live_placeholder");
-    expect(renderToStaticMarkup(createElement(PricingPage))).not.toContain("Start Pro");
+    expect(renderToStaticMarkup(createElement(PricingPage))).not.toContain("Start with Pro");
     vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
     const on = renderToStaticMarkup(createElement(PricingPage));
-    expect(on).toContain("Start Pro");
+    expect(on).toContain("Start with Pro");
     expect(on).toContain("Start with Team");
   });
 });
@@ -112,7 +112,7 @@ describe("pricing page", () => {
   const html = renderToStaticMarkup(createElement(PricingPage));
 
   it("billing off: no paid CTA text anywhere in the HTML", () => {
-    expect(html).not.toContain("Start Pro");
+    expect(html).not.toContain("Start with Pro");
     expect(html).not.toContain("Start with Team");
   });
 
@@ -128,6 +128,10 @@ describe("pricing page", () => {
     expect(text).toMatch(new RegExp(`^<p[^>]*>${PREMIUM_COMING_SOON.replace(/[()]/g, "\\$&")}\\.`));
     expect(text).toContain("Team add-on first");
     expect(text).toContain("+$30 per seat per month ($300 per seat per year)");
+  });
+
+  it("the old open-soon copy is gone in both billing states", () => {
+    for (const h of [html, cards(false), cards(true), summary(false), summary(true)]) expect(h).not.toMatch(/open soon/i);
   });
 
   it("prices are unchanged", () => {
@@ -157,6 +161,13 @@ describe("landing hero line", () => {
     const oss = html.slice(html.indexOf("oss-h"));
     expect(oss).toContain("bring your own key");
     expect(oss).toContain("npm run dev");
+  });
+
+  it("keeps the model table off the hosted home page and links to the self-hosting docs", () => {
+    expect(html).not.toMatch(/Under the hood|Which model does what|LLM_BASE_URL|gpt-4\.1-mini/);
+    const oss = html.slice(html.indexOf("oss-h"));
+    expect(oss).toContain('href="https://github.com/mastanley13/real-time-call-trainer-oss#which-model-does-what"');
+    expect(oss).toContain(">Self-hosting</a>");
   });
 
   it("uses no em dashes", () => {

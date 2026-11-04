@@ -106,6 +106,16 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `ALLOW_PUBLIC_DEMO` | Optional | `true` lets `DEMO_MODE=true` take effect in production, for a deliberate public demo only. Any other value keeps the production guard on |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Optional | Used by `npm run db:seed` to create a platform admin. `ADMIN_FIRST_NAME` and `ADMIN_LAST_NAME` set its name (default Platform Admin) |
 
+### Which model does what
+| Job | Default model | What it does |
+|---|---|---|
+| Live coach | `gpt-4.1-mini` | Per-turn cues and rubric estimate, as validated JSON |
+| Grading | `gpt-4.1-mini` | Full-transcript rubric grade with verbatim evidence checks |
+| Persona wizard | `gpt-4.1-mini` | Builds a persona, objections and rubric from your context |
+| Voice | `gpt-realtime-1.5` | OpenAI Realtime over WebRTC, the default when an OpenAI key is set. ElevenLabs Agents also supported |
+
+Coaching, grades, wizard drafts and text-call replies show the model that produced them, or say when a rules-based fallback did. Point `LLM_BASE_URL` at any OpenAI-compatible API, with its own `LLM_API_KEY`, to swap models. `/settings/models` shows what this server runs.
+
 ### Voice engines
 OpenAI Realtime is used whenever an OpenAI key is available. The server mints a 10-minute client secret per call and relays the WebRTC offer through `/api/realtime/sdp`, so the browser never sees your key and the page only connects to its own origin. When ElevenLabs is also set up, the briefing lets each trainee choose, and `VOICE_ENGINE` sets which one is picked first. With neither, calls run in text, which needs no voice keys.
 

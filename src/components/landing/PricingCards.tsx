@@ -14,7 +14,7 @@ const TIERS = [
     features: [FREE_SUMMARY, "Unlimited text sim", "Live coach channel", "Graded debriefs with transcript quotes", "Core persona library"],
   },
   {
-    id: "pro", name: "Pro", blurb: "For individual reps who practice weekly.", cta: "Start Pro",
+    id: "pro", name: "Pro", blurb: "For individual reps who practice weekly.", cta: "Start with Pro",
     features: [`${PRO_VOICE_MIN} voice minutes per month`, "Everything in Free", "Full persona library across every sales role", "Reviewed persona packs (coming soon)", "Persona wizard for your own buyers", "Call history and score trends", "MFA"],
   },
   {

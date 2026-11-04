@@ -21,12 +21,8 @@ const STEPS = [
   { title: "Debrief", body: "Every score cites your own words. Jump to the moment you lost points and retry the call from that turn." },
 ];
 
-const MODELS = [
-  { job: "Live coach", model: "gpt-4.1-mini (default)", note: "Per-turn cues and rubric estimate, as validated JSON" },
-  { job: "Grading", model: "gpt-4.1-mini (default)", note: "Full-transcript rubric grade with verbatim evidence checks" },
-  { job: "Persona wizard", model: "gpt-4.1-mini (default)", note: "Builds a persona, objections and rubric from your context" },
-  { job: "Voice", model: "gpt-realtime-1.5 (default)", note: "OpenAI Realtime over WebRTC, the default when an OpenAI key is set. ElevenLabs Agents also supported" },
-];
+/** Self-host docs: the model table and env vars moved here from the hosted home page. */
+const SELF_HOST_DOCS = "https://github.com/mastanley13/real-time-call-trainer-oss#which-model-does-what";
 
 export default function Home() {
   return (
@@ -64,27 +60,6 @@ export default function Home() {
         </ol>
       </section>
 
-      <section className="border-y border-line bg-surface" aria-labelledby="models-h">
-        <div className="page py-12">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <p className="eyebrow">Under the hood</p>
-              <h2 id="models-h" className="mt-1 text-2xl font-bold">Which model does what</h2>
-            </div>
-            <p className="max-w-md text-sm text-ink-muted">Coaching, grades, wizard drafts and text-call replies show the model that produced them, or say when a rules-based fallback did. Point <span className="mono">LLM_BASE_URL</span> at any OpenAI-compatible API, with its own <span className="mono">LLM_API_KEY</span>, to swap models.</p>
-          </div>
-          <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {MODELS.map((m) => (
-              <div key={m.job} className="rounded-panel border border-line p-4">
-                <p className="label !mb-1">{m.job}</p>
-                <p className="chip-model">{m.model}</p>
-                <p className="mt-2 text-sm text-ink-soft">{m.note}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
       <section className="page py-14 sm:py-16" aria-labelledby="feat-h">
         <h2 id="feat-h" className="sr-only">Features</h2>
         <div className="grid gap-4 md:grid-cols-3">
@@ -112,6 +87,9 @@ export default function Home() {
               <Link href="/library/new" className="btn-primary"><FileJson size={16} aria-hidden /> Build a persona pack</Link>
               <a href="https://github.com/mastanley13/real-time-call-trainer-oss" className="btn-ghost" target="_blank" rel="noreferrer"><GitPullRequest size={16} aria-hidden /> View on GitHub</a>
             </div>
+            <p className="mt-4 text-sm text-ink-soft">
+              <a href={SELF_HOST_DOCS} className="underline underline-offset-2 hover:text-ink" target="_blank" rel="noreferrer">Self-hosting</a>: which model does what, and how to swap it.
+            </p>
           </div>
           <div className="panel overflow-x-auto p-4">
             <p className="label flex items-center gap-1.5"><KeyRound size={12} aria-hidden /> Run it locally</p>
