@@ -7,9 +7,9 @@ import { registerHref } from "@/lib/pricing";
 import { pageMetadata } from "@/lib/seo";
 
 export const metadata = pageMetadata({
-  title: "Real-Time Call Trainer · Practice live calls with an AI coach",
+  title: "Real-Time Call Trainer · Hosted AI sales call practice, no setup",
   description:
-    "Open-source voice practice for sales and service calls. A library of personas for every sales job, a live coach that whispers the next move, and rubric grading backed by transcript quotes.",
+    "Hosted AI sales call practice. Talk to AI buyers who push back, get a live coach on every turn, and finish with a graded debrief that quotes your transcript. Start free, no setup. Also open source.",
   path: "/",
 });
 
