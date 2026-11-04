@@ -49,24 +49,33 @@ export async function hashPassword(plain: string): Promise<string> {
   return bcrypt.hash(plain, BCRYPT_ROUNDS);
 }
 
-export function signMfaChallengeToken(userId: string): string {
+/**
+ * `linkGoogleSub` is set only by the Google callback for an MFA account whose email matched: the link is written
+ * when the code is accepted, never before.
+ */
+export function signMfaChallengeToken(userId: string, linkGoogleSub?: string): string {
   return jwt.sign(
-    { id: userId, purpose: "mfa-challenge" },
+    { id: userId, purpose: "mfa-challenge", ...(linkGoogleSub ? { linkGoogleSub } : {}) },
     getJwtSecret(),
     { expiresIn: "5m" },
   );
 }
 
-export function verifyMfaChallengeToken(token: string): string | null {
+export function verifyMfaChallenge(token: string): { id: string; linkGoogleSub?: string } | null {
   try {
     const payload = jwt.verify(token, getJwtSecret()) as jwt.JwtPayload;
     if (!payload || payload.purpose !== "mfa-challenge" || !payload.id) {
       return null;
     }
-    return String(payload.id);
+    const sub = typeof payload.linkGoogleSub === "string" && payload.linkGoogleSub.length <= 255 ? payload.linkGoogleSub : undefined;
+    return { id: String(payload.id), linkGoogleSub: sub };
   } catch {
     return null;
   }
+}
+
+export function verifyMfaChallengeToken(token: string): string | null {
+  return verifyMfaChallenge(token)?.id ?? null;
 }
 
 export async function verifyPassword(

@@ -70,14 +70,16 @@ export async function GET(req: NextRequest) {
     let user = await prisma.user.findUnique({ where: { googleSub: profile.sub }, include: { organization: true } });
     let created = false;
     let linked = false;
+    let pendingLink = false;
 
     if (!user) {
       const byEmail = await prisma.user.findUnique({ where: { email: profile.email }, include: { organization: true } });
       if (byEmail) {
         // Google verified this address, so it is the same person. Never overwrite a different Google id.
         if (byEmail.googleSub) return fail(req, "google_failed");
-        user = await prisma.user.update({ where: { id: byEmail.id }, data: { googleSub: profile.sub }, include: { organization: true } });
-        linked = true;
+        // Nothing is written yet: the link waits for the lockout check and, with MFA, for the accepted code.
+        user = byEmail;
+        pendingLink = true;
       } else {
         const gate = accessCode();
         if (gate && !(await hasValidAccessCookie(req, gate))) {
@@ -92,8 +94,14 @@ export async function GET(req: NextRequest) {
 
     if (user.mfaEnabled && user.mfaSecret) {
       await prisma.auditEvent.create({ data: { userId: user.id, action: "user.mfa_challenge_issued", ip, userAgent, metadata: { via: "google" } } });
-      // The fragment never reaches a server or its logs; the login page picks it up.
-      return back(req, `/login#mfa=${encodeURIComponent(signMfaChallengeToken(user.id))}`);
+      // The fragment never reaches a server or its logs; the login page picks it up. A pending link rides in the
+      // signed challenge and is written by /api/auth/mfa/challenge once the code is accepted.
+      return back(req, `/login#mfa=${encodeURIComponent(signMfaChallengeToken(user.id, pendingLink ? profile.sub : undefined))}`);
+    }
+
+    if (pendingLink) {
+      user = await prisma.user.update({ where: { id: user.id }, data: { googleSub: profile.sub }, include: { organization: true } });
+      linked = true;
     }
 
     await prisma.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: new Date() } });

@@ -17,7 +17,7 @@ import { GET as start } from "@/app/api/auth/google/start/route";
 import { GET as callback } from "@/app/api/auth/google/callback/route";
 import { GET as sessionRoute } from "@/app/api/auth/session/route";
 import { ACCESS_COOKIE, accessToken } from "@/lib/access";
-import { verifyMfaChallengeToken, verifySessionToken } from "@/lib/auth";
+import { verifyMfaChallenge, verifyMfaChallengeToken, verifySessionToken } from "@/lib/auth";
 import { authorizeUrl, checkIdTokenClaims, GOOGLE_FLOW_COOKIE, googleConfig, pkceChallenge, randomToken, safeNextPath, signFlowState, verifyFlowState } from "@/lib/googleAuth";
 import { GET as status } from "@/app/api/auth/google/status/route";
 
@@ -332,6 +332,27 @@ describe("GET /api/auth/google/callback", () => {
     mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: Record<string, string> }) => (where.googleSub ? existing({ googleSub: "g-sub-1", lockedUntil: new Date(Date.now() + 60_000) }) : null));
     const res = await call();
     expect(loc(res).searchParams.get("error")).toBe("locked");
+  });
+
+  const byEmailOnly = (patch: Record<string, unknown>) =>
+    mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: Record<string, string> }) => (where.email ? existing(patch) : null));
+
+  it("does not link a locked account by email", async () => {
+    googleReplies(claims());
+    byEmailOnly({ lockedUntil: new Date(Date.now() + 60_000) });
+    const res = await call();
+    expect(loc(res).searchParams.get("error")).toBe("locked");
+    expect(mocks.prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it("does not link an MFA account until the code is accepted, and carries the pending link in the challenge", async () => {
+    googleReplies(claims());
+    byEmailOnly({ mfaEnabled: true, mfaSecret: "SECRET" });
+    const res = await call();
+    expect(mocks.prisma.user.update).not.toHaveBeenCalled();
+    expect(res.headers.get("set-cookie")).not.toContain("authToken=");
+    const challenge = new URLSearchParams(new URL(res.headers.get("location")!, "http://localhost").hash.slice(1)).get("mfa")!;
+    expect(verifyMfaChallenge(challenge)).toEqual({ id: "u-1", linkGoogleSub: "g-sub-1" });
   });
 
   it("never logs the code, tokens or secrets", async () => {

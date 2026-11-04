@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
   signSessionToken,
-  verifyMfaChallengeToken,
+  verifyMfaChallenge,
   type SessionRole,
 } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -39,8 +39,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const userId = verifyMfaChallengeToken(body.challengeToken);
-  if (!userId) {
+  const challenge = verifyMfaChallenge(body.challengeToken);
+  const userId = challenge?.id;
+  if (!challenge || !userId) {
     return NextResponse.json(
       { error: "Expired or invalid challenge. Sign in again." },
       { status: 401 },
@@ -69,6 +70,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid code" }, { status: 401 });
   }
 
+  // A Google link waiting on this challenge is written only now, after the code was accepted, and never over an
+  // existing Google id or onto a locked account.
+  let linked = false;
+  if (challenge.linkGoogleSub && !user.googleSub && !(user.lockedUntil && user.lockedUntil > new Date())) {
+    try {
+      await prisma.user.update({ where: { id: user.id }, data: { googleSub: challenge.linkGoogleSub } });
+      linked = true;
+    } catch {
+      console.error("[google] deferred link failed");
+    }
+  }
   await prisma.user.update({
     where: { id: user.id },
     data: { lastLoginAt: new Date() },
@@ -79,6 +91,7 @@ export async function POST(req: NextRequest) {
       action: "user.mfa_challenge_success",
       ip,
       userAgent: req.headers.get("user-agent") ?? undefined,
+      ...(challenge.linkGoogleSub ? { metadata: { via: "google", linked } } : {}),
     },
   });
 
