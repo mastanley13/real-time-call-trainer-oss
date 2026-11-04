@@ -504,8 +504,8 @@ async function reconcile(
     const holder = await subjectOfSubscription(tx, subscriptionId);
     return holder ? applyEntitlement(tx, holder, FREE, { customerId: hint.customerId, subscriptionId: null, status: "canceled" }, now) : null;
   }
-  // "incomplete" is a checkout still being paid; wait for it to become active.
-  if (live.status === "incomplete") return null;
+  // "incomplete" (first payment pending or needs action) goes through like any other status: it is recorded and
+  // linked, grants nothing (not entitled) and blocks a second checkout until it becomes active or expires.
   const found = entitlementFromItems(live.items.data.map((i) => ({
     quantity: i.quantity,
     priceId: i.price.id,

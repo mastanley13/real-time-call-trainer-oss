@@ -726,9 +726,11 @@ describe("customer.subscription.updated", () => {
     expect(fake.rows("organization").find((o) => o.id === "org-2")?.planTier ?? "free").toBe("free");
   });
 
-  it("waits for an incomplete checkout to finish", async () => {
+  it("an incomplete subscription is recorded and grants nothing, even for an account that held an entitled status", async () => {
     await update({ team: 8, status: "incomplete" });
-    expect(org().seatCount).toBe(3);
+    expect(org()).toMatchObject({ planTier: "free", seatCount: 1, premiumVoice: false, subscriptionStatus: "incomplete", stripeSubscriptionId: "sub_test_team" });
+    expect(org().pastDueSince ?? null).toBeNull();
+    expect(allowance("organizationId", "org-1")).toMatchObject({ planTier: "free", minutesCap: 10 });
   });
 
   describe("entitlementFromItems (acceptance cases)", () => {
@@ -1388,6 +1390,36 @@ describe("a new purchase that fails item validation", () => {
     await purchase("sub_test_bad2", 2);
     expect(cancelSpy).toHaveBeenCalledWith("sub_test_bad2");
     expect(org().stripeSubscriptionId).toBe("sub_test_bad");
+  });
+
+  it("an incomplete first payment links the subscription as incomplete, blocks checkout with that status, then grants on active and frees on incomplete_expired", async () => {
+    const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_dup", url: "https://checkout.example/dup" });
+    const setStatus = async (status: string) => {
+      liveStripe.set("sub_test_inc", { ...sub({ id: "sub_test_inc", customer: "cus_test_new", metadata: { organizationId: "org-1" }, status }), items: { data: teamItems(3) } });
+      await deliverRaw(event("customer.subscription.updated", { id: "sub_test_inc", customer: "cus_test_new", status, metadata: { organizationId: "org-1" } }));
+    };
+    await setStatus("incomplete");
+    expect(org()).toMatchObject({ planTier: "free", stripeSubscriptionId: "sub_test_inc", subscriptionStatus: "incomplete", stripeCustomerId: "cus_test_new" });
+    const blocked = await post();
+    expect(blocked.status).toBe(409);
+    expect(await blocked.json()).toMatchObject({ error: "already_subscribed", status: "incomplete" });
+    expect(create).not.toHaveBeenCalled();
+
+    await setStatus("active");
+    expect(org()).toMatchObject({ planTier: "team", seatCount: 3, subscriptionStatus: "active" });
+
+    // A different account whose first payment never completes: the link is dropped and checkout opens again.
+    org().planTier = "free";
+    await setStatus("incomplete_expired");
+    expect(org()).toMatchObject({ planTier: "free", stripeSubscriptionId: null, subscriptionStatus: "incomplete_expired" });
+    expect((await post()).status).not.toBe(409);
+  });
+
+  it("a checkout.session.completed for a still-incomplete subscription is recorded with no access", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    liveStripe.set("sub_test_inc2", { ...sub({ id: "sub_test_inc2", customer: "cus_test_new", metadata: { organizationId: "org-1" }, status: "incomplete" }), items: { data: teamItems(3) } });
+    await deliverRaw(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_new", subscription: "sub_test_inc2", payment_status: "paid", metadata: { plan: "team", userId: "owner-1", organizationId: "org-1", seats: "3" } }));
+    expect(org()).toMatchObject({ planTier: "free", stripeSubscriptionId: "sub_test_inc2", subscriptionStatus: "incomplete" });
   });
 
   it("fixing the quantity on that subscription then grants Team", async () => {
