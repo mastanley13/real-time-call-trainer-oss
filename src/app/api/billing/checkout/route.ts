@@ -5,6 +5,7 @@ import { ipLimitResponse, userLimitResponse, readJsonLimited } from "@/lib/rateL
 import { prisma } from "@/lib/db";
 import { billingGate, StripeApiError } from "@/lib/stripe";
 import { appBaseUrl, buildCheckoutParams, checkoutFingerprint, createOrReuseCheckout, CheckoutConfigError, resolvePriceIds } from "@/lib/billing";
+import { blocksCheckout } from "@/lib/subscriptionStatus";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "@/lib/usagePlan";
 import { CHECKOUT_UNAVAILABLE_MESSAGE } from "@/lib/billingUi";
 
@@ -52,8 +53,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "forbidden", message: "Only an organization owner or manager can buy a Team plan." }, { status: 403 });
   }
   const subject = body.plan === "team" && org ? org : user;
-  if (subject.stripeSubscriptionId && subject.planTier !== "free") {
-    return NextResponse.json({ error: "already_subscribed", message: "This account already has a paid plan. Use Manage billing to change it." }, { status: 409 });
+  // A linked subscription in an active, trialing, past_due, unpaid, paused or incomplete state blocks a second one,
+  // even when its items left the account on Free. Only canceled or incomplete_expired subscriptions may check out again.
+  const linkedStatus = subject.subscriptionStatus;
+  if (subject.stripeSubscriptionId && blocksCheckout(linkedStatus)) {
+    // The real status, so the page can say what to fix. Never a Stripe id.
+    return NextResponse.json({ error: "already_subscribed", status: linkedStatus, message: "This account already has a paid plan. Use Manage billing to change it." }, { status: 409 });
   }
 
   try {
@@ -85,7 +90,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ url: outcome.url });
   } catch (e) {
     if (e instanceof CheckoutConfigError) {
-      return NextResponse.json({ error: e.code, message: e.message }, { status: e.code === "invalid_seats" ? 400 : 503 });
+      return NextResponse.json({ error: e.code, message: e.message }, { status: e.code === "invalid_seats" ? 400 : 422 });
     }
     console.error("[billing/checkout]", e instanceof StripeApiError ? `stripe status ${e.status}` : "unexpected error");
     return NextResponse.json({ error: "stripe_error", message: CHECKOUT_UNAVAILABLE_MESSAGE }, { status: 502 });

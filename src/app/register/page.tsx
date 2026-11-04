@@ -6,6 +6,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
 import GoogleButton from "@/components/GoogleButton";
+import LegalLinks from "@/components/LegalLinks";
 
 export default function RegisterPage() {
   const { register, isAuthenticated, capabilities } = useAuth();
@@ -71,6 +72,7 @@ export default function RegisterPage() {
         <button className="btn-primary w-full" disabled={busy}>{busy ? "Creating…" : "Create account"}</button>
       </form>
       <p className="mt-5 text-center text-sm text-ink-muted">Already registered? <Link href="/login" className="font-semibold text-primary">Sign in</Link></p>
+      <LegalLinks />
     </AuthShell>
   );
 }
