@@ -206,7 +206,7 @@ export const LANDINGS: Record<VerticalSlug, Landing> = {
     hero: "Scale your coaching without scaling your calendar",
     subhead: "Give your clients AI buyers to practice on between sessions, with live coaching and graded debriefs.",
     primaryLabel: "Join the partner waitlist",
-    primaryHref: "mailto:support@calltrainer.tech?subject=Coach%20partner%20application",
+    primaryHref: "mailto:support@calltrainer.tech?subject=Coach%20partner%20waitlist",
     secondary: { label: "Try it free first", href: registerHref({ src: "coaches" }) },
     src: "coaches",
     pains: [
@@ -215,7 +215,7 @@ export const LANDINGS: Record<VerticalSlug, Landing> = {
       { title: "You cannot see the gaps.", body: "Without transcripts you coach from memory and self-reports." },
     ],
     steps: [
-      { title: "Apply.", body: "We review every application." },
+      { title: "Join the waitlist.", body: "Email us a few lines about you and your clients to join the partner waitlist." },
       { title: "Get set up.", body: "Approved partners get a referral link. Partner terms are coming soon." },
       { title: "Your clients practice.", body: "They practice on AI buyers, get coached live and graded with transcript quotes. Build personas for your own methodology in the persona wizard." },
     ],

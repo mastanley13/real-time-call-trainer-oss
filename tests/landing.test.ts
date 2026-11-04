@@ -44,9 +44,16 @@ describe("coaches partner page", () => {
     expect(c.description).toBe("Give your clients AI buyers to practice on between sessions.");
     expect(c.subhead).toBe("Give your clients AI buyers to practice on between sessions, with live coaching and graded debriefs.");
     expect(c.primaryLabel).toBe("Join the partner waitlist");
-    expect(c.steps.map((s) => s.title)).toEqual(["Apply.", "Get set up.", "Your clients practice."]);
+    expect(c.primaryHref).toBe("mailto:support@calltrainer.tech?subject=Coach%20partner%20waitlist");
+    expect(c.steps.map((s) => s.title)).toEqual(["Join the waitlist.", "Get set up.", "Your clients practice."]);
+    expect(c.steps[0].body).toBe("Email us a few lines about you and your clients to join the partner waitlist.");
     expect(c.steps[1].body).toBe("Approved partners get a referral link. Partner terms are coming soon.");
     expect(c.faq.map((f) => f.q)).not.toContain("When do I get paid?");
+  });
+
+  it("says waitlist, not application, and promises no review", () => {
+    expect(text).not.toMatch(/\bapply\b|application|review every/i);
+    expect(html).not.toMatch(/\bapply\b|application|review every/i);
   });
 
   it("frames the steps as a waitlist and keeps other verticals' heading", () => {
