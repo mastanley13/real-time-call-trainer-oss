@@ -502,7 +502,8 @@ describe("5. focus rings on the billing controls", () => {
 
   it("the Premium Voice checkbox keeps the global focus ring: nothing removes its outline", () => {
     expect(css).toMatch(/:focus-visible \{ @apply outline-2 outline-offset-2 outline-primary; \}/);
-    const box = page.split("\n").find((l) => l.includes('type="checkbox"'))!;
+    // The checkbox now lives in its own component, which renders in both billing states.
+    const box = read("src/components/settings/PremiumVoiceControl.tsx").split("\n").find((l) => l.includes('type="checkbox"'))!;
     expect(box).not.toMatch(/outline-(none|0)|appearance-none|sr-only/);
   });
 

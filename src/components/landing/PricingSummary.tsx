@@ -1,25 +1,28 @@
 import Link from "next/link";
 import {
-  FREE_VOICE_MIN, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT, registerHref,
+  FREE_VOICE_MIN, OPEN_SOON_LINE, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT, registerHref,
 } from "@/lib/pricing";
 
-/** Compact plan summary for landing pages. `src` and `seg` tag the sign-up links. */
-export default function PricingSummary({ src, seg }: { src: string; seg?: string }) {
+/**
+ * Compact plan summary for landing pages. `src` and `seg` tag the sign-up links. With billing off, Pro and Team read
+ * "Start free" with the open-soon line, because there is nothing to buy yet.
+ */
+export default function PricingSummary({ src, seg, billingEnabled }: { src: string; seg?: string; billingEnabled: boolean }) {
   const plans = [
     {
       name: "Free", price: "$0", note: "",
       body: `${FREE_VOICE_MIN} voice minutes a month, unlimited text sim, live coach, graded debriefs, core persona library.`,
-      href: registerHref({ seg, src }), cta: "Start free, no card",
+      href: registerHref({ seg, src }), cta: "Start free, no card", soon: false,
     },
     {
       name: "Pro", price: `$${PRICE.pro.month}/mo`, note: `or $${PRICE.pro.year}/yr`,
       body: `${PRO_VOICE_MIN} voice minutes a month, full library, persona wizard, score trends, MFA. Reviewed persona packs: coming soon.`,
-      href: registerHref({ plan: "pro", seg, src }), cta: "Start Pro",
+      href: registerHref({ plan: "pro", interval: "month", seg, src }), cta: billingEnabled ? "Start Pro" : "Start free", soon: !billingEnabled,
     },
     {
       name: "Team", price: `$${PRICE.team.month}/seat/mo`, note: `or $${PRICE.team.year}/seat/yr, ${TEAM_MIN_SEATS}-seat minimum`,
       body: `${TEAM_VOICE_MIN_PER_SEAT} pooled voice minutes per seat, Team view, assignments, enforced MFA.`,
-      href: registerHref({ plan: "team", seg, src }), cta: "Start with Team",
+      href: registerHref({ plan: "team", interval: "month", seg, src }), cta: billingEnabled ? "Start with Team" : "Start free", soon: !billingEnabled,
     },
   ];
   return (
@@ -34,6 +37,7 @@ export default function PricingSummary({ src, seg }: { src: string; seg?: string
             <p className="min-h-[1.25rem] font-mono text-xs text-ink-muted">{p.note}</p>
             <p className="mt-3 flex-1 text-sm text-ink-soft">{p.body}</p>
             <Link href={p.href} className="btn-ghost mt-5">{p.cta}</Link>
+            {p.soon && <p className="mt-2 text-center text-xs text-ink-muted">{OPEN_SOON_LINE}</p>}
           </div>
         ))}
       </div>

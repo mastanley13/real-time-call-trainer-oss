@@ -5,10 +5,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CreditCard, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageSkeleton } from "@/components/ui/Skeleton";
-import { PORTAL_FAILED_MESSAGE, type CheckoutNotice, checkoutFailure, checkoutNotice, formatMinutes, freeOverCapNotice, planPriceLine, premiumLabel, proButtonLabel, seatsOnBlur, teamButtonLabel, usageHeaderCopy } from "@/lib/billingUi";
+import { ALREADY_SUBSCRIBED_NOTICE } from "@/lib/checkoutStart";
+import { ACTIVE_NOTICE, PORTAL_FAILED_MESSAGE, type CheckoutNotice, checkoutFailure, checkoutNotice, formatMinutes, freeOverCapNotice, planPriceLine, proButtonLabel, seatsOnBlur, teamButtonLabel, usageHeaderCopy } from "@/lib/billingUi";
 import { TEAM_MIN_SEATS } from "@/lib/usagePlan";
 import BillingAlert from "./BillingAlert";
 import BillingNotice from "./BillingNotice";
+import PremiumVoiceControl from "./PremiumVoiceControl";
 import SeatsField from "./SeatsField";
 import SettingsNav from "./SettingsNav";
 
@@ -42,7 +44,6 @@ export default function BillingClient() {
   const [seatsText, setSeatsText] = useState(String(TEAM_MIN_SEATS));
   /** "Set to 3, the Team minimum." after the box was left below 3. Cleared as soon as the box is edited again. */
   const [seatsNote, setSeatsNote] = useState<string | null>(null);
-  const [premium, setPremium] = useState(false);
   // State updates are not instant, so two fast clicks could both pass a check on `busy`. The ref closes that gap.
   const busyRef = useRef<string | null>(null);
   /** The 409 and unavailable-plan banner. It replaces the plain error banner for those answers. */
@@ -67,6 +68,11 @@ export default function BillingClient() {
     }
     void go("portal");
   }
+
+  // A checkout started from the pricing page found a plan already on the account.
+  useEffect(() => {
+    if (params.get("notice") === ALREADY_SUBSCRIBED_NOTICE) setNotice(ACTIVE_NOTICE);
+  }, [params]);
 
   useEffect(() => {
     if (capabilities && !isLoading && !isAuthenticated) router.replace("/login");
@@ -114,7 +120,7 @@ export default function BillingClient() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(kind === "portal" ? {} : { plan: kind, interval, premium, ...(kind === "team" ? { seats } : {}) }),
+        body: JSON.stringify(kind === "portal" ? {} : { plan: kind, interval, premium: false, ...(kind === "team" ? { seats } : {}) }),
       });
     } catch {
       // The request never got an answer (offline or timed out): the only case where trying again is the advice.
@@ -186,6 +192,8 @@ export default function BillingClient() {
         <p className="panel p-4 text-sm text-ink-soft">Voice minutes are not tracked in this environment.</p>
       )}
 
+      <PremiumVoiceControl />
+
       {u?.billing.enabled && (
         <section className="panel p-4 sm:p-5" aria-labelledby="plans-h">
           <h2 id="plans-h" tabIndex={-1} className="text-lg font-bold focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary">Plans</h2>
@@ -199,10 +207,6 @@ export default function BillingClient() {
                 </label>
               ))}
             </fieldset>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={premium} onChange={(e) => setPremium(e.target.checked)} />
-              {premiumLabel(interval)}
-            </label>
           </div>
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
