@@ -103,7 +103,7 @@ export const LANDINGS: Record<VerticalSlug, Landing> = {
     faq: [
       { q: "Does it cover door-to-door or kitchen-table sits?", a: "It covers phone and video style calls: estimate requests, follow-ups and discovery. Use the persona wizard to model your own sit." },
       { q: "Will it make claims about savings for my reps?", a: "No. Personas are buyers. Your reps practice explaining your real numbers honestly." },
-      { q: "Can managers see who is improving?", a: "On Team, yes. Team view shows each rep's calls, scores and trends, and you can assign personas with due dates." },
+      { q: "Can managers see who is improving?", a: "Yes. Managers and owners get Team view on any plan. It shows each rep's calls, scores and trends, and you can assign personas with due dates." },
       NO_CARD,
     ],
   },
@@ -132,7 +132,7 @@ export const LANDINGS: Record<VerticalSlug, Landing> = {
     faq: [
       { q: "Is it only for agency recruiters?", a: "No. In-house talent teams use the same screens and intakes." },
       { q: "Can I model my own reqs?", a: "Yes. Paste a job description into the persona wizard to build a candidate or hiring manager." },
-      { q: "Can I track my desk?", a: "On Team, the Team view shows each recruiter's calls, scores and trends, and you can assign practice." },
+      { q: "Can I track my desk?", a: "Yes. Managers and owners get Team view on any plan. It shows each recruiter's calls, scores and trends, and you can assign practice." },
       NO_CARD,
     ],
   },
@@ -192,7 +192,7 @@ export const LANDINGS: Record<VerticalSlug, Landing> = {
       { name: "Teodora Petrov", tag: "AE discovery", blurb: "Agency founder who requested a demo." },
     ],
     faq: [
-      { q: "Does it replace call shadowing?", a: "It gives every rep reps between shadows. Managers on Team see scores and trends and can assign specific personas." },
+      { q: "Does it replace call shadowing?", a: "It gives every rep reps between shadows. Managers see scores and trends in Team view and can assign specific personas, on any plan." },
       { q: "Can it use our ICP and messaging?", a: "Yes. The persona wizard builds a prospect from a job description, product page or CRM notes." },
       { q: "Voice or text?", a: "Both. Voice for realistic dials, text sim when there is no mic or to save minutes." },
       NO_CARD,
@@ -201,12 +201,12 @@ export const LANDINGS: Record<VerticalSlug, Landing> = {
   coaches: {
     slug: "coaches",
     audience: "Sales coaches, trainers and enablement leads",
-    title: "Sales Coach Partner Program: Free Seat + 20% Recurring | Call Trainer",
-    description: "Give your clients AI buyers to practice on between sessions. Approved coaches get a free seat and 20% recurring commission.",
+    title: "AI Practice Buyers for Sales Coaches | Call Trainer",
+    description: "Give your clients AI buyers to practice on between sessions.",
     hero: "Scale your coaching without scaling your calendar",
-    subhead: "Get a free seat, give your clients AI buyers to practice on between sessions, and earn 20% recurring on every paid plan you refer.",
-    primaryLabel: "Apply to partner",
-    primaryHref: "mailto:support@calltrainer.tech?subject=Coach%20partner%20application",
+    subhead: "Give your clients AI buyers to practice on between sessions, with live coaching and graded debriefs.",
+    primaryLabel: "Join the partner waitlist",
+    primaryHref: "mailto:support@calltrainer.tech?subject=Coach%20partner%20waitlist",
     secondary: { label: "Try it free first", href: registerHref({ src: "coaches" }) },
     src: "coaches",
     pains: [
@@ -215,10 +215,9 @@ export const LANDINGS: Record<VerticalSlug, Landing> = {
       { title: "You cannot see the gaps.", body: "Without transcripts you coach from memory and self-reports." },
     ],
     steps: [
-      { title: "Apply.", body: "We review every application." },
-      { title: "Get set up.", body: "Approved partners get a free seat, a referral link and a partner code." },
+      { title: "Email us.", body: "Send a few lines about you and your clients." },
+      { title: "Hear back if it's a fit.", body: "Join the waitlist and we'll reach out if it's a fit." },
       { title: "Your clients practice.", body: "They practice on AI buyers, get coached live and graded with transcript quotes. Build personas for your own methodology in the persona wizard." },
-      { title: "Earn 20%.", body: "You earn 20% of net paid revenue on plans you refer, paid monthly, net 30." },
     ],
     personas: [
       { name: "Desmond Hale", tag: "Gatekeeper", blurb: "Executive assistant guarding the CFO at a 220-person manufacturer." },
@@ -228,20 +227,16 @@ export const LANDINGS: Record<VerticalSlug, Landing> = {
     faq: [
       { q: "Who qualifies?", a: "Sales coaches, trainers, enablement leads, managers who train reps and bootcamps with an existing audience or client base." },
       { q: "Do I have to sell?", a: "No quotas. Share it where it helps your clients." },
-      { q: "When do I get paid?", a: "Monthly, net 30 after the customer payment clears. No commission on refunds or chargebacks. Self-referrals are not eligible." },
       { q: "Can I contribute persona packs?", a: "Yes. The project is MIT open source and reviewed packs ship to Pro and Team." },
     ],
   },
 };
 
 export const PARTNER_BENEFITS = [
-  "Free seat for you",
-  "20% recurring commission on referred paid plans, every paid seat on referred teams counts",
   "Early access to persona packs and the chance to contribute your own to the MIT repo",
 ];
 
 export const PARTNER_RULES = [
-  "Disclose clearly: \"I get a commission if you sign up through my link.\" In videos, say it on screen and repeat it in live streams.",
   "No cold email, cold DMs, mass messages or scraping. Promote only to your own audience and where self-promotion is allowed.",
   "No result or income claims we have not published. No brand keyword bidding or lookalike domains.",
   "Either side can end with 14 days' notice.",

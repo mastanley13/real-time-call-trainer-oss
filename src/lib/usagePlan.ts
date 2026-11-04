@@ -62,8 +62,11 @@ export function effectivePlan(tier: unknown, billingOn: boolean): PlanTier {
 }
 
 /**
- * True only when the organization's planTier is "team". That value is written solely by the Stripe
- * webhook sync in billing.ts, so this is the one check the Team MFA enforcement toggle should use.
+ * True only when the organization's stored planTier is "team" (written solely by the Stripe webhook sync in
+ * billing.ts). Not called from app code today; only tests use it. Nothing enforces MFA or gates Team features
+ * by plan yet. It reads the raw tier and ignores subscription status and the past-due grace window, so it is
+ * not an entitlement check: the planned Team plan gate (TICKET-team-plan-gating.md) uses a status-aware rule
+ * instead, like the Team minutes check in usage.ts.
  */
 export function isTeamPlan(org: { planTier?: string | null } | null | undefined): boolean {
   return org?.planTier === "team";

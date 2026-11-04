@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
-import { LANDINGS } from "@/lib/landing";
+import LandingPage from "@/components/landing/LandingPage";
+import { LANDINGS, PARTNER_BENEFITS, PARTNER_RULES } from "@/lib/landing";
 import { LIBRARY } from "@/lib/personas";
 import { PRICING_NAV } from "@/components/SiteHeader";
 import { FREE_SUMMARY, FREE_VOICE_MIN, MINUTES_ROUNDED_NOTE, registerHref } from "@/lib/pricing";
@@ -24,6 +27,43 @@ describe("landing pages", () => {
     expect(LANDINGS.coaches.secondary.href).toBe("/register?src=coaches");
     expect(registerHref({ plan: "team", src: "pricing" })).toBe("/register?plan=team&src=pricing");
     for (const l of Object.values(LANDINGS)) expect(l.primaryHref).not.toContain("/start");
+  });
+});
+
+describe("coaches partner page", () => {
+  const c = LANDINGS.coaches;
+  const text = JSON.stringify({ c, PARTNER_BENEFITS, PARTNER_RULES });
+  const html = renderToStaticMarkup(createElement(LandingPage, { l: c, billingEnabled: false }));
+
+  it("makes no unapproved partner promises", () => {
+    for (const s of [text, html]) expect(s).not.toMatch(/20%|free seat|net[ -]?30|commission|recurring|get paid/i);
+  });
+
+  it("uses the approved title, description, subhead and CTA", () => {
+    expect(c.title).toBe("AI Practice Buyers for Sales Coaches | Call Trainer");
+    expect(c.description).toBe("Give your clients AI buyers to practice on between sessions.");
+    expect(c.subhead).toBe("Give your clients AI buyers to practice on between sessions, with live coaching and graded debriefs.");
+    expect(c.primaryLabel).toBe("Join the partner waitlist");
+    expect(c.primaryHref).toBe("mailto:support@calltrainer.tech?subject=Coach%20partner%20waitlist");
+    expect(c.steps.map((s) => s.title)).toEqual(["Email us.", "Hear back if it's a fit.", "Your clients practice."]);
+    expect(c.steps[0].body).toBe("Send a few lines about you and your clients.");
+    expect(c.steps[1].body).toBe("Join the waitlist and we'll reach out if it's a fit.");
+    expect(c.faq.map((f) => f.q)).not.toContain("When do I get paid?");
+  });
+
+  it("mentions no approved partners and no referral link", () => {
+    for (const s of [text, html]) expect(s).not.toMatch(/approved partner|referral link|approval/i);
+  });
+
+  it("says waitlist, not application, and promises no review", () => {
+    expect(text).not.toMatch(/\bapply\b|application|review every/i);
+    expect(html).not.toMatch(/\bapply\b|application|review every/i);
+  });
+
+  it("frames the steps as a waitlist and keeps other verticals' heading", () => {
+    expect(html).toContain("How the partner waitlist works");
+    const other = renderToStaticMarkup(createElement(LandingPage, { l: LANDINGS.insurance, billingEnabled: false }));
+    expect(other).toContain("Brief, call, debrief. Then go again.");
   });
 });
 

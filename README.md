@@ -1,6 +1,6 @@
 # Real-Time Call Trainer
 
-Practice live sales and service calls against AI personas from 18 sales jobs. A live coach scores every turn and cues you when an objection lands, and the debrief backs every score with quotes from your own transcript.
+Practice live sales and service calls against AI personas from 18 sales jobs. A live coach keeps a running score estimate as you talk and cues you when an objection lands, and the debrief backs every score with quotes from your own transcript.
 
 By Mykel Stanley · MIT licensed
 

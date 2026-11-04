@@ -17,7 +17,7 @@ const families = new Set(LIBRARY.map((s) => s.role)).size;
 
 const STEPS = [
   { title: "Brief", body: "Pick a persona from the library. Read the goal, the objections to expect and the talk track." },
-  { title: "Call", body: "Talk or type. The caller stays in character; a coach rail only you can see scores each turn and whispers the next move." },
+  { title: "Call", body: "Talk or type. The caller stays in character. A coach rail only you can see keeps a running score estimate and your talk-track progress, and in Coached mode cues your next move." },
   { title: "Debrief", body: "Every score cites your own words. Jump to the moment you lost points and retry the call from that turn." },
 ];
 
