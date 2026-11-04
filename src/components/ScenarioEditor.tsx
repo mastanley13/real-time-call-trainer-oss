@@ -151,7 +151,7 @@ export default function ScenarioEditor() {
     <div className="page enter grid gap-6 lg:grid-cols-[280px_1fr]">
       <aside className="card h-fit lg:sticky lg:top-20">
         <button className="btn-primary mb-3 w-full" onClick={() => { const b = newBlankScenario(); setDraft(b); setSaved(false); clearErrors(); }}>
-          <Plus size={16} /> New scenario
+          <Plus size={16} strokeWidth={1.75} /> New scenario
         </button>
         <p className="label mt-1">Your personas</p>
         <ul className="space-y-1">
@@ -173,14 +173,14 @@ export default function ScenarioEditor() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-xl font-bold sm:text-2xl">{readOnly ? "Built-in scenario" : "Edit scenario"}: {savedTitle}</h1>
           <div className="flex flex-wrap gap-2">
-            <Link href={`/trainer?scenario=${encodeURIComponent(draft.id)}`} className="btn-ghost"><Play size={16} /> Practice</Link>
+            <Link href={`/trainer?scenario=${encodeURIComponent(draft.id)}`} className="btn-ghost"><Play size={16} strokeWidth={1.75} /> Practice</Link>
             {all.some((s) => s.id === draft.id) && (
-              <button className="btn-ghost" onClick={duplicate}><Copy size={16} /> Duplicate</button>
+              <button className="btn-ghost" onClick={duplicate}><Copy size={16} strokeWidth={1.75} /> Duplicate</button>
             )}
             {!readOnly && all.some((s) => s.id === draft.id) && (
-              <button className="btn-ghost text-alert" onClick={() => setConfirmDelete(true)}><Trash2 size={16} /> Delete</button>
+              <button className="btn-ghost text-alert" onClick={() => setConfirmDelete(true)}><Trash2 size={16} strokeWidth={1.75} /> Delete</button>
             )}
-            {!readOnly && <button className="btn-primary" onClick={save}><Save size={16} /> Save</button>}
+            {!readOnly && <button className="btn-primary" onClick={save}><Save size={16} strokeWidth={1.75} /> Save</button>}
           </div>
         </div>
         {readOnly && <p className="banner-warn">Library personas can’t be edited. Duplicate one to customise it.</p>}
@@ -226,7 +226,7 @@ export default function ScenarioEditor() {
           <div>
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-sm font-semibold">Rubric <span className={`ml-2 text-xs font-normal ${total === 100 ? "text-ink-muted" : "font-semibold text-caution"}`}>Weights total {total}%.{total === 100 ? "" : " Weights should add up to 100%. Scores are rescaled when graded."}</span></h2>
-              {!readOnly && <button type="button" className="btn-ghost !min-h-[36px]" onClick={() => patch({ rubric: [...draft.rubric, { id: `c${Date.now().toString(36)}`, name: "", description: "", weight: 10 }] })}><Plus size={14} /> Criterion</button>}
+              {!readOnly && <button type="button" className="btn-ghost !min-h-[36px]" onClick={() => patch({ rubric: [...draft.rubric, { id: `c${Date.now().toString(36)}`, name: "", description: "", weight: 10 }] })}><Plus size={14} strokeWidth={1.75} /> Criterion</button>}
             </div>
             <div className="space-y-3">
               {draft.rubric.map((c, i) => (
@@ -240,7 +240,7 @@ export default function ScenarioEditor() {
                   <input id={`rw-${i}`} aria-label={`Criterion ${i + 1} weight`} type="number" min={0} max={100} className={field} {...bad(`rubric.${i}.weight`)} value={c.weight} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, weight: Number(e.target.value) } : r)) })} />
                   {msg(`rubric.${i}.weight`)}
                   </div>
-                  {!readOnly && <button type="button" aria-label={`Remove criterion ${i + 1}`} className="btn-ghost self-end text-alert" disabled={draft.rubric.length <= 1} onClick={() => patch({ rubric: draft.rubric.filter((_, j) => j !== i) })}><Trash2 size={16} aria-hidden /> Remove</button>}
+                  {!readOnly && <button type="button" aria-label={`Remove criterion ${i + 1}`} className="btn-ghost self-end text-alert" disabled={draft.rubric.length <= 1} onClick={() => patch({ rubric: draft.rubric.filter((_, j) => j !== i) })}><Trash2 size={16} strokeWidth={1.75} aria-hidden /> Remove</button>}
                   <div className="sm:col-span-3"><textarea id={`rd-${i}`} aria-label={`Criterion ${i + 1} description`} placeholder="What good looks like" rows={2} className={field} {...bad(`rubric.${i}.description`)} value={c.description} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, description: e.target.value } : r)) })} />{msg(`rubric.${i}.description`)}</div>
                 </div>
               ))}
@@ -250,7 +250,7 @@ export default function ScenarioEditor() {
           <div>
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-sm font-semibold">Objections <span className="ml-1 text-xs font-normal text-ink-muted">The live coach uses these to cue you with the prep answer</span></h2>
-              {!readOnly && <button type="button" className="btn-ghost !min-h-[36px]" disabled={draft.objections.length >= 8} onClick={() => patch({ objections: [...draft.objections, { type: "price", line: "", prepAnswer: "" }] })}><Plus size={14} /> Objection</button>}
+              {!readOnly && <button type="button" className="btn-ghost !min-h-[36px]" disabled={draft.objections.length >= 8} onClick={() => patch({ objections: [...draft.objections, { type: "price", line: "", prepAnswer: "" }] })}><Plus size={14} strokeWidth={1.75} /> Objection</button>}
             </div>
             <div className="space-y-3">
               {draft.objections.map((o, i) => (
@@ -259,7 +259,7 @@ export default function ScenarioEditor() {
                     {OBJECTION_TYPES.map((t) => <option key={t} value={t}>{OBJECTION_LABELS[t]}</option>)}
                   </select>
                   <input aria-label={`Objection ${i + 1} line`} placeholder="What the caller says" className={field} value={o.line} onChange={(e) => patch({ objections: draft.objections.map((x, j) => (j === i ? { ...x, line: e.target.value } : x)) })} />
-                  {!readOnly && <button type="button" aria-label={`Remove objection ${i + 1}`} className="btn-ghost text-alert" onClick={() => patch({ objections: draft.objections.filter((_, j) => j !== i) })}><Trash2 size={16} aria-hidden /></button>}
+                  {!readOnly && <button type="button" aria-label={`Remove objection ${i + 1}`} className="btn-ghost text-alert" onClick={() => patch({ objections: draft.objections.filter((_, j) => j !== i) })}><Trash2 size={16} strokeWidth={1.75} aria-hidden /></button>}
                   <input aria-label={`Objection ${i + 1} prep answer`} placeholder="Prep answer the coach can suggest" className={`${field} sm:col-span-3`} value={o.prepAnswer} onChange={(e) => patch({ objections: draft.objections.map((x, j) => (j === i ? { ...x, prepAnswer: e.target.value } : x)) })} />
                 </div>
               ))}

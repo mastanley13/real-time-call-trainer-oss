@@ -38,7 +38,7 @@ export default function Home() {
               Practice real sales calls against {LIBRARY.length} AI buyer personas. No API keys, no database, just sign up and start talking.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link href={registerHref({ src: "home_hero" })} className="btn-primary btn-xl">Start free <ArrowRight size={18} aria-hidden /></Link>
+              <Link href={registerHref({ src: "home_hero" })} className="btn-primary btn-xl">Start free <ArrowRight size={18} strokeWidth={1.75} aria-hidden /></Link>
               <Link href="/pricing" className="btn-ghost btn-xl">See pricing</Link>
             </div>
           </div>
@@ -69,7 +69,7 @@ export default function Home() {
             { icon: MessageSquareQuote, title: "Evidence-backed debrief", body: "Scores cite verbatim quotes that are checked against the transcript. Click any quote to see the moment, then retry from that turn." },
           ].map(({ icon: Icon, title, body }) => (
             <div key={title} className="card">
-              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-soft text-primary"><Icon size={20} aria-hidden /></span>
+              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-soft text-primary"><Icon size={20} strokeWidth={1.75} aria-hidden /></span>
               <h3 className="mt-4 text-base font-semibold">{title}</h3>
               <p className="mt-2 text-sm text-ink-soft">{body}</p>
             </div>
@@ -84,15 +84,15 @@ export default function Home() {
             <h2 id="oss-h" className="mt-1 text-2xl font-bold sm:text-3xl">Add the persona your team actually sells to</h2>
             <p className="mt-3 max-w-lg text-ink-soft">Build one with the wizard, export the pack file, and open a pull request. Packs are checked against the same schema the app uses.</p>
             <div className="mt-6 flex flex-wrap gap-3">
-              <Link href="/library/new" className="btn-primary"><FileJson size={16} aria-hidden /> Build a persona pack</Link>
-              <a href="https://github.com/mastanley13/real-time-call-trainer-oss" className="btn-ghost" target="_blank" rel="noreferrer"><GitPullRequest size={16} aria-hidden /> View on GitHub</a>
+              <Link href="/library/new" className="btn-primary"><FileJson size={16} strokeWidth={1.75} aria-hidden /> Build a persona pack</Link>
+              <a href="https://github.com/mastanley13/real-time-call-trainer-oss" className="btn-ghost" target="_blank" rel="noreferrer"><GitPullRequest size={16} strokeWidth={1.75} aria-hidden /> View on GitHub</a>
             </div>
             <p className="mt-4 text-sm text-ink-soft">
               <a href={SELF_HOST_DOCS} className="underline underline-offset-2 hover:text-ink" target="_blank" rel="noreferrer">Self-hosting</a>: which model does what, and how to swap it.
             </p>
           </div>
           <div className="panel overflow-x-auto p-4">
-            <p className="label flex items-center gap-1.5"><KeyRound size={12} aria-hidden /> Run it locally</p>
+            <p className="label flex items-center gap-1.5"><KeyRound size={12} strokeWidth={1.75} aria-hidden /> Run it locally</p>
             <pre className="font-mono text-[12.5px] leading-relaxed text-ink-soft">{`git clone https://github.com/mastanley13/real-time-call-trainer-oss
 cd real-time-call-trainer-oss && npm install
 cp .env.example .env   # add OPENAI_API_KEY for the AI coach and voice

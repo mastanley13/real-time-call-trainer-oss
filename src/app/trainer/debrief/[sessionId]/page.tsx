@@ -169,7 +169,7 @@ export default function DebriefPage() {
   const aiGradeLocked = !view.local && !mayRegrade && isAiGrade(ev);
   // Shown with the grade, or with the "wasn't graded" banner when a server call was saved without one.
   const regradeButton = mayRegrade && view.scenario && capabilities?.llm && (
-    <button type="button" className="btn-ghost btn-sm w-full print:hidden" onClick={regrade} aria-disabled={regrading} aria-busy={regrading}>{regrading ? <Loader2 size={13} className="animate-spin" aria-hidden /> : <RefreshCw size={13} aria-hidden />} {regrading ? "Re-grading" : "Re-grade with AI"}</button>
+    <button type="button" className="btn-ghost btn-sm w-full print:hidden" onClick={regrade} aria-disabled={regrading} aria-busy={regrading}>{regrading ? <Loader2 size={13} strokeWidth={1.75} className="animate-spin" aria-hidden /> : <RefreshCw size={13} strokeWidth={1.75} aria-hidden />} {regrading ? "Re-grading" : "Re-grade with AI"}</button>
   );
   const regradeStatus = regradeMsg && <p ref={regradeMsgRef} tabIndex={-1} role={regradeMsg.ok ? "status" : "alert"} className={`text-xs outline-none ${regradeMsg.ok ? "text-ok" : "text-alert"}`}>{regradeMsg.text}</p>;
   // A long call is graded on its opening turns, and ev.note says how many.
@@ -189,9 +189,9 @@ export default function DebriefPage() {
             <p className="mt-1 font-mono text-xs text-ink-muted">{new Date(view.createdAt).toLocaleString()} · {formatDuration(view.durationSeconds)} · {view.transcript.length} turns{view.coach ? ` · coach ${view.coach.mode}` : ""}</p>
           </div>
           <div className="flex flex-wrap gap-2 print:hidden">
-            <button className="btn-ghost" onClick={() => window.print()}><Printer size={16} aria-hidden /> Print</button>
-            <Link href={view.scenarioId ? `/trainer?scenario=${encodeURIComponent(view.scenarioId)}` : "/trainer"} className="btn-ghost"><RotateCcw size={16} aria-hidden /> Practice again</Link>
-            {retry && <Link href={retryHref} className="btn-primary"><RotateCcw size={16} aria-hidden /> Retry from turn {retry.turn}</Link>}
+            <button className="btn-ghost" onClick={() => window.print()}><Printer size={16} strokeWidth={1.75} aria-hidden /> Print</button>
+            <Link href={view.scenarioId ? `/trainer?scenario=${encodeURIComponent(view.scenarioId)}` : "/trainer"} className="btn-ghost"><RotateCcw size={16} strokeWidth={1.75} aria-hidden /> Practice again</Link>
+            {retry && <Link href={retryHref} className="btn-primary"><RotateCcw size={16} strokeWidth={1.75} aria-hidden /> Retry from turn {retry.turn}</Link>}
           </div>
         </div>
         {error && <p className="banner-warn">{error}</p>}
@@ -200,7 +200,7 @@ export default function DebriefPage() {
           <div className="card text-center">
             <h2 className="text-lg font-bold">Nothing to grade yet</h2>
             <p className="mx-auto mt-2 max-w-md text-ink-soft">You didn’t say anything on this call, so there’s no score. Start a new call and try your opening line.</p>
-            <Link href="/trainer" className="btn-primary mt-4"><RotateCcw size={16} aria-hidden /> Practice again</Link>
+            <Link href="/trainer" className="btn-primary mt-4"><RotateCcw size={16} strokeWidth={1.75} aria-hidden /> Practice again</Link>
           </div>
         ) : (
           <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)_380px]">
@@ -241,7 +241,7 @@ export default function DebriefPage() {
                 <div className="panel p-4">
                   <p className="eyebrow">Retry point</p>
                   <p className="mt-1 text-sm"><strong>{retry.criterion}</strong> was your weakest area ({retry.score}). Pick the call back up at turn {retry.turn} and try it again.</p>
-                  <Link href={retryHref} className="btn-primary btn-sm mt-3 w-full print:hidden"><RotateCcw size={13} aria-hidden /> Retry from turn {retry.turn}</Link>
+                  <Link href={retryHref} className="btn-primary btn-sm mt-3 w-full print:hidden"><RotateCcw size={13} strokeWidth={1.75} aria-hidden /> Retry from turn {retry.turn}</Link>
                 </div>
               )}
 
@@ -263,7 +263,7 @@ export default function DebriefPage() {
                       <p className="line-clamp-2 text-xs text-ink-muted">{drill.title}</p>
                     </div>
                   </div>
-                  <Link href={`/trainer?scenario=${encodeURIComponent(drill.id)}`} className="btn-ghost btn-sm mt-3 w-full">Pre-flight <ArrowRight size={13} aria-hidden /></Link>
+                  <Link href={`/trainer?scenario=${encodeURIComponent(drill.id)}`} className="btn-ghost btn-sm mt-3 w-full">Pre-flight <ArrowRight size={13} strokeWidth={1.75} aria-hidden /></Link>
                 </div>
               )}
             </aside>
@@ -313,11 +313,11 @@ export default function DebriefPage() {
 
                   <div className="grid gap-4 md:grid-cols-2">
                     <section className="panel p-4">
-                      <h2 className="flex items-center gap-2 text-sm font-bold"><CheckCircle2 size={16} className="text-ok" aria-hidden /> Strengths <span className="mono text-xs font-normal text-ink-muted">{ev.strengths.length}</span></h2>
+                      <h2 className="flex items-center gap-2 text-sm font-bold"><CheckCircle2 size={16} strokeWidth={1.75} className="text-ok" aria-hidden /> Strengths <span className="mono text-xs font-normal text-ink-muted">{ev.strengths.length}</span></h2>
                       <ul className="mt-2 space-y-1.5 text-sm text-ink-soft">{ev.strengths.length ? ev.strengths.map((x, i) => <li key={i}>{x}</li>) : <li>Nothing stood out this time. Keep practising and your strengths will show up here.</li>}</ul>
                     </section>
                     <section className="panel p-4">
-                      <h2 className="flex items-center gap-2 text-sm font-bold"><TrendingUp size={16} className="text-caution" aria-hidden /> Improve <span className="mono text-xs font-normal text-ink-muted">{ev.improvements.length}</span></h2>
+                      <h2 className="flex items-center gap-2 text-sm font-bold"><TrendingUp size={16} strokeWidth={1.75} className="text-caution" aria-hidden /> Improve <span className="mono text-xs font-normal text-ink-muted">{ev.improvements.length}</span></h2>
                       <ul className="mt-2 space-y-1.5 text-sm text-ink-soft">{ev.improvements.length ? ev.improvements.map((x, i) => <li key={i}>{x}</li>) : <li>Nothing major to fix. Nice work.</li>}</ul>
                     </section>
                   </div>
@@ -341,7 +341,7 @@ export default function DebriefPage() {
                             <div className="mt-3 flex flex-wrap gap-2">
                               {c.evidence.map((e, i) => (
                                 <button key={i} onClick={() => e.line && jump(e.line)} className="quote flex max-w-full items-start gap-2 text-left hover:border-signal">
-                                  <Quote size={13} className="mt-0.5 shrink-0 text-primary" aria-hidden />
+                                  <Quote size={13} strokeWidth={1.75} className="mt-0.5 shrink-0 text-primary" aria-hidden />
                                   <span className="min-w-0"><span className="italic">&ldquo;{e.quote}&rdquo;</span> <span className="mono whitespace-nowrap text-[11px] text-ink-muted">{e.speaker === "trainee" ? "You" : view.callerName}{e.line ? ` · T${e.line}` : ""}</span></span>
                                 </button>
                               ))}
@@ -372,7 +372,7 @@ export default function DebriefPage() {
                         {(lineCriteria[line] ?? []).map((id) => <span key={id} className="ml-1.5 inline-block h-2 w-2 rounded-sm align-middle" style={{ background: critColor[id] }} title={ev?.criteria.find((c) => c.id === id)?.name} />)}
                       </p>
                       <p className={`mt-0.5 text-sm leading-relaxed ${me ? "text-ink" : "text-ink-soft"}`}>{t.text}</p>
-                      {cue && Icon && <p className="mt-1 flex items-center gap-1.5 text-[11px] text-caution"><Icon size={12} aria-hidden /> {CUE_LABELS[cue.type]} cue: {cue.title}{cue.used ? " · used" : ""}</p>}
+                      {cue && Icon && <p className="mt-1 flex items-center gap-1.5 text-[11px] text-caution"><Icon size={12} strokeWidth={1.75} aria-hidden /> {CUE_LABELS[cue.type]} cue: {cue.title}{cue.used ? " · used" : ""}</p>}
                     </li>
                   );
                 })}

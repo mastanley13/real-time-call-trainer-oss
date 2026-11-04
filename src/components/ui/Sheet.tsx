@@ -57,7 +57,7 @@ export default function Sheet({ title, subtitle, onClose, children, footer, wide
             <h2 className="truncate text-lg font-bold">{title}</h2>
             {subtitle && <p className="mt-0.5 text-sm text-ink-muted">{subtitle}</p>}
           </div>
-          <button className="btn-quiet !min-h-[36px] !px-2" onClick={onClose} aria-label="Close"><X size={18} aria-hidden /></button>
+          <button className="btn-quiet !min-h-[36px] !px-2" onClick={onClose} aria-label="Close"><X size={18} strokeWidth={1.75} aria-hidden /></button>
         </div>
         <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-5 py-5">{children}</div>
         {footer && <div className="border-t border-line px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">{footer}</div>}

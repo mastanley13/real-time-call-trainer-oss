@@ -187,7 +187,7 @@ export default function PersonaWizard() {
 
   return (
     <div className="page enter">
-      <Link href="/library" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink"><ArrowLeft size={15} aria-hidden /> Library</Link>
+      <Link href="/library" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink"><ArrowLeft size={15} strokeWidth={1.75} aria-hidden /> Library</Link>
       <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="eyebrow">AI persona wizard</p>
@@ -262,7 +262,7 @@ export default function PersonaWizard() {
                 {CONTEXT_KINDS.map((k) => (
                   <button key={k} id={`ctx-tab-${k}`} type="button" role="tab" aria-selected={tab === k} aria-controls="ctx-panel" tabIndex={tab === k ? 0 : -1} onClick={() => setTab(k)}
                     className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium ${tab === k ? "border-primary text-ink" : "border-transparent text-ink-muted hover:text-ink"}`}>
-                    {contexts[k].trim() && <Check size={13} className="text-ok" aria-label="added" />}{CONTEXT_LABELS[k]}
+                    {contexts[k].trim() && <Check size={13} strokeWidth={1.75} className="text-ok" aria-label="added" />}{CONTEXT_LABELS[k]}
                   </button>
                 ))}
               </div>
@@ -271,11 +271,11 @@ export default function PersonaWizard() {
                   <div className="flex gap-2">
                     <label className="relative flex-1">
                       <span className="sr-only">Product page URL</span>
-                      <Globe size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" aria-hidden />
+                      <Globe size={15} strokeWidth={1.75} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" aria-hidden />
                       <input className="input !pl-9" type="url" placeholder="https://example.com/pricing" value={url} onChange={(e) => setUrl(e.target.value)} />
                     </label>
                     {/* aria-disabled while busy, so the focused button keeps focus instead of dropping it to the page. */}
-                    <button type="button" className="btn-ghost" onClick={importUrl} disabled={!fetching && !/^https?:\/\//.test(url)} aria-disabled={fetching}>{fetching ? <Loader2 size={15} className="animate-spin" aria-hidden /> : null} Import</button>
+                    <button type="button" className="btn-ghost" onClick={importUrl} disabled={!fetching && !/^https?:\/\//.test(url)} aria-disabled={fetching}>{fetching ? <Loader2 size={15} strokeWidth={1.75} className="animate-spin" aria-hidden /> : null} Import</button>
                   </div>
                 )}
                 {tab === "url" && fetched && <p className="font-mono text-[11px] text-ok">Imported {fetched.title || fetched.url} · {(fetched.bytes / 1024).toFixed(0)} KB · public pages only, private addresses are blocked</p>}
@@ -283,7 +283,7 @@ export default function PersonaWizard() {
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="font-mono text-[11px] text-ink-muted">{contexts[tab].length.toLocaleString()} / 8,000 chars · {filled.length} source{filled.length === 1 ? "" : "s"} added</p>
-                <button type="button" className="btn-primary" onClick={generate} disabled={!generating && !canNext} aria-disabled={generating}>{generating ? <><Loader2 size={16} className="animate-spin" aria-hidden /> Drafting persona…</> : <><PenLine size={16} strokeWidth={1.75} aria-hidden /> Draft persona</>}</button>
+                <button type="button" className="btn-primary" onClick={generate} disabled={!generating && !canNext} aria-disabled={generating}>{generating ? <><Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden /> Drafting persona…</> : <><PenLine size={16} strokeWidth={1.75} aria-hidden /> Draft persona</>}</button>
               </div>
             </section>
           )}
@@ -304,7 +304,7 @@ export default function PersonaWizard() {
                 <div>
                   <div className="mb-2 flex items-center justify-between">
                     <p className="label !mb-0">Objections</p>
-                    <button className="btn-quiet btn-sm" disabled={draft.objections.length >= 8} onClick={() => patch({ objections: [...draft.objections, { type: "price", line: "", prepAnswer: "" }] })}><Plus size={13} aria-hidden /> Objection</button>
+                    <button className="btn-quiet btn-sm" disabled={draft.objections.length >= 8} onClick={() => patch({ objections: [...draft.objections, { type: "price", line: "", prepAnswer: "" }] })}><Plus size={13} strokeWidth={1.75} aria-hidden /> Objection</button>
                   </div>
                   <div className="space-y-2">
                     {draft.objections.map((o, i) => (
@@ -314,7 +314,7 @@ export default function PersonaWizard() {
                             {OBJECTION_TYPES.map((t) => <option key={t} value={t}>{OBJECTION_LABELS[t]}</option>)}
                           </select>
                           <SourceChip src={src(`objections.${i}`)} />
-                          <button className="btn-quiet btn-sm ml-auto !px-2" aria-label={`Remove objection ${i + 1}`} onClick={() => patch({ objections: draft.objections.filter((_, j) => j !== i) })}><Trash2 size={14} aria-hidden /></button>
+                          <button className="btn-quiet btn-sm ml-auto !px-2" aria-label={`Remove objection ${i + 1}`} onClick={() => patch({ objections: draft.objections.filter((_, j) => j !== i) })}><Trash2 size={14} strokeWidth={1.75} aria-hidden /></button>
                         </div>
                         <input aria-label={`Objection ${i + 1} line`} className="input mt-2" placeholder="What they say" value={o.line} onChange={(e) => patch({ objections: draft.objections.map((x, j) => (j === i ? { ...x, line: e.target.value } : x)) })} />
                         <input aria-label={`Objection ${i + 1} prep answer`} className="input mt-2" placeholder="A strong answer for the coach to suggest" value={o.prepAnswer} onChange={(e) => patch({ objections: draft.objections.map((x, j) => (j === i ? { ...x, prepAnswer: e.target.value } : x)) })} />
@@ -340,14 +340,14 @@ export default function PersonaWizard() {
                     <div className="flex items-center gap-3">
                       <input aria-label={`Criterion ${i + 1} name`} className="input flex-1 !py-1.5 font-semibold" value={c.name} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)) })} />
                       <span className="mono w-12 text-right text-sm">{c.weight}%</span>
-                      <button className="btn-quiet btn-sm !px-2" aria-label={`Remove criterion ${i + 1}`} disabled={draft.rubric.length <= 3} onClick={() => patch({ rubric: draft.rubric.filter((_, j) => j !== i) })}><Trash2 size={14} aria-hidden /></button>
+                      <button className="btn-quiet btn-sm !px-2" aria-label={`Remove criterion ${i + 1}`} disabled={draft.rubric.length <= 3} onClick={() => patch({ rubric: draft.rubric.filter((_, j) => j !== i) })}><Trash2 size={14} strokeWidth={1.75} aria-hidden /></button>
                     </div>
                     <input type="range" min={0} max={60} step={1} aria-label={`Criterion ${i + 1} weight`} className="mt-2 w-full accent-[rgb(var(--primary))]" value={c.weight} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, weight: Number(e.target.value) } : r)) })} />
                     <input aria-label={`Criterion ${i + 1} description`} className="input mt-1 !text-[13px]" placeholder="What good looks like, in observable terms" value={c.description} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, description: e.target.value } : r)) })} />
                   </li>
                 ))}
               </ul>
-              <button className="btn-ghost btn-sm" disabled={draft.rubric.length >= 7} onClick={() => patch({ rubric: [...draft.rubric, { id: `c${draft.rubric.length + 1}-${Date.now().toString(36)}`, name: "New criterion", description: "", weight: 0 }] })}><Plus size={13} aria-hidden /> Criterion</button>
+              <button className="btn-ghost btn-sm" disabled={draft.rubric.length >= 7} onClick={() => patch({ rubric: [...draft.rubric, { id: `c${draft.rubric.length + 1}-${Date.now().toString(36)}`, name: "New criterion", description: "", weight: 0 }] })}><Plus size={13} strokeWidth={1.75} aria-hidden /> Criterion</button>
             </section>
           )}
 
@@ -358,14 +358,14 @@ export default function PersonaWizard() {
                   <h2 className="text-lg font-bold">Keep it private</h2>
                   <p className="mt-1 text-sm text-ink-soft">Saves to this browser&rsquo;s library under &ldquo;Your personas&rdquo;. Run a test call to check the persona behaves before you share it.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <button className="btn-primary" onClick={() => savePrivate(true)} disabled={!validation?.success}><Play size={15} aria-hidden /> Save and test call</button>
-                    <button className="btn-ghost" onClick={() => savePrivate(false)} disabled={!validation?.success}><Save size={15} aria-hidden /> {saved ? "Saved" : "Save only"}</button>
+                    <button className="btn-primary" onClick={() => savePrivate(true)} disabled={!validation?.success}><Play size={15} strokeWidth={1.75} aria-hidden /> Save and test call</button>
+                    <button className="btn-ghost" onClick={() => savePrivate(false)} disabled={!validation?.success}><Save size={15} strokeWidth={1.75} aria-hidden /> {saved ? "Saved" : "Save only"}</button>
                   </div>
                 </div>
                 <div className="border-t border-line pt-5">
                   <h2 className="text-lg font-bold">Contribute it as a pack</h2>
                   <p className="mt-1 text-sm text-ink-soft">Copy the pack file, add it to <span className="mono text-[13px]">src/lib/personas/{draft.role}.ts</span>, and open a pull request. It starts as a draft until a maintainer reviews it; CI checks it against the same schema.</p>
-                  <button className="btn-ghost mt-3" onClick={copyPack}><Copy size={15} aria-hidden /> {copied ? "Copied" : "Copy pack JSON"}</button>
+                  <button className="btn-ghost mt-3" onClick={copyPack}><Copy size={15} strokeWidth={1.75} aria-hidden /> {copied ? "Copied" : "Copy pack JSON"}</button>
                 </div>
               </section>
               <PackPreview draft={{ ...draft, status: "draft" }} valid={!!validation?.success} issues={[]} model={out?.method === "llm" ? out.model : undefined} />
@@ -374,7 +374,7 @@ export default function PersonaWizard() {
 
           {step < 4 && (
             <div className="flex flex-wrap items-start justify-between gap-2">
-              <button type="button" className="btn-ghost" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0}><ArrowLeft size={15} aria-hidden /> Back</button>
+              <button type="button" className="btn-ghost" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0}><ArrowLeft size={15} strokeWidth={1.75} aria-hidden /> Back</button>
               {step === 1 ? null : (
                 <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
                   {/* Why Next is off on the review step, in plain words next to the button. */}
@@ -384,7 +384,7 @@ export default function PersonaWizard() {
                       <ul className="text-ink-soft">{issues.map((i) => <li key={i}>{i}</li>)}</ul>
                     </div>
                   )}
-                  <button type="button" className="btn-primary" onClick={() => setStep((s) => s + 1)} disabled={!canNext}>Next <ArrowRight size={15} aria-hidden /></button>
+                  <button type="button" className="btn-primary" onClick={() => setStep((s) => s + 1)} disabled={!canNext}>Next <ArrowRight size={15} strokeWidth={1.75} aria-hidden /></button>
                 </div>
               )}
             </div>
