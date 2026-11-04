@@ -107,3 +107,18 @@ ever moves off an archived Premium price, set `addon=premium_voice` on its produ
 
 Prices are resolved by lookup key with `stripe.prices.list({ lookup_keys })` (`resolvePriceIds` in `src/lib/billing.ts`).
 The `STRIPE_PRICE_*` env vars are gone. No key, secret or price id is stored in code, tests, docs or commit messages.
+
+## Rebase note for #42
+
+#42 (not merged, not on this branch) adds `/checkout/start` and stores the signup intent in `POST /api/auth/register`.
+This branch only carries the intent; it does not implement either of those.
+
+- Today `/register` passes the whitelisted `plan`, `interval`, `src` and `seg` values (`src/lib/signupIntent.ts`) to
+  `/api/auth/google/start`, which keeps them in the signed `g_oauth` flow cookie (`FlowState.intent`). A brand-new
+  Google account lands on `/trainer?<intent>` via `googleLandingPath`; everyone else lands on the validated `next`.
+- After rebasing on #42, change `googleLandingPath` so a paid intent (`plan` is `pro` or `team`) returns the
+  `/checkout/start` path with the intent, still through `safeNextPath`. Free or empty intents keep `/trainer`.
+- In the callback, where `createSoloUser` runs, persist the same intent on the Google-created user with the helper
+  #42 uses in the register route, so the stored intent matches email signups. Reuse #42's validation rather than a
+  second copy of the whitelist, and keep `cleanSignupIntent` as the gate on the flow cookie value.
+- Expect text conflicts in `register/page.tsx` and `README.md`; keep both sides.

@@ -1,14 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { parseSignupIntent, signupIntentQuery } from "@/lib/signupIntent";
 
 /**
  * "Continue with Google". A plain link to the server route, which redirects to Google; nothing about the flow
  * runs in the browser. Renders nothing unless the server reports Google sign-in as configured. It asks
  * /api/auth/google/status, which stays public behind the access gate (unlike /api/config).
  */
-export default function GoogleButton({ next, label = "Continue with Google" }: { next?: string; label?: string }) {
+export default function GoogleButton({ next, label = "Continue with Google", carryIntent = false }: { next?: string; label?: string; carryIntent?: boolean }) {
   const [enabled, setEnabled] = useState(false);
+  const [intentQs, setIntentQs] = useState("");
+  useEffect(() => {
+    if (!carryIntent) return;
+    const sp = new URLSearchParams(window.location.search);
+    setIntentQs(signupIntentQuery(parseSignupIntent((k) => sp.get(k))));
+  }, [carryIntent]);
   useEffect(() => {
     let live = true;
     fetch("/api/auth/google/status")
@@ -18,10 +25,10 @@ export default function GoogleButton({ next, label = "Continue with Google" }: {
     return () => { live = false; };
   }, []);
   if (!enabled) return null;
-  const qs = next ? `?${new URLSearchParams({ next }).toString()}` : "";
+  const qs = [next ? new URLSearchParams({ next }).toString() : "", intentQs].filter(Boolean).join("&");
   return (
     <>
-      <a href={`/api/auth/google/start${qs}`} className="btn-ghost w-full justify-center">
+      <a href={qs ? `/api/auth/google/start?${qs}` : "/api/auth/google/start"} className="btn-ghost w-full justify-center">
         <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden>
           <path fill="rgb(var(--ink))" d="M21.6 12.23c0-.71-.06-1.4-.18-2.05H12v3.88h5.38a4.6 4.6 0 0 1-2 3.02v2.5h3.24c1.9-1.75 2.98-4.32 2.98-7.35Z" />
           <path fill="rgb(var(--ink-soft))" d="M12 22c2.7 0 4.96-.9 6.62-2.42l-3.24-2.5c-.9.6-2.04.95-3.38.95-2.6 0-4.8-1.75-5.59-4.1H3.07v2.58A10 10 0 0 0 12 22Z" />

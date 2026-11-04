@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { getJwtSecret } from "./auth";
 import { safeNextPath } from "./safeNext";
+import { cleanSignupIntent } from "./signupIntent";
 
 /**
  * Google sign-in: OAuth 2.0 authorization code flow with PKCE, state and nonce. No extra packages: the ID token
@@ -37,11 +38,12 @@ function appOrigin(env: Env): string | null {
   }
 }
 
-/** Null unless GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and APP_URL are set. Demo mode never offers Google. */
+/** Null unless GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, APP_URL and DATABASE_URL are set. Demo mode never offers Google. */
 export function googleConfig(env: Env = process.env): GoogleConfig | null {
   const clientId = env.GOOGLE_CLIENT_ID?.trim();
   const clientSecret = env.GOOGLE_CLIENT_SECRET?.trim();
   const origin = appOrigin(env);
+  if (!env.DATABASE_URL?.trim()) return null;
   if (!clientId || !clientSecret || !origin || env.DEMO_MODE === "true") return null;
   return { clientId, clientSecret, redirectUri: `${origin}/api/auth/google/callback` };
 }
@@ -60,6 +62,15 @@ export const FlowStateSchema = z.object({
   verifier: z.string().min(43).max(128),
   nonce: z.string().min(16).max(100),
   next: z.string().max(200),
+  /** Whitelisted sign-up intent (plan, interval, src, seg) from /register. Re-cleaned on read. */
+  intent: z
+    .object({
+      plan: z.string().max(10).optional(),
+      interval: z.string().max(10).optional(),
+      src: z.string().max(40).optional(),
+      seg: z.string().max(40).optional(),
+    })
+    .optional(),
 });
 export type FlowState = z.infer<typeof FlowStateSchema>;
 
@@ -73,7 +84,7 @@ export function verifyFlowState(token: string | undefined): FlowState | null {
     const payload = jwt.verify(token, getJwtSecret()) as jwt.JwtPayload;
     if (payload.purpose !== "google-flow") return null;
     const parsed = FlowStateSchema.safeParse(payload);
-    return parsed.success ? parsed.data : null;
+    return parsed.success ? { ...parsed.data, intent: cleanSignupIntent(parsed.data.intent) } : null;
   } catch {
     return null;
   }

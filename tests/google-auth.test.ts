@@ -89,6 +89,19 @@ describe("safeNextPath", () => {
   });
 });
 
+describe("sign-up intent through /start", () => {
+  it("stores only whitelisted values in the signed flow cookie", async () => {
+    const res = await start(new NextRequest("http://localhost/api/auth/google/start?plan=team&interval=month&src=hero-cta&seg=ae&evil=1"));
+    const flow = verifyFlowState(/g_oauth=([^;]+)/.exec(res.headers.get("set-cookie")!)![1])!;
+    expect(flow.intent).toEqual({ plan: "team", interval: "month", src: "hero-cta", seg: "ae" });
+  });
+  it("drops invalid values", async () => {
+    const res = await start(new NextRequest("http://localhost/api/auth/google/start?plan=gold&interval=week&src=%3Cscript%3E&seg=" + "x".repeat(41)));
+    const flow = verifyFlowState(/g_oauth=([^;]+)/.exec(res.headers.get("set-cookie")!)![1])!;
+    expect(flow.intent).toEqual({});
+  });
+});
+
 describe("PKCE, state and flow cookie", () => {
   const flow = { state: "state-0123456789abcdef", verifier: "v".repeat(64), nonce: "nonce-0123456789abcdef", next: "/library" };
   it("generates distinct random values and an S256 challenge", () => {
@@ -99,7 +112,7 @@ describe("PKCE, state and flow cookie", () => {
   });
   it("round-trips the signed flow state and rejects tampering", () => {
     const token = signFlowState(flow);
-    expect(verifyFlowState(token)).toEqual(flow);
+    expect(verifyFlowState(token)).toEqual({ ...flow, intent: {} });
     expect(verifyFlowState(undefined)).toBeNull();
     expect(verifyFlowState(token.slice(0, -2) + "xx")).toBeNull();
     expect(verifyFlowState(jwt.sign({ ...flow }, process.env.JWT_SECRET!))).toBeNull();
@@ -126,6 +139,7 @@ describe("disabled states", () => {
     ["client secret", { GOOGLE_CLIENT_SECRET: "" }],
     ["APP_URL", { APP_URL: "" }],
     ["demo mode", { DEMO_MODE: "true" }],
+    ["database", { DATABASE_URL: "" }],
   ])("is off without %s: capability false and both routes 404", async (_n, env) => {
     for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
     expect(googleConfig()).toBeNull();
@@ -138,7 +152,7 @@ describe("disabled states", () => {
   it("never uses the Host header for the redirect URI", () => {
     expect(googleConfig()!.redirectUri).toBe("https://calltrainer.example/api/auth/google/callback");
   });
-  it("is on with all three settings", async () => {
+  it("is on with all four settings", async () => {
     expect(await (await status()).json()).toEqual({ enabled: true });
   });
 });
@@ -165,8 +179,8 @@ describe("GET /api/auth/google/callback", () => {
     iss: "https://accounts.google.com", aud: "client-1", exp: Math.floor(Date.now() / 1000) + 300, sub: "g-sub-1",
     email: "Rep@Example.test", email_verified: true, nonce: flow.nonce, given_name: "Ravi", family_name: "Shah", ...patch,
   });
-  const call = (opts: { state?: string; cookie?: string; extraCookie?: string } = {}) => {
-    const cookies = [`${GOOGLE_FLOW_COOKIE}=${opts.cookie ?? signFlowState(flow)}`, opts.extraCookie].filter(Boolean).join("; ");
+  const call = (opts: { state?: string; cookie?: string; extraCookie?: string; flow?: Record<string, unknown> } = {}) => {
+    const cookies = [`${GOOGLE_FLOW_COOKIE}=${opts.cookie ?? signFlowState({ ...flow, ...opts.flow })}`, opts.extraCookie].filter(Boolean).join("; ");
     return callback(new NextRequest(`http://localhost/api/auth/google/callback?code=abc&state=${opts.state ?? flow.state}`, { headers: { cookie: cookies } }));
   };
   const googleReplies = (c: Record<string, unknown>) =>
@@ -257,6 +271,23 @@ describe("GET /api/auth/google/callback", () => {
     expect(mocks.prisma.auditEvent.create.mock.calls[0][0].data).toMatchObject({ action: "user.registered", metadata: { via: "google" } });
     expect(loc(res).pathname).toBe("/auth/complete");
     expect(res.headers.get("set-cookie")).toContain("authToken=");
+  });
+
+  it("sends a new account to /trainer with its whitelisted sign-up intent", async () => {
+    googleReplies(claims());
+    const res = await call({ flow: { intent: { plan: "pro", interval: "year", src: "pricing", seg: "sdr" } } });
+    expect(loc(res).pathname).toBe("/auth/complete");
+    expect(loc(res).searchParams.get("next")).toBe("/trainer?plan=pro&interval=year&src=pricing&seg=sdr");
+  });
+
+  it("ignores a forged intent and keeps the plain next path for existing users", async () => {
+    googleReplies(claims());
+    const forged = await call({ flow: { intent: { plan: "gold", src: "a b", seg: "//x" } } });
+    expect(loc(forged).searchParams.get("next")).toBe("/library");
+    googleReplies(claims());
+    mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: Record<string, string> }) => (where.googleSub ? existing({ googleSub: "g-sub-1" }) : null));
+    const res = await call({ flow: { intent: { plan: "pro" } } });
+    expect(loc(res).searchParams.get("next")).toBe("/library");
   });
 
   it("refuses a new user behind the access gate, and sends them to /access", async () => {

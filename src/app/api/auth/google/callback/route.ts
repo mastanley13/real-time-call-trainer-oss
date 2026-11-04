@@ -4,6 +4,7 @@ import { signMfaChallengeToken, signSessionToken } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { accessCode, hasValidAccessCookie, safeEqual } from "@/lib/access";
 import { generateOrgCode } from "@/lib/orgCodes";
+import { googleLandingPath } from "@/lib/signupIntent";
 import { clientIp, ipLimitResponse } from "@/lib/rateLimit";
 import { checkIdTokenClaims, decodeIdToken, exchangeCode, flowCookieOptions, GOOGLE_FLOW_COOKIE, googleConfig, verifyFlowState, type GoogleProfile } from "@/lib/googleAuth";
 
@@ -113,7 +114,7 @@ export async function GET(req: NextRequest) {
       lastName: user.lastName ?? undefined,
       role: user.role as "trainee" | "manager" | "owner",
     });
-    const res = back(req, `/auth/complete?next=${encodeURIComponent(flow.next)}`);
+    const res = back(req, `/auth/complete?next=${encodeURIComponent(googleLandingPath(flow, created))}`);
     res.cookies.set("authToken", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
