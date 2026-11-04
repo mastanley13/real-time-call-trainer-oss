@@ -39,6 +39,8 @@ model Organization {
   stripeCustomerId     String? @unique
   stripeSubscriptionId String? @unique
   subscriptionStatus   String?
+  /// When the subscription first entered past_due; the grace window counts from here. Null in any other status.
+  pastDueSince         DateTime?
   /// The one outstanding Checkout Session for this billing subject, so a second click reuses it instead of
   /// opening another. Cleared when the subscription lands or the session expires.
   stripeCheckoutSessionId   String?
@@ -92,6 +94,8 @@ model User {
   stripeCustomerId     String? @unique
   stripeSubscriptionId String? @unique
   subscriptionStatus   String?
+  /// When the subscription first entered past_due; the grace window counts from here. Null in any other status.
+  pastDueSince         DateTime?
   /// See Organization: the one outstanding Checkout Session for this subject.
   stripeCheckoutSessionId   String?
   stripeCheckoutFingerprint String?

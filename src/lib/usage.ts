@@ -2,6 +2,7 @@ import "server-only";
 import type { Prisma, TrainerSession, UsageAllowance } from "@prisma/client";
 import { prisma } from "./db";
 import { billingActive } from "./serverConfig";
+import { storedPlanEntitled } from "./subscriptionStatus";
 import {
   CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, MAX_CONNECT_LAG_SECONDS, MAX_RESERVE_MINUTES,
   OVERRUN_GRACE_SECONDS, VOICE_BLOCK_SECONDS,
@@ -75,25 +76,47 @@ export interface Resolved {
 const planOf = (v: unknown): PlanTier => (isPlanTier(v) ? v : "free");
 
 /**
+ * A past_due row with no recorded start (accounts that were past_due before pastDueSince existed) starts its grace
+ * window now, and the start is saved so the window can run out without another webhook. The write is conditional
+ * (still past_due, still no start), so a webhook that moved the status on in the meantime is never overwritten with a
+ * stale timestamp. The row is then reloaded so the caller sees whatever won. Returns the effective row.
+ */
+async function stampPastDue<T extends { subscriptionStatus: string | null; pastDueSince: Date | null }>(
+  db: Tx, kind: "user" | "organization", id: string, row: T, now: Date,
+): Promise<T> {
+  if (row.subscriptionStatus !== "past_due" || row.pastDueSince) return row;
+  const where = { id, subscriptionStatus: "past_due", pastDueSince: null };
+  const data = { pastDueSince: now };
+  const select = { subscriptionStatus: true, pastDueSince: true } as const;
+  if (kind === "user") await db.user.updateMany({ where, data });
+  else await db.organization.updateMany({ where, data });
+  const fresh = kind === "user" ? await db.user.findUnique({ where: { id }, select }) : await db.organization.findUnique({ where: { id }, select });
+  return fresh ? { ...row, subscriptionStatus: fresh.subscriptionStatus, pastDueSince: fresh.pastDueSince } : row;
+}
+
+/**
  * The allowance row for a user or a Team pool, created on first use. Also the one place caps change:
  * it re-derives plan and cap from the owner's row (so a seat added, an upgrade or a downgrade lands
  * immediately) and rolls the period when the anchor date has passed. The anchor itself never moves,
  * and a plan change keeps minutesUsed; only a new period resets it, with no rollover.
  */
+
 export async function ensureAllowance(db: Tx, subject: Subject, now: Date, depth = 0): Promise<UsageAllowance> {
   let plan: PlanTier;
   let cap: number;
   let anchor: Date;
   let existing: UsageAllowance | null;
   if ("userId" in subject) {
-    const user = await db.user.findUniqueOrThrow({ where: { id: subject.userId }, select: { planTier: true, usageAnchorAt: true } });
-    plan = effectivePlan(user.planTier, billingActive());
+    const loaded = await db.user.findUniqueOrThrow({ where: { id: subject.userId }, select: { planTier: true, subscriptionStatus: true, stripeSubscriptionId: true, pastDueSince: true, usageAnchorAt: true } });
+    const user = await stampPastDue(db, "user", subject.userId, loaded, now);
+    plan = effectivePlan(storedPlanEntitled(user, now) ? user.planTier : "free", billingActive());
     cap = capFor(plan);
     anchor = user.usageAnchorAt;
     existing = await db.usageAllowance.findUnique({ where: { userId: subject.userId } });
   } else {
-    const org = await db.organization.findUniqueOrThrow({ where: { id: subject.organizationId }, select: { planTier: true, seatCount: true, createdAt: true } });
-    plan = org.planTier === "team" && billingActive() ? "team" : "free";
+    const loadedOrg = await db.organization.findUniqueOrThrow({ where: { id: subject.organizationId }, select: { planTier: true, subscriptionStatus: true, stripeSubscriptionId: true, pastDueSince: true, seatCount: true, createdAt: true } });
+    const org = await stampPastDue(db, "organization", subject.organizationId, loadedOrg, now);
+    plan = org.planTier === "team" && storedPlanEntitled(org, now) && billingActive() ? "team" : "free";
     cap = capFor(plan, org.seatCount);
     anchor = org.createdAt;
     existing = await db.usageAllowance.findUnique({ where: { organizationId: subject.organizationId } });
@@ -170,12 +193,13 @@ async function ensureAllowanceById(db: Tx, allowanceId: string, now: Date): Prom
 
 /** Who pays for this user's minutes, and how many are left right now. Null when the user does not exist. */
 export async function resolveAllowance(db: Tx, userId: string, now: Date): Promise<Resolved | null> {
-  const user = await db.user.findUnique({ where: { id: userId }, include: { organization: true } });
-  if (!user) return null;
-  const org = user.organization;
-  const pooled = !!org && org.planTier === "team" && billingActive();
+  const found = await db.user.findUnique({ where: { id: userId }, include: { organization: true } });
+  if (!found) return null;
+  const user = await stampPastDue(db, "user", userId, found, now);
+  const org = found.organization ? await stampPastDue(db, "organization", found.organization.id, found.organization, now) : null;
+  const pooled = !!org && org.planTier === "team" && storedPlanEntitled(org, now) && billingActive();
   const allowance = await ensureAllowance(db, pooled ? { organizationId: org.id } : { userId }, now);
-  const plan: PlanTier = pooled ? "team" : effectivePlan(user.planTier, billingActive());
+  const plan: PlanTier = pooled ? "team" : effectivePlan(storedPlanEntitled(user, now) ? user.planTier : "free", billingActive());
   // A member whose Team ended (cancelled or unpaid) now has the Free allowance. Minutes they already used from the
   // pool this month still count against its cap, so leaving the pool is not a fresh 10 minutes.
   const usedElsewhere = !pooled && plan === "free" ? await usedInOtherAllowances(db, userId, allowance) : 0;
@@ -184,7 +208,9 @@ export async function resolveAllowance(db: Tx, userId: string, now: Date): Promi
     allowance,
     pooled,
     plan,
-    premiumVoice: pooled ? org.premiumVoice : user.premiumVoice,
+    // The add-on follows paid access: once the plan is Free (grace ran out, or the status is not entitled) it is off,
+    // even though the stored flag stays true until the next webhook.
+    premiumVoice: pooled ? org.premiumVoice : plan === "pro" && user.premiumVoice,
     usedElsewhere,
     remaining: roundMinutes(Math.max(0, allowance.minutesCap - used)),
     available: roundMinutes(Math.max(0, allowance.minutesCap - used - allowance.minutesReserved)),

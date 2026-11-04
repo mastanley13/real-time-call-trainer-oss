@@ -389,13 +389,13 @@ describe("checkout route", () => {
     expect((await res.json()).error).toBe("already_subscribed");
   });
 
-  it("409 while the linked subscription is active, trialing, past_due, unpaid or paused", async () => {
+  it("409 while the linked subscription is active, trialing, past_due, unpaid, paused or incomplete", async () => {
     const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_x", url: "https://checkout.example/x" });
     const u = fake.rows("user")[0];
     u.stripeSubscriptionId = "sub_test_1";
     u.stripeCustomerId = "cus_test_1";
-    // The 409 body carries a plain status: past_due, or active for anything else (trialing too), and no Stripe ids.
-    const expected: Record<string, string> = { active: "active", trialing: "active", past_due: "past_due", unpaid: "active", paused: "active" };
+    // The 409 body carries the real status, never collapsed into active, and no Stripe ids.
+    const expected: Record<string, string> = { active: "active", trialing: "trialing", past_due: "past_due", unpaid: "unpaid", paused: "paused", incomplete: "incomplete" };
     for (const [sub, status] of Object.entries(expected)) {
       u.subscriptionStatus = sub;
       const res = await post({ plan: "pro", interval: "month" });
@@ -617,6 +617,39 @@ describe("customer.subscription.updated", () => {
     expect(org()).toMatchObject({ planTier: "team", subscriptionStatus: "past_due" });
   });
 
+  it("starts the past_due grace clock on first sight, keeps it on repeats and clears it when the status leaves past_due", async () => {
+    expect(org().pastDueSince ?? null).toBeNull();
+    await update({ team: 3, status: "past_due" });
+    const first = org().pastDueSince as Date;
+    expect(first).toBeInstanceOf(Date);
+    await update({ team: 3, status: "past_due" });
+    expect((org().pastDueSince as Date).getTime()).toBe(first.getTime());
+    await update({ team: 3, status: "active" });
+    expect(org().pastDueSince).toBeNull();
+    expect(org().planTier).toBe("team");
+  });
+
+  it("past_due with no recorded start is treated as starting now and keeps the plan", async () => {
+    org().pastDueSince = null;
+    await update({ team: 3, status: "past_due" });
+    expect(org()).toMatchObject({ planTier: "team", subscriptionStatus: "past_due" });
+    expect(org().pastDueSince).toBeInstanceOf(Date);
+  });
+
+  it("past_due past the grace window drops to Free but keeps the link, so checkout stays blocked", async () => {
+    org().pastDueSince = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    org().subscriptionStatus = "past_due";
+    await update({ team: 3, status: "past_due" });
+    expect(org()).toMatchObject({ planTier: "free", subscriptionStatus: "past_due", stripeSubscriptionId: "sub_test_team" });
+  });
+
+  it("paused and incomplete_expired are Free", async () => {
+    for (const status of ["paused", "incomplete_expired"]) {
+      await update({ team: 5, status });
+      expect(org(), status).toMatchObject({ planTier: "free", subscriptionStatus: status });
+    }
+  });
+
   it("falls back to Free for unpaid, canceled and incomplete_expired subscriptions", async () => {
     await update({ team: 5, status: "unpaid" });
     expect(org()).toMatchObject({ planTier: "free", seatCount: 1, subscriptionStatus: "unpaid", premiumVoice: false });
@@ -717,9 +750,11 @@ describe("customer.subscription.updated", () => {
     expect(fake.rows("organization").find((o) => o.id === "org-2")?.planTier ?? "free").toBe("free");
   });
 
-  it("waits for an incomplete checkout to finish", async () => {
+  it("an incomplete subscription is recorded and grants nothing, even for an account that held an entitled status", async () => {
     await update({ team: 8, status: "incomplete" });
-    expect(org().seatCount).toBe(3);
+    expect(org()).toMatchObject({ planTier: "free", seatCount: 1, premiumVoice: false, subscriptionStatus: "incomplete", stripeSubscriptionId: "sub_test_team" });
+    expect(org().pastDueSince ?? null).toBeNull();
+    expect(allowance("organizationId", "org-1")).toMatchObject({ planTier: "free", minutesCap: 10 });
   });
 
   describe("entitlementFromItems (acceptance cases)", () => {
@@ -1379,6 +1414,36 @@ describe("a new purchase that fails item validation", () => {
     await purchase("sub_test_bad2", 2);
     expect(cancelSpy).toHaveBeenCalledWith("sub_test_bad2");
     expect(org().stripeSubscriptionId).toBe("sub_test_bad");
+  });
+
+  it("an incomplete first payment links the subscription as incomplete, blocks checkout with that status, then grants on active and frees on incomplete_expired", async () => {
+    const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_dup", url: "https://checkout.example/dup" });
+    const setStatus = async (status: string) => {
+      liveStripe.set("sub_test_inc", { ...sub({ id: "sub_test_inc", customer: "cus_test_new", metadata: { organizationId: "org-1" }, status }), items: { data: teamItems(3) } });
+      await deliverRaw(event("customer.subscription.updated", { id: "sub_test_inc", customer: "cus_test_new", status, metadata: { organizationId: "org-1" } }));
+    };
+    await setStatus("incomplete");
+    expect(org()).toMatchObject({ planTier: "free", stripeSubscriptionId: "sub_test_inc", subscriptionStatus: "incomplete", stripeCustomerId: "cus_test_new" });
+    const blocked = await post();
+    expect(blocked.status).toBe(409);
+    expect(await blocked.json()).toMatchObject({ error: "already_subscribed", status: "incomplete" });
+    expect(create).not.toHaveBeenCalled();
+
+    await setStatus("active");
+    expect(org()).toMatchObject({ planTier: "team", seatCount: 3, subscriptionStatus: "active" });
+
+    // A different account whose first payment never completes: the link is dropped and checkout opens again.
+    org().planTier = "free";
+    await setStatus("incomplete_expired");
+    expect(org()).toMatchObject({ planTier: "free", stripeSubscriptionId: null, subscriptionStatus: "incomplete_expired" });
+    expect((await post()).status).not.toBe(409);
+  });
+
+  it("a checkout.session.completed for a still-incomplete subscription is recorded with no access", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    liveStripe.set("sub_test_inc2", { ...sub({ id: "sub_test_inc2", customer: "cus_test_new", metadata: { organizationId: "org-1" }, status: "incomplete" }), items: { data: teamItems(3) } });
+    await deliverRaw(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_new", subscription: "sub_test_inc2", payment_status: "paid", metadata: { plan: "team", userId: "owner-1", organizationId: "org-1", seats: "3" } }));
+    expect(org()).toMatchObject({ planTier: "free", stripeSubscriptionId: "sub_test_inc2", subscriptionStatus: "incomplete" });
   });
 
   it("fixing the quantity on that subscription then grants Team", async () => {

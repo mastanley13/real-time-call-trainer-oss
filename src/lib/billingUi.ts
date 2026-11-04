@@ -208,7 +208,7 @@ export function checkoutFailure(input: { status?: number; networkError?: boolean
 
 /** What the billing page shows for a checkout that did not start. The page picks it by error code, never by status range. */
 export interface CheckoutNotice {
-  kind: "already_active" | "already_past_due" | "price_unavailable";
+  kind: "already_active" | "already_past_due" | "already_unpaid" | "already_paused" | "already_incomplete" | "price_unavailable";
   headline: string;
   body: string;
   button: string;
@@ -229,8 +229,32 @@ export const ACTIVE_NOTICE: CheckoutNotice = {
 export const PAST_DUE_NOTICE: CheckoutNotice = {
   kind: "already_past_due",
   headline: "Last payment failed",
-  body: "Your plan is still active. Update your payment method in Manage billing to keep it. Nothing new was charged.",
+  body: "We could not collect your last payment and will try again. Update your card in Manage billing to keep your plan. Nothing new was charged.",
   button: "Update payment method",
+  help: false,
+  role: "alert",
+};
+export const UNPAID_NOTICE: CheckoutNotice = {
+  kind: "already_unpaid",
+  headline: "Payment is overdue",
+  body: "Paid access is off because we could not collect payment. Update your card in Manage billing to restore it. Nothing new was charged.",
+  button: "Update payment method",
+  help: false,
+  role: "alert",
+};
+export const PAUSED_NOTICE: CheckoutNotice = {
+  kind: "already_paused",
+  headline: "Your plan is paused",
+  body: "Your trial ended without a payment method. Add one in Manage billing to resume your plan. Nothing was charged.",
+  button: "Add payment method",
+  help: false,
+  role: "alert",
+};
+export const INCOMPLETE_NOTICE: CheckoutNotice = {
+  kind: "already_incomplete",
+  headline: "Your first payment is not finished",
+  body: "Your first payment is still pending or needs action. Finish it in Manage billing. We did not start a new checkout and nothing new was charged.",
+  button: "Manage billing",
   help: false,
   role: "alert",
 };
@@ -245,12 +269,22 @@ export const PRICE_UNAVAILABLE_NOTICE: CheckoutNotice = {
 /** Shown in the 409 banner when opening the portal failed. The button then reads "Try again". */
 export const PORTAL_FAILED_MESSAGE = "Could not open billing. Try again in a moment.";
 
+/** Copy for each blocking status the checkout route can report. active and trialing share the active copy. */
+const ALREADY_SUBSCRIBED_NOTICES = new Map<unknown, CheckoutNotice>([
+  ["active", ACTIVE_NOTICE],
+  ["trialing", ACTIVE_NOTICE],
+  ["past_due", PAST_DUE_NOTICE],
+  ["unpaid", UNPAID_NOTICE],
+  ["paused", PAUSED_NOTICE],
+  ["incomplete", INCOMPLETE_NOTICE],
+]);
+
 /**
- * The notice for a checkout answer, chosen by its error code. An already_subscribed answer is past_due only when the
- * server says so; a missing or unknown status uses the active copy. Null for any other answer.
+ * The notice for a checkout answer, chosen by its error code. An already_subscribed answer uses the copy for the
+ * status the server reports; a missing or unknown status uses the active copy. Null for any other answer.
  */
 export function checkoutNotice(input: { code?: unknown; status?: unknown }): CheckoutNotice | null {
-  if (input.code === "already_subscribed") return input.status === "past_due" ? PAST_DUE_NOTICE : ACTIVE_NOTICE;
+  if (input.code === "already_subscribed") return ALREADY_SUBSCRIBED_NOTICES.get(input.status) ?? ACTIVE_NOTICE;
   if (input.code === "price_not_configured") return PRICE_UNAVAILABLE_NOTICE;
   return null;
 }
