@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -184,7 +185,12 @@ describe("landing hero line", () => {
   it("leaves one section gap between How it works and the features, not two", () => {
     const sectionClass = (id: string) => html.match(new RegExp(`<section class="([^"]*)" aria-labelledby="${id}"`))?.[1];
     expect(sectionClass("how-h")).toBe("page py-14 sm:py-16");
-    expect(sectionClass("feat-h")).toBe("page pb-14 sm:pb-16");
+    // .page sets py-8 sm:py-10 itself, so the features section must zero its top padding explicitly.
+    expect(sectionClass("feat-h")).toBe("page pt-0 pb-14 sm:pb-16");
+  });
+
+  it(".page still carries its own vertical padding, which pt-0 on the features section has to cancel", () => {
+    expect(readFileSync("src/app/globals.css", "utf8")).toMatch(/\.page \{ @apply [^}]*\bpy-8\b[^}]*\bsm:py-10\b/);
   });
 
   it("uses no em dashes", () => {
