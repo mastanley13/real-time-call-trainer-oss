@@ -9,7 +9,12 @@
  *
  * The middleware lets the pass through to the invite's own page and the invite preview and accept APIs, nothing
  * else (login, register and /api/auth/* are public anyway). Preview, accept and register also check that the
- * token in the request body is the one the pass was issued for. Accept clears the pass.
+ * token in the request body is the one the pass was issued for. "Continue with Google" from the invite (a public
+ * /api/auth/* route) binds the invite into its signed flow only when the pass matches it.
+ *
+ * An accepted invite counts as site access: /api/invites/accept, and the Google callback for a brand-new account,
+ * accept the invite atomically and only then set the same access cookie that entering the code sets
+ * (grantAccessCookie in access.ts). Both clear the pass.
  */
 import { accessCode, hasValidAccessCookie, hmacHex, safeEqual } from "./access";
 

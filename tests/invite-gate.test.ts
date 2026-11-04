@@ -234,15 +234,16 @@ describe("access gate: routes the pass opens check the token too", () => {
     expect(fake.rows("teamInvite").every((i) => !i.acceptedAt)).toBe(true);
   });
 
-  it("accepts with the matching pass, clears the pass, and says the access code is still needed", async () => {
+  it("accepts with the matching pass, clears the pass, and grants site access", async () => {
     seedInvite(VALID);
     const { pass } = await openInvite(VALID);
     const cookie = `${INVITE_PASS_COOKIE}=${pass}`;
     expect((await preview(VALID, cookie)).status).toBe(200);
     const res = await accept(VALID, cookie);
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ ok: true, accessCodeRequired: true });
+    expect(await res.json()).toMatchObject({ ok: true });
     expect(res.headers.get("set-cookie")).toMatch(new RegExp(`${INVITE_PASS_COOKIE}=;[^,]*Max-Age=0`, "i"));
+    expect(res.headers.get("set-cookie")).toContain(`${ACCESS_COOKIE}=${await accessToken(CODE)}`);
   });
 
   it("with the access code, works as before and needs no pass", async () => {
@@ -250,7 +251,7 @@ describe("access gate: routes the pass opens check the token too", () => {
     const cookie = `${ACCESS_COOKIE}=${await accessToken(CODE)}`;
     const res = await accept(VALID, cookie);
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ accessCodeRequired: false });
+    expect(await res.json()).toMatchObject({ ok: true });
   });
 });
 

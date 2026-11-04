@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { signMfaChallengeToken, signSessionToken } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { accessCode, hasValidAccessCookie, safeEqual } from "@/lib/access";
+import { accessCode, grantAccessCookie, hasValidAccessCookie, safeEqual } from "@/lib/access";
+import { hashInviteToken } from "@/lib/inviteToken";
+import { INVITE_PASS_COOKIE, invitePassCookie } from "@/lib/invitePass";
+import { acceptInviteTx, type AcceptInviteResult } from "../../../team/_lib/acceptInvite";
 import { generateOrgCode } from "@/lib/orgCodes";
 import { googleLandingPath } from "@/lib/signupIntent";
 import { sanitizeSignupIntent, type SignupIntent } from "@/lib/pricing";
@@ -18,6 +21,10 @@ import { linkGoogleAtomically, checkIdTokenClaims, decodeIdToken, exchangeCode, 
  * - Otherwise: create a solo account the way email signup does (new org, owner, Free plan, no password), storing the
  *   whitelisted sign-up intent on it like POST /api/auth/register. A paid intent then lands on /checkout/start. When
  *   TRAINER_ACCESS_CODE is set this needs the access cookie, like POST /api/auth/register.
+ * - Otherwise, behind the gate from an invite link (the signed flow carries the invite, see /start): create the
+ *   account and accept the invite in one transaction (acceptInviteTx, the same atomic claim as
+ *   /api/invites/accept). Only then does the response carry the access cookie, as an accepted invite counts as site
+ *   access. A used, revoked, expired or unknown invite creates nothing and goes to /access.
  *
  * Existing accounts do not need the access cookie: password login does not either (/login and /api/auth/* are
  * public paths). Accounts with MFA get a challenge token, never a session, exactly as password login does.
@@ -29,6 +36,8 @@ function back(req: NextRequest, path: string): NextResponse {
   return res;
 }
 const fail = (req: NextRequest, reason: string) => back(req, `/login?error=${encodeURIComponent(reason)}`);
+/** A new account without the access cookie (or with an invite that cannot be accepted) is sent to enter the code. */
+const GATED = "/access?next=%2Fregister&reason=google_invite";
 
 export async function GET(req: NextRequest) {
   const cfg = googleConfig();
@@ -73,6 +82,7 @@ export async function GET(req: NextRequest) {
     let created = false;
     let linked = false;
     let pendingLink = false;
+    let joinedInvite = false;
 
     if (!user) {
       const byEmail = await prisma.user.findUnique({ where: { email: profile.email }, include: { organization: true } });
@@ -82,10 +92,18 @@ export async function GET(req: NextRequest) {
         // Nothing is written yet: the link waits for the lockout check and, with MFA, for the accepted code.
         user = byEmail;
         pendingLink = true;
+      } else if (flow.invite) {
+        // Behind the gate from an invite link (see /start). The account is created and the invite accepted in one
+        // transaction, re-checked under the locks; anything short of an accepted invite creates nothing.
+        const joined = await createInvitedUser(profile, flow.invite, ip, userAgent);
+        if (joined.kind !== "ok") return inviteRefused(req, joined, flow.invite);
+        user = joined.user;
+        created = true;
+        joinedInvite = true;
       } else {
         const gate = accessCode();
         if (gate && !(await hasValidAccessCookie(req, gate))) {
-          return back(req, "/access?next=%2Fregister&reason=google_invite");
+          return back(req, GATED);
         }
         user = await createSoloUser(profile, ip, userAgent, sanitizeSignupIntent(flow.intent ?? {}));
         created = true;
@@ -124,7 +142,9 @@ export async function GET(req: NextRequest) {
       lastName: user.lastName ?? undefined,
       role: user.role as "trainee" | "manager" | "owner",
     });
-    const res = back(req, `/auth/complete?next=${encodeURIComponent(googleLandingPath(flow, created))}`);
+    // A joined invite is used up, so its page has nothing left to show: go straight to practice.
+    const landing = joinedInvite ? "/trainer" : googleLandingPath(flow, created);
+    const res = back(req, `/auth/complete?next=${encodeURIComponent(landing)}`);
     res.cookies.set("authToken", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -132,11 +152,74 @@ export async function GET(req: NextRequest) {
       path: "/",
       maxAge: 60 * 60 * 12,
     });
+    if (joinedInvite) {
+      // An accepted invite counts as site access: the same cookie entering the code sets. Its pass is spent.
+      await grantAccessCookie(res);
+      res.cookies.set(INVITE_PASS_COOKIE, "", invitePassCookie(0));
+    }
     return res;
   } catch (error) {
     console.error("[google] account error:", error instanceof Error ? error.name : "unknown");
     return fail(req, "google_failed");
   }
+}
+
+/** Carries a refused acceptance out of the transaction, so the account created inside it is rolled back. */
+class InviteRefused extends Error {
+  constructor(readonly result: Exclude<AcceptInviteResult, { kind: "ok" }>) {
+    super("INVITE_REFUSED");
+  }
+}
+
+/**
+ * Same shape as POST /api/auth/register with an invite (no team, trainee), then acceptInviteTx joins the invite's
+ * team, all in one transaction. Returns the account, or why the invite was refused (and nothing was written).
+ */
+async function createInvitedUser(profile: GoogleProfile, inviteToken: string, ip: string, userAgent: string | undefined) {
+  try {
+    const user = await prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          email: profile.email,
+          googleSub: profile.sub,
+          passwordHash: null,
+          firstName: profile.firstName,
+          lastName: profile.lastName,
+          organizationId: null,
+          role: "trainee",
+          lastLoginAt: new Date(),
+        },
+      });
+      await tx.auditEvent.create({
+        data: {
+          userId: created.id,
+          action: "user.registered",
+          resource: created.id,
+          ip,
+          userAgent,
+          metadata: { role: "trainee", organizationCode: null, joinOrCreate: "invite", via: "google" } satisfies Prisma.InputJsonValue,
+        },
+      });
+      const result = await acceptInviteTx(tx, created.id, hashInviteToken(inviteToken));
+      if (result.kind !== "ok") throw new InviteRefused(result);
+      return tx.user.findUniqueOrThrow({ where: { id: created.id }, include: { organization: true } });
+    });
+    return { kind: "ok" as const, user };
+  } catch (error) {
+    if (error instanceof InviteRefused) return error.result;
+    throw error;
+  }
+}
+
+/**
+ * Where a refused invite sign-up goes. A used, revoked, expired, replaced or unknown invite stays behind the gate,
+ * as before; an address or seat problem goes to /login with a message and the invite link kept in ?next=.
+ */
+function inviteRefused(req: NextRequest, result: Exclude<AcceptInviteResult, { kind: "ok" }>, inviteToken: string): NextResponse {
+  const next = encodeURIComponent(`/invite/${inviteToken}`);
+  if (result.kind === "email_mismatch") return back(req, `/login?error=google_invite_email&next=${next}`);
+  if (result.kind === "seats_full" || result.kind === "not_team_plan") return back(req, `/login?error=google_invite_full&next=${next}`);
+  return back(req, GATED);
 }
 
 /** Same shape as POST /api/auth/register with a new team: a new org, the user as its owner, the default Free plan. */

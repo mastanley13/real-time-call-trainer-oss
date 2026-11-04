@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ACCESS_COOKIE, ACCESS_MAX_AGE, accessCode, accessToken, codeMatches } from "@/lib/access";
+import { accessCode, codeMatches, grantAccessCookie } from "@/lib/access";
 import { ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 
 export async function POST(req: NextRequest) {
@@ -20,12 +20,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "That code isn't right." }, { status: 401 });
   }
   const res = NextResponse.json({ ok: true });
-  res.cookies.set(ACCESS_COOKIE, await accessToken(code), {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: ACCESS_MAX_AGE,
-  });
+  await grantAccessCookie(res);
   return res;
 }

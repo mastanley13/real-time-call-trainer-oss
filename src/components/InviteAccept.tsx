@@ -11,7 +11,7 @@ import { INVITE_ROLE_LABEL, isInviteToken, type InvitePreview } from "@/lib/invi
 type State =
   | { kind: "loading" }
   | { kind: "ready"; preview: InvitePreview }
-  | { kind: "joined"; teamName: string; accessCodeRequired: boolean }
+  | { kind: "joined"; teamName: string }
   | { kind: "problem"; message: string };
 
 const BAD_LINK = "This invite link is not valid. Check that you copied the whole link, or ask the team owner for a new one.";
@@ -63,7 +63,7 @@ export default function InviteAccept({ token }: { token: string }) {
       if (!res.ok) { setError(body.message || "Could not accept the invite. Try again in a minute."); return; }
       // The server sent a new session with the new role; pick it up so the header and tabs match.
       if (!body.sample) await adoptSession().catch(() => {});
-      setState({ kind: "joined", teamName: body.team?.name ?? "the team", accessCodeRequired: body.accessCodeRequired === true });
+      setState({ kind: "joined", teamName: body.team?.name ?? "the team" });
     } catch {
       setError("Your browser couldn't reach this server. Check your connection and try again.");
     } finally {
@@ -118,14 +118,7 @@ export default function InviteAccept({ token }: { token: string }) {
   if (state.kind === "joined") {
     return (
       <AuthShell title={`You joined ${state.teamName}`} subtitle="Your practice now counts toward the team, and you share its voice minutes.">
-        {state.accessCodeRequired ? (
-          <div className="space-y-3">
-            <p className="text-sm text-ink-soft">This site also asks for an access code. Get it from your team owner, then enter it to start practising.</p>
-            <Link href="/access?next=%2Ftrainer" className="btn-primary w-full">Enter access code</Link>
-          </div>
-        ) : (
-          <Link href="/trainer" className="btn-primary w-full">Start practising</Link>
-        )}
+        <Link href="/trainer" className="btn-primary w-full">Start practising</Link>
       </AuthShell>
     );
   }

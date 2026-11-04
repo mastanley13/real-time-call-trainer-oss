@@ -29,6 +29,28 @@ export async function accessToken(code: string): Promise<string> {
   return hmacHex(key, `trainer-access:${code}`);
 }
 
+/** The access cookie's flags: httpOnly, SameSite=Lax, path /, 30 days, Secure in production. */
+export const accessCookieOptions = () => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax" as const,
+  path: "/",
+  maxAge: ACCESS_MAX_AGE,
+});
+
+type CookieSetter = { cookies: { set(name: string, value: string, options: ReturnType<typeof accessCookieOptions>): unknown } };
+
+/**
+ * Sets the access cookie on `res`, exactly as entering the code at /access does. Used there and when a team invite
+ * is accepted (an accepted invite counts as site access). False, and nothing set, when the gate is off.
+ */
+export async function grantAccessCookie(res: CookieSetter): Promise<boolean> {
+  const code = accessCode();
+  if (!code) return false;
+  res.cookies.set(ACCESS_COOKIE, await accessToken(code), accessCookieOptions());
+  return true;
+}
+
 /** True when the request carries the access cookie for `code`. Same check the middleware gate uses. */
 export async function hasValidAccessCookie(req: { cookies: { get(name: string): { value: string } | undefined } }, code: string): Promise<boolean> {
   const cookie = req.cookies.get(ACCESS_COOKIE)?.value ?? "";

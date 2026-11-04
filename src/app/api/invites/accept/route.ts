@@ -1,21 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
 import { requireAuth } from "@/lib/apiAuth";
 import { signSessionToken } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { grantAccessCookie } from "@/lib/access";
 import { readJsonLimited } from "@/lib/rateLimit";
-import { emailsMatch, fitsSeats, inviteStatus, joinBlock, maskEmail, TokenBodySchema, type InviteStatus } from "@/lib/invites";
+import { TokenBodySchema } from "@/lib/invites";
 import { hashInviteToken } from "@/lib/inviteToken";
-import { gateAllowsInvite, hasSiteAccess, INVITE_PASS_COOKIE, invitePassCookie, passRequired } from "@/lib/invitePass";
+import { gateAllowsInvite, INVITE_PASS_COOKIE, invitePassCookie, passRequired } from "@/lib/invitePass";
 import { SAMPLE_ORG } from "@/lib/teamSample";
 import { teamIsLocal } from "../../team/_lib/server";
-import { badRequest, invitesLimit, inviteLinkProblem, lockOrgs, lockUser, seatsFull, seatUsage, serverError } from "../../team/_lib/members";
+import { acceptInviteTx } from "../../team/_lib/acceptInvite";
+import { badRequest, invitesLimit, inviteLinkProblem, seatsFull, serverError } from "../../team/_lib/members";
 
 /**
- * POST { token }: the signed-in person joins the invite's organization with the invite's role. The account's
- * email must match the invite (case-insensitive). Single use: the claim only lands while the invite is still open,
- * so two tabs cannot both accept it. Seat-checked under the organization lock. Answers with a fresh session
- * (cookie and token) that carries the new role.
+ * POST { token }: the signed-in person joins the invite's organization with the invite's role (acceptInviteTx:
+ * email match, single use, seat-checked under the organization lock). Answers with a fresh session (cookie and
+ * token) that carries the new role. An accepted invite counts as site access, so with TRAINER_ACCESS_CODE set the
+ * answer also carries the same access cookie that entering the code sets.
  */
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
@@ -38,67 +39,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const tokenHash = hashInviteToken(token);
-    const result = await prisma.$transaction(async (tx) => {
-      // A first look without locks, only to answer a bad link cheaply and to learn which organizations to lock.
-      const seen = await tx.teamInvite.findUnique({ where: { tokenHash }, select: { organizationId: true } });
-      if (!seen) return { kind: "link" as const, status: "missing" as const };
-      const before = await tx.user.findUnique({ where: { id: auth.id }, select: { organizationId: true } });
-      if (!before) return { kind: "unknown_user" as const };
-
-      // The team being joined and the team being left, in id order, then the user row. Two owners of one team who
-      // accept invites elsewhere at once queue on the team they are leaving, so the second sees the first gone.
-      await lockOrgs(tx, [seen.organizationId, before.organizationId]);
-      await lockUser(tx, auth.id);
-      // Everything below is read under the locks, against the clock as it is now, not before the wait.
-      const now = new Date();
-
-      const invite = await tx.teamInvite.findUnique({ where: { tokenHash } });
-      if (!invite) return { kind: "link" as const, status: "missing" as const };
-      const status = inviteStatus(invite, now);
-      if (status !== "pending") return { kind: "link" as const, status };
-
-      const user = await tx.user.findUnique({ where: { id: auth.id }, select: { id: true, email: true, firstName: true, lastName: true, role: true, organizationId: true } });
-      if (!user) return { kind: "unknown_user" as const };
-      // The account changed teams between the first look and the locks, so the team it is leaving is not locked.
-      if (user.organizationId !== before.organizationId) return { kind: "changed" as const };
-      if (!emailsMatch(user.email, invite.email)) return { kind: "email_mismatch" as const, invited: maskEmail(invite.email) };
-
-      const org =await tx.organization.findUnique({ where: { id: invite.organizationId }, select: { id: true, name: true, planTier: true, seatCount: true } });
-      if (!org) return { kind: "link" as const, status: "missing" as const };
-      if (org.planTier !== "team") return { kind: "not_team_plan" as const };
-
-      let current: { otherMembers: number; otherOwners: number } | null = null;
-      if (user.organizationId && user.organizationId !== org.id && user.role === "owner") {
-        const [members, owners] = await Promise.all([
-          tx.user.count({ where: { organizationId: user.organizationId } }),
-          tx.user.count({ where: { organizationId: user.organizationId, role: "owner" } }),
-        ]);
-        current = { otherMembers: members - 1, otherOwners: owners - 1 };
-      }
-      const block = joinBlock(user, org.id, current);
-      if (block) return { kind: block };
-
-      // This invite already holds one of the pending seats, so it is counted once, as the new member.
-      const usage = await seatUsage(tx, org.id, org.seatCount, now);
-      if (!fitsSeats({ ...usage, pending: Math.max(0, usage.pending - 1) }, 1)) return { kind: "seats_full" as const, seatCount: org.seatCount };
-
-      const claimed = await tx.teamInvite.updateMany({
-        where: { id: invite.id, tokenHash, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
-        data: { acceptedAt: now, acceptedById: user.id },
-      });
-      if (claimed.count !== 1) {
-        // Say why: used, revoked, expired, or replaced by a resend.
-        const fresh = await tx.teamInvite.findUnique({ where: { id: invite.id } });
-        const lost: InviteStatus | "missing" = fresh && fresh.tokenHash === tokenHash ? inviteStatus(fresh, new Date()) : "missing";
-        return { kind: "link" as const, status: lost === "pending" ? ("accepted" as const) : lost };
-      }
-
-      const updated = await tx.user.update({ where: { id: user.id }, data: { organizationId: org.id, role: invite.role } });
-      await tx.auditEvent.create({
-        data: { userId: user.id, action: "team.invite_accepted", resource: invite.id, metadata: { organizationId: org.id, role: invite.role, previousOrganizationId: user.organizationId } satisfies Prisma.InputJsonValue },
-      });
-      return { kind: "ok" as const, org, user: updated };
-    });
+    const result = await prisma.$transaction((tx) => acceptInviteTx(tx, auth.id, tokenHash));
 
     switch (result.kind) {
       case "link":
@@ -127,10 +68,10 @@ export async function POST(req: NextRequest) {
       role: result.user.role as "trainee" | "manager" | "owner",
     };
     const session = signSessionToken(sessionUser);
-    // Joining a team does not grant the site-wide access code. The page says so when it is still needed.
-    const accessCodeRequired = !(await hasSiteAccess(req));
-    const res = NextResponse.json({ ok: true, team: { name: result.org.name }, user: { ...sessionUser, isPlatformAdmin: result.user.isPlatformAdmin }, token: session, accessCodeRequired });
+    const res = NextResponse.json({ ok: true, team: { name: result.org.name }, user: { ...sessionUser, isPlatformAdmin: result.user.isPlatformAdmin }, token: session });
     res.cookies.set("authToken", session, { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: 60 * 60 * 12 });
+    // The invite is accepted, so it now counts as site access (a no-op without the access gate).
+    await grantAccessCookie(res);
     // The invite is used, so its pass has nothing left to open.
     res.cookies.set(INVITE_PASS_COOKIE, "", invitePassCookie(0));
     return res;
