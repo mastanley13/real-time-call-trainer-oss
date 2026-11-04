@@ -36,7 +36,7 @@ const COMPARE: CompareRow[] = [
   { feature: "Two-factor sign-in (MFA)", self: "You configure it", free: "Available", pro: "Available", team: "Available" },
   { feature: "Premium AI voice", self: "Your keys", free: "No", pro: "No", team: PREMIUM_COMING_SOON },
   { feature: "Updates and backups", self: "You handle them", free: "Automatic", pro: "Automatic", team: "Automatic" },
-  { feature: "Support", self: "GitHub community", free: "Community", pro: "Email", team: "Priority email" },
+  { feature: "Support", self: "GitHub community", free: "Community", pro: "Community", team: "Priority email" },
   { feature: "Overage charges", self: "None", free: "None", pro: "None", team: "None" },
 ];
 

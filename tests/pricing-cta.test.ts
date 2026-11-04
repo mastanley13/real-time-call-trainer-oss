@@ -20,7 +20,7 @@ describe("PricingCards, billing off", () => {
   const html = cards(false);
 
   it("reads Start free on Pro and Team with the open-soon line under each", () => {
-    expect(html).not.toContain("Start Pro");
+    expect(html).not.toContain("Start with Pro");
     expect(html).not.toContain("Start with Team");
     expect(count(html, ">Start free<")).toBe(2);
     expect(count(html, OPEN_SOON_LINE)).toBe(2);
@@ -40,7 +40,7 @@ describe("PricingCards, billing on", () => {
   const html = cards(true);
 
   it("keeps the paid labels and drops the open-soon line", () => {
-    expect(html).toContain("Start Pro");
+    expect(html).toContain("Start with Pro");
     expect(html).toContain("Start with Team");
     expect(html).not.toContain(OPEN_SOON_LINE);
   });
@@ -51,11 +51,11 @@ describe("PricingCards, billing on", () => {
 
   it("the toggle drives the interval in the hrefs", () => {
     // Static markup cannot click, so check the link builder the toggle state feeds.
-    expect(tierAction("pro", "Start Pro", true, "year").href).toBe("/register?plan=pro&interval=year&src=pricing");
+    expect(tierAction("pro", "Start with Pro", true, "year").href).toBe("/register?plan=pro&interval=year&src=pricing");
     expect(tierAction("team", "Start with Team", true, "year").href).toBe("/register?plan=team&interval=year&src=pricing");
     expect(tierAction("team", "Start with Team", true, "month").href).toBe("/register?plan=team&interval=month&src=pricing");
     // Billing off keeps the selected period in the link too, so sign-up stores it.
-    expect(tierAction("pro", "Start Pro", false, "year")).toMatchObject({ cta: "Start free", href: "/register?plan=pro&interval=year&src=pricing", soon: true });
+    expect(tierAction("pro", "Start with Pro", false, "year")).toMatchObject({ cta: "Start free", href: "/register?plan=pro&interval=year&src=pricing", soon: true });
     expect(tierAction("team", "Start with Team", false, "month")).toMatchObject({ cta: "Start free", href: "/register?plan=team&interval=month&src=pricing", soon: true });
   });
 });
@@ -79,10 +79,19 @@ describe("plan features match what each plan unlocks", () => {
     expect(html).not.toContain("Core persona library");
   });
 
-  it("Pro adds minutes and email support on top of Free, without relisting Free features", () => {
+  it("Pro adds minutes on top of Free, without relisting Free features or promising email support", () => {
     const pro = tier("pro");
-    for (const f of ["200 voice minutes per month", "Everything in Free", "Email support", "Reviewed persona packs (coming soon)"]) expect(pro).toContain(f);
+    for (const f of ["200 voice minutes per month", "Everything in Free", "Reviewed persona packs (coming soon)"]) expect(pro).toContain(f);
     for (const f of ["Persona wizard", "Full persona library", "Call history", "MFA"]) expect(pro).not.toContain(f);
+    expect(pro).not.toMatch(/email support/i);
+  });
+
+  it("uses Start with Pro and Start with Team, never Start Pro", () => {
+    for (const html of [cards(true), summary(true)]) {
+      expect(html).toContain(">Start with Pro<");
+      expect(html).toContain(">Start with Team<");
+      expect(html).not.toContain("Start Pro");
+    }
   });
 
   it("Team says Team view and assignments are on any plan and claims no MFA enforcement", () => {
@@ -94,7 +103,7 @@ describe("plan features match what each plan unlocks", () => {
   it("the summary cards say the same", () => {
     const s = summary(false);
     expect(s).toContain("10 voice minutes a month, unlimited text sim, live coach, graded debriefs, full persona library, persona wizard, score trends, two-factor sign-in (MFA).");
-    expect(s).toContain("200 voice minutes a month, everything in Free, email support. Reviewed persona packs: coming soon.");
+    expect(s).toContain("200 voice minutes a month, everything in Free. Reviewed persona packs: coming soon.");
     expect(s).toContain("300 pooled voice minutes per seat, everything in Pro, priority email support. Managers get Team view and assignments on any plan.");
     expect(s).not.toMatch(/core persona/i);
   });
@@ -135,7 +144,7 @@ describe("Team and MFA copy matches the code", () => {
 describe("PricingSummary", () => {
   it("billing off: Start free with the open-soon line on Pro and Team", () => {
     const html = summary(false);
-    expect(html).not.toContain("Start Pro");
+    expect(html).not.toContain("Start with Pro");
     expect(html).not.toContain("Start with Team");
     expect(count(html, OPEN_SOON_LINE)).toBe(2);
     expect(hrefs(html)).toEqual(expect.arrayContaining(["/register?plan=pro&interval=month&seg=saas&src=pricing", "/register?plan=team&interval=month&seg=saas&src=pricing"]));
@@ -143,7 +152,7 @@ describe("PricingSummary", () => {
 
   it("billing on: the paid labels", () => {
     const html = summary(true);
-    expect(html).toContain("Start Pro");
+    expect(html).toContain("Start with Pro");
     expect(html).toContain("Start with Team");
     expect(html).not.toContain(OPEN_SOON_LINE);
     expect(hrefs(html)).toEqual(expect.arrayContaining(["/register?plan=pro&interval=month&seg=saas&src=pricing", "/register?plan=team&interval=month&seg=saas&src=pricing"]));
@@ -162,10 +171,10 @@ describe("billing state", () => {
   it("the page renders the billing-off UI with a live key and the billing-on UI with a test key", () => {
     vi.stubEnv("DEMO_MODE", "");
     vi.stubEnv("STRIPE_SECRET_KEY", "sk_live_placeholder");
-    expect(renderToStaticMarkup(createElement(PricingPage))).not.toContain("Start Pro");
+    expect(renderToStaticMarkup(createElement(PricingPage))).not.toContain("Start with Pro");
     vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
     const on = renderToStaticMarkup(createElement(PricingPage));
-    expect(on).toContain("Start Pro");
+    expect(on).toContain("Start with Pro");
     expect(on).toContain("Start with Team");
   });
 });
@@ -175,7 +184,7 @@ describe("pricing page", () => {
   const html = renderToStaticMarkup(createElement(PricingPage));
 
   it("billing off: no paid CTA text anywhere in the HTML", () => {
-    expect(html).not.toContain("Start Pro");
+    expect(html).not.toContain("Start with Pro");
     expect(html).not.toContain("Start with Team");
   });
 
@@ -217,6 +226,12 @@ describe("pricing page", () => {
     };
     expect(cellsOf("Persona library")).toEqual(["Yes", "Full", "Full", "Full"]);
     expect(cellsOf("Persona wizard")).toEqual(["Yes", "Yes", "Yes", "Yes"]);
+  });
+
+  it("the Support row promises Pro nothing beyond what Free gets", () => {
+    const row = html.slice(html.indexOf(">Support</th>"));
+    const cells = [...row.slice(0, row.indexOf("</tr>")).matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((m) => m[1]);
+    expect(cells).toEqual(["GitHub community", "Community", "Community", "Priority email"]);
   });
 
   it("the Free FAQ names the library and the wizard", () => {

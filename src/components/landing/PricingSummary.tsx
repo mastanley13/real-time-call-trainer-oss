@@ -16,8 +16,8 @@ export default function PricingSummary({ src, seg, billingEnabled }: { src: stri
     },
     {
       name: "Pro", price: `$${PRICE.pro.month}/mo`, note: `or $${PRICE.pro.year}/yr`,
-      body: `${PRO_VOICE_MIN} voice minutes a month, everything in Free, email support. Reviewed persona packs: coming soon.`,
-      href: registerHref({ plan: "pro", interval: "month", seg, src }), cta: billingEnabled ? "Start Pro" : "Start free", soon: !billingEnabled,
+      body: `${PRO_VOICE_MIN} voice minutes a month, everything in Free. Reviewed persona packs: coming soon.`,
+      href: registerHref({ plan: "pro", interval: "month", seg, src }), cta: billingEnabled ? "Start with Pro" : "Start free", soon: !billingEnabled,
     },
     {
       name: "Team", price: `$${PRICE.team.month}/seat/mo`, note: `or $${PRICE.team.year}/seat/yr, ${TEAM_MIN_SEATS}-seat minimum`,

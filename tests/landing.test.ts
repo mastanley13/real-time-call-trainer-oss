@@ -45,10 +45,14 @@ describe("coaches partner page", () => {
     expect(c.subhead).toBe("Give your clients AI buyers to practice on between sessions, with live coaching and graded debriefs.");
     expect(c.primaryLabel).toBe("Join the partner waitlist");
     expect(c.primaryHref).toBe("mailto:support@calltrainer.tech?subject=Coach%20partner%20waitlist");
-    expect(c.steps.map((s) => s.title)).toEqual(["Join the waitlist.", "Get set up.", "Your clients practice."]);
-    expect(c.steps[0].body).toBe("Email us a few lines about you and your clients to join the partner waitlist.");
-    expect(c.steps[1].body).toBe("Approved partners get a referral link. Partner terms are coming soon.");
+    expect(c.steps.map((s) => s.title)).toEqual(["Email us.", "Hear back if it's a fit.", "Your clients practice."]);
+    expect(c.steps[0].body).toBe("Send a few lines about you and your clients.");
+    expect(c.steps[1].body).toBe("Join the waitlist and we'll reach out if it's a fit.");
     expect(c.faq.map((f) => f.q)).not.toContain("When do I get paid?");
+  });
+
+  it("mentions no approved partners and no referral link", () => {
+    for (const s of [text, html]) expect(s).not.toMatch(/approved partner|referral link|approval/i);
   });
 
   it("says waitlist, not application, and promises no review", () => {
@@ -57,7 +61,7 @@ describe("coaches partner page", () => {
   });
 
   it("frames the steps as a waitlist and keeps other verticals' heading", () => {
-    expect(html).toContain("From waitlist to referral link");
+    expect(html).toContain("How the partner waitlist works");
     const other = renderToStaticMarkup(createElement(LandingPage, { l: LANDINGS.insurance, billingEnabled: false }));
     expect(other).toContain("Brief, call, debrief. Then go again.");
   });

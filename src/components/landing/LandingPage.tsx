@@ -39,7 +39,7 @@ export default function LandingPage({ l, billingEnabled }: { l: Landing; billing
       <section className="border-y border-line bg-surface" aria-labelledby="how-h">
         <div className="page py-12">
           <p className="eyebrow">How it works</p>
-          <h2 id="how-h" className="mt-1 text-2xl font-bold sm:text-3xl">{partner ? "From waitlist to referral link" : "Brief, call, debrief. Then go again."}</h2>
+          <h2 id="how-h" className="mt-1 text-2xl font-bold sm:text-3xl">{partner ? "How the partner waitlist works" :"Brief, call, debrief. Then go again."}</h2>
           <ol className={`mt-8 grid gap-4 ${l.steps.length === 3 ? "md:grid-cols-3" : "md:grid-cols-2 lg:grid-cols-4"}`}>
             {l.steps.map((s, i) => (
               <li key={s.title} className="rounded-panel border border-line p-4">

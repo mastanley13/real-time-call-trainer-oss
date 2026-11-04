@@ -215,8 +215,8 @@ export const LANDINGS: Record<VerticalSlug, Landing> = {
       { title: "You cannot see the gaps.", body: "Without transcripts you coach from memory and self-reports." },
     ],
     steps: [
-      { title: "Join the waitlist.", body: "Email us a few lines about you and your clients to join the partner waitlist." },
-      { title: "Get set up.", body: "Approved partners get a referral link. Partner terms are coming soon." },
+      { title: "Email us.", body: "Send a few lines about you and your clients." },
+      { title: "Hear back if it's a fit.", body: "Join the waitlist and we'll reach out if it's a fit." },
       { title: "Your clients practice.", body: "They practice on AI buyers, get coached live and graded with transcript quotes. Build personas for your own methodology in the persona wizard." },
     ],
     personas: [
