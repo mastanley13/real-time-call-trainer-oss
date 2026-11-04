@@ -8,6 +8,7 @@ import LogoMark from "@/components/LogoMark";
 import MobileMenu from "@/components/MobileMenu";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useAuth, type User } from "@/contexts/AuthContext";
+import { showModelChip } from "@/lib/modelChip";
 import { canManageTeam } from "@/lib/team";
 
 export const NAV = [
@@ -78,7 +79,7 @@ export default function SiteHeader() {
         </nav>
 
         <div className="ml-auto flex items-center gap-1.5">
-          {capabilities?.model && capabilities.llm && (
+          {capabilities && showModelChip(capabilities, user) && (
             <Link href="/settings/models" className="chip-model hidden transition-colors hover:border-ink-muted/50 hover:text-ink lg:inline-flex"
               title="Model used for the coach, grading and persona wizard. Open model settings.">
               <span className="lamp lamp-ok !h-1.5 !w-1.5" aria-hidden /> {capabilities.model}

@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
 import { Check } from "lucide-react";
+import { useBilling } from "@/components/landing/BillingContext";
 import {
   FREE_SUMMARY, OPEN_SOON_LINE, PREMIUM_COMING_SOON, PREMIUM_VOICE_CAP_PCT, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT,
   registerHref, type Billing,
@@ -41,7 +41,7 @@ export function tierAction(id: string, cta: string, billingEnabled: boolean, int
 
 /** Billing toggle, tier cards and the Premium AI voice add-on. `billingEnabled` comes from the server. */
 export default function PricingCards({ billingEnabled }: { billingEnabled: boolean }) {
-  const [billing, setBilling] = useState<Billing>("month");
+  const { billing, setBilling } = useBilling();
   return (
     <div>
       <div role="group" aria-label="Billing period" className="inline-flex rounded-lg border border-line bg-sunken p-1">

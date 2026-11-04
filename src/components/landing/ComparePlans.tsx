@@ -1,15 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useBilling } from "@/components/landing/BillingContext";
+import type { Billing } from "@/lib/pricing";
 import { NO_SCROLL_CUE, sameScrollCue, scrollCue, type ScrollCue } from "@/lib/scrollCue";
+
+/** A cell is one string, or one string per billing period. */
+export type CompareCell = string | { month: string; year: string };
 
 export interface CompareRow {
   feature: string;
   self: string;
   free: string;
-  pro: string;
-  team: string;
+  pro: CompareCell;
+  team: CompareCell;
 }
+
+export const cellText = (c: CompareCell, b: Billing): string => (typeof c === "string" ? c : c[b]);
 
 /** Hint above the table. Renders nothing while the table fits. */
 export function CompareHint({ cue }: { cue: ScrollCue }) {
@@ -28,6 +35,7 @@ export function CompareFades({ cue }: { cue: ScrollCue }) {
 }
 
 export default function ComparePlans({ rows }: { rows: CompareRow[] }) {
+  const { billing } = useBilling();
   const ref = useRef<HTMLDivElement>(null);
   const [cue, setCue] = useState<ScrollCue>(NO_SCROLL_CUE);
 
@@ -75,8 +83,8 @@ export default function ComparePlans({ rows }: { rows: CompareRow[] }) {
                   <th scope="row" className="px-4 py-3 font-medium text-ink">{r.feature}</th>
                   <td className="px-4 py-3 text-ink-soft">{r.self}</td>
                   <td className="px-4 py-3 text-ink-soft">{r.free}</td>
-                  <td className="px-4 py-3 text-ink-soft">{r.pro}</td>
-                  <td className="px-4 py-3 text-ink-soft">{r.team}</td>
+                  <td className="px-4 py-3 text-ink-soft">{cellText(r.pro, billing)}</td>
+                  <td className="px-4 py-3 text-ink-soft">{cellText(r.team, billing)}</td>
                 </tr>
               ))}
             </tbody>
