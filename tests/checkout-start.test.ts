@@ -97,19 +97,42 @@ describe("register link intent", () => {
   it("billing off lands on /trainer, with the notice only when a plan was asked for", () => {
     expect(afterSignin(false, { plan: "pro", interval: "year", src: "pricing" })).toEqual({ path: "/trainer", notice: "plans_soon" });
     expect(afterSignin(false, { src: "pricing" })).toEqual({ path: "/trainer", notice: null });
+    expect(afterSignin(false, { plan: "pro", interval: "year", src: "pricing" }, true)).toEqual({ path: "/trainer?firstrun=1", notice: "plans_soon" });
   });
 
   it("billing on goes to the checkout step with the plan and period, for new and signed-in users alike", () => {
     expect(afterSignin(true, { plan: "team", interval: "year" })).toEqual({ path: "/checkout/start?plan=team&interval=year", notice: null });
     expect(afterSignin(true, { plan: "pro" })).toEqual({ path: "/checkout/start?plan=pro&interval=month", notice: null });
+    expect(afterSignin(true, { plan: "pro" }, true)).toEqual({ path: "/checkout/start?plan=pro&interval=month", notice: null });
     expect(afterSignin(true, {})).toEqual({ path: "/trainer", notice: null });
+  });
+
+  it("only a new account on the /trainer branch carries firstrun=1; the checkout branch never does", () => {
+    for (const plan of ["pro", "team"] as const) for (const interval of ["month", "year"] as const) {
+      expect(afterSignin(true, { plan, interval }, true).path).not.toContain("firstrun");
+      expect(afterSignin(false, { plan, interval }, true).path).toBe("/trainer?firstrun=1");
+      expect(afterSignin(false, { plan, interval }, false).path).toBe("/trainer");
+    }
+    expect(afterSignin(false, {}, true).path).toBe("/trainer?firstrun=1");
+    expect(afterSignin(true, {}, true).path).toBe("/trainer?firstrun=1");
+  });
+
+  it("an already signed-in user opening /register is never sent into first run", () => {
+    for (const billing of [true, false]) for (const intent of [{}, { plan: "pro" as const }, { src: "pricing" }]) {
+      expect(afterSignin(billing, intent).path).not.toContain("firstrun");
+      expect(afterSignin(billing, intent, false).path).not.toContain("firstrun");
+    }
   });
 
   it("the register page forwards the whitelisted intent in the sign-up POST and uses afterSignin for both paths", () => {
     const src = readFileSync("src/app/register/page.tsx", "utf8");
     expect(src).toContain("...intent,");
     expect(src).toContain("intentFromQuery(useSearchParams())");
-    expect(src.match(/goAfterSignin\(\)/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(src).toContain("afterSignin(billingEnabled, intent, newAccount)");
+    // Signed in already: never first run. Just registered: first run.
+    expect(src).toContain("if (isAuthenticated && configKnown) goAfterSignin(false);");
+    expect(src).toMatch(/await register\(\{[\s\S]*?\}\);\s*goAfterSignin\(true\);/);
+    expect(src.match(/goAfterSignin\(true\)/g)?.length).toBe(1);
     expect(src).not.toContain('router.replace("/trainer")');
   });
 });

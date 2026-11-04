@@ -10,12 +10,15 @@ import CallOrb, { type AgentState } from "@/components/CallOrb";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import CallError from "./CallError";
 import CopilotRail, { CueCard, Instruments } from "./CopilotRail";
+import FirstRunBar from "./FirstRunBar";
 import type { LiveCue, RubricChip, useCoach } from "./useCoach";
 
 export interface DeckText {
   value: string; onChange: (v: string) => void; onSend: () => void; hungUp: boolean; typing: boolean;
   /** Who plays the persona, e.g. "Text · gpt-4.1-mini" or "Text · scripted". */
   caller?: string;
+  /** A new user's first call: shows the reply target and counter, and the way back to the briefing for voice. */
+  firstRun?: { replies: number; onSwitchToVoice?: () => void };
 }
 export interface DeckVoice { muted: boolean; onToggleMute: () => void; getInputVolume: () => number; getOutputVolume: () => number; engine?: "openai" | "elevenlabs" }
 
@@ -209,6 +212,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
                 <button className="btn-primary btn-sm" onClick={onEnd} disabled={grading}>Grade this call</button>
               </div>
             )}
+            {text?.firstRun && !text.hungUp && <FirstRunBar replies={text.firstRun.replies} onSwitchToVoice={grading ? undefined : text.firstRun.onSwitchToVoice} />}
             {text && !text.hungUp && (
               <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); text.onSend(); }}>
                 {inserted && <p className="font-mono text-[11px] text-ink-muted">↳ Line inserted from the coach. Edit it or send it. Nothing is auto-sent.</p>}

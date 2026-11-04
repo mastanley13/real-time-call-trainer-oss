@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, CheckCircle2, Loader2, Printer, Quote, RefreshCw, RotateCcw, TrendingUp } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getLocalSession, updateLocalEvaluation, type CoachLog } from "@/lib/sessionStore";
+import { FIRST_RUN_PARAM } from "@/lib/firstRun";
 import { listScenarios } from "@/lib/scenarioStore";
 import type { Scenario } from "@/lib/scenarios";
 import type { Evaluation } from "@/lib/grader-types";
@@ -18,6 +19,7 @@ import { formatDuration } from "@/lib/format";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import { PersonaAvatar } from "@/components/ui/Persona";
 import { CUE_ICON } from "@/components/call/CopilotRail";
+import { FirstGradedNote } from "@/components/call/FirstRunBar";
 
 interface View {
   title: string;
@@ -74,6 +76,8 @@ function ScoreRing({ score, grade }: { score: number; grade: string }) {
 
 export default function DebriefPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
+  /** Set by the trainer when this was the user's first-run call (see lib/firstRun.ts). */
+  const firstRun = useSearchParams()?.get(FIRST_RUN_PARAM) === "1";
   const { isAuthenticated, isLoading, capabilities, user } = useAuth();
   const router = useRouter();
   const [view, setView] = useState<View | null>(null);
@@ -195,6 +199,7 @@ export default function DebriefPage() {
           </div>
         </div>
         {error && <p className="banner-warn">{error}</p>}
+        {firstRun && spoke && ev && <FirstGradedNote scenarioId={view.scenarioId} />}
 
         {!spoke ? (
           <div className="card text-center">

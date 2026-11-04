@@ -4,9 +4,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationProvider, useConversation } from "@elevenlabs/react";
 import { useAuth } from "@/contexts/AuthContext";
-import { Scenario, ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
+import { STARTER_SCENARIO_ID, Scenario, ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { listScenarios } from "@/lib/scenarioStore";
-import { getLocalSession, saveSession, type CoachLog, type StoredTurn } from "@/lib/sessionStore";
+import { countSavedSessions, getLocalSession, saveSession, type CoachLog, type StoredTurn } from "@/lib/sessionStore";
+import {
+  FIRST_RUN_PARAM, autoFinishGate, callGeneration, hasStartedFirstRun, isFirstRun, markFirstRunStarted, repliesSent, trainerView, type FirstRunState,
+} from "@/lib/firstRun";
 import type { Evaluation } from "@/lib/grader-types";
 import type { CoachMode } from "@/lib/coach-types";
 import type { AgentState } from "@/components/CallOrb";
@@ -107,7 +110,7 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, reg
 }
 
 export default function TrainerClient() {
-  const { capabilities, isAuthenticated, isLoading } = useAuth();
+  const { capabilities, isAuthenticated, isLoading, user } = useAuth();
   const router = useRouter();
   const [scenario, setScenario] = useState<Scenario | null>(null);
   const [mode, setMode] = useState<Mode>("voice");
@@ -137,6 +140,11 @@ export default function TrainerClient() {
   const turnsRef = useRef<StoredTurn[]>([]);
   const [replyTalking, setReplyTalking] = useState(false);
   const talkTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  /** A new user's first visit opens a text call that grades itself (see lib/firstRun.ts). */
+  const [firstRun, setFirstRun] = useState<FirstRunState>("deciding");
+  const autoFinish = useRef(autoFinishGate());
+  /** Bumped by every begin() and by leaving a call for the briefing, so a text reply for an older call is dropped. */
+  const callGen = useRef(callGeneration());
 
   const live = phase === "live";
   const grading = phase === "grading";
@@ -158,6 +166,9 @@ export default function TrainerClient() {
       const saved = localStorage.getItem(COACH_MODE);
       if (saved === "blind" || saved === "guided" || saved === "coached") setCoachModeState(saved);
     } catch { /* storage unavailable */ }
+    // Debrief links can ask for a call mode; the briefing still shows so the rep can change it.
+    const askedMode = params.get("mode");
+    if (askedMode === "text" || askedMode === "voice") setMode(askedMode);
     const asked = params.get("scenario");
     // Without ?scenario=, use the persona practised last.
     const wanted = () => {
@@ -208,6 +219,32 @@ export default function TrainerClient() {
   useEffect(() => {
     if (!isLoading && capabilities && !isAuthenticated) router.replace("/login");
   }, [isLoading, capabilities, isAuthenticated, router]);
+
+  // First run, decided once per page load: no saved sessions (server list for stored accounts, this browser in demo),
+  // no last persona or first-run marker in this browser, and no ?scenario or ?retry. A failed lookup gives the usual briefing.
+  const userId = user?.id;
+  useEffect(() => {
+    if (firstRun !== "deciding" || isLoading || !capabilities) return;
+    if (!isAuthenticated) { setFirstRun("off"); return; }
+    const params = new URLSearchParams(query);
+    let lastScenario = false;
+    try { lastScenario = !!localStorage.getItem(LAST_SCENARIO); } catch { /* storage unavailable */ }
+    const local = { lastScenario, started: hasStartedFirstRun(userId) };
+    // The count is only needed when nothing else has decided it.
+    const needCount = isFirstRun({ authenticated: true, sessionCount: 0, params, ...local }) && params.get(FIRST_RUN_PARAM) !== "1";
+    let alive = true;
+    (needCount ? countSavedSessions(!!capabilities.database && !capabilities.demoMode) : Promise.resolve(null)).then((sessionCount) => {
+      if (!alive) return;
+      if (!isFirstRun({ authenticated: true, sessionCount, params, ...local })) { setFirstRun("off"); return; }
+      // Text and coached: no mic prompt, no voice minutes, and live help on the first call.
+      setScenario(choose(listScenarios(), STARTER_SCENARIO_ID));
+      setNotice("");
+      setMode("text");
+      setCoachModeState("coached");
+      setFirstRun("start");
+    });
+    return () => { alive = false; };
+  }, [firstRun, isLoading, capabilities, isAuthenticated, query, userId]);
 
   // Read the minutes left each time the briefing shows, so it is right after a call and after an upgrade.
   const stored = !!capabilities?.database && !capabilities?.demoMode;
@@ -301,20 +338,50 @@ export default function TrainerClient() {
     };
     const useServer = !!capabilities?.database && !capabilities?.demoMode;
     const id = await saveSession({ mode, durationSeconds: duration, scenario, transcript, evaluation, coach: coachLog }, useServer);
-    router.push(`/trainer/debrief/${id}`);
-  }, [scenario, mode, capabilities, router, coachMode]);
+    router.push(`/trainer/debrief/${id}${firstRun === "on" ? `?${FIRST_RUN_PARAM}=1` : ""}`);
+  }, [scenario, mode, capabilities, router, coachMode, firstRun]);
 
   const onVoiceEnded = useCallback(() => void finish(), [finish]);
+
+  const beginRef = useRef(begin);
+  beginRef.current = begin;
+  // The first-run call starts on its own once the starter persona and the server's capabilities are in.
+  useEffect(() => {
+    if (firstRun !== "start" || !scenario || !capabilities || mode !== "text" || phase !== "idle") return;
+    setFirstRun("on");
+    // Leaving this call before it is graded (or switching to voice) must not bring first run back on the next visit.
+    markFirstRunStarted(userId);
+    beginRef.current();
+    // Drop ?firstrun=1 so Back from the debrief opens the briefing, not a second first run.
+    const url = new URL(window.location.href);
+    if (url.searchParams.has(FIRST_RUN_PARAM)) {
+      url.searchParams.delete(FIRST_RUN_PARAM);
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }, [firstRun, scenario, capabilities, mode, phase, userId]);
+
+  // Back on the briefing (switched to voice, or ended with nothing to grade): every later call is a normal one.
+  useEffect(() => {
+    if (firstRun === "on" && phase === "idle") setFirstRun("off");
+  }, [firstRun, phase]);
+
+  // The first-run call grades itself once: after the third reply gets its answer, or at five minutes.
+  useEffect(() => {
+    if (firstRun !== "on" || !live) return;
+    if (autoFinish.current.check(turns, elapsed)) void finish();
+  }, [firstRun, live, turns, elapsed, finish]);
 
   function begin() {
     if (!scenario) return;
     try { localStorage.setItem(LAST_SCENARIO, scenario.id); } catch { /* ignore */ }
+    callGen.current.next();
     setError("");
     coach.reset();
     const seed = retry?.seed.map((t) => ({ ...t, timestamp: new Date().toISOString() })) ?? [];
     turnsRef.current = seed;
     setTurns(seed);
     finishing.current = false;
+    autoFinish.current.reset();
     setReplyTalking(false);
     setHungUp(false);
     setCallerSource(null);
@@ -328,6 +395,25 @@ export default function TrainerClient() {
     if (mode === "text" && !seed.length) addTurn({ role: "assistant", text: scenario.aiPersona.openingLine });
   }
 
+  /** From the first-run bar: leave the text call ungraded and open the briefing with voice picked. Nothing is metered until Start. */
+  function switchToVoice() {
+    // A text reply still in flight belongs to this call: the new generation makes drainReplies drop it.
+    callGen.current.next();
+    finishing.current = true;
+    pendingRef.current = false;
+    setBusy(false);
+    setHungUp(false);
+    clearTimeout(talkTimer.current);
+    setReplyTalking(false);
+    turnsRef.current = [];
+    setTurns([]);
+    coach.reset();
+    setError("");
+    setFirstRun("off");
+    if (engine) setMode("voice");
+    setPhase("idle");
+  }
+
   function hangUp() {
     if (mode === "voice") endVoice.current();
     else void finish();
@@ -338,8 +424,11 @@ export default function TrainerClient() {
     if (pendingRef.current || !scenario) return;
     pendingRef.current = true;
     setBusy(true);
+    // Replies are for this call only. After a switch to voice or a new begin(), anything still in flight is dropped.
+    const gen = callGen.current.current;
+    const stale = () => !callGen.current.isCurrent(gen);
     try {
-      while (!finishing.current && turnsRef.current[turnsRef.current.length - 1]?.role === "user") {
+      while (!finishing.current && !stale() && turnsRef.current[turnsRef.current.length - 1]?.role === "user") {
         const sent = turnsRef.current;
         const res = await fetch("/api/simulate/turn", {
           method: "POST",
@@ -348,7 +437,7 @@ export default function TrainerClient() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.message || data.error || "Simulation failed");
-        if (finishing.current) break;
+        if (finishing.current || stale()) break;
         const reply: StoredTurn = { role: "assistant", text: data.reply, timestamp: new Date().toISOString() };
         // The reply answers what was sent, so it goes right after it, ahead of anything typed since.
         const at = sent.length;
@@ -363,10 +452,13 @@ export default function TrainerClient() {
         if (data.ended) { setHungUp(true); break; }
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Simulation failed");
+      if (!stale()) setError(e instanceof Error ? e.message : "Simulation failed");
     } finally {
-      pendingRef.current = false;
-      setBusy(false);
+      // A newer call owns these flags once begin() has run.
+      if (!stale()) {
+        pendingRef.current = false;
+        setBusy(false);
+      }
     }
   }
 
@@ -396,7 +488,9 @@ export default function TrainerClient() {
 
   if (!scenario || !capabilities) return <PageSkeleton rows={2} />;
 
-  if (phase === "idle") {
+  const view = trainerView(phase, firstRun);
+  if (view === "skeleton") return <PageSkeleton rows={2} />;
+  if (view === "briefing") {
     return (
       // Keyed by persona: revealed prep answers, "Got it" and the mic test belong to one buyer.
       <Briefing key={scenario.id} scenario={scenario} capabilities={capabilities} mode={mode} onModeChange={setMode} engine={engine} onEngineChange={setEngine} coachMode={coachMode} onCoachModeChange={setCoachMode}
@@ -437,6 +531,7 @@ export default function TrainerClient() {
   const caller = (callerSource ?? (capabilities.llm ? "llm" : "scripted")) === "llm" ? `Text · ${capabilities.model ?? "AI model"}` : "Text · scripted";
   return (
     <Deck {...shared} orbState={textOrb} status={status} onEnd={hangUp}
-      text={{ value: input, onChange: (v) => { setInput(v); if (!v) setInserted(false); }, onSend: sendText, hungUp, typing: busy && !hungUp, caller }} />
+      text={{ value: input, onChange: (v) => { setInput(v); if (!v) setInserted(false); }, onSend: sendText, hungUp, typing: busy && !hungUp, caller,
+        firstRun: firstRun === "on" ? { replies: repliesSent(turns), onSwitchToVoice: engine ? switchToVoice : undefined } : undefined }} />
   );
 }
