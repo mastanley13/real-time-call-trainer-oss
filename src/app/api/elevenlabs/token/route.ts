@@ -3,7 +3,7 @@ import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, ipLimitResponse } from "@/lib/rateLimit";
 import { elevenLabsAgentFor, meteringEnabled } from "@/lib/serverConfig";
 import { beginCall, endCall } from "@/lib/usage";
-import { capReached, minutesReserved, standardVoiceUnavailable, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
+import { capReached, dailySessionLimit, minutesReserved, standardVoiceUnavailable, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
 
 /**
  * Mints a short-lived WebRTC conversation token for the configured
@@ -51,6 +51,7 @@ export async function GET(req: NextRequest) {
     if (!begun.ok && begun.error === "cap_reached") return capReached();
     if (!begun.ok && begun.error === "minutes_reserved") return minutesReserved();
     if (!begun.ok && begun.error === "voice_blocked") return voiceBlocked(begun.retryAfterSeconds);
+    if (!begun.ok && begun.error === "daily_session_limit") return dailySessionLimit();
     if (!begun.ok && begun.error === "standard_unavailable") return standardVoiceUnavailable();
     if (!begun.ok) return voiceUnavailable();
     callId = begun.callId;
@@ -65,7 +66,7 @@ export async function GET(req: NextRequest) {
     );
     if (!res.ok) {
       console.error("[elevenlabs/token] upstream status", res.status);
-      if (callId) await endCall(auth.id, callId, "failed_connect").catch(() => null);
+      if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
       return NextResponse.json(
         { error: "elevenlabs_upstream_error", message: `ElevenLabs returned ${res.status}. Check your API key and agent id.` },
         { status: 502 },
@@ -76,7 +77,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ token, ...(callId ? { callId, maxSeconds } : {}) });
   } catch (e) {
     console.error("[elevenlabs/token]", e);
-    if (callId) await endCall(auth.id, callId, "failed_connect").catch(() => null);
+    if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
     return NextResponse.json({ error: "elevenlabs_upstream_error", message: "Could not reach ElevenLabs." }, { status: 502 });
   }
 }

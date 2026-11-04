@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { billingGate, verifyWebhookSignature } from "@/lib/stripe";
+import { billingGate, stripeLiveMode, verifyWebhookSignature } from "@/lib/stripe";
 import { handleStripeEvent } from "@/lib/billing";
 
-const Event = z.object({ id: z.string().min(1).max(255), type: z.string().min(1).max(255), data: z.object({ object: z.unknown() }) });
+const Event = z.object({ id: z.string().min(1).max(255), type: z.string().min(1).max(255), livemode: z.boolean(), data: z.object({ object: z.unknown() }) });
 
 const MAX_WEBHOOK_BYTES = 1_000_000;
 
@@ -38,6 +38,9 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid_event" }, { status: 400 });
   }
+
+  // An event from the other Stripe mode is acknowledged and dropped so Stripe does not retry it.
+  if (event.livemode !== stripeLiveMode()) return NextResponse.json({ received: true, ignored: "mode_mismatch" });
 
   try {
     const result = await handleStripeEvent(event);

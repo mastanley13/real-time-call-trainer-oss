@@ -37,7 +37,9 @@ function matches(row: Row, where: Where): boolean {
     const have = row[k] ?? null;
     if (isDate(v)) return isDate(have) && have.getTime() === v.getTime();
     if (v && typeof v === "object") {
-      const o = v as { lt?: Date; gte?: Date };
+      const o = v as { lt?: Date; gte?: Date; gt?: number; in?: unknown[] };
+      if (o.in) return o.in.includes(have);
+      if (o.gt !== undefined) return typeof have === "number" && have > o.gt;
       if (o.lt) return isDate(have) && have.getTime() < o.lt.getTime();
       if (o.gte) return isDate(have) && have.getTime() >= o.gte.getTime();
       return true; // NOT / JSON filters are not modelled
@@ -110,6 +112,7 @@ export function createFakePrisma() {
         if (args.orderBy) out = [...out].sort((a, b) => ((a.createdAt as Date).getTime() - (b.createdAt as Date).getTime()) * (args.orderBy!.createdAt === "desc" ? -1 : 1));
         return out.slice(0, args.take ?? out.length).map((r) => ({ ...r }));
       },
+      count: async (args: { where?: Where } = {}) => rows().filter((r) => matches(r, args.where ?? {})).length,
       create: async (args: { data: Record<string, unknown> }) => {
         const row = { id: `${name}-${++seq}`, ...DEFAULTS[name](), ...Object.fromEntries(Object.entries(args.data).filter(([, v]) => v !== undefined)) } as Row;
         for (const keys of UNIQUE[name]) {
@@ -147,6 +150,7 @@ export function createFakePrisma() {
     };
   }
 
+  const rawQueries: { sql: string; values: unknown[] }[] = [];
   const db = {
     user: table("user"),
     organization: table("organization"),
@@ -155,6 +159,11 @@ export function createFakePrisma() {
     trainerSession: table("trainerSession"),
     stripeEvent: table("stripeEvent"),
     auditEvent: table("auditEvent"),
+    /** Records raw queries (row locks); the fake has no concurrent transactions to block. */
+    $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      rawQueries.push({ sql: strings.join("?"), values });
+      return [];
+    },
     /** Runs fn on the same store; a throw restores the data as it was, like a rolled-back transaction. */
     $transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
       const entry = { snapshot: structuredClone(data) };
@@ -172,6 +181,7 @@ export function createFakePrisma() {
 
   return {
     db,
+    rawQueries,
     /** Direct access to rows for arranging and asserting. */
     rows: (name: keyof typeof UNIQUE) => data[name],
     seed: (name: keyof typeof UNIQUE, row: Record<string, unknown>) => {

@@ -6,7 +6,7 @@ import { ensureAllowance } from "./usage";
 import { emitBillingLifecycle, classifyPlanChange, type BillingLifecycleEvent } from "./billingEvents";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS, isPlanTier, nextAnchorUnix, type PlanTier } from "./usagePlan";
 import { blocksCheckout, isEntitled, nextPastDueSince } from "./subscriptionStatus";
-import { stripeApi, StripeApiError, type StripeParams } from "./stripe";
+import { stripeApi, StripeApiError, stripeLiveMode, type StripeParams } from "./stripe";
 
 /**
  * Checkout parameters and webhook handling. Stripe is the billing source of truth; this module mirrors
@@ -76,6 +76,7 @@ function productKind(meta: Record<string, string> | null | undefined): PriceSlot
 const PriceObject = z.object({
   id: z.string(),
   active: z.boolean().optional(),
+  livemode: z.boolean().optional(),
   type: z.string().optional(),
   recurring: z.object({ usage_type: z.string().optional(), interval: z.string().optional() }).nullish(),
   product: z.union([z.string(), z.object({ metadata: z.record(z.string()).nullish() })]).nullish(),
@@ -92,7 +93,7 @@ export const resetPriceCache = (): void => { priceCache = null; };
  */
 export async function resolvePriceIds(api: Pick<typeof stripeApi, "retrievePrice"> = stripeApi, nowMs = Date.now(), env: NodeJS.ProcessEnv = process.env): Promise<PriceIds> {
   const list = priceAllowlist(env);
-  const key = JSON.stringify(list);
+  const key = JSON.stringify({ list, live: stripeLiveMode(env) });
   if (priceCache && priceCache.key === key && nowMs - priceCache.at < PRICE_CACHE_MS) return priceCache.ids;
   const ids = emptyPrices();
   for (const slot of SLOTS) {
@@ -107,6 +108,8 @@ export async function resolvePriceIds(api: Pick<typeof stripeApi, "retrievePrice
         throw e;
       }
       if (price.id !== id || price.active === false) continue;
+      // Fail closed: a price from the other Stripe mode (or one that does not say) is never offered.
+      if (price.livemode !== stripeLiveMode(env)) { console.warn("[billing] allowlisted price is from the other Stripe mode", id); continue; }
       if (price.type !== "recurring" || price.recurring?.usage_type !== "licensed") { console.warn("[billing] allowlisted price is not flat licensed recurring", id); continue; }
       if (price.recurring.interval && price.recurring.interval !== interval) { console.warn("[billing] allowlisted price interval mismatch", id); continue; }
       const meta = typeof price.product === "object" && price.product ? price.product.metadata : null;
@@ -161,6 +164,7 @@ export function buildCheckoutParams(input: CheckoutInput, prices: PriceIds): Str
   if (addon) lineItems.push({ price: addon, quantity: seats });
 
   const metadata = {
+    app: "calltrainer",
     plan: input.plan,
     interval: input.interval,
     seats: String(seats),

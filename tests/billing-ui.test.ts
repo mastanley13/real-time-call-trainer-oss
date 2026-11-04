@@ -339,6 +339,7 @@ describe("test mode note", () => {
   it("is on only for a Stripe test key", () => {
     expect(stripeTestMode({ STRIPE_SECRET_KEY: "sk_test_abc" })).toBe(true);
     expect(stripeTestMode({ STRIPE_SECRET_KEY: "sk_live_abc" })).toBe(false);
+    expect(stripeTestMode({ STRIPE_SECRET_KEY: "sk_live_abc", STRIPE_LIVE_MODE: "true" })).toBe(false);
     expect(stripeTestMode({})).toBe(false);
     expect(stripeTestMode({ STRIPE_SECRET_KEY: "sk_test_abc", DEMO_MODE: "true" })).toBe(false);
   });

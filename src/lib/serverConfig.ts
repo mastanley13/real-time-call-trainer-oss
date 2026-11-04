@@ -1,7 +1,7 @@
 import "server-only";
 import { safeEqual } from "./access";
 import { orderVoiceEngines, realtimeKey, realtimeModel } from "./realtime";
-import { stripeStatus } from "./stripe";
+import { stripeReady, stripeStatus } from "./stripe";
 
 /**
  * Voice minutes are metered for stored accounts (not demo mode, with a database) when USAGE_CAPS=on or Stripe is
@@ -18,10 +18,11 @@ export function meteringEnabled(env: Record<string, string | undefined> = proces
 export const billingActive = (env: Record<string, string | undefined> = process.env): boolean => stripeStatus(env) !== "disabled";
 
 /**
- * True when the pricing buttons may offer a paid start: the same check /api/config reports as `billing`. Only a Stripe
- * test key counts, so a live key (or a missing one, or demo mode) reads as off and the buttons show the billing-off state.
+ * True when the pricing buttons may offer a paid start: the same check /api/config reports as `billing`. A Stripe
+ * test key counts, and a live key counts only with STRIPE_LIVE_MODE=true (stripeReady). A refused or mismatched key, a
+ * missing one, or demo mode reads as off and the buttons show the billing-off state.
  */
-export const billingOn = (env: Record<string, string | undefined> = process.env): boolean => stripeStatus(env) === "ready";
+export const billingOn = (env: Record<string, string | undefined> = process.env): boolean => stripeReady(env);
 
 type Env = Record<string, string | undefined>;
 

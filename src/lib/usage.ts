@@ -5,7 +5,7 @@ import { billingActive } from "./serverConfig";
 import { storedPlanEntitled } from "./subscriptionStatus";
 import {
   CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, MAX_CONNECT_LAG_SECONDS, MAX_RESERVE_MINUTES,
-  OVERRUN_GRACE_SECONDS, VOICE_BLOCK_SECONDS,
+  DAILY_SESSION_MINT_CAP, OVERRUN_GRACE_SECONDS, VOICE_BLOCK_SECONDS,
   capFor, effectivePlan, isPlanTier, maxMinutesAfter, midCallCapApplies, periodFor, premiumVoiceCap, settleCall, splitAcrossBoundary,
   type CallEndReasonId, type CallOutcome, type PlanTier,
 } from "./usagePlan";
@@ -292,14 +292,15 @@ export interface ScenarioInfo { id: string; title?: string; industry?: string; d
 
 export type BeginResult =
   | { ok: true; callId: string; remaining: number; pooled: boolean; engine: VoiceEngine; maxSeconds: number }
-  | { ok: false; error: "cap_reached" | "minutes_reserved" | "no_organization" | "user_not_found" | "standard_unavailable" }
+  | { ok: false; error: "cap_reached" | "minutes_reserved" | "no_organization" | "user_not_found" | "standard_unavailable" | "daily_session_limit" }
   | { ok: false; error: "voice_blocked"; retryAfterSeconds: number };
 
 const RESERVE_ATTEMPTS = 5;
 
 /**
  * Cap check, reservation, then the TrainerSession that every later metering write is keyed by. Call before
- * minting a provider session. The reservation is what the call may use at most (`maxSeconds`), and it is
+ * minting a provider session. A user who already minted DAILY_SESSION_MINT_CAP voice sessions in the last 24 hours
+ * gets `daily_session_limit`. The reservation is what the call may use at most (`maxSeconds`), and it is
  * taken with a compare-and-swap on the allowance row, so two calls (or two Team members) cannot reserve
  * the same minutes. The Premium share is reserved in the same swap. `standardAvailable: false` means the
  * server has no standard engine configured: a call that is not entitled to Premium is then refused rather
@@ -313,6 +314,14 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
     if (user.voiceBlockedUntil && user.voiceBlockedUntil.getTime() > now.getTime()) {
       return { ok: false, error: "voice_blocked", retryAfterSeconds: Math.ceil((user.voiceBlockedUntil.getTime() - now.getTime()) / 1000) } as const;
     }
+    // Per-user daily mint cap on the server clock. Only voice sessions count (they carry an allowance; saved text
+    // transcripts do not). Mints that fail upstream count too, so retrying a failing mint cannot dodge the cap.    // The user row is locked until this transaction commits, so concurrent mints for one user run one after the
+    // other: each sees the sessions the earlier ones created and the cap cannot be overshot.
+    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+    const minted = await tx.trainerSession.count({
+      where: { userId, createdAt: { gte: new Date(now.getTime() - 24 * 60 * 60 * 1000) }, allowanceId: { not: null } },
+    });
+    if (minted >= DAILY_SESSION_MINT_CAP) return { ok: false, error: "daily_session_limit" } as const;
     for (let attempt = 0; attempt < RESERVE_ATTEMPTS; attempt++) {
       const r = await resolveAllowance(tx, userId, now);
       if (!r) return { ok: false, error: "user_not_found" } as const;
@@ -515,7 +524,15 @@ interface Booking {
   premiumNet: number;
 }
 
-async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId, now: Date): Promise<CallResult | null> {
+/** End reasons that can earn a dropped-call credit; a credited call is one of these with 0 billed minutes. */
+const DROP_REASONS: CallEndReasonId[] = ["network_drop", "provider_error", "server_error"];
+/** End reasons that use up the daily free allowance (DAILY_DROP_CREDIT_CAP) when they bill 0 minutes. */
+const UNCHARGED_REASONS: CallEndReasonId[] = [...DROP_REASONS, "failed_connect"];
+
+/** `serverMintFailure`: set only by the mint routes, never from a request body (see /api/usage/end's reason enum). */
+interface SettleOpts { serverMintFailure?: boolean }
+
+async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId, now: Date, opts: SettleOpts = {}): Promise<CallResult | null> {
   const target = await chargeTarget(tx, original, now);
   if (!target) return null;
   const { allowance, samePeriod } = target;
@@ -524,7 +541,8 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   const start = billingStart(s);
   const naturalEnd = endedAtFor(s, requested, now, start);
   // Connected means the client said so, or the call outlived the connect cutoff and so must have run.
-  const connected = !!s.connectedAt || naturalEnd.getTime() > start.getTime();
+  // A mint the server itself failed never connected, however long the provider took to fail: no 60 s cutoff applies.
+  const connected = !!s.connectedAt || (!opts.serverMintFailure && naturalEnd.getTime() > start.getTime());
   const reason: CallEndReasonId = connected ? requested : "failed_connect";
 
   // The reservation limits what a capped call (Pro, Team) is billed. A Free call is billed for every minute it ran.
@@ -538,7 +556,27 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
     billedEnd = new Date(Math.min(naturalEnd.getTime(), confirmedMs + s.reservedMinutes * 60 * 1000));
   }
   const endedAt = connected ? billedEnd : now;
-  const st = settleCall({ connectedAt: connected ? start : null, endedAt, reason, remainingMinutes: bounded ? target.remaining : Number.POSITIVE_INFINITY });
+  // The connect heartbeat sets lastHeartbeatAt to the start itself, so only a later one proves the client kept running.
+  const heartbeatSeen = !!s.lastHeartbeatAt && s.lastHeartbeatAt.getTime() > start.getTime();
+  // Only a call that could still go uncharged needs the 24 hour count. The user row is locked first, so two of this
+  // user's calls settle one after the other and the second sees the first one's credit. An uncharged call is a drop
+  // reason or a never-connected call (failed_connect) with 0 billed minutes, zero-second calls included: every other
+  // client-reported failure bills at least 1. A mint failure the server itself reports is not the client's doing: it
+  // skips the count, so it is never charged. Nothing stored marks such a row, so later calls still count it.
+  let recentCreditedDrops = 0;
+  const neverConnected = !connected && !opts.serverMintFailure;
+  if (neverConnected || (connected && !heartbeatSeen && DROP_REASONS.includes(reason))) {
+    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${s.userId} FOR UPDATE`;
+    recentCreditedDrops = await tx.trainerSession.count({
+      where: {
+        userId: s.userId,
+        endedAt: { gte: new Date(now.getTime() - 24 * 60 * 60 * 1000) },
+        endReason: { in: UNCHARGED_REASONS },
+        billedMinutes: 0,
+      },
+    });
+  }
+  const st = settleCall({ connectedAt: connected ? start : null, endedAt, reason, remainingMinutes: bounded ? target.remaining : Number.POSITIVE_INFINITY, heartbeatSeen, recentCreditedDrops });
   // A stale call keeps its own reason when the reservation is what clamped it.
   let endReason: CallEndReasonId = requested === "heartbeat_timeout" && st.endReason === "cap_reached" ? "heartbeat_timeout" : st.endReason;
 
@@ -577,11 +615,17 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   }
 
   // Whoever flips endedAt from null owns the settlement, so a repeated end event writes nothing.
+  // The heartbeat the credit decision saw must still be the latest: a heartbeat that committed since the read
+  // means this call was not a drop, so the settlement is redone from the fresh row.
   const won = await tx.trainerSession.updateMany({
-    where: { id: s.id, endedAt: null },
+    where: { id: s.id, endedAt: null, lastHeartbeatAt: s.lastHeartbeatAt ?? null },
     data: { endedAt, endReason: b.endReason, billableSeconds: b.billableSeconds, billedMinutes: b.net + b.priorNet },
   });
-  if (won.count === 0) return null;
+  if (won.count === 0) {
+    const current = await tx.trainerSession.findUnique({ where: { id: s.id }, select: { endedAt: true } });
+    if (current && !current.endedAt) throw new StaleAllowanceError();
+    return null;
+  }
 
   // When the call really ran, written on every call entry so it outlives the TrainerSession row (see usedInOtherAllowances).
   const ran = b.billableSeconds > 0 ? { ranFrom: start, ranTo: new Date(start.getTime() + b.billableSeconds * 1000) } : {};
@@ -650,7 +694,7 @@ function storedResult(s: OpenSession): CallResult {
  * times come from the server's own timestamps, so a client cannot shorten or lengthen what it is charged.
  * Returns null when the call does not belong to this user.
  */
-export async function endCall(userId: string, callId: string, reason: CallEndReasonId, now = new Date()): Promise<CallResult | null> {
+export async function endCall(userId: string, callId: string, reason: CallEndReasonId, now = new Date(), opts: SettleOpts = {}): Promise<CallResult | null> {
   return runMetered(async (tx) => {
     const s = await tx.trainerSession.findUnique({ where: { id: callId } });
     if (!s || s.userId !== userId) return null;
@@ -659,7 +703,7 @@ export async function endCall(userId: string, callId: string, reason: CallEndRea
       if (SERVER_ENDED.has(s.endReason ?? "") && pastReservation(s, now, callCapApplies(s))) await flagOverrun(tx, s, now);
       return storedResult(s);
     }
-    const done = await settle(tx, s, reason, now);
+    const done = await settle(tx, s, reason, now, opts);
     if (done) return done;
     const again = await tx.trainerSession.findUnique({ where: { id: callId } });
     return again ? storedResult(again) : null;

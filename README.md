@@ -44,7 +44,7 @@ Server routes (src/app/api)
   ├─ team/overview     team KPIs, roster, heatmap and coaching queue (org-scoped)
   ├─ team/assignments  create, list and remove persona assignments
   ├─ llm/check         one-token connection check for the Models page
-  ├─ usage, usage/heartbeat, usage/end, usage/credit   voice minute metering (on when `USAGE_CAPS=on` or Stripe is set): the ledger is the source of truth. Free is 10 voice minutes a month, checked only when a call starts (a started call runs to its end); text practice is never capped
+  ├─ usage, usage/heartbeat, usage/end, usage/credit   voice minute metering (on when `USAGE_CAPS=on` or Stripe is set): the ledger is the source of truth. Free is 10 voice minutes a month, checked only when a call starts (a started call runs to its end); text practice is never capped. Per user, 3 uncharged failed calls (quick drops or never-connected calls) and 20 voice sessions per rolling 24 hours
   ├─ billing/checkout, billing/portal   Stripe Checkout (subscription) and Billing Portal, test mode only
   ├─ stripe/webhook    signature-verified, idempotent plan sync from Stripe's current subscription state (checkout completed, async payment succeeded and expired, subscription updated and deleted)
   └─ auth/*, access, me, health, config, cron/purge-expired
@@ -93,7 +93,9 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `RATE_LIMIT_WIZARD_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/persona/generate` and `/api/persona/fetch-url`. Default 20 per 3600 s |
 | `RATE_LIMIT_USAGE_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on the voice metering routes (`/api/usage/*`: a heartbeat every 10 s per call, plus end events). Default 1200 per 600 s |
 | `RATE_LIMIT_BILLING_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/billing/checkout` and `/api/billing/portal`. Default 20 per 3600 s |
-| `STRIPE_SECRET_KEY` | For billing | Stripe **test mode** key. Must start with `sk_test_`; any other key makes every Stripe call fail with `stripe_live_key_refused`. Unset, or `DEMO_MODE=true`: billing is off and the Billing tab is hidden. Setting it also turns voice minute metering on (see `USAGE_CAPS`); only an active or trialing Stripe subscription, or one past due for less than `PAST_DUE_GRACE_DAYS` (default 7), raises an account above Free |
+| `STRIPE_LIVE_MODE` | No | Exact string `true` allows a live Stripe key (`sk_live_`/`rk_live_`). Without it a live key fails every Stripe call with `stripe_live_key_refused`; with it and a test key they fail with `stripe_mode_mismatch`. The webhook ignores events whose `livemode` does not match |
+| `STRIPE_PORTAL_CONFIGURATION` | No | Billing Portal configuration id (`bpc_...`). When set, the portal opens with it instead of the Stripe account default |
+| `STRIPE_SECRET_KEY` | For billing | Stripe key: test mode (`sk_test_`/`rk_test_`) by default; live keys only with `STRIPE_LIVE_MODE=true`, otherwise every Stripe call fails with `stripe_live_key_refused`. Unset, or `DEMO_MODE=true`: billing is off and the Billing tab is hidden. Setting it also turns voice minute metering on (see `USAGE_CAPS`); only an active or trialing Stripe subscription, or one past due for less than `PAST_DUE_GRACE_DAYS` (default 7), raises an account above Free |
 | `USAGE_CAPS` | Optional | `on` meters voice minutes for stored accounts (needs `DATABASE_URL`, not `DEMO_MODE`) without Stripe: everyone is Free, 10 voice minutes a month, resetting monthly, and voice is refused if the usage lookup fails. Default off, so self-hosted installs stay uncapped. A Stripe key also turns metering on. Text practice is never metered |
 | `STRIPE_WEBHOOK_SECRET` | For billing | Signing secret (`whsec_...`) for `/api/stripe/webhook`. From `stripe listen` locally, or the endpoint's page in the Stripe dashboard. Subscribe it to `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `customer.subscription.updated` and `customer.subscription.deleted` |
 | `PAST_DUE_GRACE_DAYS` | Optional | Days a past-due subscription keeps paid access, counted from when it first went past due. Whole number, 0 to 365; anything else uses 7. Unpaid, paused, incomplete and canceled subscriptions never keep access |
@@ -113,6 +115,7 @@ OpenAI Realtime is used whenever an OpenAI key is available. The server mints a 
 3. Copy the agent id into `ELEVENLABS_AGENT_ID`, and create an API key (with Agents access) for `ELEVENLABS_API_KEY`.
 4. If the agent requires authentication (recommended), the app uses a server-minted token, so nothing public is exposed.
 5. Optional: set a `voiceId` per scenario in the editor.
+6. On every ElevenLabs agent (standard and premium), set **Max conversation duration** (`conversation_config.conversation.max_duration_seconds`) to 3600, which matches the longest call the server reserves. Leave the duration override disabled in the Security tab. The server cannot end an ElevenLabs call, and a per-call duration sent by the browser is not trusted, so this agent setting is the only hard stop on provider spend.
 
 ### Grading and re-grades
 - `/api/evaluate-call` grades the transcript against the persona's rubric with `LLM_MODEL`. Without a key, or when the model call fails, a rules-based grader scores rubric coverage and the debrief marks it "Estimate. Rules-based grade, not AI-graded."

@@ -3,7 +3,7 @@ import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { meteringEnabled } from "@/lib/serverConfig";
 import { VOICE_UNAVAILABLE_MESSAGE } from "@/lib/billingUi";
-import { stripeStatus, stripeTestMode } from "@/lib/stripe";
+import { stripeReady, stripeTestMode } from "@/lib/stripe";
 import { usageSummary } from "@/lib/usage";
 
 /**
@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
     metered: true,
     ...summary,
     billing: {
-      enabled: stripeStatus() === "ready",
+      enabled: stripeReady(),
       testMode: stripeTestMode(),
       canBuyTeam: manages && !!user.organization,
       // A member of a Team pool who is not an owner or manager has nothing to upgrade: the admin buys the minutes.
