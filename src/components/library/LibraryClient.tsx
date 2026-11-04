@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Copy, FileJson, Play, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { Copy, FileJson, Play, Search, SlidersHorizontal, UserPlus, X } from "lucide-react";
 import {
   CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps,
   type CallType, type ObjectionType, type Scenario,
@@ -136,7 +136,7 @@ export default function LibraryClient() {
           <h1 className="mt-1 text-3xl font-bold sm:text-4xl">Library</h1>
           <p className="mt-1 text-sm text-ink-muted"><span className="mono">{all.length}</span> personas across <span className="mono">{familyCount}</span> sales jobs · open source, add your own as a pack file</p>
         </div>
-        <Link href="/library/new" className="btn-primary"><Sparkles size={16} aria-hidden /> New persona with AI</Link>
+        <Link href="/library/new" className="btn-primary"><UserPlus size={16} strokeWidth={1.75} aria-hidden /> New persona</Link>
       </div>
 
       <div className="mt-6 flex gap-2">
@@ -170,7 +170,7 @@ export default function LibraryClient() {
                 {Object.entries(filters).flatMap(([k, set]) => [...(set as Set<string>)].map((v) => (
                   <button key={`${k}:${v}`} className="chip hover:border-ink-muted" onClick={() => toggle(k as keyof Filters, v)}>
                     {k === "role" ? jobFamilyLabel(v) : k === "objection" ? OBJECTION_LABELS[v as ObjectionType] : k === "callType" ? CALL_TYPE_LABELS[v as CallType] : k === "source" ? SOURCE_LABEL[v as Source] : v}
-                    <X size={12} aria-label="Remove filter" />
+                    <span className="sr-only">, remove filter</span><X size={12} strokeWidth={1.75} aria-hidden />
                   </button>
                 )))}
               </div>
@@ -178,7 +178,7 @@ export default function LibraryClient() {
                 <div className="card text-center">
                   <h2 className="text-base font-semibold">No persona matches yet</h2>
                   <p className="mx-auto mt-1 max-w-sm text-sm text-ink-muted">Clear a filter, or have the wizard build this persona from a job description, product page or CRM notes.</p>
-                  <Link href="/library/new" className="btn-primary mt-4"><Sparkles size={16} aria-hidden /> Build it with AI</Link>
+                  <Link href="/library/new" className="btn-primary mt-4"><UserPlus size={16} strokeWidth={1.75} aria-hidden /> New persona</Link>
                 </div>
               )}
             </section>
@@ -279,9 +279,9 @@ function FacetGroup({ title, values, counts, selected, onToggle, chips = false, 
 function CreateTile() {
   return (
     <Link href="/library/new" className="group flex min-h-[188px] flex-col justify-between rounded-panel border border-dashed border-primary/50 bg-primary-soft/40 p-4 transition hover:border-primary hover:bg-primary-soft/70">
-      <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-on"><Sparkles size={18} aria-hidden /></span>
+      <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-on"><UserPlus size={18} strokeWidth={1.75} aria-hidden /></span>
       <span>
-        <span className="block font-heading text-base font-bold">Create with AI</span>
+        <span className="block font-heading text-base font-bold">New persona</span>
         <span className="mt-1 block text-sm text-ink-soft">Paste a job description, product page, CRM notes or a call. The wizard drafts the persona, objections and rubric.</span>
       </span>
     </Link>

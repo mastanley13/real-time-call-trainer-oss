@@ -2,14 +2,14 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { AudioLines, ClipboardCheck, Loader2, MessageSquareText, PlugZap, Radar, Server, WandSparkles, type LucideIcon } from "lucide-react";
+import { AudioLines, ClipboardCheck, Loader2, MessageSquareText, PenLine, PlugZap, Radar, Server, type LucideIcon } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import SettingsNav from "./SettingsNav";
 import { jobRows, voiceEngines, type JobId } from "./models";
 import type { LlmCheckResult } from "@/app/api/llm/hints";
 
-const JOB_ICON: Record<JobId, LucideIcon> = { coach: Radar, grading: ClipboardCheck, wizard: WandSparkles, caller: MessageSquareText };
+const JOB_ICON: Record<JobId, LucideIcon> = { coach: Radar, grading: ClipboardCheck, wizard: PenLine, caller: MessageSquareText };
 const COLS = "sm:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)_minmax(0,1.25fr)]";
 
 type Check = { state: "idle" } | { state: "running" } | { state: "done"; result: LlmCheckResult } | { state: "error"; message: string };

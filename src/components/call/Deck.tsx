@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronUp, Loader2, Mic, MicOff, PhoneOff, Send, Target, X } from "lucide-react";
+import { ChevronUp, Loader2, Mic, MicOff, PhoneOff, Send, Target, TrendingUp, X } from "lucide-react";
 import { CUE_LABELS, type CoachMode } from "@/lib/coach-types";
 import { talkTrackSteps, type Scenario } from "@/lib/scenarios";
 import type { StoredTurn } from "@/lib/sessionStore";
@@ -171,7 +171,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
                     {objection && <p className="mt-1.5 text-xs font-semibold text-alert">Objection detected · cue in the coach rail</p>}
                     {me && chipsFor(i).length > 0 && (
                       <div className="mt-1.5 flex flex-wrap gap-1.5">
-                        {chipsFor(i).map((c) => <span key={c.id} className="inline-flex items-center gap-1 rounded-md bg-ok-soft px-1.5 py-0.5 font-mono text-[11px] text-ok">▲ {c.name} +{c.delta}</span>)}
+                        {chipsFor(i).map((c) => <span key={c.id} className="inline-flex items-center gap-1 rounded-md bg-ok-soft px-1.5 py-0.5 font-mono text-[11px] text-ok"><TrendingUp size={12} strokeWidth={1.75} aria-hidden /> {c.name} +{c.delta}</span>)}
                       </div>
                     )}
                   </div>

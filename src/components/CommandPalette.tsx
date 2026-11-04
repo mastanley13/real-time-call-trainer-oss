@@ -5,7 +5,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import {
   BarChart3, CornerDownLeft, Cpu, LibraryBig, LogIn, Monitor, PhoneCall, RotateCcw, Search, SearchX,
-  ShieldCheck, Sparkles, SunMoon, UserPlus, Users, type LucideIcon,
+  ShieldCheck, SunMoon, UserPlus, Users, type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { jobFamilyLabel, type Scenario } from "@/lib/scenarios";
@@ -153,7 +153,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
     }
     return [
       to("library", "Library", "/library", LibraryBig, "personas browse catalog packs search"),
-      to("new", "New persona with AI", "/library/new", Sparkles, "create build wizard generate add custom"),
+      to("new", "New persona", "/library/new", UserPlus, "create build wizard generate add custom ai draft"),
       to("practice", "Practice", "/trainer", PhoneCall, "call train pre flight briefing start roleplay"),
       to("progress", "Progress", "/dashboard", BarChart3, "dashboard history scores sessions logbook stats"),
       ...(canSeeTeam ? [to("team", "Team", "/team", Users, "manager reps members invite coaching")] : []),
@@ -219,7 +219,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
     const found = goHits.length + peopleTotal + actHits.length;
     // Nothing matched: offer the wizard as the one thing Enter can do.
     const shown = q && scenarios && !found
-      ? [{ key: "build", title: "Suggestion", count: "", rows: cmdRows("go", [{ id: "build", label: "Build it with AI", detail: "Describe the buyer and the wizard drafts the persona, objections and rubric", icon: Sparkles, run: () => go("/library/new") }]) }]
+      ? [{ key: "build", title: "Suggestion", count: "", rows: cmdRows("go", [{ id: "build", label: "New persona", detail: "Describe the buyer and the wizard drafts the persona, objections and rubric", icon: UserPlus, run: () => go("/library/new") }]) }]
       : raw.filter((s) => s.rows.length).map(({ top, ...s }) => { void top; return s; });
     let start = 0;
     const withStart: Section[] = shown.map((s) => { const sec = { ...s, start }; start += s.rows.length; return sec; });

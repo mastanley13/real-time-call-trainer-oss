@@ -47,7 +47,7 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 
 ### 3. Command palette (Ctrl+K, ⌘K on macOS)
 1. Press Ctrl+K (⌘K) on any page: the palette opens with focus in "Search personas, pages and actions".
-2. Type part of a persona name, a page ("Progress", "Models") or an action ("New persona with AI"). Arrow keys move, Enter opens, Escape closes and focus returns to where it was.
+2. Type part of a persona name, a page ("Progress", "Models") or an action ("New persona"). Arrow keys move, Enter opens, Escape closes and focus returns to where it was.
 3. A search with no match shows "No results". The palette is usable at 375 px.
 4. On `/trainer`, pick a different persona: the briefing switches to it without a full page reload. Toggle theme from the palette: the header theme icon updates too.
 
@@ -56,7 +56,7 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 2. **Start here** shows the reviewed scenarios plus the create tile. Each job family has its own shelf; "View all N" and "Show fewer" expand and collapse it.
 3. **Phone shelves**: at 375 px each shelf swipes sideways and snaps card by card; from tablet width up they become grids.
 4. **Facets**: Role, Objection type, Difficulty, Call type, Industry and Pack source (Reviewed, Draft (needs review), Mine). Counts update as you combine them; active filters show as chips with a remove button; "Clear all" resets. On phones, **Filters** opens a bottom sheet with a "Show N" button.
-5. **Search**: press `/` to focus it. Search matches names, objections and industries. A miss shows "No persona matches yet" with **Build it with AI**.
+5. **Search**: press `/` to focus it. Search matches names, objections and industries. A miss shows "No persona matches yet" with **New persona**.
 6. **Sheet**: open a card. It shows the persona, chips, goal, objections with prep answers, talk track and rubric weights. Draft personas show the "Draft persona" notice. Escape closes it and focus returns to the card.
 7. **Pack JSON**: in the sheet press **Pack file**. The JSON has no `builtIn` field; **Copy JSON** changes to "Copied".
 8. **Practise** on a card and **Pre-flight** in the sheet open `/trainer?scenario=<id>`. **Duplicate & edit** opens a copy in the editor.

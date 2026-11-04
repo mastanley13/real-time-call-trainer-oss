@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Copy, Globe, Loader2, Play, Plus, Save, Sparkles, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Copy, Cpu, Globe, Loader2, PenLine, Play, Plus, Save, Trash2 } from "lucide-react";
 import { CALL_TYPES, CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, OBJECTION_TYPES, ScenarioSchema, type CallType, type ObjectionType, type Scenario } from "@/lib/scenarios";
 import { CONTEXT_KINDS, CONTEXT_LABELS, type ContextKind, type FetchedPage, type FieldSource, type WizardInput, type WizardOutput } from "@/lib/wizard-types";
 import { saveCustomScenario } from "@/lib/scenarioStore";
@@ -193,7 +193,7 @@ export default function PersonaWizard() {
           <p className="eyebrow">AI persona wizard</p>
           <h1 className="mt-1 text-3xl font-bold">New persona</h1>
         </div>
-        <span className="chip-model"><Sparkles size={12} aria-hidden /> {out ? (out.method === "llm" ? `Generated with ${out.model ?? capabilities.model}` : "Template draft (AI unavailable)") : capabilities.llm ? `Drafts with ${capabilities.model ?? "your model"}` : "Template drafts (no AI key on this server)"}</span>
+        <span className="chip-model"><Cpu size={12} strokeWidth={1.75} aria-hidden />{out ? (out.method === "llm" ? `Generated with ${out.model ?? capabilities.model}` : "Template draft (AI unavailable)") : capabilities.llm ? `Drafts with ${capabilities.model ?? "your model"}` : "Template drafts (no AI key on this server)"}</span>
       </div>
 
       {/* minmax(0,1fr) and min-w-0: the step list scrolls sideways on phones instead of widening the page. */}
@@ -283,7 +283,7 @@ export default function PersonaWizard() {
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="font-mono text-[11px] text-ink-muted">{contexts[tab].length.toLocaleString()} / 8,000 chars · {filled.length} source{filled.length === 1 ? "" : "s"} added</p>
-                <button type="button" className="btn-primary" onClick={generate} disabled={!generating && !canNext} aria-disabled={generating}>{generating ? <><Loader2 size={16} className="animate-spin" aria-hidden /> Drafting persona…</> : <><Sparkles size={16} aria-hidden /> Draft persona</>}</button>
+                <button type="button" className="btn-primary" onClick={generate} disabled={!generating && !canNext} aria-disabled={generating}>{generating ? <><Loader2 size={16} className="animate-spin" aria-hidden /> Drafting persona…</> : <><PenLine size={16} strokeWidth={1.75} aria-hidden /> Draft persona</>}</button>
               </div>
             </section>
           )}
