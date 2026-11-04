@@ -60,7 +60,8 @@ export default function Home() {
         </ol>
       </section>
 
-      <section className="page py-14 sm:py-16" aria-labelledby="feat-h">
+      {/* Continues How it works with no visible heading, so only bottom padding: one section gap, not two. */}
+      <section className="page pb-14 sm:pb-16" aria-labelledby="feat-h">
         <h2 id="feat-h" className="sr-only">Features</h2>
         <div className="grid gap-4 md:grid-cols-3">
           {[

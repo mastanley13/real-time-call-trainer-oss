@@ -134,6 +134,17 @@ describe("pricing page", () => {
     for (const h of [html, cards(false), cards(true), summary(false), summary(true)]) expect(h).not.toMatch(/open soon/i);
   });
 
+  it("plan copy names MFA as two-factor sign-in, never bare", () => {
+    const text = (h: string) => h.replace(/<[^>]+>/g, "\n");
+    for (const h of [html, cards(false), summary(false)]) {
+      expect(h).toContain("wo-factor sign-in (MFA)");
+      // Every MFA mention is the parenthetical after "two-factor sign-in".
+      expect(text(h).match(/\bMFA\b/g)?.length).toBe(text(h).match(/[Tt]wo-factor sign-in \(MFA\)/g)?.length);
+    }
+    expect(cards(false)).toContain(">Two-factor sign-in (MFA)</li>");
+    expect(html).toContain(">Two-factor sign-in (MFA)</th>");
+  });
+
   it("prices are unchanged", () => {
     for (const s of ["$29", "$290", "$59", "$590", "3-seat"]) expect(html).toContain(s);
   });
@@ -168,6 +179,12 @@ describe("landing hero line", () => {
     const oss = html.slice(html.indexOf("oss-h"));
     expect(oss).toContain('href="https://github.com/mastanley13/real-time-call-trainer-oss#which-model-does-what"');
     expect(oss).toContain(">Self-hosting</a>");
+  });
+
+  it("leaves one section gap between How it works and the features, not two", () => {
+    const sectionClass = (id: string) => html.match(new RegExp(`<section class="([^"]*)" aria-labelledby="${id}"`))?.[1];
+    expect(sectionClass("how-h")).toBe("page py-14 sm:py-16");
+    expect(sectionClass("feat-h")).toBe("page pb-14 sm:pb-16");
   });
 
   it("uses no em dashes", () => {
