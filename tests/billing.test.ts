@@ -1129,6 +1129,26 @@ describe("a deleted older subscription cannot revoke a newer one", () => {
     expect(cancelSpy).toHaveBeenCalledWith("sub_test_dupe");
     expect(user().stripeSubscriptionId).toBe("sub_test_first");
   });
+
+  it("a failed cancel of a duplicate subscription answers 500, drops the event id, and cancels on Stripe's retry", async () => {
+    await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_first", metadata: { plan: "pro", userId: "owner-1" } }));
+    liveSub({ id: "sub_test_dupe", customer: "cus_test_1", pro: true, metadata: { userId: "owner-1" } });
+    cancelSpy.mockRejectedValueOnce(new StripeApiError(500));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const e = event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_dupe", payment_status: "paid", metadata: { plan: "pro", userId: "owner-1" } }, "evt_test_dupe_cancel");
+    const first = await deliverRaw(e);
+    expect(first.status).toBe(500);
+    expect(await first.json()).toEqual({ error: "webhook_failed" });
+    expect(fake.rows("stripeEvent").some((r) => r.id === "evt_test_dupe_cancel")).toBe(false);
+    expect(user().stripeSubscriptionId).toBe("sub_test_first");
+    cancelSpy.mockResolvedValue({ id: "sub_test_dupe" });
+    const retry = await deliverRaw(e);
+    expect(retry.status).toBe(200);
+    expect((await retry.json()).result).toBe("processed");
+    expect(cancelSpy).toHaveBeenCalledWith("sub_test_dupe");
+    expect(cancelSpy.mock.calls.filter((c) => c[0] === "sub_test_dupe")).toHaveLength(2);
+    expect(user().stripeSubscriptionId).toBe("sub_test_first");
+  });
 });
 
 describe("one outstanding Checkout Session per billing subject", () => {
