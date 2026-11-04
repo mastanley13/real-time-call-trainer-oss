@@ -142,7 +142,7 @@ describe("landing hero line", () => {
   it("leads with the hosted pitch and the two CTAs", () => {
     expect(hero).toContain("Sales call practice, <span");
     expect(hero.replace(/<[^>]+>/g, "")).toContain("Sales call practice, no setup required");
-    expect(hero).toContain("Practice real sales calls against 54 AI buyer personas. No API keys, no database, just sign in and start talking.");
+    expect(hero).toContain("Practice real sales calls against 54 AI buyer personas. No API keys, no database, just sign up and start talking.");
     expect(hrefs(hero)).toEqual(expect.arrayContaining(["/register?src=home_hero", "/pricing"]));
     expect(hero).toContain(">Start free <");
     expect(hero).toContain(">See pricing<");

@@ -39,7 +39,7 @@ export default function Home() {
               Sales call practice, <span className="text-primary">no setup required</span>
             </h1>
             <p className="mt-5 max-w-xl text-lg leading-relaxed text-ink-soft">
-              Practice real sales calls against {LIBRARY.length} AI buyer personas. No API keys, no database, just sign in and start talking.
+              Practice real sales calls against {LIBRARY.length} AI buyer personas. No API keys, no database, just sign up and start talking.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link href={registerHref({ src: "home_hero" })} className="btn-primary btn-xl">Start free <ArrowRight size={18} aria-hidden /></Link>
