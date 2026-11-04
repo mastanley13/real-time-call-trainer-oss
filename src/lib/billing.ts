@@ -5,6 +5,7 @@ import { prisma } from "./db";
 import { ensureAllowance } from "./usage";
 import { emitBillingLifecycle, classifyPlanChange, type BillingLifecycleEvent } from "./billingEvents";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS, isPlanTier, nextAnchorUnix, type PlanTier } from "./usagePlan";
+import { blocksCheckout, isEntitled, nextPastDueSince } from "./subscriptionStatus";
 import { stripeApi, StripeApiError, type StripeParams } from "./stripe";
 
 /**
@@ -313,12 +314,8 @@ const SubscriptionObject = z.object({
 });
 type LiveSubscription = z.infer<typeof SubscriptionObject>;
 
-/** Stripe statuses that keep a paid plan. Anything else (canceled, unpaid, incomplete_expired, paused) is Free. */
-const ENTITLED = new Set(["active", "trialing", "past_due"]);
-
-/** A linked subscription in one of these statuses blocks a new checkout (send the customer to the portal). */
-const CHECKOUT_BLOCKING = new Set(["active", "trialing", "past_due", "unpaid", "paused"]);
-export const blocksCheckout = (status: string | null | undefined): boolean => !!status && CHECKOUT_BLOCKING.has(status);
+// Which statuses keep a paid plan, and which block a new checkout, is decided only in subscriptionStatus.ts.
+export { blocksCheckout };
 
 interface Entitlement { plan: PlanTier; seats: number; premium: boolean; interval?: Interval }
 
@@ -436,6 +433,13 @@ async function currentSubscriptionId(tx: Tx, subject: Subject): Promise<string |
   return row?.stripeSubscriptionId ?? null;
 }
 
+async function pastDueSinceOf(tx: Tx, subject: Subject): Promise<Date | null> {
+  const row = subject.kind === "organization"
+    ? await tx.organization.findUnique({ where: { id: subject.id }, select: { pastDueSince: true } })
+    : await tx.user.findUnique({ where: { id: subject.id }, select: { pastDueSince: true } });
+  return row?.pastDueSince ?? null;
+}
+
 interface Applied {
   event: BillingLifecycleEvent | null;
   /** A second subscription for a subject that already has one: cancel it at Stripe after the transaction commits. */
@@ -459,20 +463,20 @@ async function applyEntitlement(
   };
   let from: PlanTier;
   if (subject.kind === "organization") {
-    const org = await tx.organization.findUniqueOrThrow({ where: { id: subject.id }, select: { planTier: true } });
+    const org = await tx.organization.findUniqueOrThrow({ where: { id: subject.id }, select: { planTier: true, pastDueSince: true } });
     from = org.planTier === "team" ? "team" : "free";
     const plan: PlanTier = next.plan === "team" ? "team" : "free";
     await tx.organization.update({
       where: { id: subject.id },
-      data: { planTier: plan, seatCount: plan === "team" ? next.seats : 1, premiumVoice: plan === "team" && next.premium, ...keepIds },
+      data: { planTier: plan, seatCount: plan === "team" ? next.seats : 1, premiumVoice: plan === "team" && next.premium, pastDueSince: nextPastDueSince(stripe.status, org.pastDueSince, now), ...keepIds },
     });
     await ensureAllowance(tx, { organizationId: subject.id }, now);
     return { event: build(subject, from, plan, plan === "team" ? next.seats : 1, plan === "team" && next.premium) };
   }
-  const user = await tx.user.findUniqueOrThrow({ where: { id: subject.id }, select: { planTier: true } });
+  const user = await tx.user.findUniqueOrThrow({ where: { id: subject.id }, select: { planTier: true, pastDueSince: true } });
   from = isPlanTier(user.planTier) && user.planTier !== "team" ? user.planTier : "free";
   const plan: PlanTier = next.plan === "pro" ? "pro" : "free";
-  await tx.user.update({ where: { id: subject.id }, data: { planTier: plan, premiumVoice: plan === "pro" && next.premium, ...keepIds } });
+  await tx.user.update({ where: { id: subject.id }, data: { planTier: plan, premiumVoice: plan === "pro" && next.premium, pastDueSince: nextPastDueSince(stripe.status, user.pastDueSince, now), ...keepIds } });
   await ensureAllowance(tx, { userId: subject.id }, now);
   return { event: build(subject, from, plan, 1, plan === "pro" && next.premium) };
 }
@@ -533,9 +537,11 @@ async function reconcile(
   if (held && held !== live.id) {
     // The subject already has a different subscription. This one is either an old subscription's late
     // event (ignore it) or a duplicate purchase (cancel it so the customer is not billed twice).
-    return ENTITLED.has(live.status) ? { event: null, cancelSubscriptionId: live.id } : null;
+    return isEntitled(live.status, null, now) ? { event: null, cancelSubscriptionId: live.id } : null;
   }
-  const next = ENTITLED.has(live.status) ? found : FREE;
+  // Grace counts from when the account first went past_due; a first sighting starts it now.
+  const since = nextPastDueSince(live.status, await pastDueSinceOf(tx, subject), now);
+  const next = isEntitled(live.status, since, now) ? found : FREE;
   return applyEntitlement(tx, subject, next, { customerId: live.customer, subscriptionId: live.id, status: live.status }, now);
 }
 

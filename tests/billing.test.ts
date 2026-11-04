@@ -365,13 +365,13 @@ describe("checkout route", () => {
     expect((await res.json()).error).toBe("already_subscribed");
   });
 
-  it("409 while the linked subscription is active, trialing, past_due, unpaid or paused", async () => {
+  it("409 while the linked subscription is active, trialing, past_due, unpaid, paused or incomplete", async () => {
     const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_x", url: "https://checkout.example/x" });
     const u = fake.rows("user")[0];
     u.stripeSubscriptionId = "sub_test_1";
     u.stripeCustomerId = "cus_test_1";
-    // The 409 body carries a plain status: past_due, or active for anything else (trialing too), and no Stripe ids.
-    const expected: Record<string, string> = { active: "active", trialing: "active", past_due: "past_due", unpaid: "active", paused: "active" };
+    // The 409 body carries the real status, never collapsed into active, and no Stripe ids.
+    const expected: Record<string, string> = { active: "active", trialing: "trialing", past_due: "past_due", unpaid: "unpaid", paused: "paused", incomplete: "incomplete" };
     for (const [sub, status] of Object.entries(expected)) {
       u.subscriptionStatus = sub;
       const res = await post({ plan: "pro", interval: "month" });
@@ -591,6 +591,39 @@ describe("customer.subscription.updated", () => {
   it("keeps the plan while past_due, records the status", async () => {
     await update({ team: 3, status: "past_due" });
     expect(org()).toMatchObject({ planTier: "team", subscriptionStatus: "past_due" });
+  });
+
+  it("starts the past_due grace clock on first sight, keeps it on repeats and clears it when the status leaves past_due", async () => {
+    expect(org().pastDueSince ?? null).toBeNull();
+    await update({ team: 3, status: "past_due" });
+    const first = org().pastDueSince as Date;
+    expect(first).toBeInstanceOf(Date);
+    await update({ team: 3, status: "past_due" });
+    expect((org().pastDueSince as Date).getTime()).toBe(first.getTime());
+    await update({ team: 3, status: "active" });
+    expect(org().pastDueSince).toBeNull();
+    expect(org().planTier).toBe("team");
+  });
+
+  it("past_due with no recorded start is treated as starting now and keeps the plan", async () => {
+    org().pastDueSince = null;
+    await update({ team: 3, status: "past_due" });
+    expect(org()).toMatchObject({ planTier: "team", subscriptionStatus: "past_due" });
+    expect(org().pastDueSince).toBeInstanceOf(Date);
+  });
+
+  it("past_due past the grace window drops to Free but keeps the link, so checkout stays blocked", async () => {
+    org().pastDueSince = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    org().subscriptionStatus = "past_due";
+    await update({ team: 3, status: "past_due" });
+    expect(org()).toMatchObject({ planTier: "free", subscriptionStatus: "past_due", stripeSubscriptionId: "sub_test_team" });
+  });
+
+  it("paused and incomplete_expired are Free", async () => {
+    for (const status of ["paused", "incomplete_expired"]) {
+      await update({ team: 5, status });
+      expect(org(), status).toMatchObject({ planTier: "free", subscriptionStatus: status });
+    }
   });
 
   it("falls back to Free for unpaid, canceled and incomplete_expired subscriptions", async () => {

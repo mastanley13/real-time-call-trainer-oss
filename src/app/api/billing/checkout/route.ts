@@ -4,7 +4,8 @@ import { requireAuth } from "@/lib/apiAuth";
 import { ipLimitResponse, userLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { billingGate, StripeApiError } from "@/lib/stripe";
-import { appBaseUrl, buildCheckoutParams, checkoutFingerprint, createOrReuseCheckout, CheckoutConfigError, blocksCheckout, resolvePriceIds } from "@/lib/billing";
+import { appBaseUrl, buildCheckoutParams, checkoutFingerprint, createOrReuseCheckout, CheckoutConfigError, resolvePriceIds } from "@/lib/billing";
+import { blocksCheckout } from "@/lib/subscriptionStatus";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "@/lib/usagePlan";
 import { CHECKOUT_UNAVAILABLE_MESSAGE } from "@/lib/billingUi";
 
@@ -52,12 +53,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "forbidden", message: "Only an organization owner or manager can buy a Team plan." }, { status: 403 });
   }
   const subject = body.plan === "team" && org ? org : user;
-  // A linked subscription in an active, trialing, past_due, unpaid or paused state blocks a second one, even
-  // when its items left the account on Free. Only canceled or incomplete_expired subscriptions may check out again.
-  if (subject.stripeSubscriptionId && blocksCheckout(subject.subscriptionStatus)) {
-    // Plain status only: past_due is told apart so the page can ask for a new card; everything else reads as active.
-    const status = subject.subscriptionStatus === "past_due" ? "past_due" : "active";
-    return NextResponse.json({ error: "already_subscribed", status, message: "This account already has a paid plan. Use Manage billing to change it." }, { status: 409 });
+  // A linked subscription in an active, trialing, past_due, unpaid, paused or incomplete state blocks a second one,
+  // even when its items left the account on Free. Only canceled or incomplete_expired subscriptions may check out again.
+  const linkedStatus = subject.subscriptionStatus;
+  if (subject.stripeSubscriptionId && blocksCheckout(linkedStatus)) {
+    // The real status, so the page can say what to fix. Never a Stripe id.
+    return NextResponse.json({ error: "already_subscribed", status: linkedStatus, message: "This account already has a paid plan. Use Manage billing to change it." }, { status: 409 });
   }
 
   try {
