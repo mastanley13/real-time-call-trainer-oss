@@ -28,9 +28,9 @@ const COMPARE: CompareRow[] = [
   { feature: "Postgres database", self: "You run it", free: "Managed", pro: "Managed", team: "Managed" },
   { feature: "Live coach channel", self: "Yes", free: "Yes", pro: "Yes", team: "Yes" },
   { feature: "Graded debriefs with transcript quotes", self: "Yes", free: "Yes", pro: "Yes", team: "Yes" },
-  { feature: "Persona library", self: "Yes", free: "Core set", pro: "Full", team: "Full" },
+  { feature: "Persona library", self: "Yes", free: "Full", pro: "Full", team: "Full" },
   { feature: "Reviewed persona packs (Insurance, Solar)", self: "Community", free: "No", pro: "Coming soon", team: "Coming soon" },
-  { feature: "Persona wizard", self: "Yes", free: "No", pro: "Yes", team: "Yes" },
+  { feature: "Persona wizard", self: "Yes", free: "Yes", pro: "Yes", team: "Yes" },
   { feature: "Team view for managers", self: "You host it", free: "No", pro: "No", team: "Managed" },
   { feature: "Assignments", self: "You host it", free: "No", pro: "No", team: "Yes" },
   { feature: "MFA", self: "You configure it", free: "Yes", pro: "Yes", team: "Enforced for team" },
@@ -41,7 +41,7 @@ const COMPARE: CompareRow[] = [
 ];
 
 const FAQ: { q: string; a: string }[] = [
-  { q: "What do I get on Free?", a: FREE_SUMMARY },
+  { q: "What do I get on Free?", a: `${FREE_SUMMARY} It includes the full persona library, the persona wizard, the live coach and graded debriefs.` },
   { q: "What happens when I hit my voice minute cap?", a: "Voice calls pause until your minutes reset: at your next billing cycle on paid plans, or monthly from your signup date on Free. We never charge overages, ever. The text sim stays fully available, so you can keep practicing, get coached and get graded. You can upgrade anytime if you want more voice minutes now." },
   { q: "Will I ever get a surprise bill?", a: "No. There are no overage charges on any plan. Your price is your price, whatever you use." },
   { q: "Do unused minutes roll over?", a: "No. Paid plans reset at the start of each billing cycle. Free resets monthly from your signup date." },

@@ -11,12 +11,12 @@ export default function PricingSummary({ src, seg, billingEnabled }: { src: stri
   const plans = [
     {
       name: "Free", price: "$0", note: "",
-      body: `${FREE_VOICE_MIN} voice minutes a month, unlimited text sim, live coach, graded debriefs, core persona library.`,
+      body: `${FREE_VOICE_MIN} voice minutes a month, unlimited text sim, live coach, graded debriefs, full persona library, persona wizard, score trends, MFA.`,
       href: registerHref({ seg, src }), cta: "Start free, no card", soon: false,
     },
     {
       name: "Pro", price: `$${PRICE.pro.month}/mo`, note: `or $${PRICE.pro.year}/yr`,
-      body: `${PRO_VOICE_MIN} voice minutes a month, full library, persona wizard, score trends, MFA. Reviewed persona packs: coming soon.`,
+      body: `${PRO_VOICE_MIN} voice minutes a month, everything in Free, email support. Reviewed persona packs: coming soon.`,
       href: registerHref({ plan: "pro", interval: "month", seg, src }), cta: billingEnabled ? "Start Pro" : "Start free", soon: !billingEnabled,
     },
     {

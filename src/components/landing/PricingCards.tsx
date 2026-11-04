@@ -11,11 +11,11 @@ import {
 const TIERS = [
   {
     id: "free", name: "Free", blurb: "Try it solo, no card.", cta: "Start free, no card",
-    features: [FREE_SUMMARY, "Unlimited text sim", "Live coach channel", "Graded debriefs with transcript quotes", "Core persona library"],
+    features: [FREE_SUMMARY, "Unlimited text sim", "Live coach channel", "Graded debriefs with transcript quotes", "Full persona library across every sales role", "Persona wizard for your own buyers", "Call history and score trends", "MFA"],
   },
   {
     id: "pro", name: "Pro", blurb: "For individual reps who practice weekly.", cta: "Start Pro",
-    features: [`${PRO_VOICE_MIN} voice minutes per month`, "Everything in Free", "Full persona library across every sales role", "Reviewed persona packs (coming soon)", "Persona wizard for your own buyers", "Call history and score trends", "MFA"],
+    features: [`${PRO_VOICE_MIN} voice minutes per month`, "Everything in Free", "Email support", "Reviewed persona packs (coming soon)"],
   },
   {
     id: "team", name: "Team", blurb: `Built for a manager plus reps: ${TEAM_MIN_SEATS}-seat minimum.`, cta: "Start with Team",

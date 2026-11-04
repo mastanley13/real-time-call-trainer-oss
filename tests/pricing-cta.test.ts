@@ -69,6 +69,29 @@ describe("Premium add-on card", () => {
   });
 });
 
+describe("plan features match what each plan unlocks", () => {
+  const html = cards(false);
+  const tier = (id: string) => html.slice(html.indexOf(`id="tier-${id}"`), html.indexOf("</section>", html.indexOf(`id="tier-${id}"`)));
+
+  it("Free lists the full library, the wizard, history and MFA", () => {
+    for (const f of ["Full persona library across every sales role", "Persona wizard for your own buyers", "Call history and score trends", "MFA"]) expect(tier("free")).toContain(f);
+    expect(html).not.toContain("Core persona library");
+  });
+
+  it("Pro adds minutes and email support on top of Free, without relisting Free features", () => {
+    const pro = tier("pro");
+    for (const f of ["200 voice minutes per month", "Everything in Free", "Email support", "Reviewed persona packs (coming soon)"]) expect(pro).toContain(f);
+    for (const f of ["Persona wizard", "Full persona library", "Call history", ">MFA<"]) expect(pro).not.toContain(f);
+  });
+
+  it("the summary cards say the same", () => {
+    const s = summary(false);
+    expect(s).toContain("10 voice minutes a month, unlimited text sim, live coach, graded debriefs, full persona library, persona wizard, score trends, MFA.");
+    expect(s).toContain("200 voice minutes a month, everything in Free, email support. Reviewed persona packs: coming soon.");
+    expect(s).not.toMatch(/core persona/i);
+  });
+});
+
 describe("PricingSummary", () => {
   it("billing off: Start free with the open-soon line on Pro and Team", () => {
     const html = summary(false);
@@ -147,6 +170,24 @@ describe("pricing page", () => {
     expect(html).toContain("There are no refunds. Payments to StrategixAI LLC are non-refundable except where the law requires.");
   });
 
+  it("Free gets the full persona library and the persona wizard in the compare table", () => {
+    const cellsOf = (feature: string) => {
+      const row = html.slice(html.indexOf(`>${feature}</th>`));
+      return [...row.slice(0, row.indexOf("</tr>")).matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((m) => m[1]);
+    };
+    expect(cellsOf("Persona library")).toEqual(["Yes", "Full", "Full", "Full"]);
+    expect(cellsOf("Persona wizard")).toEqual(["Yes", "Yes", "Yes", "Yes"]);
+  });
+
+  it("the Free FAQ names the library and the wizard", () => {
+    const answer = html.slice(html.indexOf("What do I get on Free?"));
+    expect(answer.slice(0, answer.indexOf("</p>"))).toContain("It includes the full persona library, the persona wizard, the live coach and graded debriefs.");
+  });
+
+  it("says nothing about a core or partial persona set", () => {
+    expect(html).not.toMatch(/core (persona|set)|Core set/i);
+  });
+
   it("prices are unchanged", () => {
     for (const s of ["$29", "$290", "$59", "$590", "3-seat"]) expect(html).toContain(s);
   });
@@ -174,6 +215,18 @@ describe("landing hero line", () => {
     const oss = html.slice(html.indexOf("oss-h"));
     expect(oss).toContain("bring your own key");
     expect(oss).toContain("npm run dev");
+  });
+
+  it("describes the coach rail as a running estimate, talk track and Coached cues, not a per-turn score", () => {
+    const how = html.slice(html.indexOf("how-h"), html.indexOf("models-h"));
+    expect(how).toContain("A coach rail only you can see keeps a running score estimate and your talk-track progress, and in Coached mode cues your next move.");
+    expect(html).not.toMatch(/scores each turn|scores every turn/);
+  });
+
+  it("the hero demo uses the real rail labels", () => {
+    expect(hero).toContain("Live estimate");
+    expect(hero).toContain("not final");
+    expect(hero).toContain("Talk track");
   });
 
   it("uses no em dashes", () => {
