@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Copy, FileJson, Play, Search, SlidersHorizontal, UserPlus, X } from "lucide-react";
+import { Copy, FileJson, Phone, Search, SlidersHorizontal, UserPlus, X } from "lucide-react";
 import {
   CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps,
   type CallType, type ObjectionType, type Scenario,
@@ -311,7 +311,7 @@ function PersonaCard({ s, onOpen, onDuplicate }: { s: Scenario; onOpen: () => vo
         <span className="pointer-events-none truncate font-mono text-[11px] text-ink-muted">{s.industry || "General"} · {s.durationMin} min</span>
         <span className="flex shrink-0 items-center gap-1">
           <button className="btn-quiet btn-sm !px-2" onClick={onDuplicate} title="Duplicate and edit" aria-label={`Duplicate and edit ${s.title}`}><Copy size={14} strokeWidth={1.75} aria-hidden /></button>
-          <Link href={`/trainer?scenario=${encodeURIComponent(s.id)}`} className="btn-primary btn-sm" aria-label={`Practise ${s.title}`}><Play size={13} strokeWidth={1.75} aria-hidden /> Practise</Link>
+          <Link href={`/trainer?scenario=${encodeURIComponent(s.id)}`} className="btn-primary btn-sm" aria-label={`Start practice: ${s.title}`}><Phone size={13} strokeWidth={1.75} aria-hidden /> Start practice</Link>
         </span>
       </div>
     </article>
@@ -329,7 +329,7 @@ function PersonaSheet({ s, onClose, onDuplicate }: { s: Scenario; onClose: () =>
     <Sheet title={s.aiPersona.name} subtitle={s.aiPersona.role} onClose={onClose} wide
       footer={
         <div className="flex flex-wrap gap-2">
-          <Link href={`/trainer?scenario=${encodeURIComponent(s.id)}`} className="btn-primary flex-1" data-autofocus><Play size={16} strokeWidth={1.75} aria-hidden /> Pre-flight</Link>
+          <Link href={`/trainer?scenario=${encodeURIComponent(s.id)}`} className="btn-primary flex-1" data-autofocus><Phone size={16} strokeWidth={1.75} aria-hidden /> Start practice</Link>
           <button className="btn-ghost" onClick={onDuplicate}><Copy size={16} strokeWidth={1.75} aria-hidden /> Duplicate & edit</button>
           <button className="btn-ghost" onClick={() => setJson((v) => !v)} aria-pressed={json}><FileJson size={16} strokeWidth={1.75} aria-hidden /> Pack file</button>
         </div>

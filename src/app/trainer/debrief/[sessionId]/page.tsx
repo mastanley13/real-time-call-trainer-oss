@@ -263,7 +263,7 @@ export default function DebriefPage() {
                       <p className="line-clamp-2 text-xs text-ink-muted">{drill.title}</p>
                     </div>
                   </div>
-                  <Link href={`/trainer?scenario=${encodeURIComponent(drill.id)}`} className="btn-ghost btn-sm mt-3 w-full">Pre-flight <ArrowRight size={13} strokeWidth={1.75} aria-hidden /></Link>
+                  <Link href={`/trainer?scenario=${encodeURIComponent(drill.id)}`} className="btn-ghost btn-sm mt-3 w-full">Start practice <ArrowRight size={13} strokeWidth={1.75} aria-hidden /></Link>
                 </div>
               )}
             </aside>

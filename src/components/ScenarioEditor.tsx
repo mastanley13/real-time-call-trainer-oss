@@ -4,7 +4,7 @@ import Link from "next/link";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
-import { Copy, Plus, Trash2, Save, Play } from "lucide-react";
+import { Copy, Plus, Trash2, Save, Phone } from "lucide-react";
 import { CALL_TYPES, CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, OBJECTION_TYPES, Scenario, ScenarioSchema, newBlankScenario } from "@/lib/scenarios";
 import { ZodIssue } from "zod";
 import { deleteCustomScenario, duplicateScenario, listScenarios, saveCustomScenario } from "@/lib/scenarioStore";
@@ -173,7 +173,7 @@ export default function ScenarioEditor() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-xl font-bold sm:text-2xl">{readOnly ? "Built-in scenario" : "Edit scenario"}: {savedTitle}</h1>
           <div className="flex flex-wrap gap-2">
-            <Link href={`/trainer?scenario=${encodeURIComponent(draft.id)}`} className="btn-ghost"><Play size={16} strokeWidth={1.75} /> Practice</Link>
+            <Link href={`/trainer?scenario=${encodeURIComponent(draft.id)}`} className="btn-ghost"><Phone size={16} strokeWidth={1.75} aria-hidden /> Start practice</Link>
             {all.some((s) => s.id === draft.id) && (
               <button className="btn-ghost" onClick={duplicate}><Copy size={16} strokeWidth={1.75} /> Duplicate</button>
             )}

@@ -1,11 +1,11 @@
 "use client";
 
-import { Check, CircleHelp, CornerDownLeft, Ear, Flag, ShieldAlert, X } from "lucide-react";
+import { Check, CircleHelp, CornerDownLeft, Flag, MessageSquare, ShieldAlert, X } from "lucide-react";
 import { COACH_MODES, COACH_MODE_LABELS, CUE_LABELS, type CoachMode, type CoachResult, type CueType } from "@/lib/coach-types";
 import { talkTrackSteps, type Scenario } from "@/lib/scenarios";
 import type { LiveCue } from "./useCoach";
 
-export const CUE_ICON: Record<CueType, typeof ShieldAlert> = { objection: ShieldAlert, next_question: CircleHelp, whisper: Ear, guardrail: Flag };
+export const CUE_ICON: Record<CueType, typeof ShieldAlert> = { objection: ShieldAlert, next_question: CircleHelp, whisper: MessageSquare, guardrail: Flag };
 export const CUE_TONE: Record<CueType, string> = {
   objection: "text-alert border-alert/60",
   next_question: "text-signal border-signal/60",

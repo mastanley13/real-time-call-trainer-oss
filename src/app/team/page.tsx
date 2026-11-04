@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Building2, ClipboardPlus, Download, FlaskConical, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { ClipboardPlus, Download, Info, Loader2, RefreshCw, ShieldCheck, Users } from "lucide-react";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import EmptyState from "@/components/ui/EmptyState";
 import TeamKpis from "@/components/team/TeamKpis";
@@ -152,7 +152,7 @@ export default function TeamPage() {
     return (
       <div className="page enter">
         <div className="panel mx-auto max-w-lg">
-          <EmptyState icon={Building2} title="You're not on a team yet">
+          <EmptyState icon={Users} title="You're not on a team yet">
             <p>Your account is not part of an organization. Register with your team&rsquo;s org code, or ask the org owner to add you.</p>
             <Link href="/dashboard" className="btn-ghost btn-pill mt-4">Go to Progress</Link>
           </EmptyState>
@@ -199,7 +199,7 @@ export default function TeamPage() {
 
       {data.sample && (
         <div className="banner-warn flex items-start gap-3">
-          <FlaskConical size={18} strokeWidth={1.75} className="mt-0.5 shrink-0 text-caution" aria-hidden />
+          <Info size={18} strokeWidth={1.75} className="mt-0.5 shrink-0 text-caution" aria-hidden />
           <p><strong>Sample data.</strong> This is a made-up team so you can explore the view in demo mode. Assignments and notes you add are saved in this browser only. Connect a database and invite reps with your org code to see your real team.</p>
         </div>
       )}

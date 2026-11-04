@@ -59,7 +59,7 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 5. **Search**: press `/` to focus it. Search matches names, objections and industries. A miss shows "No persona matches yet" with **New persona**.
 6. **Sheet**: open a card. It shows the persona, chips, goal, objections with prep answers, talk track and rubric weights. Draft personas show the "Draft persona" notice. Escape closes it and focus returns to the card.
 7. **Pack JSON**: in the sheet press **Pack file**. The JSON has no `builtIn` field; **Copy JSON** changes to "Copied".
-8. **Practise** on a card and **Pre-flight** in the sheet open `/trainer?scenario=<id>`. **Duplicate & edit** opens a copy in the editor.
+8. **Start practice** on a card and in the sheet open `/trainer?scenario=<id>`. **Duplicate & edit** opens a copy in the editor.
 
 ### 5. Persona wizard (`/library/new`)
 **Template path (no key)**
@@ -143,7 +143,7 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 
 ## Run a scenario end to end
 1. `DEMO_MODE=true npm run dev` and open `/library`.
-2. Open **Inbound lead: leaking water heater** and press **Pre-flight**.
+2. Open **Inbound lead: leaking water heater** and press **Start practice**.
 3. Text mode, Coached. Try: "Thanks for calling, this is Sam. How urgent is the leak and where is it?", "What's the age of the unit, and have you shut the water off?", "Can I get your name, address and best callback number?", "There's a diagnostic fee of $89, applied to the repair. I can book you this afternoon between 2 and 4."
 4. Watch the talk track tick and the tapes turn solid. **End & grade**: every criterion has a score, and quotes come from your own lines.
 5. Add `LLM_API_KEY` and repeat. Scores come with rationales, and any quote the model returns that is not in the transcript is dropped.

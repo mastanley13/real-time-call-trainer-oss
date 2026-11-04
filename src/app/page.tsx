@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, FileJson, GitPullRequest, KeyRound, LibraryBig, MessageSquareQuote, Radar } from "lucide-react";
+import { ArrowRight, ClipboardCheck, FileJson, GitPullRequest, IdCard, MessageSquare, Terminal } from "lucide-react";
 import HeroDeck from "@/components/landing/HeroDeck";
 import PublicFooter from "@/components/landing/PublicFooter";
 import { LIBRARY } from "@/lib/personas";
@@ -64,9 +64,9 @@ export default function Home() {
         <h2 id="feat-h" className="sr-only">Features</h2>
         <div className="grid gap-4 md:grid-cols-3">
           {[
-            { icon: LibraryBig, title: `${LIBRARY.length} personas, ${families} sales jobs`, body: "SDR cold calls to collections, filtered by role, industry, difficulty and the objections they throw. Each persona is a plain JSON pack." },
-            { icon: Radar, title: "A live coach, not a script", body: "Live rubric estimate, talk-track progress and talk ratio, plus cues with a line you can use. Blind, Guided or Coached, your call." },
-            { icon: MessageSquareQuote, title: "Evidence-backed debrief", body: "Scores cite verbatim quotes that are checked against the transcript. Click any quote to see the moment, then retry from that turn." },
+            { icon: IdCard, title: `${LIBRARY.length} personas, ${families} sales jobs`, body: "SDR cold calls to collections, filtered by role, industry, difficulty and the objections they throw. Each persona is a plain JSON pack." },
+            { icon: MessageSquare, title: "A live coach, not a script", body: "Live rubric estimate, talk-track progress and talk ratio, plus cues with a line you can use. Blind, Guided or Coached, your call." },
+            { icon: ClipboardCheck, title: "Evidence-backed debrief", body: "Scores cite verbatim quotes that are checked against the transcript. Click any quote to see the moment, then retry from that turn." },
           ].map(({ icon: Icon, title, body }) => (
             <div key={title} className="card">
               <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-soft text-primary"><Icon size={20} strokeWidth={1.75} aria-hidden /></span>
@@ -92,7 +92,7 @@ export default function Home() {
             </p>
           </div>
           <div className="panel overflow-x-auto p-4">
-            <p className="label flex items-center gap-1.5"><KeyRound size={12} strokeWidth={1.75} aria-hidden /> Run it locally</p>
+            <p className="label flex items-center gap-1.5"><Terminal size={12} strokeWidth={1.75} aria-hidden /> Run it locally</p>
             <pre className="font-mono text-[12.5px] leading-relaxed text-ink-soft">{`git clone https://github.com/mastanley13/real-time-call-trainer-oss
 cd real-time-call-trainer-oss && npm install
 cp .env.example .env   # add OPENAI_API_KEY for the AI coach and voice

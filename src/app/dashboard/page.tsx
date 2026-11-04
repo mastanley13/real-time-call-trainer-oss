@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, ChevronRight, Mic, PhoneCall, RotateCcw, Trash2 } from "lucide-react";
+import { ArrowRight, ChevronRight, PhoneCall, RotateCcw, Trash2, UserRound } from "lucide-react";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import EmptyState from "@/components/ui/EmptyState";
 import AssignedToYou from "@/components/team/AssignedToYou";
@@ -209,7 +209,7 @@ export default function DashboardPage() {
           <p className="eyebrow">Logbook</p>
           <h1 className="mt-1 text-3xl font-bold">Progress{user?.firstName ? `, ${user.firstName}` : ""}</h1>
         </div>
-        <Link href="/trainer" className="btn-primary"><Mic size={16} strokeWidth={1.75} aria-hidden /> New practice call</Link>
+        <Link href="/trainer" className="btn-primary"><PhoneCall size={16} strokeWidth={1.75} aria-hidden /> New practice call</Link>
       </div>
       {error && <p className="banner-warn">{error}</p>}
       {/* Personas a manager assigned; renders nothing when there are none. */}
@@ -227,7 +227,7 @@ export default function DashboardPage() {
       </div>
 
       {rows.length === 0 ? (
-        <div className="panel"><EmptyState icon={PhoneCall} title="No practice calls yet"><p>Run your first scenario and your scores, trends and practice streak show up here.</p><Link href="/library" className="btn-primary btn-pill mt-4"><Mic size={16} strokeWidth={1.75} aria-hidden /> Pick a persona</Link></EmptyState></div>
+        <div className="panel"><EmptyState icon={PhoneCall} title="No practice calls yet"><p>Run your first scenario and your scores, trends and practice streak show up here.</p><Link href="/library" className="btn-primary btn-pill mt-4"><UserRound size={16} strokeWidth={1.75} aria-hidden /> Pick a persona</Link></EmptyState></div>
       ) : (
         <>
           {/* grid-cols-[minmax(0,1fr)] on phones: an implicit auto column would grow to fit wide charts and widen the page. */}

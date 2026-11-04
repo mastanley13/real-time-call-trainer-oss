@@ -2,14 +2,14 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { AudioLines, ClipboardCheck, Loader2, MessageSquareText, PenLine, PlugZap, Radar, Server, type LucideIcon } from "lucide-react";
+import { ClipboardCheck, Cpu, Loader2, MessageSquare, Mic, PenLine, Phone, Plug, type LucideIcon } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import SettingsNav from "./SettingsNav";
 import { jobRows, voiceEngines, type JobId } from "./models";
 import type { LlmCheckResult } from "@/app/api/llm/hints";
 
-const JOB_ICON: Record<JobId, LucideIcon> = { coach: Radar, grading: ClipboardCheck, wizard: PenLine, caller: MessageSquareText };
+const JOB_ICON: Record<JobId, LucideIcon> = { coach: MessageSquare, grading: ClipboardCheck, wizard: PenLine, caller: Phone };
 const COLS = "sm:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)_minmax(0,1.25fr)]";
 
 type Check = { state: "idle" } | { state: "running" } | { state: "done"; result: LlmCheckResult } | { state: "error"; message: string };
@@ -81,7 +81,7 @@ export default function ModelsClient() {
           <div className="min-w-0">
             <h2 id="provider-h" className="label">Provider</h2>
             <p className="flex items-center gap-2 font-heading text-lg font-semibold">
-              <Server size={18} strokeWidth={1.75} className="text-primary" aria-hidden />
+              <Cpu size={18} strokeWidth={1.75} className="text-primary" aria-hidden />
               {capabilities.provider === "custom" ? "Custom OpenAI-compatible endpoint" : "OpenAI"}
             </p>
             <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-6 gap-y-2 text-sm">
@@ -93,7 +93,7 @@ export default function ModelsClient() {
           </div>
           {/* aria-disabled, not disabled, so keyboard focus stays on the button while the check runs. */}
           <button type="button" className="btn-ghost" onClick={runCheck} aria-disabled={running} aria-busy={running}>
-            {running ? <Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden /> : <PlugZap size={16} strokeWidth={1.75} aria-hidden />}
+            {running ? <Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden /> : <Plug size={16} strokeWidth={1.75} aria-hidden />}
             {running ? "Checking" : "Check connection"}
           </button>
         </div>
@@ -143,7 +143,7 @@ export default function ModelsClient() {
         <ul className="grid gap-3 sm:grid-cols-2">
           {voices.map((v) => (
             <li key={v.id} className="panel flex gap-3 p-4">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary"><AudioLines size={18} strokeWidth={1.75} aria-hidden /></span>
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary"><Mic size={18} strokeWidth={1.75} aria-hidden /></span>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-[15px] font-semibold">{v.label}</h3>

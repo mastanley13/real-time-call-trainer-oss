@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Copy, Cpu, Globe, Loader2, PenLine, Play, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Copy, Cpu, Globe, Loader2, PenLine, Phone, Plus, Save, Trash2 } from "lucide-react";
 import { CALL_TYPES, CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, OBJECTION_TYPES, ScenarioSchema, type CallType, type ObjectionType, type Scenario } from "@/lib/scenarios";
 import { CONTEXT_KINDS, CONTEXT_LABELS, type ContextKind, type FetchedPage, type FieldSource, type WizardInput, type WizardOutput } from "@/lib/wizard-types";
 import { saveCustomScenario } from "@/lib/scenarioStore";
@@ -358,7 +358,7 @@ export default function PersonaWizard() {
                   <h2 className="text-lg font-bold">Keep it private</h2>
                   <p className="mt-1 text-sm text-ink-soft">Saves to this browser&rsquo;s library under &ldquo;Your personas&rdquo;. Run a test call to check the persona behaves before you share it.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <button className="btn-primary" onClick={() => savePrivate(true)} disabled={!validation?.success}><Play size={15} strokeWidth={1.75} aria-hidden /> Save and test call</button>
+                    <button className="btn-primary" onClick={() => savePrivate(true)} disabled={!validation?.success}><Phone size={15} strokeWidth={1.75} aria-hidden /> Save and test call</button>
                     <button className="btn-ghost" onClick={() => savePrivate(false)} disabled={!validation?.success}><Save size={15} strokeWidth={1.75} aria-hidden /> {saved ? "Saved" : "Save only"}</button>
                   </div>
                 </div>
