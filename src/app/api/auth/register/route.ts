@@ -7,6 +7,9 @@ import { prisma } from "@/lib/db";
 import { accessCode, hasValidAccessCookie } from "@/lib/access";
 import { generateOrgCode, isValidOrgCode } from "@/lib/orgCodes";
 import { sanitizeSignupIntent } from "@/lib/pricing";
+import { emailsMatch, INVITE_TOKEN_RE, inviteStatus } from "@/lib/invites";
+import { hashInviteToken } from "@/lib/inviteToken";
+import { passFrom, passMatchesToken } from "@/lib/invitePass";
 
 const RegisterSchema = z
   .object({
@@ -18,9 +21,11 @@ const RegisterSchema = z
       .string()
       .min(10, "Password must be at least 10 characters")
       .max(200),
-    /// Exactly one of these two must be provided.
+    /// Exactly one of these three must be provided. An invite signs up with no organization; the invite page
+    /// then joins the team through /api/invites/accept, which checks seats.
     joinOrgCode: z.string().regex(/^[0-9]{3,8}$/).optional(),
     newOrgName: z.string().trim().min(2).max(120).optional(),
+    inviteToken: z.string().regex(INVITE_TOKEN_RE).optional(),
     /// Sign-up link context. Never rejects the request: bad values are dropped by sanitizeSignupIntent below.
     plan: z.unknown().optional(),
     interval: z.unknown().optional(),
@@ -28,13 +33,15 @@ const RegisterSchema = z
     seg: z.unknown().optional(),
   })
   .refine(
-    (v) => !!v.joinOrgCode !== !!v.newOrgName,
+    (v) => [v.joinOrgCode, v.newOrgName, v.inviteToken].filter(Boolean).length === 1,
     "Either joinOrgCode or newOrgName must be provided (but not both).",
   );
 
 export async function POST(request: NextRequest) {
   const code = accessCode();
-  if (code && !(await hasValidAccessCookie(request, code))) {
+  // Without the access code, the only way in is a team invite pass, and then only to sign up for that invite.
+  const invitePass = code && !(await hasValidAccessCookie(request, code)) ? await passFrom(request) : undefined;
+  if (invitePass === null) {
     return NextResponse.json({ error: "invite code required" }, { status: 403 });
   }
 
@@ -65,6 +72,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  if (invitePass && !(body.inviteToken && (await passMatchesToken(invitePass, body.inviteToken)))) {
+    return NextResponse.json({ error: "invite code required" }, { status: 403 });
+  }
+
   const emailLower = body.email.toLowerCase();
   const intent = sanitizeSignupIntent(body);
 
@@ -80,10 +91,18 @@ export async function POST(request: NextRequest) {
     const hashedPassword = await hashPassword(body.password);
 
     const { user, organization } = await prisma.$transaction(async (tx) => {
-      let orgId: string;
+      let orgId: string | null;
       let role: "owner" | "trainee";
 
-      if (body.newOrgName) {
+      if (body.inviteToken) {
+        // Only for an open invite to this same address, so the invite path cannot make orgless accounts at will.
+        const invite = await tx.teamInvite.findUnique({ where: { tokenHash: hashInviteToken(body.inviteToken) } });
+        if (!invite || inviteStatus(invite, new Date()) !== "pending" || !emailsMatch(invite.email, emailLower)) {
+          throw new Error("INVALID_INVITE");
+        }
+        orgId = null;
+        role = "trainee";
+      } else if (body.newOrgName) {
         const code = await generateOrgCode();
         const org = await tx.organization.create({
           data: { name: body.newOrgName, code },
@@ -131,7 +150,7 @@ export async function POST(request: NextRequest) {
           metadata: {
             role,
             organizationCode: created.organization?.code ?? null,
-            joinOrCreate: body.newOrgName ? "create" : "join",
+            joinOrCreate: body.inviteToken ? "invite" : body.newOrgName ? "create" : "join",
           } satisfies Prisma.InputJsonValue,
         },
       });
@@ -170,6 +189,12 @@ export async function POST(request: NextRequest) {
     if (error instanceof Error && error.message === "INVALID_ORG_CODE") {
       return NextResponse.json(
         { error: "Unknown organization code." },
+        { status: 400 },
+      );
+    }
+    if (error instanceof Error && error.message === "INVALID_INVITE") {
+      return NextResponse.json(
+        { error: "This invite is not valid for this email. Use the address the invite was sent to, or ask the team owner for a new link." },
         { status: 400 },
       );
     }

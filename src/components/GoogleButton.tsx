@@ -50,5 +50,7 @@ export const GOOGLE_ERRORS: Record<string, string> = {
   google_expired: "That Google sign-in took too long or was opened in another tab. Try again.",
   google_failed: "Google sign-in didn't work. Try again, or use your email and password.",
   google_unverified: "Your Google account's email isn't verified. Verify it with Google, or sign up with email.",
+  google_invite_email: "This invite was sent to a different email. Continue with the Google account for that address, or ask the team owner for a new invite.",
+  google_invite_full: "This team can't add members right now. Ask the team owner to check seats and billing, then open your invite link again.",
   locked: "This account is temporarily locked after too many attempts. Try again in 15 minutes.",
 };

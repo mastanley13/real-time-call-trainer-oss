@@ -117,6 +117,8 @@ export const IP_LIMITS = {
   usage: () => ({ limit: envInt("RATE_LIMIT_USAGE_MAX", 1200), windowMs: envInt("RATE_LIMIT_USAGE_WINDOW_SEC", 600) * 1000 }),
   /** Stripe Checkout and Billing Portal sessions. */
   billing: () => ({ limit: envInt("RATE_LIMIT_BILLING_MAX", 20), windowMs: envInt("RATE_LIMIT_BILLING_WINDOW_SEC", 3600) * 1000 }),
+  /** Team members and invites: create, resend, revoke, remove, and the invite preview and accept. */
+  invites: () => ({ limit: envInt("RATE_LIMIT_INVITES_MAX", 60), windowMs: envInt("RATE_LIMIT_INVITES_WINDOW_SEC", 900) * 1000 }),
 } as const;
 
 /**
@@ -130,6 +132,8 @@ export const USER_LIMITS = {
   usage: { limit: 60, windowMs: 60_000 },
   /** Checkout and portal sessions. */
   billing: { limit: 20, windowMs: 3_600_000 },
+  /** Member and invite changes, and the invite preview and accept. */
+  invites: { limit: 30, windowMs: 60_000 },
 } as const;
 
 function limitedResponse(r: RateLimitResult): Response | null {

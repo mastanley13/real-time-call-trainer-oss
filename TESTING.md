@@ -134,7 +134,7 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 1. Register a new team and land in the app. Sign out and back in. A wrong password shows an error.
 2. `/settings/security`: enrol TOTP MFA, sign out, and sign in with the code. A wrong code is rejected.
 3. Signed out, `/dashboard` redirects to `/login`. Sessions persist across devices.
-4. Google sign-in (needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL`, `DATABASE_URL`): `/login` and `/register` show Continue with Google. With any of the four unset there is no button and `curl -i localhost:3000/api/auth/google/start` returns 404. A new Google account lands in the app on the Free plan; an account with the same email signs in as that user; an account with MFA asks for the authenticator code. With `TRAINER_ACCESS_CODE` set and no access cookie, a new Google user is sent to `/access`. An unverified Google email shows the unverified error; an email whose account is linked to a different Google account fails; Cancel on Google's screen returns to `/login` with a cancelled message. From `/register?plan=pro&interval=year&src=pricing`, a new Google account lands on `/trainer` with the same query.
+4. Google sign-in (needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL`, `DATABASE_URL`): `/login` and `/register` show Continue with Google. With any of the four unset there is no button and `curl -i localhost:3000/api/auth/google/start` returns 404. A new Google account lands in the app on the Free plan; an account with the same email signs in as that user; an account with MFA asks for the authenticator code. With `TRAINER_ACCESS_CODE` set and no access cookie, a new Google user is sent to `/access`, unless they started from a team invite link (see Team invites behind the gate). An unverified Google email shows the unverified error; an email whose account is linked to a different Google account fails; Cancel on Google's screen returns to `/login` with a cancelled message. From `/register?plan=pro&interval=year&src=pricing`, a new Google account lands on `/trainer` with the same query.
 
 ### 15. API sanity
 1. `GET /api/config` returns capability flags and the model id only, never a key or base URL.
@@ -153,6 +153,8 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 ### Access code
 Run with `TRAINER_ACCESS_CODE=letmein`. Any page redirects to `/access`; `curl -i localhost:3000/api/config` returns 401 `access_code_required`; `/api/health` returns 200. A wrong code shows an error; the right one sets an httpOnly cookie and lands on the app. 11 wrong attempts within 15 minutes from one IP return 429. Unset the variable and the gate disappears.
 
+**Team invites behind the gate.** Full mode only (a database and `JWT_SECRET`). As a Team-plan owner with the code, create an invite on Settings > Members and copy the link. In a private window (no code), open it: it passes through `/api/invites/gate/<token>`, which sets a 30 minute httpOnly `invite_pass` cookie, and the invite page loads. Before accepting, any other page (`/dashboard`, `/settings`) still redirects to `/access`. Create an account from there and accept: an accepted invite counts as site access, so the response sets the same 30 day `trainer_access` cookie the code sets, clears `invite_pass`, and Start practising opens `/trainer`. Repeat in a new private window with a new invite and Create an account > Continue with Google using the invited address: the new account joins the team, lands on `/trainer` and gets the same cookie. With a different Google address it lands on `/login` with an "invite was sent to a different email" message and no account is made. Revoke or let an invite expire, then open its link: it lands on `/access`. Without `JWT_SECRET` no pass is issued and every invite link lands on `/access`.
+
 ### Rate limits
 Every limit is a fixed window in memory, per server instance, and resets on restart. There are two kinds: per-IP limits, most of which you can tune with `RATE_LIMIT_*` variables, and fixed per-account limits, so a signed-in user can't get past a limit by switching networks. Both apply; whichever runs out first answers 429. The client IP is read from `X-Forwarded-For` as set by `TRUSTED_PROXY_HOPS` (see [DEPLOY.md](DEPLOY.md#client-ip-behind-proxies)). The `RATE_LIMIT_*` limits, `/api/access` and the Models check answer with a `Retry-After` header and `{ "error": "rate_limited", "message": ... }`, and the UI shows the message.
 
@@ -168,6 +170,7 @@ Every limit is a fixed window in memory, per server instance, and resets on rest
 | `/api/elevenlabs/token` (ElevenLabs voice) | `RATE_LIMIT_TOKEN_MAX` (10 per 3600 s) | Set 1 and start two ElevenLabs calls |
 | `/api/usage/heartbeat`, `/api/usage/end`, `/api/usage/credit` (voice metering) | `RATE_LIMIT_USAGE_MAX` (1200 per 600 s) | Full mode only. Set 3, then `curl` `/api/usage/end` four times with a signed-in cookie |
 | `/api/billing/checkout` + `/api/billing/portal` (Stripe, shared) | `RATE_LIMIT_BILLING_MAX` (20 per 3600 s) | Needs `STRIPE_SECRET_KEY=sk_test_...`. Set 2 and press **Choose Pro** three times |
+| `/api/team/invites*`, `DELETE /api/team/members/[id]`, `/api/invites/preview` + `/accept` (members and invites, shared) | `RATE_LIMIT_INVITES_MAX` (60 per 900 s) | Full mode with a Team-plan owner. Set 2 and press **Resend** three times |
 | `/api/auth/google/start` + `/callback` (Google sign-in, shared) | `RATE_LIMIT_GOOGLE_MAX` (30 per 900 s) | Needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL`. Set 2 and `curl -i` the start route three times |
 | `/api/llm/check` (Models page) | fixed, 6 per 10 min | Press **Check connection** seven times |
 | `/api/access` | fixed, 10 per 15 min | See Access code above |
@@ -188,6 +191,7 @@ Each `_MAX` has a matching `_WINDOW_SEC`.
 | `/api/realtime/session` | 6 per minute |
 | `/api/realtime/sdp` | 10 per minute |
 | `/api/usage/*` (heartbeat, end, credit) | 60 per minute |
+| Members and invites (create, resend, revoke, remove, preview, accept, shared) | 30 per minute |
 | `/api/billing/checkout` + `/api/billing/portal` (shared) | 20 per hour |
 | `/api/elevenlabs/token` | 20 per minute |
 | `POST /api/transcripts` (save a session) | 30 per minute |

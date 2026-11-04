@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { getJwtSecret } from "./auth";
+import { INVITE_TOKEN_RE } from "./invites";
 import { safeNextPath } from "./safeNext";
 import { cleanSignupIntent } from "./signupIntent";
 
@@ -92,6 +93,11 @@ export const FlowStateSchema = z.object({
       seg: z.string().max(40).optional(),
     })
     .optional(),
+  /**
+   * A team invite token, set only by /start behind the access gate for a browser holding the invite pass issued for
+   * it. The callback re-checks the invite and accepts it before a new account gets site access.
+   */
+  invite: z.string().regex(INVITE_TOKEN_RE).optional(),
 });
 export type FlowState = z.infer<typeof FlowStateSchema>;
 

@@ -9,7 +9,7 @@ export function accessCode(): string | null {
 
 const enc = new TextEncoder();
 
-async function hmacHex(key: string, msg: string): Promise<string> {
+export async function hmacHex(key: string, msg: string): Promise<string> {
   const k = await crypto.subtle.importKey("raw", enc.encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const sig = new Uint8Array(await crypto.subtle.sign("HMAC", k, enc.encode(msg)));
   return Array.from(sig, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -27,6 +27,28 @@ export function safeEqual(a: string, b: string): boolean {
 export async function accessToken(code: string): Promise<string> {
   const key = process.env.JWT_SECRET || `access-key:${code}`;
   return hmacHex(key, `trainer-access:${code}`);
+}
+
+/** The access cookie's flags: httpOnly, SameSite=Lax, path /, 30 days, Secure in production. */
+export const accessCookieOptions = () => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax" as const,
+  path: "/",
+  maxAge: ACCESS_MAX_AGE,
+});
+
+type CookieSetter = { cookies: { set(name: string, value: string, options: ReturnType<typeof accessCookieOptions>): unknown } };
+
+/**
+ * Sets the access cookie on `res`, exactly as entering the code at /access does. Used there and when a team invite
+ * is accepted (an accepted invite counts as site access). False, and nothing set, when the gate is off.
+ */
+export async function grantAccessCookie(res: CookieSetter): Promise<boolean> {
+  const code = accessCode();
+  if (!code) return false;
+  res.cookies.set(ACCESS_COOKIE, await accessToken(code), accessCookieOptions());
+  return true;
 }
 
 /** True when the request carries the access cookie for `code`. Same check the middleware gate uses. */

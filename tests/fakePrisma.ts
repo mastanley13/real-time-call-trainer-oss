@@ -16,6 +16,7 @@ const UNIQUE: Record<string, string[][]> = {
   trainerSession: [["id"]],
   stripeEvent: [["id"]],
   auditEvent: [["id"]],
+  teamInvite: [["id"], ["tokenHash"]],
 };
 
 const NO_CHECKOUT = { stripeCheckoutSessionId: null, stripeCheckoutFingerprint: null, stripeCheckoutUrl: null, stripeCheckoutExpiresAt: null };
@@ -28,6 +29,7 @@ const DEFAULTS: Record<string, () => Record<string, unknown>> = {
   trainerSession: () => ({ connectedAt: null, endedAt: null, endReason: null, lastHeartbeatAt: null, degradedAt: null, billableSeconds: 0, billedMinutes: 0, durationSeconds: 0, allowanceId: null, allowancePeriodStart: null, reservedMinutes: 0, engineTier: "standard", premiumReservedMinutes: 0, carriedMinutes: 0, carriedPremiumMinutes: 0, abuseFlagged: false, capEnforced: true, createdAt: new Date() }),
   stripeEvent: () => ({ processedAt: new Date() }),
   auditEvent: () => ({}),
+  teamInvite: () => ({ role: "trainee", invitedById: null, sentAt: new Date(), acceptedAt: null, acceptedById: null, revokedAt: null, createdAt: new Date() }),
 };
 
 const isDate = (v: unknown): v is Date => v instanceof Date;
@@ -37,8 +39,9 @@ function matches(row: Row, where: Where): boolean {
     const have = row[k] ?? null;
     if (isDate(v)) return isDate(have) && have.getTime() === v.getTime();
     if (v && typeof v === "object") {
-      const o = v as { lt?: Date; gte?: Date; gt?: number; in?: unknown[] };
+      const o = v as { lt?: Date; gte?: Date; gt?: number | Date; in?: unknown[] };
       if (o.in) return o.in.includes(have);
+      if (isDate(o.gt)) return isDate(have) && have.getTime() > o.gt.getTime();
       if (o.gt !== undefined) return typeof have === "number" && have > o.gt;
       if (o.lt) return isDate(have) && have.getTime() < o.lt.getTime();
       if (o.gte) return isDate(have) && have.getTime() >= o.gte.getTime();
@@ -107,6 +110,7 @@ export function createFakePrisma() {
         if (!r) throw new Error(`${name} not found`);
         return withInclude(r, args);
       },
+      findFirst: async (args: { where: Where }) => copy(find(args.where)),
       findMany: async (args: { where?: Where; take?: number; orderBy?: { createdAt: "desc" | "asc" } } = {}) => {
         let out = rows().filter((r) => matches(r, args.where ?? {}));
         if (args.orderBy) out = [...out].sort((a, b) => ((a.createdAt as Date).getTime() - (b.createdAt as Date).getTime()) * (args.orderBy!.createdAt === "desc" ? -1 : 1));
@@ -159,6 +163,7 @@ export function createFakePrisma() {
     trainerSession: table("trainerSession"),
     stripeEvent: table("stripeEvent"),
     auditEvent: table("auditEvent"),
+    teamInvite: table("teamInvite"),
     /** Records raw queries (row locks); the fake has no concurrent transactions to block. */
     $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
       rawQueries.push({ sql: strings.join("?"), values });

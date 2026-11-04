@@ -57,6 +57,7 @@ model Organization {
   trainerSessions     TrainerSession[]
   trainingAssignments TrainingAssignment[]
   poolAllowance       UsageAllowance? @relation("OrgPool")
+  invites             TeamInvite[]
 }
 
 enum UserRole {
@@ -123,6 +124,7 @@ model User {
   auditEvents         AuditEvent[]
   assignmentsCreated  TrainingAssignment[] @relation("AssignmentAssigner")
   assignmentsReceived TrainingAssignment[] @relation("AssignmentAssignee")
+  invitesSent         TeamInvite[] @relation("InviteSender")
 
   @@index([organizationId])
 }
@@ -314,6 +316,37 @@ model TrainingAssignment {
   @@index([organizationId, archivedAt])
   @@index([assigneeId])
   @@index([assignedById])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Team invites
+// ─────────────────────────────────────────────────────────────────────────
+
+/// An owner's invitation for one email address to join their Team-plan organization.
+/// Only the sha256 of the token is stored; the raw token appears only in the link shown to the owner.
+/// Status is derived: accepted, revoked, expired (expiresAt has passed) or pending.
+model TeamInvite {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Lowercased. The accepting account's email must match it.
+  email          String
+  /// Role the invitee gets on accept: trainee or manager.
+  role           UserRole     @default(trainee)
+  /// sha256 hex of the token. A resend replaces it, so an older link stops working.
+  tokenHash      String       @unique
+  invitedById    String?
+  invitedBy      User?        @relation("InviteSender", fields: [invitedById], references: [id], onDelete: SetNull)
+  expiresAt      DateTime
+  /// When the link was created, or last rotated by a resend.
+  sentAt         DateTime     @default(now())
+  acceptedAt     DateTime?
+  acceptedById   String?
+  revokedAt      DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, email])
+  @@index([invitedById])
 }
 
 // ─────────────────────────────────────────────────────────────────────────
