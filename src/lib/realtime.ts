@@ -8,10 +8,10 @@
  * Docs this follows (checked 2026-10):
  * - Realtime guide: https://developers.openai.com/api/docs/guides/realtime
  * - WebRTC: https://developers.openai.com/api/docs/guides/realtime-webrtc
- *   POST /v1/realtime/client_secrets (server, API key) -> { value: "ek_...", expires_at, session };
- *   browser POSTs its SDP offer to /v1/realtime/calls with "Authorization: Bearer ek_..." and
- *   "Content-Type: application/sdp"; events flow over the "oai-events" data channel.
- * - Client secrets: https://developers.openai.com/api/reference/resources/realtime/subresources/client_secrets/methods/create
+ *   Unified interface: the browser sends its SDP offer to our /api/realtime/sdp, and the server (API key only, no
+ *   ek_ client secret ever reaches the browser) POSTs it to /v1/realtime/calls with the session config, keeps the call
+ *   id from the Location header and hangs the call up itself (see realtimeCalls.ts); events flow over the
+ *   "oai-events" data channel.
  * - Server events: https://developers.openai.com/api/reference/resources/realtime/server-events
  * - Client events: https://developers.openai.com/api/reference/resources/realtime/client-events
  * - Reference app: https://github.com/openai/openai-realtime-agents (beta event names, kept as fallbacks)
@@ -226,7 +226,7 @@ export function applyRealtimeEvent(asm: TurnAssembler, ev: RealtimeServerEvent, 
   }
 }
 
-/** Upstream status from client_secrets -> a message an operator can act on. Never includes the upstream body. */
+/** Upstream status from POST /v1/realtime/calls -> a message an operator can act on. Never includes the upstream body. */
 export function realtimeUpstreamMessage(status: number, model: string): string {
   if (status === 401) return "OpenAI rejected the API key. Check OPENAI_API_KEY.";
   if (status === 403) return "This OpenAI key cannot use the Realtime API. Check the project's model access in the OpenAI dashboard.";

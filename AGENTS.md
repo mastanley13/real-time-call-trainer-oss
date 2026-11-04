@@ -55,14 +55,14 @@ src/app/                          App Router pages and API routes
     simulate/turn                 Text-mode caller (LLM or scripted)
     evaluate-call                 Post-call grading (LLM or heuristic)
     elevenlabs/token              Mints an ElevenLabs WebRTC conversation token server-side
-    realtime/session              Mints a short-lived OpenAI Realtime client secret per call (key stays server-side)
-    realtime/sdp                  Relays the browser's WebRTC offer to OpenAI, so the CSP stays same-origin
+    realtime/session              Starts an OpenAI Realtime call: cap check, reservation, call id (returns no OpenAI credential)
+    realtime/sdp                  Opens the call at OpenAI with the server key from the browser's offer, stores providerCallId, so the server can hang up
     llm/check                     One-token connection check for the Models page
     team/                         Team overview, roster and assignments (org-scoped; sample team in demo mode)
     transcripts                   Saved sessions; POST stores a score only with a valid grade seal
     transcripts/[id]              GET one session; PATCH re-grades the stored transcript (canRegrade, capped by gradable)
     sessions/[sessionId]/notes    Supervisor notes (Postgres, org-scoped); PUT with expectedNotesAt gets 409 conflict on a stale save
-    auth/*, me, access, config, health, cron/purge-expired
+    auth/*, me, access, config, health, cron/purge-expired, cron/enforce-voice-deadlines
 src/components/
   call/Deck.tsx                   Live call deck (dark .deck scope): transcript, composer, phone coach sheet
   call/CopilotRail.tsx            Rubric tapes, talk track, cues, "Use line", coach mode dial

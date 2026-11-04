@@ -12,7 +12,7 @@ vi.mock("@/lib/apiAuth", async () => ({
 }));
 
 import { beginCall, checkCap, creditManual, endCall, ensureAllowance, heartbeat, resolveAllowance, usageSummary } from "@/lib/usage";
-import { FREE_MINUTES, MAX_CALL_SECONDS, capFor } from "@/lib/usagePlan";
+import { FREE_MINUTES, HARD_SESSION_CAP_SECONDS, MAX_CALL_SECONDS, PROVIDER_LIMIT_GRACE_SECONDS, capFor } from "@/lib/usagePlan";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
 import { POST as saveTranscript } from "@/app/api/transcripts/route";
@@ -125,17 +125,28 @@ describe("the cap is checked only when a call starts", () => {
     expect(session(callId).transcript).toHaveLength(transcript.length);
   });
 
-  it("a Free call that runs far past the cap is never stopped or flagged, and all of it counts", async () => {
+  it("a Free call that runs far past the cap (but inside the 30 minute hard deadline) is never stopped or flagged, and all of it counts", async () => {
     await freeUserWith(9);
-    const { answers, result } = await runCall("u-1", { endAt: 40 * 60 });
+    const { answers, result } = await runCall("u-1", { endAt: 25 * 60 });
     expect(answers.every((a) => a.found && !a.stop)).toBe(true);
-    expect(result).toMatchObject({ endReason: "user_hangup", billedMinutes: 40 });
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 49, minutesReserved: 0 });
+    expect(result).toMatchObject({ endReason: "user_hangup", billedMinutes: 25 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 34, minutesReserved: 0 });
     expect(fake.rows("trainerSession")[0].abuseFlagged).toBe(false);
     expect(fake.rows("user")[0].voiceBlockedUntil ?? null).toBeNull();
     // A late stray end event for a call that was never clamped is not an overrun either.
-    await endCall("u-1", fake.rows("trainerSession")[0].id as string, "user_hangup", at(40 * 60 + 600));
+    await endCall("u-1", fake.rows("trainerSession")[0].id as string, "user_hangup", at(25 * 60 + 600));
     expect(fake.rows("trainerSession")[0].abuseFlagged).toBe(false);
+  });
+
+  it("a Free call is still stopped at the 30 minute hard deadline, as max_duration, and billed to it", async () => {
+    await freeUserWith(9);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    const deadline = HARD_SESSION_CAP_SECONDS + PROVIDER_LIMIT_GRACE_SECONDS;
+    expect(await heartbeat("u-1", begun.callId, "ok", at(deadline - 10))).toMatchObject({ found: true, stop: false });
+    expect(await heartbeat("u-1", begun.callId, "ok", at(40 * 60))).toMatchObject({ found: true, stop: true, reason: "max_duration" });
+    expect(session(begun.callId)).toMatchObject({ endReason: "max_duration", billedMinutes: HARD_SESSION_CAP_SECONDS / 60 }); // billed to the deadline, not to when it was noticed
   });
 
   it("the call length limit still applies to a Free call", async () => {
@@ -145,7 +156,8 @@ describe("the cap is checked only when a call starts", () => {
     await heartbeat("u-1", begun.callId, "connected", at(0));
     const r = await heartbeat("u-1", begun.callId, "ok", at(MAX_CALL_SECONDS + 5));
     expect(r).toMatchObject({ found: true, stop: true, reason: "max_duration" });
-    expect(session(begun.callId)).toMatchObject({ endReason: "max_duration", billedMinutes: MAX_CALL_SECONDS / 60 });
+    // The 24 hour limit is now behind the 30 minute hard deadline, so a call noticed this late is billed only to the deadline.
+    expect(session(begun.callId)).toMatchObject({ endReason: "max_duration", billedMinutes: HARD_SESSION_CAP_SECONDS / 60 });
   });
 
   it("a plan change mid-call does not change the rule the call started under", async () => {

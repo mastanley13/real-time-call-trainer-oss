@@ -5,6 +5,7 @@ import {
 } from "@/lib/realtime";
 import { getCapabilities } from "@/lib/serverConfig";
 import { BUILT_IN_SCENARIOS, buildAgentPrompt } from "@/lib/scenarios";
+import { HARD_SESSION_CAP_SECONDS, PROVIDER_LIMIT_GRACE_SECONDS } from "@/lib/usagePlan";
 import { NextRequest } from "next/server";
 import { POST as sessionPOST } from "@/app/api/realtime/session/route";
 import { POST as sdpPOST } from "@/app/api/realtime/sdp/route";
@@ -193,37 +194,18 @@ describe("POST /api/realtime/session", () => {
     expect((await res.json()).error).toBe("realtime_not_configured");
   });
 
-  it("mints a client secret with the persona prompt, transcription and VAD, and never returns the key", async () => {
+  it("returns the model and voice only: no client secret, no key, no provider request", async () => {
     setup();
     vi.stubEnv("OPENAI_API_KEY", "sk-secret-test");
-    const fetchMock = vi.fn(async () => Response.json({ value: "ek_abc123456789", expires_at: 1_900_000_000 }));
+    const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const res = await sessionPOST(req({ scenario }));
     const text = await res.text();
     expect(res.status).toBe(200);
     expect(text).not.toContain("sk-secret-test");
-    expect(JSON.parse(text)).toEqual({ clientSecret: "ek_abc123456789", expiresAt: 1_900_000_000, model: DEFAULT_REALTIME_MODEL, voice: "marin" });
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("https://api.openai.com/v1/realtime/client_secrets");
-    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer sk-secret-test");
-    const sent = JSON.parse(init.body as string);
-    expect(sent.session.type).toBe("realtime");
-    expect(sent.session.instructions).toBe(buildAgentPrompt(scenario));
-    expect(sent.session.audio.input.transcription.model).toBeTruthy();
-    expect(sent.session.audio.input.turn_detection.type).toBe("semantic_vad");
-    expect(sent.session.audio.output.voice).toBe("marin");
-  });
-
-  it("maps an upstream 401 to a friendly message without the upstream body", async () => {
-    setup();
-    vi.stubEnv("OPENAI_API_KEY", "sk-bad");
-    vi.stubGlobal("fetch", vi.fn(async () => new Response('{"error":{"message":"Incorrect API key provided: sk-bad"}}', { status: 401 })));
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    const res = await sessionPOST(req({ scenario }));
-    const text = await res.text();
-    expect(res.status).toBe(502);
-    expect(JSON.parse(text)).toEqual({ error: "realtime_upstream_error", message: "OpenAI rejected the API key. Check OPENAI_API_KEY." });
-    expect(text).not.toContain("sk-bad");
+    expect(text).not.toContain("ek_");
+    expect(JSON.parse(text)).toEqual({ model: DEFAULT_REALTIME_MODEL, voice: "marin" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rejects a malformed scenario", async () => {
@@ -235,36 +217,99 @@ describe("POST /api/realtime/session", () => {
 });
 
 describe("POST /api/realtime/sdp", () => {
+  // Metering off (demo mode): no call row. The metered flow is covered in realtime-hangup.test.ts.
+  const scenario = BUILT_IN_SCENARIOS[0];
   const req = (body: unknown) => new NextRequest("http://localhost/api/realtime/sdp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const setup = () => {
+    vi.stubEnv("DEMO_MODE", "true");
+    vi.stubEnv("OPENAI_API_KEY", "sk-secret-test");
+    vi.stubEnv("OPENAI_REALTIME_API_KEY", "");
+    vi.stubEnv("REALTIME_MODEL", "");
+    vi.stubEnv("REALTIME_VOICE", "");
+  };
   afterEach(() => vi.unstubAllGlobals());
 
-  it("relays the offer with the client secret as documented", async () => {
-    vi.stubEnv("DEMO_MODE", "true");
-    const fetchMock = vi.fn(async () => new Response("v=0 answer", { status: 201 }));
+  it("posts the offer and the persona session to the calls endpoint with the server key, and returns the answer", async () => {
+    setup();
+    const fetchMock = vi.fn(async () => new Response("v=0 answer", { status: 201, headers: { Location: "/v1/realtime/calls/rtc_abc123" } }));
     vi.stubGlobal("fetch", fetchMock);
-    const res = await sdpPOST(req({ clientSecret: "ek_abc123456789", sdp: "v=0 offer sdp" }));
+    const res = await sdpPOST(req({ sdp: "v=0 offer sdp", scenario }));
+    const text = await res.text();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ sdp: "v=0 answer" });
+    expect(JSON.parse(text)).toEqual({ sdp: "v=0 answer" });
+    expect(text).not.toContain("rtc_abc123");
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://api.openai.com/v1/realtime/calls");
-    expect(init.headers).toEqual({ Authorization: "Bearer ek_abc123456789", "Content-Type": "application/sdp" });
-    expect(init.body).toBe("v=0 offer sdp");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer sk-secret-test");
+    expect(init.body).toBeInstanceOf(FormData);
+    const form = init.body as FormData;
+    expect(form.get("sdp")).toBe("v=0 offer sdp");
+    const session = JSON.parse(form.get("session") as string);
+    expect(session.type).toBe("realtime");
+    expect(session.model).toBe(DEFAULT_REALTIME_MODEL);
+    expect(session.instructions).toBe(buildAgentPrompt(scenario));
+    expect(session.audio.input.transcription.model).toBeTruthy();
+    expect(session.audio.input.turn_detection.type).toBe("semantic_vad");
+    expect(session.audio.output.voice).toBe("marin");
   });
 
-  it("refuses anything that is not an ephemeral secret", async () => {
-    vi.stubEnv("DEMO_MODE", "true");
+  it("refuses an offer that names a call when voice is not metered, and refuses the old clientSecret body", async () => {
+    setup();
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const res = await sdpPOST(req({ clientSecret: "sk-project-key", sdp: "v=0 offer sdp" }));
-    expect(res.status).toBe(400);
+    expect((await sdpPOST(req({ callId: "c1", sdp: "v=0 offer sdp", scenario }))).status).toBe(400);
+    expect((await sdpPOST(req({ clientSecret: "ek_abc123456789", sdp: "v=0 offer sdp" }))).status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("reports an expired secret", async () => {
-    vi.stubEnv("DEMO_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 401 })));
+  it("maps an upstream 401 to a friendly message without the upstream body", async () => {
+    setup();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response('{"error":{"message":"Incorrect API key provided: sk-secret-test"}}', { status: 401 })));
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const res = await sdpPOST(req({ clientSecret: "ek_abc123456789", sdp: "v=0 offer sdp" }));
-    expect((await res.json()).error).toBe("realtime_secret_expired");
+    const res = await sdpPOST(req({ sdp: "v=0 offer sdp", scenario }));
+    const text = await res.text();
+    expect(res.status).toBe(502);
+    expect(JSON.parse(text)).toEqual({ error: "realtime_upstream_error", message: "OpenAI rejected the API key. Check OPENAI_API_KEY." });
+    expect(text).not.toContain("sk-secret-test");
+  });
+
+  it("fails a response with no call id instead of handing the browser a call the server cannot hang up", async () => {
+    setup();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("v=0 answer", { status: 201 })));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await sdpPOST(req({ sdp: "v=0 offer sdp", scenario }))).status).toBe(502);
+  });
+
+  it("with metering off, hangs the call up after the hard ceiling plus grace (best effort, in process)", async () => {
+    setup();
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    try {
+      const fetchMock = vi.fn(async () => new Response("v=0 answer", { status: 201, headers: { Location: "/v1/realtime/calls/rtc_unmetered" } }));
+      vi.stubGlobal("fetch", fetchMock);
+      expect((await sdpPOST(req({ sdp: "v=0 offer sdp", scenario }))).status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync((HARD_SESSION_CAP_SECONDS + PROVIDER_LIMIT_GRACE_SECONDS) * 1000);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect((fetchMock.mock.calls[1] as unknown as [string])[0]).toBe("https://api.openai.com/v1/realtime/calls/rtc_unmetered/hangup");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("with metering off, carries the per-IP realtime limit itself: over it gets 429 and OpenAI is not called", async () => {
+    setup();
+    vi.stubEnv("RATE_LIMIT_REALTIME_MAX", "1");
+    const fetchMock = vi.fn(async () => new Response("v=0 answer", { status: 201, headers: { Location: "/v1/realtime/calls/rtc_ip" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const ip = { "x-forwarded-for": "10.9.9.9" };
+    const post = () => sdpPOST(new NextRequest("http://localhost/api/realtime/sdp", { method: "POST", headers: { "content-type": "application/json", ...ip }, body: JSON.stringify({ sdp: "v=0 offer sdp", scenario }) }));
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    try {
+      expect((await post()).status).toBe(200);
+      expect((await post()).status).toBe(429);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

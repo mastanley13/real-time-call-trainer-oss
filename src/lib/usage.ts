@@ -5,10 +5,11 @@ import { billingActive } from "./serverConfig";
 import { storedPlanEntitled } from "./subscriptionStatus";
 import {
   CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, MAX_CONNECT_LAG_SECONDS, MAX_RESERVE_MINUTES,
-  DAILY_SESSION_MINT_CAP, OVERRUN_GRACE_SECONDS, VOICE_BLOCK_SECONDS,
-  capFor, effectivePlan, isPlanTier, maxMinutesAfter, midCallCapApplies, periodFor, premiumVoiceCap, settleCall, splitAcrossBoundary,
+  DAILY_SESSION_MINT_CAP, HARD_SESSION_CAP_SECONDS, OVERRUN_GRACE_SECONDS, VOICE_BLOCK_SECONDS,
+  capFor, effectivePlan, maxMinutesAfter, midCallCapApplies, periodFor, premiumVoiceCap, providerDeadlineSeconds, settleCall, splitAcrossBoundary,
   type CallEndReasonId, type CallOutcome, type PlanTier,
 } from "./usagePlan";
+import { hangupCall, hangupCalls } from "./providerHangup";
 
 /**
  * Voice minute metering. The ledger (UsageEntry) is the source of truth and UsageAllowance.minutesUsed
@@ -20,8 +21,11 @@ import {
  * (that is also its server-side maximum length), the billing clock starts from the server's mint time, and
  * a call that goes silent is billed as if it ran until the server noticed, up to its reservation.
  *
- * Neither voice provider is ended from here (the browser holds the connection), so the reservation is a
- * billing clamp, not a hard stop. Calls that visibly outlive it are flagged (see `flagOverrun`).
+ * ElevenLabs is not ended from here (the browser holds that connection), so there the reservation is a billing
+ * clamp, not a hard stop. An OpenAI Realtime call is opened by the server (see /api/realtime/sdp), which stores its
+ * provider call id and hangs it up when a settlement has a server reason, when the server answers stop, at the
+ * call's deadline (see `callDeadlineMs`) and from the deadline sweep, whatever the browser does. Calls that visibly
+ * outlive their reservation are still flagged (see `flagOverrun`).
  *
  * Free is the exception: its cap is checked only when a call starts. The reservation still stops two calls from
  * starting on the same last minutes, but it is not a limit on the running call: no heartbeat stop, no billing
@@ -72,8 +76,6 @@ export interface Resolved {
   /** remaining minus what open calls have reserved: what a new call can take. */
   available: number;
 }
-
-const planOf = (v: unknown): PlanTier => (isPlanTier(v) ? v : "free");
 
 /**
  * A past_due row with no recorded start (accounts that were past_due before pastDueSince existed) starts its grace
@@ -306,9 +308,11 @@ const RESERVE_ATTEMPTS = 5;
  * server has no standard engine configured: a call that is not entitled to Premium is then refused rather
  * than run on Premium for free.
  */
-export async function beginCall(userId: string, scenario: ScenarioInfo, now = new Date(), opts: { standardAvailable?: boolean } = {}): Promise<BeginResult> {
-  return runMetered(async (tx) => {
-    await settleStale(tx, userId, now);
+export async function beginCall(userId: string, scenario: ScenarioInfo, now = new Date(), opts: { standardAvailable?: boolean; providerSession?: Prisma.InputJsonValue } = {}): Promise<BeginResult> {
+  const reaped: string[] = [];
+  const result = await runMetered(async (tx): Promise<BeginResult> => {
+    reaped.length = 0;
+    await settleStale(tx, userId, now, reaped);
     const user = await tx.user.findUnique({ where: { id: userId }, select: { organizationId: true, voiceBlockedUntil: true } });
     if (!user) return { ok: false, error: "user_not_found" } as const;
     if (user.voiceBlockedUntil && user.voiceBlockedUntil.getTime() > now.getTime()) {
@@ -361,6 +365,7 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
           premiumReservedMinutes: premiumMinutes,
           engineTier: engine,
           capEnforced: capApplies,
+          providerSession: opts.providerSession,
         },
       });
       // Free calls are not limited by the plan cap once started, only by the call length limit.
@@ -369,6 +374,8 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
     }
     return { ok: false, error: "minutes_reserved" } as const;
   });
+  await hangupCalls(reaped);
+  return result;
 }
 
 // ---- Server-side clock ------------------------------------------------------------------------
@@ -410,6 +417,47 @@ const SERVER_ENDED: ReadonlySet<string> = new Set(["cap_reached", "max_duration"
  */
 const maxSecondsOf = (reservedMinutes: number, capApplies = true) => (capApplies ? Math.min(reservedMinutes * 60, MAX_CALL_SECONDS) : MAX_CALL_SECONDS);
 
+/**
+ * When the server hangs the provider call up regardless of what the browser does: the call's maximum length (capped at
+ * HARD_SESSION_CAP_SECONDS, so a Free call too) from the mint time, plus the provider grace. Billing is not
+ * based on this; it only bounds how long the provider session can outlive the server's own stop.
+ */
+export function callDeadlineMs(s: Pick<OpenSession, "createdAt" | "reservedMinutes" | "allowanceId" | "capEnforced">): number {
+  return s.createdAt.getTime() + providerDeadlineSeconds(callMaxSeconds(s)) * 1000;
+}
+
+/** The call's maximum length: its reservation (24 hours for Free, and for a legacy call with no reservation). */
+const callMaxSeconds = (s: Pick<OpenSession, "reservedMinutes" | "allowanceId" | "capEnforced">): number =>
+  s.allowanceId ? maxSecondsOf(s.reservedMinutes, callCapApplies(s)) : MAX_CALL_SECONDS;
+
+/**
+ * The latest moment a call can be billed to: the mint time plus its maximum length, capped at HARD_SESSION_CAP_SECONDS.
+ * This is the deadline without the provider grace, so the 20 seconds of grace bill as nothing, and a call settled late
+ * (the sweep missed it, or the owner's next mint reaped it) is never billed past what it could have run.
+ */
+const billingCapMs = (s: Pick<OpenSession, "createdAt" | "reservedMinutes" | "allowanceId" | "capEnforced">): number =>
+  s.createdAt.getTime() + Math.min(callMaxSeconds(s), HARD_SESSION_CAP_SECONDS) * 1000;
+
+/** An open call nobody is heartbeating: none within the connect window, or none for HEARTBEAT_TIMEOUT_SECONDS (rule 3). */
+const isSilent = (s: Pick<OpenSession, "createdAt" | "lastHeartbeatAt">, now: Date): boolean =>
+  s.lastHeartbeatAt
+    ? now.getTime() - s.lastHeartbeatAt.getTime() > HEARTBEAT_TIMEOUT_SECONDS * 1000
+    : now.getTime() - s.createdAt.getTime() > CONNECT_WINDOW_SECONDS * 1000;
+
+/**
+ * Why the deadline sweep must act on a call that still has a provider call: "max_duration" (past its deadline),
+ * "heartbeat_timeout" (open and silent), "ended" (the server settled it with a server reason). Null when it is not
+ * due. The sweep also settles the first two when the call is still open.
+ */
+export function voiceEnforcement(
+  s: Pick<OpenSession, "createdAt" | "reservedMinutes" | "allowanceId" | "capEnforced" | "endedAt" | "endReason" | "lastHeartbeatAt">,
+  now: Date,
+): "max_duration" | "heartbeat_timeout" | "ended" | null {
+  if (now.getTime() >= callDeadlineMs(s)) return "max_duration";
+  if (!s.endedAt) return isSilent(s, now) ? "heartbeat_timeout" : null;
+  return SERVER_ENDED.has(s.endReason ?? "") ? "ended" : null;
+}
+
 // ---- During a call ----------------------------------------------------------------------------
 
 export type HeartbeatState = "connected" | "ok" | "recovering";
@@ -425,10 +473,14 @@ export type HeartbeatResult =
  * server's mint time whether or not the client ever says "connected".
  */
 export async function heartbeat(userId: string, callId: string, state: HeartbeatState, now = new Date()): Promise<HeartbeatResult> {
-  return runMetered(async (tx) => {
+  // The provider hangup is sent after the transaction commits: whenever the server answers stop, and for a call past its deadline.
+  let hangup = false;
+  const result = await runMetered(async (tx): Promise<HeartbeatResult> => {
+    hangup = false;
     const s = await tx.trainerSession.findUnique({ where: { id: callId } });
     if (!s || s.userId !== userId) return { found: false } as const;
     if (s.endedAt) {
+      hangup = true;
       // The server already settled this call. Still heartbeating well past the end of its reservation means the
       // browser kept the provider session running, whether the server clamped it or reaped it as silent.
       if (SERVER_ENDED.has(s.endReason ?? "") && pastReservation(s, now, callCapApplies(s))) await flagOverrun(tx, s, now);
@@ -452,12 +504,18 @@ export async function heartbeat(userId: string, callId: string, state: Heartbeat
     const start = billingStart({ createdAt: s.createdAt, connectedAt });
     const elapsed = Math.max(0, Math.floor((now.getTime() - start.getTime()) / 1000));
     const left = Math.min(limit, MAX_CALL_SECONDS) - elapsed;
-    if (left > 0) return { found: true, stop: false, secondsLeft: left } as const;
+    // At the call's hard deadline (30 minutes from mint for every plan, Free included) the provider call is hung up, so the
+    // call is settled and stopped here too: a client that keeps heartbeating cannot hold the reservation or keep billing.
+    // When the reservation ran out first, its own reason (cap_reached) is kept.
+    if (left > 0 && now.getTime() < callDeadlineMs(s)) return { found: true, stop: false, secondsLeft: left } as const;
+    hangup = true;
     // A Free call can only be stopped by the call length limit, never by the plan cap.
-    const reason = capApplies && limit - elapsed <= 0 ? "cap_reached" : "max_duration";
+    const reason: "cap_reached" | "max_duration" = capApplies && limit - elapsed <= 0 ? "cap_reached" : "max_duration";
     const settlement = await settle(tx, { ...s, connectedAt, lastHeartbeatAt: now, degradedAt: null }, reason, now);
     return { found: true, stop: true, reason, settlement } as const;
   });
+  if (hangup) await hangupCall(callId);
+  return result;
 }
 
 /**
@@ -555,6 +613,9 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
     const confirmedMs = Math.max(start.getTime(), s.lastHeartbeatAt?.getTime() ?? 0);
     billedEnd = new Date(Math.min(naturalEnd.getTime(), confirmedMs + s.reservedMinutes * 60 * 1000));
   }
+  // Whatever the settle time, billing stops at the call's deadline without grace (never before it started billing).
+  const capClamped = billedEnd.getTime() > billingCapMs(s);
+  if (capClamped) billedEnd = new Date(Math.max(start.getTime(), billingCapMs(s)));
   const endedAt = connected ? billedEnd : now;
   // The connect heartbeat sets lastHeartbeatAt to the start itself, so only a later one proves the client kept running.
   const heartbeatSeen = !!s.lastHeartbeatAt && s.lastHeartbeatAt.getTime() > start.getTime();
@@ -579,6 +640,12 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   const st = settleCall({ connectedAt: connected ? start : null, endedAt, reason, remainingMinutes: bounded ? target.remaining : Number.POSITIVE_INFINITY, heartbeatSeen, recentCreditedDrops });
   // A stale call keeps its own reason when the reservation is what clamped it.
   let endReason: CallEndReasonId = requested === "heartbeat_timeout" && st.endReason === "cap_reached" ? "heartbeat_timeout" : st.endReason;
+  // A call the deadline trimmed ran past its limit, so a client-reported ending (a late hang-up) is recorded as the server's
+  // reason: cap_reached when its reservation was the limit, max_duration when the 30 minute ceiling was. That keeps the
+  // overrun check below (it only looks at server reasons) working for late end events.
+  if (capClamped && connected && !SERVER_ENDED.has(endReason)) {
+    endReason = bounded && callMaxSeconds(s) <= HARD_SESSION_CAP_SECONDS ? "cap_reached" : "max_duration";
+  }
 
   const hasReservation = !!s.allowanceId;
   let b: Booking;
@@ -695,7 +762,7 @@ function storedResult(s: OpenSession): CallResult {
  * Returns null when the call does not belong to this user.
  */
 export async function endCall(userId: string, callId: string, reason: CallEndReasonId, now = new Date(), opts: SettleOpts = {}): Promise<CallResult | null> {
-  return runMetered(async (tx) => {
+  const result = await runMetered(async (tx) => {
     const s = await tx.trainerSession.findUnique({ where: { id: callId } });
     if (!s || s.userId !== userId) return null;
     if (s.endedAt) {
@@ -708,6 +775,9 @@ export async function endCall(userId: string, callId: string, reason: CallEndRea
     const again = await tx.trainerSession.findUnique({ where: { id: callId } });
     return again ? storedResult(again) : null;
   });
+  // A settlement the server decided (the reservation clamped it, or nobody reported its end) also ends the provider call.
+  if (result && SERVER_ENDED.has(result.endReason)) await hangupCall(callId);
+  return result;
 }
 
 /**
@@ -716,13 +786,11 @@ export async function endCall(userId: string, callId: string, reason: CallEndRea
  * These calls are billed as if they ran until now, up to their reservation: the server cannot see the
  * provider connection, so silence is not treated as proof the call stopped.
  */
-export async function settleStale(tx: Tx, userId: string, now: Date): Promise<void> {
+export async function settleStale(tx: Tx, userId: string, now: Date, reaped?: string[]): Promise<void> {
   const open = await tx.trainerSession.findMany({ where: { userId, endedAt: null } });
   for (const s of open) {
-    const silent = s.lastHeartbeatAt
-      ? now.getTime() - s.lastHeartbeatAt.getTime() > HEARTBEAT_TIMEOUT_SECONDS * 1000
-      : now.getTime() - s.createdAt.getTime() > CONNECT_WINDOW_SECONDS * 1000;
-    if (silent) await settle(tx, s, "heartbeat_timeout", now);
+    // `reaped` collects the settled calls so the caller can hang up their provider calls once the transaction commits.
+    if (isSilent(s, now) && (await settle(tx, s, "heartbeat_timeout", now))) reaped?.push(s.id);
   }
 }
 
@@ -763,8 +831,10 @@ export interface UsageSummary {
 
 /** What the usage panel shows. Everything comes from the allowance row and this user's ledger entries. */
 export async function usageSummary(userId: string, now = new Date()): Promise<UsageSummary | null> {
-  return runMetered(async (tx) => {
-    await settleStale(tx, userId, now);
+  const reaped: string[] = [];
+  const summary = await runMetered(async (tx) => {
+    reaped.length = 0;
+    await settleStale(tx, userId, now, reaped);
     const r = await resolveAllowance(tx, userId, now);
     if (!r) return null;
     const entries = await tx.usageEntry.findMany({
@@ -788,4 +858,6 @@ export async function usageSummary(userId: string, now = new Date()): Promise<Us
       entries: entries.map((e) => ({ id: e.id, kind: e.kind, minutes: e.minutes, createdAt: e.createdAt.toISOString() })),
     };
   });
+  await hangupCalls(reaped);
+  return summary;
 }
