@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronUp, Loader2, Mic, MicOff, PhoneOff, Send, Target, X } from "lucide-react";
+import { ChevronUp, Loader2, Mic, MicOff, PhoneOff, Send, Target, TrendingUp, X } from "lucide-react";
 import { CUE_LABELS, type CoachMode } from "@/lib/coach-types";
 import { talkTrackSteps, type Scenario } from "@/lib/scenarios";
 import type { StoredTurn } from "@/lib/sessionStore";
@@ -139,11 +139,11 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
         {voice && (
           <button className={`btn-ghost !min-h-[38px] !px-3 ${voice.muted ? "!border-alert/60 !text-alert" : ""}`} onClick={voice.onToggleMute} disabled={grading}
             aria-label={voice.muted ? "Unmute microphone" : "Mute microphone"}>
-            {voice.muted ? <MicOff size={16} aria-hidden /> : <Mic size={16} aria-hidden />}<span className="hidden sm:inline" aria-hidden>{voice.muted ? "Unmute" : "Mute"}</span><span className="kbd hidden lg:inline-flex" aria-hidden>Space</span>
+            {voice.muted ? <MicOff size={16} strokeWidth={1.75} aria-hidden /> : <Mic size={16} strokeWidth={1.75} aria-hidden />}<span className="hidden sm:inline" aria-hidden>{voice.muted ? "Unmute" : "Mute"}</span><span className="kbd hidden lg:inline-flex" aria-hidden>Space</span>
           </button>
         )}
         <button className="btn-danger !min-h-[38px] !px-3 sm:!px-4" onClick={endClicked} disabled={grading} aria-label={text?.hungUp ? "Grade this call" : "End and grade call"}>
-          <PhoneOff size={16} aria-hidden /><span className="hidden sm:inline">{text?.hungUp ? "Grade call" : "End & grade"}</span><span className="kbd hidden !border-alert-on/30 !bg-transparent !text-alert-on lg:inline-flex">Esc</span>
+          <PhoneOff size={16} strokeWidth={1.75} aria-hidden /><span className="hidden sm:inline">{text?.hungUp ? "Grade call" : "End & grade"}</span><span className="kbd hidden !border-alert-on/30 !bg-transparent !text-alert-on lg:inline-flex">Esc</span>
         </button>
       </header>
 
@@ -151,7 +151,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
         {/* Transcript column */}
         <section className="flex min-h-0 flex-col" aria-label="Call">
           <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2.5 text-[13px] sm:px-6">
-            <Target size={14} className="shrink-0 text-primary" aria-hidden />
+            <Target size={14} strokeWidth={1.75} className="shrink-0 text-primary" aria-hidden />
             <p className="min-w-0 flex-1 truncate"><span className="font-semibold">Goal:</span> <span className="text-ink-soft">{scenario.traineeGoal}</span></p>
             <span className="mono shrink-0 text-[11px] text-ink-muted">{turns.length} turns<span className="md:hidden"> · {source}</span></span>
           </div>
@@ -171,7 +171,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
                     {objection && <p className="mt-1.5 text-xs font-semibold text-alert">Objection detected · cue in the coach rail</p>}
                     {me && chipsFor(i).length > 0 && (
                       <div className="mt-1.5 flex flex-wrap gap-1.5">
-                        {chipsFor(i).map((c) => <span key={c.id} className="inline-flex items-center gap-1 rounded-md bg-ok-soft px-1.5 py-0.5 font-mono text-[11px] text-ok">▲ {c.name} +{c.delta}</span>)}
+                        {chipsFor(i).map((c) => <span key={c.id} className="inline-flex items-center gap-1 rounded-md bg-ok-soft px-1.5 py-0.5 font-mono text-[11px] text-ok"><TrendingUp size={12} strokeWidth={1.75} aria-hidden /> {c.name} +{c.delta}</span>)}
                       </div>
                     )}
                   </div>
@@ -196,7 +196,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
             {coachMode !== "blind" && (
               <button ref={sheetOpener} type="button" className="flex w-full items-center gap-3 rounded-panel border border-line bg-surface px-3 py-2 text-left" onClick={() => setSheet(true)} aria-label="Open the coach rail" aria-haspopup="dialog">
                 <div className="min-w-0 flex-1"><Instruments result={coach.result} steps={steps} compact /></div>
-                <ChevronUp size={18} className="shrink-0 text-ink-muted" aria-hidden />
+                <ChevronUp size={18} strokeWidth={1.75} className="shrink-0 text-ink-muted" aria-hidden />
               </button>
             )}
           </div>
@@ -225,7 +225,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
                     autoFocus
                     disabled={grading}
                   />
-                  <button className="btn-primary !h-[46px] !min-w-[46px] !rounded-xl !px-3.5" disabled={grading || !text.value.trim()} aria-label="Send"><Send size={17} aria-hidden /></button>
+                  <button className="btn-primary !h-[46px] !min-w-[46px] !rounded-xl !px-3.5" disabled={grading || !text.value.trim()} aria-label="Send"><Send size={17} strokeWidth={1.75} aria-hidden /></button>
                 </div>
                 <p className="hidden font-mono text-[10px] text-ink-muted sm:block"><span className="kbd">Enter</span> send · <span className="kbd">Shift</span>+<span className="kbd">Enter</span> new line · <span className="kbd">Esc</span> end call</p>
               </form>
@@ -250,7 +250,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
           <div ref={sheetRef} onKeyDown={trapSheet} className="flex max-h-[85dvh] w-full flex-col overflow-hidden rounded-t-sheet border border-line bg-surface animate-cue-in" role="dialog" aria-modal="true" aria-label="Coach">
             <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
               <p className="font-heading text-sm font-bold">Coach</p>
-              <button ref={sheetClose} type="button" className="btn-quiet !min-h-[36px] !px-2" onClick={() => setSheet(false)} aria-label="Close coach"><X size={18} aria-hidden /></button>
+              <button ref={sheetClose} type="button" className="btn-quiet !min-h-[36px] !px-2" onClick={() => setSheet(false)} aria-label="Close coach"><X size={18} strokeWidth={1.75} aria-hidden /></button>
             </div>
             <div className="flex min-h-0 flex-1 flex-col pb-[env(safe-area-inset-bottom)]">
               <CopilotRail scenario={scenario} result={coach.result} cues={coach.cues} mode={coachMode} onModeChange={onCoachModeChange} voice={isVoice}
@@ -265,7 +265,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
       {grading && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-background/80 backdrop-blur-sm" role="status">
           <div className="panel flex items-center gap-3 px-5 py-4">
-            <Loader2 size={18} className="animate-spin text-primary" aria-hidden />
+            <Loader2 size={18} strokeWidth={1.75} className="animate-spin text-primary" aria-hidden />
             <div>
               <p className="text-sm font-semibold">Grading the full call</p>
               <p className="font-mono text-[11px] text-ink-muted">{gradingLabel}</p>

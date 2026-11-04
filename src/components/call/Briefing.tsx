@@ -165,7 +165,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
 
   return (
     <div className="page enter">
-      <Link href="/library" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink"><ArrowLeft size={15} aria-hidden /> Library</Link>
+      <Link href="/library" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink"><ArrowLeft size={15} strokeWidth={1.75} aria-hidden /> Library</Link>
 
       <div className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
         <div className="space-y-6">
@@ -190,7 +190,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
 
           {retryFrom && (
             <p id="retry-reason" className="flex items-start gap-2 rounded-panel border border-primary/40 bg-primary-soft/50 p-3 text-sm" role="status">
-              <RotateCcw size={16} className="mt-0.5 shrink-0 text-primary" aria-hidden />
+              <RotateCcw size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-primary" aria-hidden />
               <span><strong>Retry from turn {retryFrom.turn}.</strong> The call picks up right after {p.name} says &ldquo;{retryFrom.line}&rdquo; Retries run in text mode.</span>
             </p>
           )}
@@ -276,7 +276,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
                 {CALL_MODES.map((m) => (
                   <button key={m} type="button" role="radio" aria-checked={mode === m} tabIndex={mode === m ? 0 : -1} disabled={!!retryFrom && m === "voice"} aria-describedby={!!retryFrom && m === "voice" ? "retry-reason" : undefined} onClick={() => onModeChange(m)}
                     className={`flex min-h-[38px] items-center justify-center gap-2 rounded-md text-sm font-semibold transition disabled:opacity-40 ${mode === m ? "bg-surface text-ink shadow-card ring-1 ring-line" : "text-ink-muted hover:text-ink"}`}>
-                    {m === "voice" ? <Mic size={15} aria-hidden /> : <Keyboard size={15} aria-hidden />}{m === "voice" ? "Voice" : "Text"}
+                    {m === "voice" ? <Mic size={15} strokeWidth={1.75} aria-hidden /> : <Keyboard size={15} strokeWidth={1.75} aria-hidden />}{m === "voice" ? "Voice" : "Text"}
                   </button>
                 ))}
               </div>
@@ -315,7 +315,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
             {/* A disabled Start always has a visible reason, and aria-describedby points the button at it. */}
             <button className="btn-primary btn-xl w-full" onClick={onStart} disabled={blocked || voiceLookupFailed || outOfMinutes}
               aria-describedby={voiceLookupFailed ? VOICE_UNAVAILABLE_ID : outOfMinutes ? "minutes-out" : blocked ? "voice-blocked-reason" : undefined}>
-              <PhoneCall size={18} aria-hidden /> Start call
+              <PhoneCall size={18} strokeWidth={1.75} aria-hidden /> Start call
             </button>
             <p className="text-center text-xs text-ink-muted">The coach only talks to you. {p.name} never hears it.</p>
           </div>

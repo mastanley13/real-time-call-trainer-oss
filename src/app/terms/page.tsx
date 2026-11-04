@@ -28,7 +28,7 @@ export default function TermsPage() {
 
         <section aria-labelledby="billing-h">
           <h2 id="billing-h" className="text-xl font-bold text-ink">Plans and billing</h2>
-          <p className="mt-2">Free accounts include 10 voice minutes a month and unlimited text practice. Paid plans (Pro and Team) are available by monthly or annual subscription at the prices on /pricing. There are no overage charges. There are no refunds. You can cancel anytime and keep access until the end of the period you have paid for. See Billing, cancellation and refunds below.</p>
+          <p className="mt-2">Free accounts include 10 voice minutes a month and unlimited text practice. Paid plans (Pro and Team) are available by monthly or annual subscription at the prices on /pricing. There are no overage charges. There are no refunds, except where the law requires. You can cancel anytime and keep access until the end of the period you have paid for. See Billing, cancellation and refunds below.</p>
         </section>
 
         <section aria-labelledby="cancel-h">

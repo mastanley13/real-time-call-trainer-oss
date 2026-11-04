@@ -1,5 +1,6 @@
 "use client";
 
+import { TrendingUp } from "lucide-react";
 import type { CoachResult } from "@/lib/coach-types";
 import { BUILT_IN_SCENARIOS, talkTrackSteps } from "@/lib/scenarios";
 import { CriteriaTapes, CueCard, Instruments } from "@/components/call/CopilotRail";
@@ -58,7 +59,7 @@ export default function HeroDeck() {
             <li key={i} className={`rounded-md p-2 ${i === 2 ? "bg-alert-soft/60 ring-1 ring-alert/40" : ""}`}>
               <p className={`font-mono text-[10px] uppercase tracking-wide ${who === "You" ? "text-primary" : "text-ink-muted"}`}>T{5 + i} · {who}</p>
               <p className={`mt-0.5 text-[13px] leading-snug ${who === "You" ? "text-ink" : "text-ink-soft"}`}>{text}</p>
-              {who === "You" && <p className="mt-1 inline-block rounded bg-ok-soft px-1.5 py-0.5 font-mono text-[10px] text-ok">▲ Discovery questions +12</p>}
+              {who === "You" && <p className="mt-1 inline-flex items-center gap-1 rounded bg-ok-soft px-1.5 py-0.5 font-mono text-[10px] text-ok"><TrendingUp size={12} strokeWidth={1.75} aria-hidden /> Discovery questions +12</p>}
             </li>
           ))}
           <li className="pt-1"><CueCard cue={CUE} voice={false} onUse={() => {}} onDismiss={() => {}} compact /></li>

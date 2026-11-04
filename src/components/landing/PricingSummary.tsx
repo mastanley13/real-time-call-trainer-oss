@@ -11,17 +11,17 @@ export default function PricingSummary({ src, seg, billingEnabled }: { src: stri
   const plans = [
     {
       name: "Free", price: "$0", note: "",
-      body: `${FREE_VOICE_MIN} voice minutes a month, unlimited text sim, live coach, graded debriefs, core persona library.`,
+      body: `${FREE_VOICE_MIN} voice minutes a month, unlimited text sim, live coach, graded debriefs, full persona library, persona wizard, score trends, two-factor sign-in (MFA).`,
       href: registerHref({ seg, src }), cta: "Start free, no card", soon: false,
     },
     {
       name: "Pro", price: `$${PRICE.pro.month}/mo`, note: `or $${PRICE.pro.year}/yr`,
-      body: `${PRO_VOICE_MIN} voice minutes a month, full library, persona wizard, score trends, MFA. Reviewed persona packs: coming soon.`,
-      href: registerHref({ plan: "pro", interval: "month", seg, src }), cta: billingEnabled ? "Start Pro" : "Start free", soon: !billingEnabled,
+      body: `${PRO_VOICE_MIN} voice minutes a month, everything in Free. Reviewed persona packs: coming soon.`,
+      href: registerHref({ plan: "pro", interval: "month", seg, src }), cta: billingEnabled ? "Start with Pro" : "Start free", soon: !billingEnabled,
     },
     {
       name: "Team", price: `$${PRICE.team.month}/seat/mo`, note: `or $${PRICE.team.year}/seat/yr, ${TEAM_MIN_SEATS}-seat minimum`,
-      body: `${TEAM_VOICE_MIN_PER_SEAT} pooled voice minutes per seat, Team view, assignments, enforced MFA.`,
+      body: `${TEAM_VOICE_MIN_PER_SEAT} pooled voice minutes per seat, everything in Pro, priority email support. Managers get Team view and assignments on any plan.`,
       href: registerHref({ plan: "team", interval: "month", seg, src }), cta: billingEnabled ? "Start with Team" : "Start free", soon: !billingEnabled,
     },
   ];

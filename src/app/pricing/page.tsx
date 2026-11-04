@@ -28,21 +28,21 @@ const COMPARE: CompareRow[] = [
   { feature: "Postgres database", self: "You run it", free: "Managed", pro: "Managed", team: "Managed" },
   { feature: "Live coach channel", self: "Yes", free: "Yes", pro: "Yes", team: "Yes" },
   { feature: "Graded debriefs with transcript quotes", self: "Yes", free: "Yes", pro: "Yes", team: "Yes" },
-  { feature: "Persona library", self: "Yes", free: "Core set", pro: "Full", team: "Full" },
+  { feature: "Persona library", self: "Yes", free: "Full", pro: "Full", team: "Full" },
   { feature: "Reviewed persona packs (Insurance, Solar)", self: "Community", free: "No", pro: "Coming soon", team: "Coming soon" },
-  { feature: "Persona wizard", self: "Yes", free: "No", pro: "Yes", team: "Yes" },
-  { feature: "Team view for managers", self: "You host it", free: "No", pro: "No", team: "Managed" },
-  { feature: "Assignments", self: "You host it", free: "No", pro: "No", team: "Yes" },
-  { feature: "MFA", self: "You configure it", free: "Yes", pro: "Yes", team: "Enforced for team" },
+  { feature: "Persona wizard", self: "Yes", free: "Yes", pro: "Yes", team: "Yes" },
+  { feature: "Team view", self: "You host it", free: "Available to managers", pro: "Available to managers", team: "Available to managers" },
+  { feature: "Assignments", self: "You host it", free: "Available to managers", pro: "Available to managers", team: "Available to managers" },
+  { feature: "Two-factor sign-in (MFA)", self: "You configure it", free: "Available", pro: "Available", team: "Available" },
   { feature: "Premium AI voice", self: "Your keys", free: "No", pro: "No", team: PREMIUM_COMING_SOON },
   { feature: "Updates and backups", self: "You handle them", free: "Automatic", pro: "Automatic", team: "Automatic" },
-  { feature: "Support", self: "GitHub community", free: "Community", pro: "Email", team: "Priority email" },
+  { feature: "Support", self: "GitHub community", free: "Community", pro: "Community", team: "Priority email" },
   { feature: "Overage charges", self: "None", free: "None", pro: "None", team: "None" },
 ];
 
 const FAQ: { q: string; a: string }[] = [
-  { q: "What do I get on Free?", a: FREE_SUMMARY },
-  { q: "What happens when I hit my voice minute cap?", a: "Voice calls pause until your next billing cycle. We never charge overages, ever. The text sim stays fully available, so you can keep practicing, get coached and get graded. You can upgrade anytime if you want more voice minutes now." },
+  { q: "What do I get on Free?", a: `${FREE_SUMMARY} It includes the full persona library, the persona wizard, the live coach and graded debriefs.` },
+  { q: "What happens when I hit my voice minute cap?", a: "Voice calls pause until your minutes reset: at your next billing cycle on paid plans, or monthly from your signup date on Free. We never charge overages, ever. The text sim stays fully available, so you can keep practicing, get coached and get graded. You can upgrade anytime if you want more voice minutes now." },
   { q: "Will I ever get a surprise bill?", a: "No. There are no overage charges on any plan. Your price is your price, whatever you use." },
   { q: "Do unused minutes roll over?", a: "No. Paid plans reset at the start of each billing cycle. Free resets monthly from your signup date." },
   { q: "Can I buy more minutes mid-month?", a: `Not as an add-on. Upgrade to a higher plan or add Team seats. Each new seat adds ${TEAM_VOICE_MIN_PER_SEAT} minutes to the pool.` },
@@ -51,9 +51,9 @@ const FAQ: { q: string; a: string }[] = [
   { q: "Do I need OpenAI or ElevenLabs keys?", a: "No. The hosted plans include the voice models. You only need keys if you self-host." },
   { q: "Do I need a database?", a: "No. We run and back up the database for hosted plans." },
   { q: "How do Team minutes work?", a: `Each seat adds ${TEAM_VOICE_MIN_PER_SEAT} voice minutes to one shared pool. A rep who practices more can use minutes a lighter user does not. When the pool runs out, voice pauses for the team and the text sim stays on.` },
-  { q: "Why a 3-seat minimum on Team?", a: "Team view and assignments are built for a manager coaching several reps. Solo reps get the best value on Pro." },
+  { q: "Why a 3-seat minimum on Team?", a: "Team is built for a manager coaching several reps, with one shared pool of voice minutes. Solo reps get the best value on Pro. Team view and assignments are available to managers and owners on any plan." },
   { q: "What are reviewed persona packs?", a: "Industry buyer sets, like final expense, Medicare, P&C insurance and residential solar, with realistic objections and grading tuned to that sale. Each pack is reviewed before release. They are coming soon to Pro and Team." },
-  { q: "What does Premium AI voice add?", a: `${PREMIUM_COMING_SOON}. It will be a Team add-on first. The full realtime voice model for your buyers, more natural and expressive. It can use up to ${PREMIUM_VOICE_CAP_PCT}% of your plan minutes. After that, calls fall back to standard voice and never stop. It costs +$${PRICE.premium.month} per seat per month ($${PRICE.premium.year} per seat per year).` },
+  { q: "What does Premium AI voice add?", a: `${PREMIUM_COMING_SOON}. It will be a Team add-on first. The full realtime voice model for your buyers, more natural and expressive. It can use up to ${PREMIUM_VOICE_CAP_PCT}% of your plan minutes. After that, calls fall back to standard voice and never stop. Pricing will be announced when it launches.` },
   { q: "How does annual billing work?", a: `Pay for 10 months, get 12. Pro is $${PRICE.pro.year} a year. Team is $${PRICE.team.year} per seat per year.` },
   { q: "Can I cancel anytime?", a: "Yes. Cancel anytime from Settings > Billing and your access continues until the end of the period you paid for. There are no refunds. Payments to StrategixAI LLC are non-refundable except where the law requires." },
   { q: "What happens to my data?", a: "Transcripts are kept until an admin sets a retention window. No call audio is stored on our servers." },
@@ -81,6 +81,7 @@ export default function PricingPage() {
         <section id="plans" className="page py-12 sm:py-14" aria-label="Plans">
           <PricingCards billingEnabled={billingOn()} />
           <p className="mt-4 text-sm text-ink-muted">No overage charges on any plan. Free has no card and resets monthly from your signup date, with no rollover.</p>
+          <p className="mt-1 text-sm text-ink-muted">Prices in USD. Sales tax or VAT may be added at checkout where required.</p>
         </section>
 
         <section className="border-y border-line bg-surface" aria-labelledby="compare-h">

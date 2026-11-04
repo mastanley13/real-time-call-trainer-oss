@@ -81,7 +81,7 @@ export default function AssignSheet({ members, viewer, defaultAssigneeId, local,
   }
 
   return (
-    <Sheet title="Assign persona" subtitle="It shows up on their Progress page with a Pre-flight link." onClose={onClose} wide
+    <Sheet title="Assign persona" subtitle="It shows up on their Progress page with a Start practice link." onClose={onClose} wide
       footer={
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="min-w-0 flex-1 text-sm" role={error ? "alert" : undefined}>

@@ -1,11 +1,11 @@
 "use client";
 
-import { Check, CircleHelp, CornerDownLeft, Ear, Flag, ShieldAlert, X } from "lucide-react";
+import { Check, CircleHelp, CornerDownLeft, Flag, MessageSquare, ShieldAlert, X } from "lucide-react";
 import { COACH_MODES, COACH_MODE_LABELS, CUE_LABELS, type CoachMode, type CoachResult, type CueType } from "@/lib/coach-types";
 import { talkTrackSteps, type Scenario } from "@/lib/scenarios";
 import type { LiveCue } from "./useCoach";
 
-export const CUE_ICON: Record<CueType, typeof ShieldAlert> = { objection: ShieldAlert, next_question: CircleHelp, whisper: Ear, guardrail: Flag };
+export const CUE_ICON: Record<CueType, typeof ShieldAlert> = { objection: ShieldAlert, next_question: CircleHelp, whisper: MessageSquare, guardrail: Flag };
 export const CUE_TONE: Record<CueType, string> = {
   objection: "text-alert border-alert/60",
   next_question: "text-signal border-signal/60",
@@ -119,7 +119,7 @@ export function CueCard({ cue, voice, onUse, onDismiss, compact = false }: { cue
           <p className="font-mono text-[10px] font-medium uppercase tracking-[0.1em]">{CUE_LABELS[cue.type]} · turn {cue.triggerTurn}</p>
           <p className="mt-0.5 text-sm font-semibold text-ink">{cue.title}</p>
         </div>
-        <button className="rounded p-1 text-ink-muted hover:bg-surface hover:text-ink" onClick={onDismiss} aria-label={`Dismiss cue: ${cue.title}`}><X size={14} aria-hidden /></button>
+        <button className="rounded p-1 text-ink-muted hover:bg-surface hover:text-ink" onClick={onDismiss} aria-label={`Dismiss cue: ${cue.title}`}><X size={14} strokeWidth={1.75} aria-hidden /></button>
       </div>
       {cue.heard && <p className="mt-2 border-l border-line pl-2 text-[12.5px] italic text-ink-soft"><span className="not-italic font-mono text-[10px] uppercase text-ink-muted">Heard </span>&ldquo;{cue.heard}&rdquo;</p>}
       {cue.message && <p className="mt-2 text-[13px] text-ink-soft">{cue.message}</p>}
@@ -131,7 +131,7 @@ export function CueCard({ cue, voice, onUse, onDismiss, compact = false }: { cue
       )}
       {cue.suggestedLine && !voice && (
         <div className="mt-2.5 flex gap-2">
-          <button type="button" className="btn-primary btn-sm" onClick={onUse}><CornerDownLeft size={13} aria-hidden /> Use line</button>
+          <button type="button" className="btn-primary btn-sm" onClick={onUse}><CornerDownLeft size={13} strokeWidth={1.75} aria-hidden /> Use line</button>
           <button className="btn-quiet btn-sm" onClick={onDismiss}>Dismiss</button>
         </div>
       )}

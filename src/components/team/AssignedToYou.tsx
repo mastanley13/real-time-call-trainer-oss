@@ -79,7 +79,7 @@ export default function AssignedToYou() {
                 <span className="shrink-0 text-xs text-ink-muted">This persona is not in your library. Ask your manager to reassign it.</span>
               ) : (
                 <Link href={`/trainer?scenario=${encodeURIComponent(a.scenarioId)}`} className="btn-primary btn-sm shrink-0">
-                  Pre-flight <ArrowRight size={13} strokeWidth={1.75} aria-hidden /><span className="sr-only">: {a.scenarioTitle}</span>
+                  Start practice <ArrowRight size={13} strokeWidth={1.75} aria-hidden /><span className="sr-only">: {a.scenarioTitle}</span>
                 </Link>
               )}
             </li>

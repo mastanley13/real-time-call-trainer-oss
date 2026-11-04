@@ -195,7 +195,7 @@ export default function SecuritySettingsPage() {
           {me.mfaEnabled ? (
             <>
               <div className="flex items-center gap-2 mb-3">
-                <ShieldCheck className="w-5 h-5 text-ok" />
+                <ShieldCheck strokeWidth={1.75} className="w-5 h-5 text-ok" />
                 <h2 className="text-sm font-semibold text-ink">
                   MFA is enabled
                 </h2>
@@ -239,7 +239,7 @@ export default function SecuritySettingsPage() {
           ) : enroll ? (
             <>
               <div className="flex items-center gap-2 mb-3">
-                <ShieldCheck className="w-5 h-5 text-ink-soft" />
+                <ShieldCheck strokeWidth={1.75} className="w-5 h-5 text-ink-soft" />
                 <h2 className="text-sm font-semibold text-ink">
                   Finish enrollment
                 </h2>
@@ -317,7 +317,7 @@ export default function SecuritySettingsPage() {
           ) : (
             <>
               <div className="flex items-center gap-2 mb-3">
-                <ShieldOff className="w-5 h-5 text-ink-muted" />
+                <ShieldOff strokeWidth={1.75} className="w-5 h-5 text-ink-muted" />
                 <h2 className="text-sm font-semibold text-ink">
                   MFA is off
                 </h2>

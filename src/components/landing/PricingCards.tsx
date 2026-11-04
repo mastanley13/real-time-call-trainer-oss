@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Check } from "lucide-react";
+import { Check, Clock } from "lucide-react";
 import { useBilling } from "@/components/landing/BillingContext";
 import {
   FREE_SUMMARY, OPEN_SOON_LINE, PREMIUM_COMING_SOON, PREMIUM_VOICE_CAP_PCT, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT,
@@ -11,15 +11,15 @@ import {
 const TIERS = [
   {
     id: "free", name: "Free", blurb: "Try it solo, no card.", cta: "Start free, no card",
-    features: [FREE_SUMMARY, "Unlimited text sim", "Live coach channel", "Graded debriefs with transcript quotes", "Core persona library"],
+    features: [FREE_SUMMARY, "Unlimited text sim", "Live coach channel", "Graded debriefs with transcript quotes", "Full persona library across every sales role", "Persona wizard for your own buyers", "Call history and score trends", "Two-factor sign-in (MFA)"],
   },
   {
-    id: "pro", name: "Pro", blurb: "For individual reps who practice weekly.", cta: "Start Pro",
-    features: [`${PRO_VOICE_MIN} voice minutes per month`, "Everything in Free", "Full persona library across every sales role", "Reviewed persona packs (coming soon)", "Persona wizard for your own buyers", "Call history and score trends", "MFA"],
+    id: "pro", name: "Pro", blurb: "For individual reps who practice weekly.", cta: "Start with Pro",
+    features: [`${PRO_VOICE_MIN} voice minutes per month`, "Everything in Free", "Reviewed persona packs (coming soon)"],
   },
   {
     id: "team", name: "Team", blurb: `Built for a manager plus reps: ${TEAM_MIN_SEATS}-seat minimum.`, cta: "Start with Team",
-    features: [`${TEAM_VOICE_MIN_PER_SEAT} voice minutes per seat, pooled across the team`, "Everything in Pro", "Managed Team view: every rep's calls, scores and trends", "Assignments: give reps a persona and a due date", "Enforced MFA for the whole team", "Priority email support"],
+    features: [`${TEAM_VOICE_MIN_PER_SEAT} voice minutes per seat, pooled across the team`, "Everything in Pro", "Priority email support", "Team view and assignments for managers, available on any plan"],
   },
 ] as const;
 
@@ -70,7 +70,7 @@ export default function PricingCards({ billingEnabled }: { billingEnabled: boole
               <p className="mt-2 text-sm text-ink-soft">{t.blurb}</p>
               <ul className="mt-4 flex-1 space-y-2 text-sm text-ink-soft">
                 {t.features.map((f) => f.endsWith("(coming soon)") ? (
-                  <li key={f} className="flex gap-2 text-ink-muted"><span className="w-4 shrink-0" aria-hidden />{f}</li>
+                  <li key={f} className="flex gap-2"><Clock size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-ink-muted" aria-hidden />{f}</li>
                 ) : (
                   <li key={f} className="flex gap-2"><Check size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-ok" aria-hidden />{f}</li>
                 ))}
@@ -89,10 +89,6 @@ export default function PricingCards({ billingEnabled }: { billingEnabled: boole
           <h3 className="text-base font-bold">Add-on: Premium AI voice</h3>
           <span className="chip">{PREMIUM_COMING_SOON}</span>
         </div>
-        <p className="mt-2 flex items-baseline gap-1">
-          <span className="font-heading text-2xl font-bold">+${PRICE.premium[billing]}</span>
-          <span className="text-sm text-ink-muted">/seat /{billing === "month" ? "month" : "year"}</span>
-        </p>
         <p className="mt-2 max-w-2xl text-sm text-ink-soft">
           The full realtime voice model for your buyers, more lifelike and expressive. It can use up to {PREMIUM_VOICE_CAP_PCT}% of your plan minutes. After that, calls fall back to standard voice and never stop. No extra minute charges.
         </p>

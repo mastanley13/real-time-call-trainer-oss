@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, FileJson, GitPullRequest, KeyRound, LibraryBig, MessageSquareQuote, Radar } from "lucide-react";
+import { ArrowRight, BookOpen, ClipboardCheck, FileJson, GitPullRequest, MessageSquare, Terminal } from "lucide-react";
 import HeroDeck from "@/components/landing/HeroDeck";
 import PublicFooter from "@/components/landing/PublicFooter";
 import { LIBRARY } from "@/lib/personas";
@@ -17,16 +17,12 @@ const families = new Set(LIBRARY.map((s) => s.role)).size;
 
 const STEPS = [
   { title: "Brief", body: "Pick a persona from the library. Read the goal, the objections to expect and the talk track." },
-  { title: "Call", body: "Talk or type. The caller stays in character; a coach rail only you can see scores each turn and whispers the next move." },
+  { title: "Call", body: "Talk or type. The caller stays in character. A coach rail only you can see keeps a running score estimate and your talk-track progress, and in Coached mode cues your next move." },
   { title: "Debrief", body: "Every score cites your own words. Jump to the moment you lost points and retry the call from that turn." },
 ];
 
-const MODELS = [
-  { job: "Live coach", model: "gpt-4.1-mini (default)", note: "Per-turn cues and rubric estimate, as validated JSON" },
-  { job: "Grading", model: "gpt-4.1-mini (default)", note: "Full-transcript rubric grade with verbatim evidence checks" },
-  { job: "Persona wizard", model: "gpt-4.1-mini (default)", note: "Builds a persona, objections and rubric from your context" },
-  { job: "Voice", model: "gpt-realtime-1.5 (default)", note: "OpenAI Realtime over WebRTC, the default when an OpenAI key is set. ElevenLabs Agents also supported" },
-];
+/** Self-host docs: the model table and env vars moved here from the hosted home page. */
+const SELF_HOST_DOCS = "https://github.com/mastanley13/real-time-call-trainer-oss#which-model-does-what";
 
 export default function Home() {
   return (
@@ -42,7 +38,7 @@ export default function Home() {
               Practice real sales calls against {LIBRARY.length} AI buyer personas. No API keys, no database, just sign up and start talking.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link href={registerHref({ src: "home_hero" })} className="btn-primary btn-xl">Start free <ArrowRight size={18} aria-hidden /></Link>
+              <Link href={registerHref({ src: "home_hero" })} className="btn-primary btn-xl">Start free <ArrowRight size={18} strokeWidth={1.75} aria-hidden /></Link>
               <Link href="/pricing" className="btn-ghost btn-xl">See pricing</Link>
             </div>
           </div>
@@ -64,37 +60,18 @@ export default function Home() {
         </ol>
       </section>
 
-      <section className="border-y border-line bg-surface" aria-labelledby="models-h">
-        <div className="page py-12">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <p className="eyebrow">Under the hood</p>
-              <h2 id="models-h" className="mt-1 text-2xl font-bold">Which model does what</h2>
-            </div>
-            <p className="max-w-md text-sm text-ink-muted">Coaching, grades, wizard drafts and text-call replies show the model that produced them, or say when a rules-based fallback did. Point <span className="mono">LLM_BASE_URL</span> at any OpenAI-compatible API, with its own <span className="mono">LLM_API_KEY</span>, to swap models.</p>
-          </div>
-          <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {MODELS.map((m) => (
-              <div key={m.job} className="rounded-panel border border-line p-4">
-                <p className="label !mb-1">{m.job}</p>
-                <p className="chip-model">{m.model}</p>
-                <p className="mt-2 text-sm text-ink-soft">{m.note}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="page py-14 sm:py-16" aria-labelledby="feat-h">
+      {/* Continues How it works with no visible heading, so only bottom padding: one section gap, not two.
+          pt-0 overrides the py-8 sm:py-10 that .page (globals.css) applies. */}
+      <section className="page pt-0 pb-14 sm:pb-16" aria-labelledby="feat-h">
         <h2 id="feat-h" className="sr-only">Features</h2>
         <div className="grid gap-4 md:grid-cols-3">
           {[
-            { icon: LibraryBig, title: `${LIBRARY.length} personas, ${families} sales jobs`, body: "SDR cold calls to collections, filtered by role, industry, difficulty and the objections they throw. Each persona is a plain JSON pack." },
-            { icon: Radar, title: "A live coach, not a script", body: "Live rubric estimate, talk-track progress and talk ratio, plus cues with a line you can use. Blind, Guided or Coached, your call." },
-            { icon: MessageSquareQuote, title: "Evidence-backed debrief", body: "Scores cite verbatim quotes that are checked against the transcript. Click any quote to see the moment, then retry from that turn." },
+            { icon: BookOpen, title: `${LIBRARY.length} personas, ${families} sales jobs`, body: "SDR cold calls to collections, filtered by role, industry, difficulty and the objections they throw. Each persona is a plain JSON pack." },
+            { icon: MessageSquare, title: "A live coach, not a script", body: "Live rubric estimate, talk-track progress and talk ratio, plus cues with a line you can use. Blind, Guided or Coached, your call." },
+            { icon: ClipboardCheck, title: "Evidence-backed debrief", body: "Scores cite verbatim quotes that are checked against the transcript. Click any quote to see the moment, then retry from that turn." },
           ].map(({ icon: Icon, title, body }) => (
             <div key={title} className="card">
-              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-soft text-primary"><Icon size={20} aria-hidden /></span>
+              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-soft text-primary"><Icon size={20} strokeWidth={1.75} aria-hidden /></span>
               <h3 className="mt-4 text-base font-semibold">{title}</h3>
               <p className="mt-2 text-sm text-ink-soft">{body}</p>
             </div>
@@ -109,12 +86,15 @@ export default function Home() {
             <h2 id="oss-h" className="mt-1 text-2xl font-bold sm:text-3xl">Add the persona your team actually sells to</h2>
             <p className="mt-3 max-w-lg text-ink-soft">Build one with the wizard, export the pack file, and open a pull request. Packs are checked against the same schema the app uses.</p>
             <div className="mt-6 flex flex-wrap gap-3">
-              <Link href="/library/new" className="btn-primary"><FileJson size={16} aria-hidden /> Build a persona pack</Link>
-              <a href="https://github.com/mastanley13/real-time-call-trainer-oss" className="btn-ghost" target="_blank" rel="noreferrer"><GitPullRequest size={16} aria-hidden /> View on GitHub</a>
+              <Link href="/library/new" className="btn-primary"><FileJson size={16} strokeWidth={1.75} aria-hidden /> Build a persona pack</Link>
+              <a href="https://github.com/mastanley13/real-time-call-trainer-oss" className="btn-ghost" target="_blank" rel="noreferrer"><GitPullRequest size={16} strokeWidth={1.75} aria-hidden /> View on GitHub</a>
             </div>
+            <p className="mt-4 text-sm text-ink-soft">
+              <a href={SELF_HOST_DOCS} className="underline underline-offset-2 hover:text-ink" target="_blank" rel="noreferrer">Self-hosting</a>: which model does what, and how to swap it.
+            </p>
           </div>
           <div className="panel overflow-x-auto p-4">
-            <p className="label flex items-center gap-1.5"><KeyRound size={12} aria-hidden /> Run it locally</p>
+            <p className="label flex items-center gap-1.5"><Terminal size={12} strokeWidth={1.75} aria-hidden /> Run it locally</p>
             <pre className="font-mono text-[12.5px] leading-relaxed text-ink-soft">{`git clone https://github.com/mastanley13/real-time-call-trainer-oss
 cd real-time-call-trainer-oss && npm install
 cp .env.example .env   # add OPENAI_API_KEY for the AI coach and voice

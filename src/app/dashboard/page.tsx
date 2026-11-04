@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, ChevronRight, Mic, PhoneCall, RotateCcw, Trash2 } from "lucide-react";
+import { ArrowRight, ChevronRight, PhoneCall, RotateCcw, Trash2, UserRound } from "lucide-react";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import EmptyState from "@/components/ui/EmptyState";
 import AssignedToYou from "@/components/team/AssignedToYou";
@@ -209,7 +209,7 @@ export default function DashboardPage() {
           <p className="eyebrow">Logbook</p>
           <h1 className="mt-1 text-3xl font-bold">Progress{user?.firstName ? `, ${user.firstName}` : ""}</h1>
         </div>
-        <Link href="/trainer" className="btn-primary"><Mic size={16} aria-hidden /> New practice call</Link>
+        <Link href="/trainer" className="btn-primary"><PhoneCall size={16} strokeWidth={1.75} aria-hidden /> New practice call</Link>
       </div>
       {error && <p className="banner-warn">{error}</p>}
       {/* Personas a manager assigned; renders nothing when there are none. */}
@@ -227,7 +227,7 @@ export default function DashboardPage() {
       </div>
 
       {rows.length === 0 ? (
-        <div className="panel"><EmptyState icon={PhoneCall} title="No practice calls yet"><p>Run your first scenario and your scores, trends and practice streak show up here.</p><Link href="/library" className="btn-primary btn-pill mt-4"><Mic size={16} aria-hidden /> Pick a persona</Link></EmptyState></div>
+        <div className="panel"><EmptyState icon={PhoneCall} title="No practice calls yet"><p>Run your first scenario and your scores, trends and practice streak show up here.</p><Link href="/library" className="btn-primary btn-pill mt-4"><UserRound size={16} strokeWidth={1.75} aria-hidden /> Pick a persona</Link></EmptyState></div>
       ) : (
         <>
           {/* grid-cols-[minmax(0,1fr)] on phones: an implicit auto column would grow to fit wide charts and widen the page. */}
@@ -247,7 +247,7 @@ export default function DashboardPage() {
                       <div className="min-w-0"><p className="truncate text-sm font-semibold">{drill.aiPersona.name}</p><p className="line-clamp-2 text-xs text-ink-muted">{drill.title}</p></div>
                     </div>
                   )}
-                  {drill && <div className="mt-auto pt-4"><Link href={`/trainer?scenario=${encodeURIComponent(drill.id)}`} className="btn-primary w-full">Start this drill <ArrowRight size={15} aria-hidden /></Link></div>}
+                  {drill && <div className="mt-auto pt-4"><Link href={`/trainer?scenario=${encodeURIComponent(drill.id)}`} className="btn-primary w-full">Start this drill <ArrowRight size={15} strokeWidth={1.75} aria-hidden /></Link></div>}
                 </>
               ) : <p className="mt-2 text-sm text-ink-muted">Finish a graded call and we&rsquo;ll point you at the skill to drill next.</p>}
             </section>
@@ -302,11 +302,11 @@ export default function DashboardPage() {
                 </div>
                 {/* No chip for an ungraded call: the score column already says "Ungraded". */}
                 {(r.legacy || r.method) && <span className={`chip !text-[10.5px] ${r.legacy ? "" : r.method === "llm" ? "!border-ok/40 !text-ok" : "!border-caution/40 !text-caution"}`}>{r.legacy ? "Legacy" : r.method === "llm" ? "AI-graded" : "Estimate"}</span>}
-                <ChevronRight size={16} className="hidden text-ink-muted sm:block" aria-hidden />
+                <ChevronRight size={16} strokeWidth={1.75} className="hidden text-ink-muted sm:block" aria-hidden />
                 {r.id.startsWith("local-") && (
                   <button aria-label={`Delete session: ${r.title}, ${new Date(r.createdAt).toLocaleString()}`} title="Delete session"
                     className="ml-auto inline-flex min-h-[40px] items-center gap-1.5 rounded-md px-2 text-xs font-semibold text-ink-muted hover:bg-surface hover:text-alert sm:ml-0"
-                    onClick={() => removeRow(r)}><Trash2 size={16} aria-hidden /><span className="sm:sr-only">Delete</span></button>
+                    onClick={() => removeRow(r)}><Trash2 size={16} strokeWidth={1.75} aria-hidden /><span className="sm:sr-only">Delete</span></button>
                 )}
               </li>
             ))}
@@ -317,7 +317,7 @@ export default function DashboardPage() {
       {capabilities?.demoMode && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-panel border border-dashed border-line p-4 text-sm">
           <p className="text-ink-soft">Demo mode: sessions and custom personas live in this browser only.</p>
-          <button className="btn-ghost" onClick={() => setConfirmReset(true)}><RotateCcw size={16} aria-hidden /> Reset demo data</button>
+          <button className="btn-ghost" onClick={() => setConfirmReset(true)}><RotateCcw size={16} strokeWidth={1.75} aria-hidden /> Reset demo data</button>
         </div>
       )}
 
