@@ -1,5 +1,6 @@
 import Link from "next/link";
-import ComparePlans from "@/components/landing/ComparePlans";
+import { BillingProvider } from "@/components/landing/BillingContext";
+import ComparePlans, { type CompareRow } from "@/components/landing/ComparePlans";
 import PricingCards from "@/components/landing/PricingCards";
 import PublicFooter from "@/components/landing/PublicFooter";
 import {
@@ -17,8 +18,10 @@ export const metadata = pageMetadata({
   path: "/pricing",
 });
 
-const COMPARE: { feature: string; self: string; free: string; pro: string; team: string }[] = [
-  { feature: "Price", self: "$0, you pay your own API bill", free: "$0", pro: `$${PRICE.pro.month}/mo`, team: `$${PRICE.team.month}/seat/mo, ${TEAM_MIN_SEATS}-seat min` },
+const COMPARE: CompareRow[] = [
+  { feature: "Price", self: "$0, you pay your own API bill", free: "$0",
+    pro: { month: `$${PRICE.pro.month}/mo`, year: `$${PRICE.pro.year}/yr` },
+    team: { month: `$${PRICE.team.month}/seat/mo, ${TEAM_MIN_SEATS}-seat min`, year: `$${PRICE.team.year}/seat/yr, ${TEAM_MIN_SEATS}-seat min` } },
   { feature: "Voice minutes", self: "Unlimited (your keys)", free: `${FREE_VOICE_MIN} a month`, pro: `${PRO_VOICE_MIN} a month. ${MINUTES_ROUNDED_NOTE}`, team: `${TEAM_VOICE_MIN_PER_SEAT} per seat, pooled. ${MINUTES_ROUNDED_NOTE}` },
   { feature: "Text sim", self: "Yes", free: "Unlimited", pro: "Unlimited", team: "Unlimited" },
   { feature: "Bring your own OpenAI or ElevenLabs keys", self: "Required", free: "Not needed", pro: "Not needed", team: "Not needed" },
@@ -74,17 +77,19 @@ export default function PricingPage() {
         </div>
       </section>
 
-      <section id="plans" className="page py-12 sm:py-14" aria-label="Plans">
-        <PricingCards billingEnabled={billingOn()} />
-        <p className="mt-4 text-sm text-ink-muted">No overage charges on any plan. Free has no card and resets monthly from your signup date, with no rollover.</p>
-      </section>
+      <BillingProvider>
+        <section id="plans" className="page py-12 sm:py-14" aria-label="Plans">
+          <PricingCards billingEnabled={billingOn()} />
+          <p className="mt-4 text-sm text-ink-muted">No overage charges on any plan. Free has no card and resets monthly from your signup date, with no rollover.</p>
+        </section>
 
-      <section className="border-y border-line bg-surface" aria-labelledby="compare-h">
-        <div className="page py-12">
-          <h2 id="compare-h" className="text-2xl font-bold">Compare plans</h2>
-          <ComparePlans rows={COMPARE} />
-        </div>
-      </section>
+        <section className="border-y border-line bg-surface" aria-labelledby="compare-h">
+          <div className="page py-12">
+            <h2 id="compare-h" className="text-2xl font-bold">Compare plans</h2>
+            <ComparePlans rows={COMPARE} />
+          </div>
+        </section>
+      </BillingProvider>
 
       <section className="page py-12 sm:py-14" aria-labelledby="faq-h">
         <h2 id="faq-h" className="text-2xl font-bold">Questions</h2>
