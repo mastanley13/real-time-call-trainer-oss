@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, IdCard, PhoneCall, Users } from "lucide-react";
+import { BarChart3, BookOpen, PhoneCall, Users } from "lucide-react";
 import { navFor } from "@/components/SiteHeader";
 import { useAuth } from "@/contexts/AuthContext";
 
-const ICONS = { "/trainer": PhoneCall, "/library": IdCard, "/dashboard": BarChart3, "/team": Users } as const;
+const ICONS = { "/trainer": PhoneCall, "/library": BookOpen, "/dashboard": BarChart3, "/team": Users } as const;
 
 /** Bottom tab bar on phones. Hidden on desktop and during a live call. */
 export default function MobileTabBar() {

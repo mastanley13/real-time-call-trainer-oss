@@ -61,9 +61,11 @@ describe("icon set", () => {
     expect(library.match(/<UserPlus [^>]*\/>\s*(?:<\/span>\s*<span>\s*<span[^>]*>)?\s*New persona</g)?.length).toBe(3);
     expect(library + palette).not.toMatch(/with AI/);
     expect(palette).toContain('to("new", "New persona", "/library/new", UserPlus');
-    // Persona library: IdCard. Calls: Phone.
-    expect(palette).toContain('"/library", IdCard');
-    expect(read("src/components/MobileTabBar.tsx")).toContain('"/library": IdCard');
+    // Persona library: BookOpen (docs/ICONS.md), on every surface that shows it. Calls: Phone.
+    expect(palette).toContain('"/library", BookOpen');
+    expect(read("src/components/MobileTabBar.tsx")).toContain('"/library": BookOpen');
+    expect(read("src/app/page.tsx")).toContain("{ icon: BookOpen, title: `${LIBRARY.length} personas");
+    expect(srcFiles.filter((f) => lucideImports(read(f)).includes("IdCard"))).toEqual([]);
     expect(library.match(/<Phone [^>]*\/> Start practice</g)?.length).toBe(2);
     expect(wizard).toMatch(/<Phone [^>]*\/> Save and test call/);
     // Drafting: PenLine. Model chip: Cpu. Coach: MessageSquare. Grading: ClipboardCheck.

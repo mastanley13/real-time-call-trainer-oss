@@ -10,7 +10,7 @@ We compared six sets for coverage of our actions, visual consistency and cost in
 
 | Set | Style | Stroke width | Covers our actions | Next 15 `optimizePackageImports` default | Server components | Switch cost |
 |---|---|---|---|---|---|---|
-| **Lucide** (current) | 24 px outline, round caps, ~1,600 icons, ISC | Any value | All, including ClipboardCheck, MessageSquare, IdCard, PhoneOff, MicOff | Yes | Works as is | None |
+| **Lucide** (current) | 24 px outline, round caps, ~1,600 icons, ISC | Any value | All, including ClipboardCheck, MessageSquare, BookOpen, PhoneOff, MicOff | Yes | Works as is | None |
 | Phosphor (regular, duotone) | 6 fixed weights, ~1,500 icons each, MIT | Fixed per weight, so 1.75 cannot carry over | Most. No exact ClipboardCheck or square MessageSquare | No | Needs `@phosphor-icons/react/dist/ssr` in server components | 33 files, 78 icons |
 | Tabler | 24 px outline, ~5,900 icons, MIT | Any value | All | Yes | Works as is | 33 files, 78 icons |
 | Heroicons | Outline 1.5 and solid, ~320 icons, MIT | Tuned for 1.5 | Gaps: no mic off, no end call, no clipboard check | Yes (`20/solid`, `24/solid`, `24/outline`) | Works as is | 33 files, plus gaps |
@@ -32,7 +32,7 @@ We did not install any other set to measure it. Per-icon cost for all six is a f
 | Action or object | Icon | Label |
 |---|---|---|
 | Create persona | `UserPlus` | New persona |
-| Persona library, persona collection | `IdCard` | Library |
+| Persona library, persona collection | `BookOpen` (decision made: BookOpen, replaces IdCard) | Library |
 | One persona | `UserRound` | Pick a persona |
 | Draft with the wizard | `PenLine` | Draft persona |
 | Model, provider, model chip | `Cpu` | Models |
