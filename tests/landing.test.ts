@@ -83,6 +83,10 @@ describe("billing, cancellation and refund copy", () => {
     expect(terms).toContain("non-refundable except where the law requires");
     expect(terms).toContain("Last updated: November 4, 2026");
   });
+  it("terms says no refunds up top and keeps the legal carve-out in one place", () => {
+    expect(terms).toContain("There are no refunds.");
+    expect(terms.split("except where the law requires").length - 1).toBe(1);
+  });
   it("neither page promises a money-back guarantee", () => {
     expect(pricing + terms).not.toMatch(/money[- ]back|guarantee/i);
     expect(terms).not.toMatch(/[–—]/);
