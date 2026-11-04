@@ -274,11 +274,19 @@ describe("GET /api/auth/google/callback", () => {
     expect(res.headers.get("set-cookie")).toContain("authToken=");
   });
 
-  it("sends a new account to /trainer with its whitelisted sign-up intent", async () => {
+  it("stores a new account's sign-up intent and sends a paid plan to /checkout/start", async () => {
     googleReplies(claims());
     const res = await call({ flow: { intent: { plan: "pro", interval: "year", src: "pricing", seg: "sdr" } } });
     expect(loc(res).pathname).toBe("/auth/complete");
-    expect(loc(res).searchParams.get("next")).toBe("/trainer?plan=pro&interval=year&src=pricing&seg=sdr");
+    // Like the email path, src and seg are stored on the user, not repeated in the checkout URL.
+    expect(loc(res).searchParams.get("next")).toBe("/checkout/start?plan=pro&interval=year");
+    expect(mocks.prisma.user.create.mock.calls[0][0].data).toMatchObject({ signupPlanIntent: "pro", signupInterval: "year", signupSrc: "pricing", signupSeg: "sdr" });
+  });
+
+  it("keeps a new account without a paid plan on /trainer with its intent", async () => {
+    googleReplies(claims());
+    const res = await call({ flow: { intent: { src: "pricing", seg: "sdr" } } });
+    expect(loc(res).searchParams.get("next")).toBe("/trainer?src=pricing&seg=sdr");
   });
 
   it("ignores a forged intent and keeps the plain next path for existing users", async () => {

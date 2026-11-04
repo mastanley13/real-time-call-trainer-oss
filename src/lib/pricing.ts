@@ -37,21 +37,40 @@ export interface SignupIntent {
 }
 
 const TAG = /^[a-z0-9_-]{1,40}$/;
+/** Accepted interval spellings. The stored and emitted value is always month or year. */
+const INTERVAL_ALIASES = new Map<string, Billing>([
+  ["month", "month"], ["monthly", "month"], ["year", "year"], ["yearly", "year"], ["annual", "year"],
+]);
 
 /**
  * Whitelists sign-up link values: plan is pro or team, interval is month or year, src and seg are 1 to 40 chars of
- * [a-z0-9_-] (lowercased first). Anything else is dropped. Used by the register page and the register route.
+ * [a-z0-9_-] (lowercased first). Anything else is dropped. Interval also accepts monthly, yearly and annual. Used by the register page and the register route.
  */
 export function sanitizeSignupIntent(raw: { plan?: unknown; interval?: unknown; src?: unknown; seg?: unknown }): SignupIntent {
   const tag = (v: unknown) => (typeof v === "string" && TAG.test(v.toLowerCase()) ? v.toLowerCase() : undefined);
   const out: SignupIntent = {};
   if (raw.plan === "pro" || raw.plan === "team") out.plan = raw.plan;
-  if (raw.interval === "month" || raw.interval === "year") out.interval = raw.interval;
+  const interval = typeof raw.interval === "string" ? INTERVAL_ALIASES.get(raw.interval.toLowerCase()) : undefined;
+  if (interval) out.interval = interval;
   const src = tag(raw.src);
   if (src) out.src = src;
   const seg = tag(raw.seg);
   if (seg) out.seg = seg;
   return out;
+}
+
+/** What /register shows for a plan link: name, period, price for that period and, for Team, the seat minimum. */
+export function planSummary(intent: SignupIntent): { name: string; periodLabel: string; price: string; seats?: string } | null {
+  if (!intent.plan) return null;
+  const interval = intent.interval ?? "month";
+  const team = intent.plan === "team";
+  const unit = interval === "year" ? "yr" : "mo";
+  return {
+    name: team ? "Team" : "Pro",
+    periodLabel: interval === "year" ? "Annual" : "Monthly",
+    price: `$${PRICE[intent.plan][interval]}${team ? "/seat" : ""}/${unit}`,
+    ...(team ? { seats: `${TEAM_MIN_SEATS} seats minimum. You choose seats at checkout.` } : {}),
+  };
 }
 
 /** Sign-up link for a CTA. Query params are kept in a fixed order. */

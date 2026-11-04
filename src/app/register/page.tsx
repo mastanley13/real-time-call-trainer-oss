@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
 import GoogleButton from "@/components/GoogleButton";
 import { afterSignin, intentFromQuery, rememberNotice } from "@/lib/checkoutStart";
+import { planSummary } from "@/lib/pricing";
 import LegalLinks from "@/components/LegalLinks";
 
 export default function RegisterPage() {
@@ -26,6 +27,7 @@ function RegisterForm() {
   const router = useRouter();
   // The link's plan, period, src and seg, whitelisted. Anything else in the query is dropped.
   const intent = intentFromQuery(useSearchParams());
+  const summary = planSummary(intent);
   const billingEnabled = capabilities?.billing === true;
 
   /** Billing on with a plan goes to checkout; otherwise /trainer, with a one-time notice when a plan was asked for. */
@@ -74,6 +76,14 @@ function RegisterForm() {
     <AuthShell title="Create your account" subtitle="Start a team workspace or join one with a code.">
       {capabilities && !capabilities.database && !capabilities.demoMode && (
         <div className="banner-warn mb-4">Registration needs a database. Set <code>DATABASE_URL</code> or use <code>DEMO_MODE=true</code>.</div>
+      )}
+      {summary && (
+        <div className="panel mb-4 p-4" aria-label="Your plan">
+          <p className="eyebrow">Your plan</p>
+          <p className="mt-1 font-heading text-lg font-semibold">{summary.name}, {summary.periodLabel}</p>
+          <p className="text-sm text-ink-soft">{summary.price}</p>
+          {summary.seats && <p className="text-sm text-ink-muted">{summary.seats}</p>}
+        </div>
       )}
       <GoogleButton carryIntent />
       <form onSubmit={onSubmit} className="space-y-4">
