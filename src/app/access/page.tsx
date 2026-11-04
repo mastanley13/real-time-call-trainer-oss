@@ -1,12 +1,17 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import AuthShell from "@/components/AuthShell";
 
 export default function AccessPage() {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [invited, setInvited] = useState(false);
+
+  useEffect(() => {
+    setInvited(new URLSearchParams(window.location.search).get("reason") === "google_invite");
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -42,6 +47,9 @@ export default function AccessPage() {
 
   return (
     <AuthShell title="Enter access code" subtitle="This trainer is invite-only. Enter the code you were given.">
+      {invited && (
+        <div className="banner-warn mb-4">New accounts need the access code. Enter it, then choose Continue with Google again.</div>
+      )}
       <form onSubmit={onSubmit} className="space-y-4">
         <div>
           <label htmlFor="access-code" className="label">Access code</label>

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
+import GoogleButton, { GOOGLE_ERRORS } from "@/components/GoogleButton";
 
 export default function LoginPage() {
   const { login, completeMfaChallenge, isAuthenticated, capabilities } = useAuth();
@@ -19,6 +20,17 @@ export default function LoginPage() {
   useEffect(() => {
     if (isAuthenticated) router.replace("/trainer");
   }, [isAuthenticated, router]);
+
+  // Coming back from Google: an error code in the query, or an MFA challenge in the fragment
+  // (fragments never reach a server). Read once, then clear them from the address bar.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const err = url.searchParams.get("error");
+    const mfa = new URLSearchParams(url.hash.slice(1)).get("mfa");
+    if (err) setError(GOOGLE_ERRORS[err] ?? GOOGLE_ERRORS.google_failed);
+    if (mfa) setChallenge(mfa);
+    if (err || mfa) window.history.replaceState(null, "", url.pathname);
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -46,6 +58,7 @@ export default function LoginPage() {
           No database is configured, so accounts are unavailable. Set <code>DATABASE_URL</code>, or run with <code>DEMO_MODE=true</code> to skip login (see TESTING.md).
         </div>
       )}
+      {!challenge && <GoogleButton />}
       <form onSubmit={onSubmit} className="space-y-4">
         {challenge ? (
           <div>

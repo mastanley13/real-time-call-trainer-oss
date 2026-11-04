@@ -39,6 +39,8 @@ export interface Capabilities {
   /** Realtime model id for the voice provenance chip, when realtime is on. */
   realtimeModel?: string;
   llm: boolean;
+  /** Google sign-in is configured on the server. Absent or false hides the button. */
+  google?: boolean;
   database: boolean;
   /** Stripe test-mode billing is on. Absent or false hides the Billing tab. */
   billing?: boolean;
@@ -60,6 +62,8 @@ interface AuthContextType {
     code: string,
   ) => Promise<void>;
   register: (formData: RegisterFormData) => Promise<void>;
+  /** Stores the session a Google sign-in left in the cookie. */
+  adoptSession: () => Promise<void>;
   logout: () => void;
   isLoading: boolean;
   isAuthenticated: boolean;
@@ -230,6 +234,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
+  const adoptSession = async () => {
+    const response = await fetch("/api/auth/session", { credentials: "include" });
+    if (!response.ok) throw new Error("We could not finish signing you in. Try again.");
+    const { user: sessionUser, token } = await response.json();
+    persistSession(sessionUser, token);
+  };
+
   const logout = () => {
     setIsLoading(true);
     clearSession();
@@ -246,6 +257,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         login,
         completeMfaChallenge,
         register,
+        adoptSession,
         logout,
         isLoading,
         isAuthenticated,

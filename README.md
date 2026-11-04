@@ -80,7 +80,9 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `DATABASE_URL` | For accounts | Postgres connection string |
 | `JWT_SECRET` | For accounts | 32+ random bytes (`node generate-jwt-secret.js`). Also keys the grade seal and the access-code cookie |
 | `CRON_SECRET` | Optional | Bearer secret for `/api/cron/purge-expired`. The route accepts only `Authorization: Bearer $CRON_SECRET` (Vercel Cron sends it when the variable is set) and returns 401 without it |
-| `APP_URL` | Optional | Public origin for canonical URLs, Open Graph images and the sitemap. Defaults to `https://calltrainer.tech`; `VERCEL_URL` and preview hosts are never used |
+| `APP_URL` | Optional | Public origin for canonical URLs, Open Graph images and the sitemap. Defaults to `https://calltrainer.tech`; `VERCEL_URL` and preview hosts are never used. Google sign-in has no default: it stays off until `APP_URL` is set, and its redirect URI is built from it, never from the Host header |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Optional | Turns on Continue with Google on `/login` and `/register`. Needs `APP_URL` too, and a database. Unset, the button is hidden and `/api/auth/google/*` return 404. See Google sign-in below |
+| `RATE_LIMIT_GOOGLE_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/auth/google/start` and `/callback`. Default 30 per 900 s |
 | `TRAINER_ACCESS_CODE` | Optional | When set, every page and API route (except `/api/health`, `/api/stripe/webhook`, which checks the Stripe signature, and `/api/cron/*`, which needs the `CRON_SECRET` bearer) requires this code via `/access`. Cookie is an HMAC keyed by `JWT_SECRET`, valid 30 days. Unset = no gate |
 | `TRUSTED_PROXY_HOPS` | Optional | Number of proxies in front of the app that append to `X-Forwarded-For`. The client IP for rate limits and audit rows is read that many entries from the right. Default 1, which fits Vercel and a single proxy that appends. The app needs at least one proxy that sets or appends the header, or clients can pick their own address; see [DEPLOY.md](DEPLOY.md#client-ip-behind-proxies) |
 | `RATE_LIMIT_CALLER_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/simulate/turn`. Default 30 per 300 s |
@@ -124,6 +126,17 @@ OpenAI Realtime is used whenever an OpenAI key is available. The server mints a 
 Supervisor notes are written from the coaching queue, and the rep sees them on their debrief. If someone else saved the note after you opened it, the save is refused with 409 `conflict` and the editor asks you to open the note again, so one manager can't silently overwrite another.
 
 Demo mode shows a sample team and keeps assignments and notes in your browser. With a database, run the `20261027000000_training_assignments` migration.
+
+### Google sign-in
+
+Optional. Create an OAuth client (type Web application) in Google Cloud, add `https://<your-host>/api/auth/google/callback` as an authorized redirect URI, then set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `APP_URL` (the public origin, for example `https://calltrainer.tech`). The redirect URI is always `${APP_URL}/api/auth/google/callback`. If any of the three is missing, or `DEMO_MODE=true`, the button is hidden and both routes return 404, so previews and self-hosts are unaffected.
+
+- The flow is the authorization code flow with PKCE (S256), a random state and a nonce, scopes `openid email profile`. The verifier, state and nonce live in a signed, httpOnly, 10 minute cookie that the callback checks and clears. The ID token's issuer, audience, expiry and nonce are checked, and the email must be verified by Google.
+- A user who already has the same email (or the same Google account) signs in as that user, and the Google id is stored on the account. Unverified emails never link.
+- A new user gets a solo account made the way email signup makes a new team: a new organization, the user as its owner, no password, and the default Free plan with its usage caps.
+- With `TRAINER_ACCESS_CODE` set, new Google users need the access cookie (they are sent to `/access`), the same rule as `POST /api/auth/register`. Existing users do not, because password login does not either.
+- Accounts with MFA get the same challenge as password login: no session until the authenticator code is accepted.
+- Sign-ins are audit-logged with `via: "google"`. Tokens, codes and secrets are never logged.
 
 ### Database
 ```bash
