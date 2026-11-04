@@ -103,6 +103,13 @@ export function talkTrackSteps(callScript: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * The persona a new user's first-run call opens with (see firstRun.ts). PLACEHOLDER: the first reviewed built-in,
+ * an easy inbound call with a friendly opening. Mykel picks the final starter persona. If this id is ever missing,
+ * the trainer falls back to its usual pick.
+ */
+export const STARTER_SCENARIO_ID = "home-services-inbound-lead";
+
 export const BUILT_IN_SCENARIOS: Scenario[] = [
   {
     id: "home-services-inbound-lead",

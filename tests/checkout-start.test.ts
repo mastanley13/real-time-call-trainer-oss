@@ -94,15 +94,23 @@ describe("register link intent", () => {
     expect(intentFromQuery(new URLSearchParams(`plan=enterprise&src=${"x".repeat(500)}&seg=<script>`))).toEqual({});
   });
 
-  it("billing off lands on /trainer, with the notice only when a plan was asked for", () => {
-    expect(afterSignin(false, { plan: "pro", interval: "year", src: "pricing" })).toEqual({ path: "/trainer", notice: "plans_soon" });
-    expect(afterSignin(false, { src: "pricing" })).toEqual({ path: "/trainer", notice: null });
+  it("billing off lands on /trainer in first-run mode, with the notice only when a plan was asked for", () => {
+    expect(afterSignin(false, { plan: "pro", interval: "year", src: "pricing" })).toEqual({ path: "/trainer?firstrun=1", notice: "plans_soon" });
+    expect(afterSignin(false, { src: "pricing" })).toEqual({ path: "/trainer?firstrun=1", notice: null });
   });
 
   it("billing on goes to the checkout step with the plan and period, for new and signed-in users alike", () => {
     expect(afterSignin(true, { plan: "team", interval: "year" })).toEqual({ path: "/checkout/start?plan=team&interval=year", notice: null });
     expect(afterSignin(true, { plan: "pro" })).toEqual({ path: "/checkout/start?plan=pro&interval=month", notice: null });
-    expect(afterSignin(true, {})).toEqual({ path: "/trainer", notice: null });
+    expect(afterSignin(true, {})).toEqual({ path: "/trainer?firstrun=1", notice: null });
+  });
+
+  it("only the /trainer branch carries firstrun=1; the checkout branch never does", () => {
+    for (const plan of ["pro", "team"] as const) for (const interval of ["month", "year"] as const) {
+      expect(afterSignin(true, { plan, interval }).path).not.toContain("firstrun");
+      expect(afterSignin(false, { plan, interval }).path).toBe("/trainer?firstrun=1");
+    }
+    expect(afterSignin(false, {}).path).toBe("/trainer?firstrun=1");
   });
 
   it("the register page forwards the whitelisted intent in the sign-up POST and uses afterSignin for both paths", () => {

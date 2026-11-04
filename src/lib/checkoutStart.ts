@@ -1,4 +1,5 @@
 import { checkoutFailure } from "./billingUi";
+import { FIRST_RUN_PARAM } from "./firstRun";
 import { checkoutStartHref, sanitizeSignupIntent, type Billing, type PlanIntent, type SignupIntent } from "./pricing";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "./usagePlan";
 
@@ -66,11 +67,12 @@ export function intentFromQuery(q: { get(name: string): string | null }): Signup
 
 /**
  * Where to go once the user is signed in, from a sign-up or a register link opened while signed in. Billing on with a
- * plan goes to the checkout step. Otherwise /trainer, with the open-soon notice when a plan was asked for.
+ * plan goes to the checkout step. Otherwise /trainer in first-run mode (see firstRun.ts), with the open-soon notice
+ * when a plan was asked for.
  */
 export function afterSignin(billingEnabled: boolean, intent: SignupIntent): { path: string; notice: NoticeKind | null } {
   if (intent.plan && billingEnabled) return { path: checkoutStartHref(intent.plan, intent.interval ?? "month"), notice: null };
-  return { path: "/trainer", notice: intent.plan ? "plans_soon" : null };
+  return { path: `/trainer?${FIRST_RUN_PARAM}=1`, notice: intent.plan ? "plans_soon" : null };
 }
 
 export interface CheckoutStartInput {

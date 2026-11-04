@@ -81,6 +81,23 @@ function saveLocal(s: Omit<StoredSession, "id" | "createdAt">): string {
   return id;
 }
 
+/**
+ * How many sessions this user has saved, from the same lists the dashboard reads: the server's (stored accounts)
+ * plus this browser's. Null when the server list could not be read, so callers can fail closed.
+ */
+export async function countSavedSessions(useServer: boolean, fetchFn: typeof fetch = fetch): Promise<number | null> {
+  const local = readLocal().length;
+  if (!useServer) return local;
+  try {
+    const r = await fetchFn("/api/transcripts", { credentials: "include" });
+    if (!r.ok) return null;
+    const { sessions } = await r.json();
+    return Array.isArray(sessions) ? sessions.length + local : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Returns the new session id (prefixed `local-` when stored in the browser). */
 export async function saveSession(s: Omit<StoredSession, "id" | "createdAt">, useServer: boolean): Promise<string> {
   const { evaluation, seal } = splitSeal(s.evaluation);
