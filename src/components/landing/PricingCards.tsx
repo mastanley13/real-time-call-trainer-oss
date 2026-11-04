@@ -89,10 +89,6 @@ export default function PricingCards({ billingEnabled }: { billingEnabled: boole
           <h3 className="text-base font-bold">Add-on: Premium AI voice</h3>
           <span className="chip">{PREMIUM_COMING_SOON}</span>
         </div>
-        <p className="mt-2 flex items-baseline gap-1">
-          <span className="font-heading text-2xl font-bold">+${PRICE.premium[billing]}</span>
-          <span className="text-sm text-ink-muted">/seat /{billing === "month" ? "month" : "year"}</span>
-        </p>
         <p className="mt-2 max-w-2xl text-sm text-ink-soft">
           The full realtime voice model for your buyers, more lifelike and expressive. It can use up to {PREMIUM_VOICE_CAP_PCT}% of your plan minutes. After that, calls fall back to standard voice and never stop. No extra minute charges.
         </p>

@@ -60,11 +60,11 @@ describe("PricingCards, billing on", () => {
 });
 
 describe("Premium add-on card", () => {
-  it.each([false, true])("shows the coming-soon label, the price and no button (billing %s)", (on) => {
+  it.each([false, true])("shows the coming-soon label, no price and no button (billing %s)", (on) => {
     const html = cards(on);
     const addon = html.slice(html.indexOf("Add-on: Premium AI voice"));
     expect(addon).toContain(PREMIUM_COMING_SOON);
-    expect(addon).toContain("+$30");
+    expect(addon).not.toMatch(/\+\$30|\$300/);
     expect(addon).not.toMatch(/<a |<button|href=/);
   });
 });
@@ -122,12 +122,29 @@ describe("pricing page", () => {
     expect(cells).toEqual(["Your keys", "No", "No", PREMIUM_COMING_SOON]);
   });
 
-  it("the Premium FAQ starts with the label, says Team first and keeps the price", () => {
+  it("the Premium FAQ starts with the label, says Team first and ends without a price", () => {
     const answer = html.slice(html.indexOf("What does Premium AI voice add?"));
     const text = answer.slice(answer.indexOf("<p"), answer.indexOf("</p>"));
     expect(text).toMatch(new RegExp(`^<p[^>]*>${PREMIUM_COMING_SOON.replace(/[()]/g, "\\$&")}\\.`));
     expect(text).toContain("Team add-on first");
-    expect(text).toContain("+$30 per seat per month ($300 per seat per year)");
+    expect(text.endsWith("Pricing will be announced when it launches.")).toBe(true);
+  });
+
+  it("shows no Premium price anywhere", () => {
+    expect(html).not.toMatch(/\+\$30|\$300/);
+  });
+
+  it("states USD and tax under the plan cards", () => {
+    const plans = html.slice(html.indexOf('id="plans"'), html.indexOf("compare-h"));
+    expect(plans).toContain("Prices in USD. Sales tax or VAT may be added at checkout where required.");
+  });
+
+  it("explains when voice minutes reset on paid plans and on Free", () => {
+    expect(html).toContain("Voice calls pause until your minutes reset: at your next billing cycle on paid plans, or monthly from your signup date on Free.");
+  });
+
+  it("keeps the no-refunds policy", () => {
+    expect(html).toContain("There are no refunds. Payments to StrategixAI LLC are non-refundable except where the law requires.");
   });
 
   it("prices are unchanged", () => {

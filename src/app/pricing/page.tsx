@@ -42,7 +42,7 @@ const COMPARE: CompareRow[] = [
 
 const FAQ: { q: string; a: string }[] = [
   { q: "What do I get on Free?", a: FREE_SUMMARY },
-  { q: "What happens when I hit my voice minute cap?", a: "Voice calls pause until your next billing cycle. We never charge overages, ever. The text sim stays fully available, so you can keep practicing, get coached and get graded. You can upgrade anytime if you want more voice minutes now." },
+  { q: "What happens when I hit my voice minute cap?", a: "Voice calls pause until your minutes reset: at your next billing cycle on paid plans, or monthly from your signup date on Free. We never charge overages, ever. The text sim stays fully available, so you can keep practicing, get coached and get graded. You can upgrade anytime if you want more voice minutes now." },
   { q: "Will I ever get a surprise bill?", a: "No. There are no overage charges on any plan. Your price is your price, whatever you use." },
   { q: "Do unused minutes roll over?", a: "No. Paid plans reset at the start of each billing cycle. Free resets monthly from your signup date." },
   { q: "Can I buy more minutes mid-month?", a: `Not as an add-on. Upgrade to a higher plan or add Team seats. Each new seat adds ${TEAM_VOICE_MIN_PER_SEAT} minutes to the pool.` },
@@ -53,7 +53,7 @@ const FAQ: { q: string; a: string }[] = [
   { q: "How do Team minutes work?", a: `Each seat adds ${TEAM_VOICE_MIN_PER_SEAT} voice minutes to one shared pool. A rep who practices more can use minutes a lighter user does not. When the pool runs out, voice pauses for the team and the text sim stays on.` },
   { q: "Why a 3-seat minimum on Team?", a: "Team view and assignments are built for a manager coaching several reps. Solo reps get the best value on Pro." },
   { q: "What are reviewed persona packs?", a: "Industry buyer sets, like final expense, Medicare, P&C insurance and residential solar, with realistic objections and grading tuned to that sale. Each pack is reviewed before release. They are coming soon to Pro and Team." },
-  { q: "What does Premium AI voice add?", a: `${PREMIUM_COMING_SOON}. It will be a Team add-on first. The full realtime voice model for your buyers, more natural and expressive. It can use up to ${PREMIUM_VOICE_CAP_PCT}% of your plan minutes. After that, calls fall back to standard voice and never stop. It costs +$${PRICE.premium.month} per seat per month ($${PRICE.premium.year} per seat per year).` },
+  { q: "What does Premium AI voice add?", a: `${PREMIUM_COMING_SOON}. It will be a Team add-on first. The full realtime voice model for your buyers, more natural and expressive. It can use up to ${PREMIUM_VOICE_CAP_PCT}% of your plan minutes. After that, calls fall back to standard voice and never stop. Pricing will be announced when it launches.` },
   { q: "How does annual billing work?", a: `Pay for 10 months, get 12. Pro is $${PRICE.pro.year} a year. Team is $${PRICE.team.year} per seat per year.` },
   { q: "Can I cancel anytime?", a: "Yes. Cancel anytime from Settings > Billing and your access continues until the end of the period you paid for. There are no refunds. Payments to StrategixAI LLC are non-refundable except where the law requires." },
   { q: "What happens to my data?", a: "Transcripts are kept until an admin sets a retention window. No call audio is stored on our servers." },
@@ -81,6 +81,7 @@ export default function PricingPage() {
         <section id="plans" className="page py-12 sm:py-14" aria-label="Plans">
           <PricingCards billingEnabled={billingOn()} />
           <p className="mt-4 text-sm text-ink-muted">No overage charges on any plan. Free has no card and resets monthly from your signup date, with no rollover.</p>
+          <p className="mt-1 text-sm text-ink-muted">Prices in USD. Sales tax or VAT may be added at checkout where required.</p>
         </section>
 
         <section className="border-y border-line bg-surface" aria-labelledby="compare-h">
