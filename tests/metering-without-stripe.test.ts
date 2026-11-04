@@ -103,6 +103,18 @@ describe("/api/usage with no Stripe key", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ metered: true, plan: "free", minutesCap: 10, remaining: 10, billing: { enabled: false } });
   });
+  it("hasPortal is true for a Free account still linked to Stripe, false for an unlinked one, and carries no id", async () => {
+    addUser("u-1", { planTier: "free", stripeCustomerId: "cus_test_1", stripeSubscriptionId: "sub_test_1", subscriptionStatus: "past_due" });
+    const linked = await (await usageRoute(new NextRequest("http://localhost/api/usage"))).json();
+    expect(linked.plan).toBe("free");
+    expect(linked.billing.hasPortal).toBe(true);
+    expect(JSON.stringify(linked)).not.toMatch(/cus_|sub_/);
+
+    addUser("u-2");
+    mocks.authId = "u-2";
+    const unlinked = await (await usageRoute(new NextRequest("http://localhost/api/usage"))).json();
+    expect(unlinked.billing.hasPortal).toBe(false);
+  });
   it("demo mode is not metered", async () => {
     vi.stubEnv("DEMO_MODE", "true");
     const res = await usageRoute(new NextRequest("http://localhost/api/usage"));
