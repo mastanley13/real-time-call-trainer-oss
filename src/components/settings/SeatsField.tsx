@@ -31,7 +31,7 @@ export default function SeatsField({ value, note, disabled, onChange, onBlur }: 
         onBlur={onBlur}
       />
       <p id="seats-help" className="mt-1 text-xs text-ink-muted">{SEATS_HELP}</p>
-      <p id="seats-note" role="status" className="mt-1 text-xs font-medium text-ink">{note ?? ""}</p>
+      <p id="seats-note" role="status" aria-live="polite" className="mt-1 text-xs font-medium text-ink">{note ?? ""}</p>
     </div>
   );
 }

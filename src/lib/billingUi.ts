@@ -173,14 +173,18 @@ export const SEATS_HELP = `Team starts at ${TEAM_MIN_SEATS} seats.`;
 /** Shown, and announced, when the box is set to the minimum because it was left below it. */
 export const SEATS_CLAMPED_NOTE = `Set to ${TEAM_MIN_SEATS}, the Team minimum.`;
 
+/** Shown, and announced, when the box is set to the maximum because it was left above it. */
+export const SEATS_MAX_NOTE = `Team plans go up to ${TEAM_MAX_SEATS} seats here. Contact us for more.`;
+
 /**
  * What leaving the seats box does: the text it ends up with, and the note to show when that changed the number because
- * it was below the minimum (empty and non-numbers count as below).
+ * it was below the minimum (empty and non-numbers count as below) or above the maximum.
  */
 export function seatsOnBlur(text: string): { value: string; note: string | null } {
   const typed = Math.floor(Number(text.trim()));
   const below = !Number.isFinite(typed) || typed < TEAM_MIN_SEATS;
-  return { value: String(clampSeats(text)), note: below ? SEATS_CLAMPED_NOTE : null };
+  const above = Number.isFinite(typed) && typed > TEAM_MAX_SEATS;
+  return { value: String(clampSeats(text)), note: below ? SEATS_CLAMPED_NOTE : above ? SEATS_MAX_NOTE : null };
 }
 
 // ---- Checkout failures -------------------------------------------------------------------------------

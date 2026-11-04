@@ -121,7 +121,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           setIsAuthenticated(true);
         }
       })
-      .catch(() => setCapabilities({ demoMode: false, elevenlabs: false, realtime: false, voiceEngines: [], llm: false, database: true }));
+      // A rejected fetch (offline, blocked) is a failed config load, the same as an HTTP error: never guess defaults.
+      .catch(() => {
+        setCapabilities(null);
+        setCapabilitiesFailed(true);
+      });
     try {
       const token = localStorage.getItem("authToken");
       const storedUser = localStorage.getItem("userData");

@@ -13,6 +13,35 @@ import { registerHref } from "@/lib/pricing";
 import { TEAM_MIN_SEATS } from "@/lib/usagePlan";
 
 /**
+ * Shown when /api/config could not be read. Focus moves to the heading on load so a screen reader hears what happened.
+ * Try again reloads the page, so the button shows a pending state meanwhile, and focus moves to the heading first
+ * because a disabled button would otherwise drop it to the page body.
+ */
+export function ConfigFailed() {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const [retrying, setRetrying] = useState(false);
+  useEffect(() => { headingRef.current?.focus(); }, []);
+  const retry = () => {
+    if (retrying) return;
+    headingRef.current?.focus();
+    setRetrying(true);
+    window.location.reload();
+  };
+  return (
+    <div className="page enter min-w-0 max-w-xl space-y-4 py-10">
+      <p className="eyebrow">Checkout</p>
+      <h1 ref={headingRef} tabIndex={-1} className="break-words text-3xl font-bold focus:outline-none">Checkout could not load right now</h1>
+      <p className="break-words text-ink-soft">We could not reach the server to check your plan options. Nothing was charged. Please try again.</p>
+      <button type="button" className="btn-primary max-w-full" disabled={retrying} aria-busy={retrying} onClick={retry}>
+        {retrying && <Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden />}
+        {retrying ? "Trying again..." : "Try again"}
+      </button>
+      <p className="text-sm text-ink-muted"><Link href="/pricing" className="underline underline-offset-2 hover:text-ink">Back to pricing</Link></p>
+    </div>
+  );
+}
+
+/**
  * The step between a pricing button and Stripe Checkout (billing on). Signed out goes to register with the same plan and
  * period. Pro starts at once. Team asks for seats first (3 or more). A server that cannot sell the plan falls back to
  * Free with a notice, and an existing plan goes to billing settings.
@@ -81,17 +110,7 @@ export default function CheckoutStartClient() {
 
   if (isLoading || !isAuthenticated || !plan || (!capabilities && !capabilitiesFailed)) return <PageSkeleton rows={2} />;
 
-  if (!capabilities) {
-    return (
-      <div className="page enter max-w-xl space-y-4 py-10">
-        <p className="eyebrow">Checkout</p>
-        <h1 className="text-3xl font-bold">Checkout could not load right now</h1>
-        <p className="text-ink-soft">We could not reach the server to check your plan options. Nothing was charged. Please try again.</p>
-        <button type="button" className="btn-primary" onClick={() => window.location.reload()}>Try again</button>
-        <p className="text-sm text-ink-muted"><Link href="/pricing" className="underline underline-offset-2 hover:text-ink">Back to pricing</Link></p>
-      </div>
-    );
-  }
+  if (!capabilities) return <ConfigFailed />;
 
   const name = plan === "pro" ? "Pro" : "Team";
   return (
