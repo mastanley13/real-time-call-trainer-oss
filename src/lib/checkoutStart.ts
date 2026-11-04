@@ -11,8 +11,8 @@ export type NoticeKind = "plans_soon" | "paid_soon";
 
 /** One-time notices shown on /trainer. "plans_soon" follows a sign-up from a Pro or Team link while billing is off. */
 export const NOTICE_TEXT: Record<NoticeKind, string> = {
-  plans_soon: "You're on Free. Pro and Team open soon.",
-  paid_soon: "Paid plans open soon. You're on Free.",
+  plans_soon: "You're on Free. Pro and Team checkout is not set up on this server.",
+  paid_soon: "Checkout is not available right now. You're on Free. Try again later.",
 };
 /** Query value on /settings/billing for a checkout that found an existing plan. */
 export const ALREADY_SUBSCRIBED_NOTICE = "already_subscribed";
