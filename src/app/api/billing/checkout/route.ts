@@ -19,7 +19,7 @@ const Body = z.object({
   premium: z.boolean().default(false),
 });
 
-/** Starts a Stripe Checkout Session (mode=subscription, test mode only) for Pro or Team, with the optional Premium Voice add-on. */
+/** Starts a Stripe Checkout Session (mode=subscription; test mode, or live mode with STRIPE_LIVE_MODE=true) for Pro or Team, with the optional Premium Voice add-on. */
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
