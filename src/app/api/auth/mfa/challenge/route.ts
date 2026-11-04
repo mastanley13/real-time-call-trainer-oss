@@ -7,6 +7,7 @@ import {
 } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { verifyTotp } from "@/lib/mfa";
+import { linkGoogleAtomically } from "@/lib/googleAuth";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 
 const BodySchema = z.object({
@@ -70,16 +71,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid code" }, { status: 401 });
   }
 
-  // A Google link waiting on this challenge is written only now, after the code was accepted, and never over an
-  // existing Google id or onto a locked account.
-  let linked = false;
-  if (challenge.linkGoogleSub && !user.googleSub && !(user.lockedUntil && user.lockedUntil > new Date())) {
-    try {
-      await prisma.user.update({ where: { id: user.id }, data: { googleSub: challenge.linkGoogleSub } });
-      linked = true;
-    } catch {
-      console.error("[google] deferred link failed");
-    }
+  // A Google link waiting on this challenge is written only now, after the code was accepted. The write is atomic
+  // (no Google id yet, not locked). If it cannot be made, the challenge is refused: no session, no cookie.
+  const linked = Boolean(challenge.linkGoogleSub);
+  if (challenge.linkGoogleSub && !(await linkGoogleAtomically(prisma, user.id, challenge.linkGoogleSub))) {
+    await prisma.auditEvent.create({ data: { userId: user.id, action: "user.mfa_challenge_failed", ip, metadata: { via: "google", reason: "link_refused" } } });
+    return NextResponse.json({ error: "Google sign-in could not be completed. Sign in again." }, { status: 409 });
   }
   await prisma.user.update({
     where: { id: user.id },

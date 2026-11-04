@@ -6,7 +6,7 @@ import { accessCode, hasValidAccessCookie, safeEqual } from "@/lib/access";
 import { generateOrgCode } from "@/lib/orgCodes";
 import { googleLandingPath } from "@/lib/signupIntent";
 import { clientIp, ipLimitResponse } from "@/lib/rateLimit";
-import { checkIdTokenClaims, decodeIdToken, exchangeCode, flowCookieOptions, GOOGLE_FLOW_COOKIE, googleConfig, verifyFlowState, type GoogleProfile } from "@/lib/googleAuth";
+import { linkGoogleAtomically, checkIdTokenClaims, decodeIdToken, exchangeCode, flowCookieOptions, GOOGLE_FLOW_COOKIE, googleConfig, verifyFlowState, type GoogleProfile } from "@/lib/googleAuth";
 
 /**
  * Google redirects here with ?code&state. We check state against the signed flow cookie, swap the code (with the
@@ -100,7 +100,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (pendingLink) {
-      user = await prisma.user.update({ where: { id: user.id }, data: { googleSub: profile.sub }, include: { organization: true } });
+      if (!(await linkGoogleAtomically(prisma, user.id, profile.sub))) return fail(req, "google_failed");
       linked = true;
     }
 

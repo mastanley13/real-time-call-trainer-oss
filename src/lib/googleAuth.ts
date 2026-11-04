@@ -48,6 +48,27 @@ export function googleConfig(env: Env = process.env): GoogleConfig | null {
   return { clientId, clientSecret, redirectUri: `${origin}/api/auth/google/callback` };
 }
 
+/**
+ * Writes googleSub only while the account still has no Google id and is not locked, in one statement, so two
+ * concurrent sign-ins or a lockout in between cannot be overwritten. Returns false when nothing was written
+ * (lost the race, locked, or the id belongs to another account).
+ */
+export async function linkGoogleAtomically(
+  db: { user: { updateMany: (args: { where: Record<string, unknown>; data: { googleSub: string } }) => Promise<{ count: number }> } },
+  userId: string,
+  googleSub: string,
+): Promise<boolean> {
+  try {
+    const { count } = await db.user.updateMany({
+      where: { id: userId, googleSub: null, OR: [{ lockedUntil: null }, { lockedUntil: { lte: new Date() } }] },
+      data: { googleSub },
+    });
+    return count === 1;
+  } catch {
+    return false;
+  }
+}
+
 export const googleEnabled = (env: Env = process.env): boolean => googleConfig(env) !== null;
 
 const b64url = (buf: Buffer) => buf.toString("base64url");

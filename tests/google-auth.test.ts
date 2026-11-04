@@ -4,7 +4,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => {
   const prisma = {
-    user: { findUnique: vi.fn(), update: vi.fn(), create: vi.fn() },
+    user: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
     organization: { findUnique: vi.fn(), create: vi.fn() },
     auditEvent: { create: vi.fn() },
     $transaction: vi.fn(),
@@ -193,9 +193,10 @@ describe("GET /api/auth/google/callback", () => {
   });
 
   beforeEach(() => {
-    for (const m of [mocks.prisma.user.findUnique, mocks.prisma.user.update, mocks.prisma.user.create, mocks.prisma.organization.findUnique, mocks.prisma.organization.create, mocks.prisma.auditEvent.create, mocks.prisma.$transaction]) m.mockReset();
+    for (const m of [mocks.prisma.user.findUnique, mocks.prisma.user.update, mocks.prisma.user.updateMany, mocks.prisma.user.create, mocks.prisma.organization.findUnique, mocks.prisma.organization.create, mocks.prisma.auditEvent.create, mocks.prisma.$transaction]) m.mockReset();
     mocks.prisma.user.findUnique.mockResolvedValue(null);
     mocks.prisma.user.update.mockImplementation(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => existing({ id: where.id, ...data }));
+    mocks.prisma.user.updateMany.mockResolvedValue({ count: 1 });
     mocks.prisma.organization.findUnique.mockResolvedValue(null);
     mocks.prisma.organization.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "org-1", ...data }));
     mocks.prisma.user.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => existing({ id: "u-new", ...data, organization: { id: "org-1", code: "123456" } }));
@@ -243,7 +244,7 @@ describe("GET /api/auth/google/callback", () => {
     googleReplies(claims());
     mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: Record<string, string> }) => (where.email === "rep@example.test" ? existing() : null));
     const res = await call();
-    expect(mocks.prisma.user.update.mock.calls[0][0]).toMatchObject({ where: { id: "u-1" }, data: { googleSub: "g-sub-1" } });
+    expect(mocks.prisma.user.updateMany.mock.calls[0][0]).toMatchObject({ where: { id: "u-1", googleSub: null }, data: { googleSub: "g-sub-1" } });
     expect(mocks.prisma.user.create).not.toHaveBeenCalled();
     expect(loc(res).pathname).toBe("/auth/complete");
     expect(loc(res).searchParams.get("next")).toBe("/library");
@@ -353,6 +354,15 @@ describe("GET /api/auth/google/callback", () => {
     expect(res.headers.get("set-cookie")).not.toContain("authToken=");
     const challenge = new URLSearchParams(new URL(res.headers.get("location")!, "http://localhost").hash.slice(1)).get("mfa")!;
     expect(verifyMfaChallenge(challenge)).toEqual({ id: "u-1", linkGoogleSub: "g-sub-1" });
+  });
+
+  it("refuses the sign-in when the atomic link loses a race (Google id set or account locked meanwhile)", async () => {
+    googleReplies(claims());
+    byEmailOnly({});
+    mocks.prisma.user.updateMany.mockResolvedValue({ count: 0 });
+    const res = await call();
+    expect(loc(res).searchParams.get("error")).toBe("google_failed");
+    expect(res.headers.get("set-cookie")).not.toContain("authToken=");
   });
 
   it("never logs the code, tokens or secrets", async () => {
