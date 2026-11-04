@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { accessCode, hasValidAccessCookie, safeEqual } from "@/lib/access";
 import { generateOrgCode } from "@/lib/orgCodes";
 import { googleLandingPath } from "@/lib/signupIntent";
+import { sanitizeSignupIntent, type SignupIntent } from "@/lib/pricing";
 import { clientIp, ipLimitResponse } from "@/lib/rateLimit";
 import { linkGoogleAtomically, checkIdTokenClaims, decodeIdToken, exchangeCode, flowCookieOptions, GOOGLE_FLOW_COOKIE, googleConfig, verifyFlowState, type GoogleProfile } from "@/lib/googleAuth";
 
@@ -14,7 +15,8 @@ import { linkGoogleAtomically, checkIdTokenClaims, decodeIdToken, exchangeCode, 
  *
  * - Known Google account: sign in.
  * - Same verified email as an existing account: link Google to it and sign in.
- * - Otherwise: create a solo account the way email signup does (new org, owner, Free plan, no password). When
+ * - Otherwise: create a solo account the way email signup does (new org, owner, Free plan, no password), storing the
+ *   whitelisted sign-up intent on it like POST /api/auth/register. A paid intent then lands on /checkout/start. When
  *   TRAINER_ACCESS_CODE is set this needs the access cookie, like POST /api/auth/register.
  *
  * Existing accounts do not need the access cookie: password login does not either (/login and /api/auth/* are
@@ -85,7 +87,7 @@ export async function GET(req: NextRequest) {
         if (gate && !(await hasValidAccessCookie(req, gate))) {
           return back(req, "/access?next=%2Fregister&reason=google_invite");
         }
-        user = await createSoloUser(profile, ip, userAgent);
+        user = await createSoloUser(profile, ip, userAgent, sanitizeSignupIntent(flow.intent ?? {}));
         created = true;
       }
     }
@@ -138,7 +140,7 @@ export async function GET(req: NextRequest) {
 }
 
 /** Same shape as POST /api/auth/register with a new team: a new org, the user as its owner, the default Free plan. */
-async function createSoloUser(profile: GoogleProfile, ip: string, userAgent: string | undefined) {
+async function createSoloUser(profile: GoogleProfile, ip: string, userAgent: string | undefined, intent: SignupIntent) {
   const orgCode = await generateOrgCode();
   return prisma.$transaction(async (tx) => {
     const org = await tx.organization.create({
@@ -154,6 +156,10 @@ async function createSoloUser(profile: GoogleProfile, ip: string, userAgent: str
         organizationId: org.id,
         role: "owner",
         lastLoginAt: new Date(),
+        signupPlanIntent: intent.plan,
+        signupInterval: intent.interval,
+        signupSrc: intent.src,
+        signupSeg: intent.seg,
       },
       include: { organization: true },
     });
