@@ -52,7 +52,7 @@ export default function PrivacyPage() {
 
         <section aria-labelledby="cookies-h">
           <h2 id="cookies-h" className="text-xl font-bold text-ink">Cookies and local storage</h2>
-          <p className="mt-2">We use cookies to keep you signed in, to secure the sign-in flow and, while the site is invite only, to remember for 30 days that you entered a valid invite code. Your browser&apos;s local storage also keeps your sign-in token and basic profile so you stay signed in, along with display preferences such as light or dark theme, your last scenario and your Team view date range. Display preferences do not leave your device.</p>
+          <p className="mt-2">We use cookies to keep you signed in, to secure the sign-in flow and, while the site is invite only, to remember for 30 days that you entered a valid invite code. Your browser&apos;s local storage also keeps your sign-in token and basic profile so you stay signed in, the custom personas you create in the editor or persona wizard, and preferences such as light or dark theme, coach mode, voice engine, your last scenario and your Team view date range. An unsaved persona draft is kept in session storage until you close the tab. Personas and preferences stored this way stay on your device unless you start a call with them, with two exceptions. In the persona wizard, the details you enter, any page you import by URL and the context you paste are sent to our servers and, when AI drafting is on, to our AI provider to draft the persona. Your Team view date range is sent to our servers to load Team results.</p>
         </section>
 
         <section aria-labelledby="children-h">
