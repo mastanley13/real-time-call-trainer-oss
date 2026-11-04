@@ -23,8 +23,8 @@ export type Billing = "month" | "year";
 export const PREMIUM_COMING_SOON = "Coming soon (not on sale yet)";
 /** The checkout route rejects premium:true while this is false. Flip it only when Premium goes on sale. */
 export const PREMIUM_VOICE_ON_SALE = false;
-/** Under "Start free" on Pro and Team while billing is off. */
-export const OPEN_SOON_LINE = "Pro and Team open soon. Free is live today, no card.";
+/** Under "Start free" on Pro and Team only when checkout is not configured on this server (billingEnabled is false). */
+export const OPEN_SOON_LINE = "Pro and Team checkout is not set up on this server. Free is live today, no card.";
 
 export type PlanIntent = "pro" | "team";
 
