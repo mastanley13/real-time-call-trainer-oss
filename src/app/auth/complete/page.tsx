@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import AuthShell from "@/components/AuthShell";
 import { useAuth } from "@/contexts/AuthContext";
+import { safeNextPath } from "@/lib/safeNext";
 
 /** Where Google sign-in lands: stores the session the server set, then moves on. */
 export default function AuthCompletePage() {
@@ -17,8 +18,7 @@ export default function AuthCompletePage() {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    const raw = new URLSearchParams(window.location.search).get("next") ?? "/trainer";
-    const next = raw.startsWith("/") && !raw.startsWith("//") && !raw.startsWith("/\\") ? raw : "/trainer";
+    const next = safeNextPath(new URLSearchParams(window.location.search).get("next"));
     adoptSession()
       .then(() => router.replace(next))
       .catch((e: Error) => setError(e.message));

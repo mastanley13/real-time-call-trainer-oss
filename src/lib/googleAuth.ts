@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { getJwtSecret } from "./auth";
+import { safeNextPath } from "./safeNext";
 
 /**
  * Google sign-in: OAuth 2.0 authorization code flow with PKCE, state and nonce. No extra packages: the ID token
@@ -51,13 +52,7 @@ const b64url = (buf: Buffer) => buf.toString("base64url");
 export const randomToken = (bytes = 32) => b64url(randomBytes(bytes));
 export const pkceChallenge = (verifier: string) => b64url(createHash("sha256").update(verifier).digest());
 
-/** Only same-site paths: "/x", never "//host" or "/\host". */
-export function safeNextPath(raw: string | null | undefined, fallback = "/trainer"): string {
-  if (!raw || raw.length > 200) return fallback;
-  if (!raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) return fallback;
-  if (/[\r\n]/.test(raw)) return fallback;
-  return raw;
-}
+export { safeNextPath };
 
 /** What we remember between /start and /callback, signed into a short-lived cookie. */
 export const FlowStateSchema = z.object({

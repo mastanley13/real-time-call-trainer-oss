@@ -75,6 +75,18 @@ describe("safeNextPath", () => {
       expect(safeNextPath(bad)).toBe("/trainer");
     }
   });
+  it("rejects tabs, newlines, other control characters and backslashes that URL parsing would normalize away", () => {
+    for (const bad of ["/\t/evil.example", "/\n/evil.example", "/\r/evil.example", "/\u0000/evil.example", "/\u007f/evil.example", "/x\\@evil.example", "/\t\\evil.example", decodeURIComponent("%2F%09%2Fevil.example")]) {
+      expect(safeNextPath(bad)).toBe("/trainer");
+      // The point of the rule: what the browser would resolve must stay on this origin.
+      expect(new URL(safeNextPath(bad), "https://app.example").origin).toBe("https://app.example");
+    }
+  });
+  it("is what the start route stores for an encoded-tab next", async () => {
+    const res = await start(new NextRequest("http://localhost/api/auth/google/start?next=%2F%09%2Fevil.example"));
+    const flow = verifyFlowState(/g_oauth=([^;]+)/.exec(res.headers.get("set-cookie")!)![1])!;
+    expect(flow.next).toBe("/trainer");
+  });
 });
 
 describe("PKCE, state and flow cookie", () => {
