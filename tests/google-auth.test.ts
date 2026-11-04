@@ -283,10 +283,17 @@ describe("GET /api/auth/google/callback", () => {
     expect(mocks.prisma.user.create.mock.calls[0][0].data).toMatchObject({ signupPlanIntent: "pro", signupInterval: "year", signupSrc: "pricing", signupSeg: "sdr" });
   });
 
-  it("keeps a new account without a paid plan on /trainer with its intent", async () => {
+  it("keeps a new account without a paid plan on /trainer with its intent, in first-run mode", async () => {
     googleReplies(claims());
     const res = await call({ flow: { intent: { src: "pricing", seg: "sdr" } } });
-    expect(loc(res).searchParams.get("next")).toBe("/trainer?src=pricing&seg=sdr");
+    expect(loc(res).searchParams.get("next")).toBe("/trainer?src=pricing&seg=sdr&firstrun=1");
+  });
+
+  it("never sends an existing Google account into first run", async () => {
+    googleReplies(claims());
+    mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: Record<string, string> }) => (where.googleSub ? existing({ googleSub: "g-sub-1" }) : null));
+    const res = await call({ flow: { next: "/trainer", intent: { src: "pricing" } } });
+    expect(loc(res).searchParams.get("next")).toBe("/trainer");
   });
 
   it("ignores a forged intent and keeps the plain next path for existing users", async () => {

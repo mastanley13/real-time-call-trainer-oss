@@ -1,5 +1,6 @@
 import { safeNextPath } from "./safeNext";
 import { checkoutStartHref, sanitizeSignupIntent } from "./pricing";
+import { withFirstRun } from "./firstRun";
 
 /**
  * Sign-up intent from the pricing CTAs (/register?plan=pro&interval=year&src=...&seg=...). Pure and client-safe.
@@ -29,7 +30,8 @@ export function signupIntentQuery(intent: SignupIntent): string {
 /**
  * Where a finished Google sign-in lands. A brand-new account from /register goes where email signup goes: a paid plan
  * to /checkout/start (the page sends Free-only or billing-off cases back to /trainer), anything else to /trainer with
- * its whitelisted intent kept in the query. Everyone else goes to the validated next path.
+ * its whitelisted intent kept in the query. Everyone else goes to the validated next path. A new account that lands
+ * on a plain /trainer gets ?firstrun=1, as email sign-up does; an existing account never does.
  */
 export function googleLandingPath(flow: { next: string; intent?: SignupIntent }, created: boolean): string {
   const intent = created && flow.intent ? cleanSignupIntent(flow.intent) : {};
@@ -37,5 +39,6 @@ export function googleLandingPath(flow: { next: string; intent?: SignupIntent },
     return safeNextPath(checkoutStartHref(intent.plan, intent.interval === "year" ? "year" : "month"));
   }
   const qs = signupIntentQuery(intent);
-  return qs ? safeNextPath(`/trainer?${qs}`) : safeNextPath(flow.next);
+  const path = qs ? safeNextPath(`/trainer?${qs}`) : safeNextPath(flow.next);
+  return created ? withFirstRun(path) : path;
 }

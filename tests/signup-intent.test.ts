@@ -27,11 +27,19 @@ describe("sign-up intent", () => {
     expect(googleLandingPath({ next: "/library", intent: { plan: "team", interval: "year" } }, true)).toBe("/checkout/start?plan=team&interval=year");
     expect(googleLandingPath({ next: "/library", intent: { plan: "team" } }, true)).toBe("/checkout/start?plan=team&interval=month");
     // No paid plan: unchanged from before, any surviving intent value goes to /trainer.
-    expect(googleLandingPath({ next: "/library", intent: { plan: "gold", interval: "year" } }, true)).toBe("/trainer?interval=year");
+    expect(googleLandingPath({ next: "/library", intent: { plan: "gold", interval: "year" } }, true)).toBe("/trainer?interval=year&firstrun=1");
     expect(googleLandingPath({ next: "/library", intent: { plan: "gold" } }, true)).toBe("/library");
     expect(googleLandingPath({ next: "/library", intent: { plan: "pro" } }, false)).toBe("/library");
     expect(googleLandingPath({ next: "/library", intent: {} }, true)).toBe("/library");
-    expect(googleLandingPath({ next: "/library", intent: { src: "pricing" } }, true)).toBe("/trainer?src=pricing");
-    expect(googleLandingPath({ next: "//evil.example" }, true)).toBe("/trainer");
+    expect(googleLandingPath({ next: "/library", intent: { src: "pricing" } }, true)).toBe("/trainer?src=pricing&firstrun=1");
+    expect(googleLandingPath({ next: "//evil.example" }, true)).toBe("/trainer?firstrun=1");
+  });
+  it("adds firstrun=1 only for a new Google account landing on a plain /trainer", () => {
+    expect(googleLandingPath({ next: "/trainer" }, true)).toBe("/trainer?firstrun=1");
+    expect(googleLandingPath({ next: "/trainer" }, false)).toBe("/trainer");
+    expect(googleLandingPath({ next: "/trainer", intent: { src: "pricing" } }, false)).toBe("/trainer");
+    expect(googleLandingPath({ next: "/trainer?scenario=sdr-cold-1" }, true)).toBe("/trainer?scenario=sdr-cold-1");
+    expect(googleLandingPath({ next: "/library" }, true)).toBe("/library");
+    expect(googleLandingPath({ next: "/library", intent: { plan: "pro" } }, true)).not.toContain("firstrun");
   });
 });

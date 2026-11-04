@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  FIRST_RUN_REPLIES, FIRST_RUN_SECONDS, autoFinishDue, autoFinishGate, isFirstRun, repliesSent, trainerView,
+  FIRST_RUN_REPLIES, FIRST_RUN_SECONDS, autoFinishDue, autoFinishGate, callGeneration, firstRunMarkerKey, hasStartedFirstRun, isFirstRun,
+  markFirstRunStarted, repliesSent, trainerView, withFirstRun,
 } from "@/lib/firstRun";
 import { afterSignin } from "@/lib/checkoutStart";
 import { countSavedSessions } from "@/lib/sessionStore";
@@ -67,6 +68,21 @@ describe("countSavedSessions", () => {
     const f = vi.fn();
     expect(await countSavedSessions(false, f as unknown as typeof fetch)).toBe(0);
     expect(f).not.toHaveBeenCalled();
+  });
+
+  describe("with someone's browser-stored sessions in this browser", () => {
+    const local = [{ id: "local-a", createdAt: "2026-11-01T10:00:00Z" }, { id: "local-b", createdAt: "2026-11-02T10:00:00Z" }];
+    beforeEach(() => { vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "rtct.sessions.v1" ? JSON.stringify(local) : null) }); });
+    afterEach(() => { vi.unstubAllGlobals(); });
+
+    it("a stored account counts only its own server sessions, so a new user still gets first run", async () => {
+      expect(await countSavedSessions(true, answer(200, { sessions: [] }) as unknown as typeof fetch)).toBe(0);
+      expect(await countSavedSessions(true, answer(200, { sessions: [{ id: "s1" }] }) as unknown as typeof fetch)).toBe(1);
+    });
+
+    it("demo mode counts the browser store", async () => {
+      expect(await countSavedSessions(false)).toBe(2);
+    });
   });
 });
 
@@ -137,12 +153,128 @@ describe("auto-finish", () => {
 });
 
 describe("afterSignin", () => {
-  it("appends firstrun=1 on the /trainer branch only", () => {
-    expect(afterSignin(false, {}).path).toBe("/trainer?firstrun=1");
-    expect(afterSignin(false, { plan: "pro", interval: "month" }).path).toBe("/trainer?firstrun=1");
-    expect(afterSignin(true, {}).path).toBe("/trainer?firstrun=1");
-    expect(afterSignin(true, { plan: "pro", interval: "year" }).path).toBe("/checkout/start?plan=pro&interval=year");
-    expect(afterSignin(true, { plan: "team" }).path).not.toContain("firstrun");
+  it("appends firstrun=1 on the /trainer branch only, and only for a new account", () => {
+    expect(afterSignin(false, {}, true).path).toBe("/trainer?firstrun=1");
+    expect(afterSignin(false, { plan: "pro", interval: "month" }, true).path).toBe("/trainer?firstrun=1");
+    expect(afterSignin(true, {}, true).path).toBe("/trainer?firstrun=1");
+    expect(afterSignin(true, { plan: "pro", interval: "year" }, true).path).toBe("/checkout/start?plan=pro&interval=year");
+    expect(afterSignin(true, { plan: "team" }, true).path).not.toContain("firstrun");
+  });
+
+  it("never appends it for a user who was already signed in", () => {
+    expect(afterSignin(false, {}).path).toBe("/trainer");
+    expect(afterSignin(true, {}, false).path).toBe("/trainer");
+    expect(afterSignin(false, { plan: "pro" }, false).path).toBe("/trainer");
+  });
+});
+
+describe("withFirstRun", () => {
+  it("adds the flag to a plain /trainer, keeping its other query values", () => {
+    expect(withFirstRun("/trainer")).toBe("/trainer?firstrun=1");
+    expect(withFirstRun("/trainer?src=pricing")).toBe("/trainer?src=pricing&firstrun=1");
+    expect(withFirstRun("/trainer?firstrun=1")).toBe("/trainer?firstrun=1");
+  });
+
+  it("leaves every other path, and a /trainer that names a persona or retry, unchanged", () => {
+    for (const p of ["/library", "/checkout/start?plan=pro&interval=month", "/trainer?scenario=x", "/trainer?retry=abc&turn=2", "/trainer/debrief/abc", "/dashboard"]) {
+      expect(withFirstRun(p)).toBe(p);
+    }
+  });
+});
+
+describe("abandoned first visit", () => {
+  it("a saved last persona or the per-user marker turns first run off", () => {
+    expect(isFirstRun({ authenticated: true, sessionCount: 0, params: q(), lastScenario: true })).toBe(false);
+    expect(isFirstRun({ authenticated: true, sessionCount: 0, params: q(), started: true })).toBe(false);
+    expect(isFirstRun({ authenticated: true, sessionCount: 0, params: q(), lastScenario: false, started: false })).toBe(true);
+  });
+
+  it("?firstrun=1 still forces it as a testing override", () => {
+    expect(isFirstRun({ authenticated: true, sessionCount: 3, params: q("firstrun=1"), lastScenario: true, started: true })).toBe(true);
+    expect(isFirstRun({ authenticated: true, sessionCount: 0, params: q("firstrun=1&scenario=x"), lastScenario: false })).toBe(false);
+  });
+
+  const memory = () => {
+    const m = new Map<string, string>();
+    return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), m };
+  };
+
+  it("the marker is kept per user id", () => {
+    const store = memory();
+    expect(hasStartedFirstRun("u-1", store)).toBe(false);
+    markFirstRunStarted("u-1", store);
+    expect(hasStartedFirstRun("u-1", store)).toBe(true);
+    expect(hasStartedFirstRun("u-2", store)).toBe(false);
+    expect([...store.m.keys()]).toEqual([firstRunMarkerKey("u-1")]);
+    expect(firstRunMarkerKey("u-1")).toBe("rtct.firstRunStarted.u-1");
+  });
+
+  it("no user id, or blocked storage, never throws and reads as not started", () => {
+    const store = memory();
+    markFirstRunStarted(undefined, store);
+    expect(store.m.size).toBe(0);
+    expect(hasStartedFirstRun(undefined, store)).toBe(false);
+    const blocked = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
+    expect(() => markFirstRunStarted("u-1", blocked)).not.toThrow();
+    expect(hasStartedFirstRun("u-1", blocked)).toBe(false);
+  });
+
+  it("the trainer checks the last persona and marker, and sets the marker when the first-run call begins", () => {
+    const src = readFileSync("src/components/TrainerClient.tsx", "utf8");
+    expect(src).toContain("lastScenario = !!localStorage.getItem(LAST_SCENARIO)");
+    expect(src).toContain("started: hasStartedFirstRun(userId)");
+    expect(src).toMatch(/setFirstRun\("on"\);[\s\S]{0,200}markFirstRunStarted\(userId\);[\s\S]{0,40}beginRef\.current\(\);/);
+  });
+});
+
+describe("call generation", () => {
+  it("a reply started for one call is stale once a new call begins or the call is left", () => {
+    const gen = callGeneration();
+    const first = gen.next();
+    expect(gen.isCurrent(first)).toBe(true);
+    // Switch to voice.
+    gen.next();
+    expect(gen.isCurrent(first)).toBe(false);
+    // A new call after that: the old reply stays stale.
+    const third = gen.next();
+    expect(gen.isCurrent(first)).toBe(false);
+    expect(gen.isCurrent(third)).toBe(true);
+    expect(gen.current).toBe(third);
+  });
+
+  it("a stale text reply is dropped, with its hang-up, by drainReplies", async () => {
+    // Model of drainReplies: the guard is read after the reply comes back.
+    const gen = callGeneration();
+    let turns: T[] = [opening, me()];
+    let hungUp = false;
+    let answer!: (v: { reply: string; ended: boolean }) => void;
+    const pending = new Promise<{ reply: string; ended: boolean }>((r) => { answer = r; });
+    const callGen = gen.next();
+    const drain = (async () => {
+      const data = await pending;
+      if (!gen.isCurrent(callGen)) return;
+      turns = [...turns, them(data.reply)];
+      if (data.ended) hungUp = true;
+    })();
+    // Switch to voice, then begin a new call while the old reply is in flight.
+    gen.next();
+    turns = [opening];
+    gen.next();
+    answer({ reply: "Bye.", ended: true });
+    await drain;
+    expect(turns).toEqual([opening]);
+    expect(hungUp).toBe(false);
+  });
+
+  it("the trainer bumps the generation on begin and on switch to voice, and drainReplies checks it", () => {
+    const src = readFileSync("src/components/TrainerClient.tsx", "utf8");
+    const body = (name: string) => src.slice(src.indexOf(`function ${name}(`), src.indexOf("\n  }\n", src.indexOf(`function ${name}(`)));
+    expect(body("begin")).toContain("callGen.current.next();");
+    expect(body("switchToVoice")).toContain("callGen.current.next();");
+    const drain = body("drainReplies");
+    expect(drain).toContain("const gen = callGen.current.current;");
+    expect(drain).toContain("if (finishing.current || stale()) break;");
+    expect(drain).toMatch(/while \(!finishing\.current && !stale\(\)/);
   });
 });
 

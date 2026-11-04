@@ -30,9 +30,9 @@ function RegisterForm() {
   const summary = planSummary(intent);
   const billingEnabled = capabilities?.billing === true;
 
-  /** Billing on with a plan goes to checkout; otherwise /trainer, with a one-time notice when a plan was asked for. */
-  function goAfterSignin() {
-    const next = afterSignin(billingEnabled, intent);
+  /** Billing on with a plan goes to checkout; otherwise /trainer, with a one-time notice when a plan was asked for. A new account opens the first-run call. */
+  function goAfterSignin(newAccount: boolean) {
+    const next = afterSignin(billingEnabled, intent, newAccount);
     if (next.notice) rememberNotice(next.notice);
     router.replace(next.path);
   }
@@ -43,7 +43,7 @@ function RegisterForm() {
 
   // Already signed in: record nothing new, follow the billing state. Wait for the capabilities so the state is known.
   useEffect(() => {
-    if (isAuthenticated && configKnown) goAfterSignin();
+    if (isAuthenticated && configKnown) goAfterSignin(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, configKnown]);
 
@@ -64,7 +64,7 @@ function RegisterForm() {
         ...(mode === "create" ? { newOrgName: f.orgName } : { joinOrgCode: f.orgCode }),
         ...intent,
       });
-      goAfterSignin();
+      goAfterSignin(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {

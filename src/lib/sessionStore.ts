@@ -82,17 +82,17 @@ function saveLocal(s: Omit<StoredSession, "id" | "createdAt">): string {
 }
 
 /**
- * How many sessions this user has saved, from the same lists the dashboard reads: the server's (stored accounts)
- * plus this browser's. Null when the server list could not be read, so callers can fail closed.
+ * How many sessions this user has saved. Stored accounts count only their own server sessions: browser-stored
+ * sessions carry no owner, so they may be someone else's demo calls. Demo mode counts this browser's store.
+ * Null when the server list could not be read, so callers can fail closed.
  */
 export async function countSavedSessions(useServer: boolean, fetchFn: typeof fetch = fetch): Promise<number | null> {
-  const local = readLocal().length;
-  if (!useServer) return local;
+  if (!useServer) return readLocal().length;
   try {
     const r = await fetchFn("/api/transcripts", { credentials: "include" });
     if (!r.ok) return null;
     const { sessions } = await r.json();
-    return Array.isArray(sessions) ? sessions.length + local : null;
+    return Array.isArray(sessions) ? sessions.length : null;
   } catch {
     return null;
   }
