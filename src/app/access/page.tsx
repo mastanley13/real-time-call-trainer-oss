@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import AuthShell from "@/components/AuthShell";
+import LegalLinks from "@/components/LegalLinks";
 
 export default function AccessPage() {
   const [code, setCode] = useState("");
@@ -50,6 +51,7 @@ export default function AccessPage() {
         {error && <p role="alert" className="text-sm text-alert">{error}</p>}
         <button type="submit" className="btn-primary w-full" disabled={busy}>{busy ? "Checking…" : "Continue"}</button>
       </form>
+      <LegalLinks />
     </AuthShell>
   );
 }
