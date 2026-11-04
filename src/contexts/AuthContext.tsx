@@ -39,8 +39,6 @@ export interface Capabilities {
   /** Realtime model id for the voice provenance chip, when realtime is on. */
   realtimeModel?: string;
   llm: boolean;
-  /** Google sign-in is configured on the server. Absent or false hides the button. */
-  google?: boolean;
   database: boolean;
   /** Stripe test-mode billing is on. Absent or false hides the Billing tab. */
   billing?: boolean;

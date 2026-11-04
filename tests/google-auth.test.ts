@@ -19,7 +19,7 @@ import { GET as sessionRoute } from "@/app/api/auth/session/route";
 import { ACCESS_COOKIE, accessToken } from "@/lib/access";
 import { verifyMfaChallengeToken, verifySessionToken } from "@/lib/auth";
 import { authorizeUrl, checkIdTokenClaims, GOOGLE_FLOW_COOKIE, googleConfig, pkceChallenge, randomToken, safeNextPath, signFlowState, verifyFlowState } from "@/lib/googleAuth";
-import { getCapabilities } from "@/lib/serverConfig";
+import { GET as status } from "@/app/api/auth/google/status/route";
 
 const NOW = 1_800_000_000;
 const good = {
@@ -129,7 +129,7 @@ describe("disabled states", () => {
   ])("is off without %s: capability false and both routes 404", async (_n, env) => {
     for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
     expect(googleConfig()).toBeNull();
-    expect(getCapabilities().google).toBe(false);
+    expect(await (await status()).json()).toEqual({ enabled: false });
     const s = await start(new NextRequest("http://localhost/api/auth/google/start"));
     expect(s.status).toBe(404);
     const c = await callback(new NextRequest("http://localhost/api/auth/google/callback?code=x&state=y"));
@@ -138,8 +138,8 @@ describe("disabled states", () => {
   it("never uses the Host header for the redirect URI", () => {
     expect(googleConfig()!.redirectUri).toBe("https://calltrainer.example/api/auth/google/callback");
   });
-  it("is on with all three settings", () => {
-    expect(getCapabilities().google).toBe(true);
+  it("is on with all three settings", async () => {
+    expect(await (await status()).json()).toEqual({ enabled: true });
   });
 });
 

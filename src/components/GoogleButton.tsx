@@ -1,14 +1,23 @@
 "use client";
 
-import { useAuth } from "@/contexts/AuthContext";
+import { useEffect, useState } from "react";
 
 /**
  * "Continue with Google". A plain link to the server route, which redirects to Google; nothing about the flow
- * runs in the browser. Renders nothing unless the server reports Google sign-in as configured.
+ * runs in the browser. Renders nothing unless the server reports Google sign-in as configured. It asks
+ * /api/auth/google/status, which stays public behind the access gate (unlike /api/config).
  */
 export default function GoogleButton({ next, label = "Continue with Google" }: { next?: string; label?: string }) {
-  const { capabilities } = useAuth();
-  if (!capabilities?.google) return null;
+  const [enabled, setEnabled] = useState(false);
+  useEffect(() => {
+    let live = true;
+    fetch("/api/auth/google/status")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { enabled?: boolean } | null) => { if (live) setEnabled(d?.enabled === true); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+  if (!enabled) return null;
   const qs = next ? `?${new URLSearchParams({ next }).toString()}` : "";
   return (
     <>

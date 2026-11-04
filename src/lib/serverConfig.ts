@@ -1,7 +1,6 @@
 import "server-only";
 import { safeEqual } from "./access";
 import { orderVoiceEngines, realtimeKey, realtimeModel } from "./realtime";
-import { googleEnabled } from "./googleAuth";
 import { stripeStatus } from "./stripe";
 
 /**
@@ -57,8 +56,6 @@ export function getCapabilities() {
     voiceEngines: orderVoiceEngines({ openai: realtime, elevenlabs }, process.env.VOICE_ENGINE),
     ...(realtime ? { realtimeModel: realtimeModel() } : {}),
     llm: Boolean(llmKey()),
-    /** Google sign-in is configured: client id, secret and APP_URL set, and not demo mode. */
-    google: googleEnabled(),
     database: Boolean(process.env.DATABASE_URL),
     /** Stripe test-mode billing: false when unset, in demo mode, or when the key is not an sk_test_ key. */
     billing: stripeStatus() === "ready",
