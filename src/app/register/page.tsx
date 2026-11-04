@@ -6,6 +6,7 @@ import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
 import { afterSignin, intentFromQuery, rememberNotice } from "@/lib/checkoutStart";
+import LegalLinks from "@/components/LegalLinks";
 
 export default function RegisterPage() {
   // useSearchParams needs a Suspense boundary in the App Router.
@@ -97,6 +98,7 @@ function RegisterForm() {
         <button className="btn-primary w-full" disabled={busy || !configKnown}>{busy ? "Creating…" : "Create account"}</button>
       </form>
       <p className="mt-5 text-center text-sm text-ink-muted">Already registered? <Link href="/login" className="font-semibold text-primary">Sign in</Link></p>
+      <LegalLinks />
     </AuthShell>
   );
 }
