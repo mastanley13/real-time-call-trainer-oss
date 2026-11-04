@@ -7,9 +7,12 @@ import { createFakePrisma } from "./fakePrisma";
 
 const mocks = vi.hoisted(() => ({ fake: null as unknown as ReturnType<typeof import("./fakePrisma").createFakePrisma>, authId: "owner-1" }));
 vi.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get: (_t, k) => (mocks.fake.db as Record<string | symbol, unknown>)[k] }) }));
-vi.mock("@/lib/apiAuth", () => ({ requireAuth: () => ({ id: mocks.authId, email: `${mocks.authId}@example.test` }), isDemoUser: () => false }));
+// Test-only: this file posts to the billing routes more often than the fixed per-user hourly limit allows in
+// one process, and it asserts nothing about rate limits. Limits are covered in their own tests.
+vi.mock("@/lib/rateLimit", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/rateLimit")>()), ipLimitResponse: () => null, userLimitResponse: () => null }));
+vi.mock("@/lib/apiAuth",() => ({ requireAuth: () => ({ id: mocks.authId, email: `${mocks.authId}@example.test` }), isDemoUser: () => false }));
 
-import { buildCheckoutParams, CheckoutConfigError, entitlementFromItems, LOOKUP_KEYS, resetPriceCache, resolvePriceIds, type PriceIds } from "@/lib/billing";
+import { buildCheckoutParams, CheckoutConfigError, entitlementFromItems, PRICE_ENV, priceAllowlist, resetPriceCache, resolvePriceIds, type PriceIds } from "@/lib/billing";
 import { isTeamPlan } from "@/lib/usagePlan";
 import { billingGate, encodeForm, stripeApi, StripeApiError, stripeSecretKey, stripeStatus, StripeConfigError, verifyWebhookSignature } from "@/lib/stripe";
 import { classifyPlanChange, setBillingEventSink, type BillingLifecycleEvent } from "@/lib/billingEvents";
@@ -23,18 +26,28 @@ const PRICES: PriceIds = {
   team: { month: "price_test_team_m", year: "price_test_team_y" },
   premium: { month: "price_test_prem_m", year: "price_test_prem_y" },
 };
-// What stripe.prices.list({ lookup_keys }) returns in these tests: no network, placeholder ids.
-const priceRow = (key: string, id: string, extra: Record<string, unknown> = {}) => ({ id, lookup_key: key, active: true, type: "recurring", recurring: { usage_type: "licensed" }, ...extra });
-const PRICE_LIST = {
-  data: [
-    priceRow(LOOKUP_KEYS.pro.month, PRICES.pro.month!, { product: { metadata: { plan: "pro" } } }),
-    priceRow(LOOKUP_KEYS.pro.year, PRICES.pro.year!, { product: { metadata: { plan: "pro" } } }),
-    priceRow(LOOKUP_KEYS.team.month, PRICES.team.month!, { product: { metadata: { plan: "team", min_seats: "3", pooled_minutes_per_seat: "300" } } }),
-    priceRow(LOOKUP_KEYS.team.year, PRICES.team.year!, { product: { metadata: { plan: "team" } } }),
-    priceRow(LOOKUP_KEYS.premium.month, PRICES.premium.month!),
-    priceRow(LOOKUP_KEYS.premium.year, PRICES.premium.year!),
-  ],
+// What stripe.prices.retrieve returns in these tests, by price id: no network, placeholder ids.
+const priceRow = (id: string, metadata: Record<string, string> | null, extra: Record<string, unknown> = {}) =>
+  ({ id, active: true, type: "recurring", recurring: { usage_type: "licensed" }, product: metadata ? { metadata } : "prod_not_expanded", ...extra });
+const PRO_META = { ct_plan: "pro", ct_addon: "none", ct_seat_min: "1", ct_voice_minutes: "200", ct_minutes_basis: "user", ct_version: "1" };
+const TEAM_META = { ct_plan: "team", ct_addon: "none", ct_seat_min: "3", ct_voice_minutes: "300", ct_minutes_basis: "seat_pooled", ct_version: "1" };
+const PREMIUM_META = { ct_plan: "addon", ct_addon: "premium_voice", ct_seat_min: "1", ct_voice_minutes: "0", ct_minutes_basis: "none", ct_version: "1" };
+const rec = (interval: string) => ({ recurring: { usage_type: "licensed", interval } });
+const PRICE_ROWS: Record<string, unknown> = {
+  [PRICES.pro.month!]: priceRow(PRICES.pro.month!, PRO_META, rec("month")),
+  [PRICES.pro.year!]: priceRow(PRICES.pro.year!, PRO_META, rec("year")),
+  [PRICES.team.month!]: priceRow(PRICES.team.month!, TEAM_META, rec("month")),
+  [PRICES.team.year!]: priceRow(PRICES.team.year!, TEAM_META, rec("year")),
+  [PRICES.premium.month!]: priceRow(PRICES.premium.month!, PREMIUM_META, rec("month")),
+  [PRICES.premium.year!]: priceRow(PRICES.premium.year!, PREMIUM_META, rec("year")),
 };
+const stubAllowlist = () => {
+  for (const slot of ["pro", "team", "premium"] as const) for (const i of ["month", "year"] as const) vi.stubEnv(PRICE_ENV[slot][i], PRICES[slot][i]!);
+};
+const retrieveFrom = (rows: Record<string, unknown>) => vi.mocked(stripeApi.retrievePrice).mockImplementation(async (id: string) => {
+  if (!(id in rows)) throw new StripeApiError(404);
+  return rows[id];
+});
 const WHSEC = "whsec_test_placeholder";
 const NOW = new Date("2026-10-31T10:00:00Z");
 const ANCHOR = new Date("2026-03-10T09:30:00Z");
@@ -55,7 +68,9 @@ beforeEach(() => {
   vi.stubEnv("DEMO_MODE", "");
   vi.stubEnv("DATABASE_URL", "postgresql://ci:ci@localhost:5432/ci");
   resetPriceCache();
-  vi.spyOn(stripeApi, "listPricesByLookupKeys").mockResolvedValue(PRICE_LIST);
+  stubAllowlist();
+  vi.spyOn(stripeApi, "retrievePrice");
+  retrieveFrom(PRICE_ROWS);
   setBillingEventSink(null);
 });
 afterEach(() => {
@@ -187,65 +202,66 @@ describe("checkout params per plan", () => {
     expect(() => buildCheckoutParams({ ...base, plan: "pro", premium: true }, { ...PRICES, premium: { month: undefined, year: undefined } })).toThrow(CheckoutConfigError);
   });
 
-  it("resolves the six prices by lookup key and caches the result", async () => {
-    const list = vi.mocked(stripeApi.listPricesByLookupKeys);
+  it("resolves the six allowlisted price ids and caches the result", async () => {
+    const get = vi.mocked(stripeApi.retrievePrice);
     expect(await resolvePriceIds()).toEqual(PRICES);
-    expect([...list.mock.calls[0][0]].sort()).toEqual(Object.values(LOOKUP_KEYS).flatMap((k) => Object.values(k)).sort());
+    expect(get.mock.calls.map((c) => c[0]).sort()).toEqual(Object.values(PRICES).flatMap((p) => Object.values(p)).sort());
     await resolvePriceIds();
-    expect(list).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledTimes(6);
   });
 
-  it("asks Stripe for prices by lookup key with the product expanded, never by price id", async () => {
-    const sent = vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+  it("asks Stripe for one price by id with the product expanded", async () => {
+    const sent = vi.fn(async () => new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", sent);
-    vi.mocked(stripeApi.listPricesByLookupKeys).mockRestore();
-    await stripeApi.listPricesByLookupKeys(["calltrainer_pro_monthly"]);
+    vi.mocked(stripeApi.retrievePrice).mockRestore();
+    await stripeApi.retrievePrice("price_test_pro_m");
     const [url, init] = sent.mock.calls[0] as unknown as [string, RequestInit];
     expect(init.method).toBe("GET");
-    expect(decodeURIComponent(url)).toBe("https://api.stripe.com/v1/prices?lookup_keys[0]=calltrainer_pro_monthly&active=true&limit=100&expand[0]=data.product");
+    expect(decodeURIComponent(url)).toBe("https://api.stripe.com/v1/prices/price_test_pro_m?expand[0]=product");
   });
 
-  it("leaves a price unresolved when it is inactive, metered, one-time or on the wrong product", async () => {
-    vi.mocked(stripeApi.listPricesByLookupKeys).mockResolvedValue({
-      data: [
-        priceRow(LOOKUP_KEYS.pro.month, "price_test_x1", { active: false }),
-        priceRow(LOOKUP_KEYS.pro.year, "price_test_x2", { recurring: { usage_type: "metered" } }),
-        priceRow(LOOKUP_KEYS.team.month, "price_test_x3", { type: "one_time", recurring: null }),
-        priceRow(LOOKUP_KEYS.team.year, "price_test_x4", { product: { metadata: { plan: "pro" } } }),
-      ],
+  it("#14 a blank or missing allowlist variable leaves that price unconfigured and never calls Stripe for it", async () => {
+    vi.stubEnv(PRICE_ENV.pro.month, "  ");
+    vi.stubEnv(PRICE_ENV.team.year, "");
+    const ids = await resolvePriceIds();
+    expect(ids.pro.month).toBeUndefined();
+    expect(ids.team.year).toBeUndefined();
+    expect(ids.pro.year).toBe(PRICES.pro.year);
+    expect(vi.mocked(stripeApi.retrievePrice).mock.calls.map((c) => c[0])).not.toContain(PRICES.pro.month);
+  });
+
+  it("#12 leaves a price unresolved when it is unknown, inactive, metered, one-time or on the wrong product", async () => {
+    retrieveFrom({
+      [PRICES.pro.month!]: priceRow(PRICES.pro.month!, PRO_META, { active: false }),
+      [PRICES.pro.year!]: priceRow(PRICES.pro.year!, PRO_META, { recurring: { usage_type: "metered" } }),
+      [PRICES.team.month!]: priceRow(PRICES.team.month!, TEAM_META, { type: "one_time", recurring: null }),
+      [PRICES.team.year!]: priceRow(PRICES.team.year!, PRO_META),
+      // The premium prices are not in the map, so Stripe answers 404.
     });
     const none = { month: undefined, year: undefined };
     expect(await resolvePriceIds()).toEqual({ pro: none, team: none, premium: none });
   });
 
-  it("a Pro or Team product with no plan metadata, or a different plan, is not resolved", async () => {
-    const mk = (product: unknown) => ({
-      data: [
-        priceRow(LOOKUP_KEYS.pro.month, "price_test_pro_m", { product }),
-        priceRow(LOOKUP_KEYS.pro.year, "price_test_pro_y", { product }),
-        priceRow(LOOKUP_KEYS.team.month, "price_test_team_m", { product }),
-        priceRow(LOOKUP_KEYS.team.year, "price_test_team_y", { product }),
-      ],
-    });
+  it("a product with no, unexpanded or different plan metadata is not resolved; the older plan key is not read", async () => {
     const none = { month: undefined, year: undefined };
-    for (const product of [undefined, null, "prod_not_expanded", { metadata: null }, { metadata: {} }, { metadata: { plan: "" } }, { metadata: { plan: "enterprise" } }, { metadata: { min_seats: "3" } }]) {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const bad: (Record<string, string> | null)[] = [null, {}, { ct_plan: "" }, { ct_plan: "enterprise" }, { ct_seat_min: "3" }, { ct_plan: "addon", ct_addon: "none" }, { plan: "team" }, { ct_plan: "team", ct_addon: "premium_voice" }];
+    for (const metadata of bad) {
       resetPriceCache();
-      vi.mocked(stripeApi.listPricesByLookupKeys).mockResolvedValue(mk(product));
-      expect(await resolvePriceIds(), JSON.stringify(product)).toEqual({ pro: none, team: none, premium: none });
+      retrieveFrom({ [PRICES.team.month!]: priceRow(PRICES.team.month!, metadata) });
+      expect((await resolvePriceIds()).team, JSON.stringify(metadata)).toEqual(none);
     }
-    // Each key needs its own plan: a Team product behind a Pro key (and the reverse) is refused.
-    resetPriceCache();
-    vi.mocked(stripeApi.listPricesByLookupKeys).mockResolvedValue({
-      data: [
-        priceRow(LOOKUP_KEYS.pro.month, "price_test_pro_m", { product: { metadata: { plan: "team" } } }),
-        priceRow(LOOKUP_KEYS.team.month, "price_test_team_m", { product: { metadata: { plan: "pro" } } }),
-      ],
-    });
-    expect(await resolvePriceIds()).toEqual({ pro: none, team: none, premium: none });
   });
 
-  it("Premium Voice is an add-on: it resolves without plan metadata and never sets a tier", async () => {
-    expect((await resolvePriceIds()).premium).toEqual({ month: "price_test_prem_m", year: "price_test_prem_y" });
+  it("a Team product behind a Pro slot (and the reverse) is refused", async () => {
+    retrieveFrom({ [PRICES.pro.month!]: priceRow(PRICES.pro.month!, TEAM_META), [PRICES.team.month!]: priceRow(PRICES.team.month!, PRO_META) });
+    const ids = await resolvePriceIds();
+    expect(ids.pro.month).toBeUndefined();
+    expect(ids.team.month).toBeUndefined();
+  });
+
+  it("Premium voice resolves only from an add-on product with ct_addon=premium_voice", async () => {
+    expect((await resolvePriceIds()).premium).toEqual(PRICES.premium);
   });
 });
 
@@ -277,16 +293,18 @@ describe("checkout route", () => {
 
   it("a misconfigured product blocks checkout before any Stripe session or charge exists", async () => {
     const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_x", url: "https://checkout.example/x" });
-    const missing = (key: string, id: string) => priceRow(key, id); // product not expanded, so no plan metadata
-    const cases: { body: Record<string, unknown>; data: unknown[] }[] = [
-      { body: { plan: "pro", interval: "month" }, data: [missing(LOOKUP_KEYS.pro.month, "price_test_pro_m")] },
-      { body: { plan: "pro", interval: "month" }, data: [priceRow(LOOKUP_KEYS.pro.month, "price_test_pro_m", { product: { metadata: { plan: "team" } } })] },
-      { body: { plan: "team", interval: "year", seats: 3 }, data: [priceRow(LOOKUP_KEYS.team.year, "price_test_team_y", { product: { metadata: {} } })] },
-      { body: { plan: "team", interval: "year", seats: 3 }, data: [priceRow(LOOKUP_KEYS.team.year, "price_test_team_y", { product: { metadata: { plan: "pro" } } })] },
+    const slot = (plan: "pro" | "team", i: "month" | "year", metadata: Record<string, string> | null, extra: Record<string, unknown> = {}) => ({ [PRICES[plan][i]!]: priceRow(PRICES[plan][i]!, metadata, extra) });
+    const cases: { body: Record<string, unknown>; rows: Record<string, unknown> }[] = [
+      { body: { plan: "pro", interval: "month" }, rows: slot("pro", "month", null) },
+      { body: { plan: "pro", interval: "month" }, rows: slot("pro", "month", TEAM_META) },
+      { body: { plan: "team", interval: "year", seats: 3 }, rows: slot("team", "year", {}) },
+      { body: { plan: "team", interval: "year", seats: 3 }, rows: slot("team", "year", PRO_META) },
+      // #12 a metered price on an allowlisted product is refused at checkout.
+      { body: { plan: "pro", interval: "year" }, rows: slot("pro", "year", PRO_META, { recurring: { usage_type: "metered" } }) },
     ];
     for (const c of cases) {
       resetPriceCache();
-      vi.mocked(stripeApi.listPricesByLookupKeys).mockResolvedValue({ data: c.data });
+      retrieveFrom(c.rows);
       const res = await post(c.body);
       expect(res.status).toBe(503);
       expect((await res.json()).error).toBe("price_not_configured");
@@ -295,6 +313,15 @@ describe("checkout route", () => {
     // Nothing was recorded for a checkout that never existed.
     expect(user().stripeCheckoutSessionId ?? null).toBeNull();
     expect(org().stripeCheckoutSessionId ?? null).toBeNull();
+  });
+
+  it("#14 an empty allowlist variable answers price_not_configured and creates nothing", async () => {
+    const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_x", url: "https://checkout.example/x" });
+    vi.stubEnv(PRICE_ENV.pro.month, "");
+    const res = await post({ plan: "pro", interval: "month" });
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toBe("price_not_configured");
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("the same prices with the right product metadata check out", async () => {
@@ -332,9 +359,31 @@ describe("checkout route", () => {
   it("blocks a second subscription and points to the portal", async () => {
     fake.rows("user")[0].planTier = "pro";
     fake.rows("user")[0].stripeSubscriptionId = "sub_test_1";
+    fake.rows("user")[0].subscriptionStatus = "active";
     const res = await post({ plan: "pro", interval: "month" });
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe("already_subscribed");
+  });
+
+  it("409 while the linked subscription is active, trialing, past_due, unpaid or paused", async () => {
+    const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_x", url: "https://checkout.example/x" });
+    fake.rows("user")[0].stripeSubscriptionId = "sub_test_1";
+    for (const status of ["active", "trialing", "past_due", "unpaid", "paused"]) {
+      fake.rows("user")[0].subscriptionStatus = status;
+      expect((await post({ plan: "pro", interval: "month" })).status, status).toBe(409);
+    }
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("a canceled or incomplete_expired linked subscription may check out again", async () => {
+    const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_again", url: "https://checkout.example/again" });
+    fake.rows("user")[0].stripeSubscriptionId = "sub_test_1";
+    for (const status of ["canceled", "incomplete_expired"]) {
+      fake.rows("user")[0].subscriptionStatus = status;
+      fake.rows("user")[0].stripeCheckoutSessionId = null;
+      expect((await post({ plan: "pro", interval: "month" })).status, status).toBe(200);
+    }
+    expect(create).toHaveBeenCalled();
   });
 
   it("does not leak a Stripe failure", async () => {
@@ -385,10 +434,11 @@ const deliverRaw = (e: unknown, header?: string | null) => {
 };
 
 /** Subscription item prices as Stripe returns them with the product expanded. */
-const itemPrice = (id: string, lookup_key: string | null, metadata: Record<string, string>) => ({ id, lookup_key, product: { metadata } });
-const PRO_PRICE = itemPrice("price_test_pro_y", "calltrainer_pro_annual", { plan: "pro" });
-const TEAM_PRICE = itemPrice("price_test_team_m", "calltrainer_team_monthly", { plan: "team", min_seats: "3", pooled_minutes_per_seat: "300" });
-const PREMIUM_PRICE = itemPrice("price_test_prem_m", "calltrainer_premium_monthly", {});
+const itemPrice = (id: string, metadata: Record<string, string> | null, extra: Record<string, unknown> = {}) =>
+  ({ id, type: "recurring", recurring: { usage_type: "licensed", interval: "month" }, product: metadata ? { metadata } : "prod_not_expanded", ...extra });
+const PRO_PRICE = itemPrice("price_test_pro_y", PRO_META, { recurring: { usage_type: "licensed", interval: "year" } });
+const TEAM_PRICE = itemPrice("price_test_team_m", TEAM_META);
+const PREMIUM_PRICE = itemPrice("price_test_prem_m", PREMIUM_META);
 
 /** Stripe's current state by subscription id. A missing id answers 404, like a subscription Stripe no longer has. */
 const liveStripe = new Map<string, unknown>();
@@ -492,10 +542,10 @@ describe("checkout.session.completed", () => {
     expect(user().planTier).toBe("free");
   });
 
-  it("never lets metadata drop Team below 3 seats", async () => {
+  it("a Team subscription below the 3 seat minimum is not granted, and is not clamped up", async () => {
     await deliver(event("checkout.session.completed", { mode: "subscription", customer: "c", subscription: "s", metadata: { plan: "team", organizationId: "org-1", seats: "1" } }));
-    expect(org().seatCount).toBe(3);
-    expect(allowance("organizationId", "org-1")?.minutesCap).toBe(900);
+    expect(org().planTier ?? "free").toBe("free");
+    expect(allowance("organizationId", "org-1")?.minutesCap ?? 10).toBe(10);
   });
 
   it("keeps minutes already used when a Free user upgrades mid-period", async () => {
@@ -550,26 +600,75 @@ describe("customer.subscription.updated", () => {
   const withItems = (items: unknown[], status = "active") =>
     deliver(event("customer.subscription.updated", { ...sub({ id: "sub_test_team", customer: "cus_test_team", metadata: { organizationId: "org-1" }, status }), items: { data: items } }));
 
-  it("does not change a paid plan when the items declare no valid plan", async () => {
-    await withItems([{ quantity: 1, price: itemPrice("price_unknown", null, {}) }]);
-    expect(org().planTier).toBe("team");
+  describe("an entitled Team org whose current subscription fails validation drops to Free", () => {
+    const cases: [string, unknown[]][] = [
+      ["no valid plan on an unknown price", [{ quantity: 3, price: itemPrice("price_unknown", {}) }]],
+      ["Team seats drop below the minimum", [{ quantity: 2, price: TEAM_PRICE }]],
+      ["allowlisted Team price on a Pro product", [{ quantity: 3, price: itemPrice("price_test_team_m", PRO_META) }]],
+      ["metered price", [{ quantity: 3, price: itemPrice("price_test_team_m", TEAM_META, { recurring: { usage_type: "metered", interval: "month" } }) }]],
+      ["Pro and Team base plans together", [{ quantity: 3, price: TEAM_PRICE }, { quantity: 1, price: PRO_PRICE }]],
+      ["unexpanded product", [{ quantity: 3, price: itemPrice("price_test_team_m", null) }]],
+    ];
+    for (const [name, items] of cases) {
+      it(name, async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        expect(org().planTier).toBe("team");
+        await withItems(items.map((i) => ({ ...(i as object) })));
+        expect(org()).toMatchObject({ planTier: "free", premiumVoice: false, seatCount: 1 });
+        expect(allowance("organizationId", "org-1")).toMatchObject({ planTier: "free", minutesCap: 10 });
+      });
+    }
+
+    it("keeps the billing link, blocks a replacement checkout, and recovers when the seats are fixed", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      await withItems([{ quantity: 2, price: TEAM_PRICE }]);
+      // Access is revoked, but Stripe is still billing this subscription, so the link stays.
+      expect(org()).toMatchObject({ planTier: "free", stripeSubscriptionId: "sub_test_team", subscriptionStatus: "active" });
+      const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_dup", url: "https://checkout.example/dup" });
+      const res = await checkout(new NextRequest("http://localhost/api/billing/checkout", { method: "POST", body: JSON.stringify({ plan: "team", interval: "month", seats: 3 }), headers: { "content-type": "application/json" } }));
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toBe("already_subscribed");
+      expect(create).not.toHaveBeenCalled();
+      // A second, duplicate subscription is still detected and cancelled.
+      await deliver(event("customer.subscription.updated", { ...sub({ id: "sub_test_dup", customer: "cus_test_team", metadata: { organizationId: "org-1" }, team: 3 }) }));
+      expect(cancelSpy).toHaveBeenCalledWith("sub_test_dup");
+      // Fixing the quantity on the same subscription restores Team.
+      await update({ team: 3 });
+      expect(org()).toMatchObject({ planTier: "team", seatCount: 3, stripeSubscriptionId: "sub_test_team" });
+      expect(allowance("organizationId", "org-1")?.minutesCap).toBe(900);
+    });
+
+    it("a real cancellation after a refused sync still unlinks the subscription", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      await withItems([{ quantity: 2, price: TEAM_PRICE }]);
+      await withItems([{ quantity: 2, price: TEAM_PRICE }], "canceled");
+      expect(org()).toMatchObject({ planTier: "free", subscriptionStatus: "canceled" });
+      expect(org().stripeSubscriptionId ?? null).toBeNull();
+    });
+
+    it("a stale subscription that nobody holds cannot revoke the current one", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      await deliver(event("customer.subscription.updated", { ...sub({ id: "sub_test_old", customer: "cus_test_team", metadata: { organizationId: "org-1" } }), items: { data: [{ quantity: 2, price: TEAM_PRICE }] } }));
+      expect(org()).toMatchObject({ planTier: "team", seatCount: 3, stripeSubscriptionId: "sub_test_team" });
+      expect(allowance("organizationId", "org-1")?.minutesCap).toBe(900);
+    });
   });
 
-  it("an archived price with no lookup key still syncs from its product metadata", async () => {
-    const archived = itemPrice("price_test_archived_team", null, { plan: "team" });
+  it("an archived price (not allowlisted) still syncs from its product metadata", async () => {
+    const archived = itemPrice("price_test_archived_team", { ...TEAM_META });
     await withItems([{ quantity: 5, price: archived }]);
     expect(org()).toMatchObject({ planTier: "team", seatCount: 5 });
     expect(allowance("organizationId", "org-1")?.minutesCap).toBe(1500);
   });
 
   it("an archived price that goes unpaid or past its lifetime still drops the org to Free", async () => {
-    const archived = itemPrice("price_test_archived_team", null, { plan: "team" });
+    const archived = itemPrice("price_test_archived_team", { ...TEAM_META });
     await withItems([{ quantity: 3, price: archived }], "unpaid");
     expect(org()).toMatchObject({ planTier: "free", subscriptionStatus: "unpaid" });
   });
 
   it("unpaid revokes access even when the items carry no plan metadata at all", async () => {
-    await withItems([{ quantity: 3, price: itemPrice("price_unknown", null, {}) }], "unpaid");
+    await withItems([{ quantity: 3, price: itemPrice("price_unknown", {}) }], "unpaid");
     expect(org()).toMatchObject({ planTier: "free", subscriptionStatus: "unpaid" });
     expect(allowance("organizationId", "org-1")).toMatchObject({ planTier: "free", minutesCap: 10 });
   });
@@ -577,10 +676,10 @@ describe("customer.subscription.updated", () => {
   it("a product without plan metadata, or with an invalid one, never grants Team", async () => {
     await update({ team: 3 });
     await deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_x", subscription: "sub_test_nometa", metadata: { plan: "team", organizationId: "org-2" } }));
-    liveStripe.set("sub_test_nometa", { ...sub({ id: "sub_test_nometa", customer: "cus_x" }), items: { data: [{ quantity: 9, price: itemPrice("price_a", "calltrainer_team_monthly", {}) }] } });
+    liveStripe.set("sub_test_nometa", { ...sub({ id: "sub_test_nometa", customer: "cus_x" }), items: { data: [{ quantity: 9, price: itemPrice("price_a", {}) }] } });
     fake.seed("organization", { id: "org-2", code: "456", createdAt: new Date("2026-02-20T00:00:00Z") });
     await deliverRaw(event("customer.subscription.updated", { id: "sub_test_nometa", customer: "cus_x", status: "active", metadata: { organizationId: "org-2" } }));
-    liveStripe.set("sub_test_nometa", { ...sub({ id: "sub_test_nometa", customer: "cus_x" }), items: { data: [{ quantity: 9, price: itemPrice("price_a", "calltrainer_team_monthly", { plan: "enterprise" }) }] } });
+    liveStripe.set("sub_test_nometa", { ...sub({ id: "sub_test_nometa", customer: "cus_x" }), items: { data: [{ quantity: 9, price: itemPrice("price_a", { ct_plan: "enterprise", ct_version: "1" }) }] } });
     await deliverRaw(event("customer.subscription.updated", { id: "sub_test_nometa", customer: "cus_x", status: "active", metadata: { organizationId: "org-2" } }));
     expect(fake.rows("organization").find((o) => o.id === "org-2")?.planTier ?? "free").toBe("free");
   });
@@ -590,25 +689,174 @@ describe("customer.subscription.updated", () => {
     expect(org().seatCount).toBe(3);
   });
 
-  it("derives entitlement from product metadata: the plan must be declared, Premium is only a flag", () => {
-    expect(entitlementFromItems([{ quantity: 2, productMetadata: { plan: "team" } }])).toEqual({ plan: "team", seats: 3, premium: false });
-    expect(entitlementFromItems([{ quantity: 1, productMetadata: { plan: "pro" } }, { quantity: 1, lookupKey: "calltrainer_premium_monthly", productMetadata: {} }])).toEqual({ plan: "pro", seats: 1, premium: true });
-    expect(entitlementFromItems([{ quantity: 1, lookupKey: "calltrainer_premium_monthly" }])).toBeNull();
+  describe("entitlementFromItems (acceptance cases)", () => {
+    const L = PRICES;
+    type Item = Parameters<typeof entitlementFromItems>[0][number];
+    const item = (priceId: string, metadata: Record<string, string> | null, quantity = 1, extra: Partial<Item> = {}): Item =>
+      ({ priceId, quantity, priceType: "recurring", usageType: "licensed", productMetadata: metadata, ...extra });
+    let warn: MockInstance<typeof console.warn>;
+    beforeEach(() => { warn = vi.spyOn(console, "warn").mockImplementation(() => undefined); });
+
+    it("#1 Pro monthly allowlisted", () => {
+      expect(entitlementFromItems([item(L.pro.month!, PRO_META)], L)).toEqual({ plan: "pro", seats: 1, premium: false, interval: "month" });
+    });
+    it("#2 Pro annual allowlisted", () => {
+      expect(entitlementFromItems([item(L.pro.year!, PRO_META)], L)).toMatchObject({ plan: "pro", interval: "year" });
+    });
+    it("#3 Team monthly qty 3 grants 3 seats, which pool 900 minutes", async () => {
+      expect(entitlementFromItems([item(L.team.month!, TEAM_META, 3)], L)).toMatchObject({ plan: "team", seats: 3, premium: false });
+      await deliver(event("customer.subscription.updated", { ...sub({ id: "sub_test_t3", customer: "cus_t3", metadata: { organizationId: "org-1" } }), items: { data: [{ quantity: 3, price: TEAM_PRICE }] } }));
+      expect(allowance("organizationId", "org-1")?.minutesCap).toBe(900);
+    });
+    it("#4 Team qty 2 is not granted, not clamped up, and is logged", async () => {
+      expect(entitlementFromItems([item(L.team.month!, TEAM_META, 2)], L)).toBeNull();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("plan sync refused"), expect.stringContaining("below the seat minimum"), L.team.month);
+      // A new organization buying 2 seats stays Free.
+      fake.seed("organization", { id: "org-2", code: "456", createdAt: new Date("2026-02-20T00:00:00Z") });
+      await deliver(event("customer.subscription.updated", { ...sub({ id: "sub_test_t2", customer: "cus_t2", metadata: { organizationId: "org-2" } }), items: { data: [{ quantity: 2, price: TEAM_PRICE }] } }));
+      expect(fake.rows("organization").find((o) => o.id === "org-2")?.planTier ?? "free").toBe("free");
+    });
+    it("#5 a Team price id on a Pro product grants nothing", () => {
+      expect(entitlementFromItems([item(L.team.month!, PRO_META, 3)], L)).toBeNull();
+      expect(warn).toHaveBeenCalled();
+    });
+    it("#6 a lookup key on the price is ignored: a Pro product stays Pro", () => {
+      const it = { ...item(L.pro.month!, PRO_META), lookup_key: "calltrainer_team_monthly", lookupKey: "calltrainer_team_monthly" };
+      expect(entitlementFromItems([it], L)).toMatchObject({ plan: "pro", seats: 1 });
+    });
+    it("#7 a non-allowlisted price falls back to product ct_plan=team with ct_version=1", () => {
+      expect(entitlementFromItems([item("price_test_archived", TEAM_META, 3, { interval: "year" })], L)).toMatchObject({ plan: "team", seats: 3, interval: "year" });
+    });
+    it("#7b the fallback needs ct_version=1 and a valid ct_plan", () => {
+      const bad: Record<string, string>[] = [{ ct_plan: "team" }, { ct_plan: "team", ct_version: "2" }, { plan: "team" }, { ct_plan: "enterprise", ct_version: "1" }];
+      for (const meta of bad) {
+        expect(entitlementFromItems([item("price_test_archived", meta, 3)], L), JSON.stringify(meta)).toBeNull();
+      }
+    });
+    it("#8 an unknown price with no ct_* metadata is Free and logged", () => {
+      expect(entitlementFromItems([item("price_unknown", {}, 3)], L)).toBeNull();
+      expect(warn).toHaveBeenCalledWith("[billing] product has no ct_* metadata");
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("skipped"), "price_unknown");
+    });
+    it("#9 Team plus Premium monthly items grant Team with premium", () => {
+      expect(entitlementFromItems([item(L.team.month!, TEAM_META, 4), item(L.premium.month!, PREMIUM_META, 4)], L)).toEqual({ plan: "team", seats: 4, premium: true, interval: "month" });
+    });
+    it("#10 a Premium item alone grants nothing", () => {
+      expect(entitlementFromItems([item(L.premium.month!, PREMIUM_META, 3)], L)).toBeNull();
+    });
+    it("#11 Pro and Team items on one subscription grant nothing", () => {
+      expect(entitlementFromItems([item(L.pro.month!, PRO_META), item(L.team.month!, TEAM_META, 3)], L)).toBeNull();
+    });
+    it("#12 a metered or one-time price, or an unexpanded product, grants nothing at sync", () => {
+      expect(entitlementFromItems([item(L.pro.month!, PRO_META, 1, { usageType: "metered" })], L)).toBeNull();
+      expect(entitlementFromItems([item(L.pro.month!, PRO_META, 1, { priceType: "one_time" })], L)).toBeNull();
+      expect(entitlementFromItems([item(L.pro.month!, null)], L)).toBeNull();
+    });
+    it("a zero-quantity Premium item sets no flag", () => {
+      expect(entitlementFromItems([item(L.pro.month!, PRO_META), item(L.premium.month!, PREMIUM_META, 0)], L)).toMatchObject({ premium: false });
+    });
+    it("the older plan and addon keys are no longer read", () => {
+      warn.mockClear();
+      expect(entitlementFromItems([item(L.pro.month!, { plan: "pro" })], L)).toBeNull();
+      expect(entitlementFromItems([item("price_test_archived", { plan: "team" }, 3)], L)).toBeNull();
+      expect(entitlementFromItems([item(L.team.month!, { plan: "team" }, 3)], L)).toBeNull();
+      // Legacy Premium markers grant no Premium; the item is skipped and the Team base still grants.
+      const teamNoPremium = { plan: "team", seats: 3, premium: false, interval: "month" };
+      expect(entitlementFromItems([item(L.team.month!, TEAM_META, 3), item(L.premium.month!, { plan: "premium", addon: "premium_voice" }, 3)], L)).toEqual(teamNoPremium);
+      expect(entitlementFromItems([item(L.team.month!, TEAM_META, 3), item(L.premium.month!, { addon: "premium_voice" }, 3)], L)).toEqual(teamNoPremium);
+      expect(warn).toHaveBeenCalledWith("[billing] product has no ct_* metadata");
+    });
+    it("a Team base plus any non-allowlisted item that is not a valid base or Premium add-on keeps Team and skips the item", () => {
+      const only = { pro: { month: undefined, year: undefined }, team: { month: L.team.month, year: undefined }, premium: { month: undefined, year: undefined } };
+      const base = item(L.team.month!, TEAM_META, 3);
+      const skipped: Record<string, string>[] = [
+        { ct_plan: "premium", ct_version: "1" },
+        { plan: "premium_voice_addon" },
+        { plan: "premium", addon: "premium_voice", ct_addon: "none" },
+        { addon: "premium_voice" },
+      ];
+      for (const meta of skipped) {
+        warn.mockClear();
+        expect(entitlementFromItems([base, item("price_test_extra", meta, 3)], only), JSON.stringify(meta)).toEqual({ plan: "team", seats: 3, premium: false, interval: "month" });
+        expect(warn, JSON.stringify(meta)).toHaveBeenCalledWith(expect.stringContaining("skipped"), "price_test_extra");
+      }
+      // No valid base left: still nothing granted.
+      expect(entitlementFromItems([item("price_test_extra", skipped[0], 3)], only)).toBeNull();
+    });
+    it("R2c: a Team base plus an invalid non-allowlisted add-on grants Team without Premium, and warns", () => {
+      const only = { ...L, team: { month: L.team.month, year: undefined }, pro: { month: undefined, year: undefined }, premium: { month: undefined, year: undefined } };
+      const base = item(L.team.month!, TEAM_META, 3);
+      warn.mockClear();
+      expect(entitlementFromItems([base, item("price_test_archived", { ct_plan: "addon", ct_version: "1", addon: "premium_voice" }, 3)], only)).toEqual({ plan: "team", seats: 3, premium: false, interval: "month" });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("skipped"), "price_test_archived");
+      const invalid: Record<string, string>[] = [{ ct_plan: "addon", ct_version: "1" }, { ct_plan: "addon", ct_addon: "none", ct_version: "1" }, { ct_plan: "addon", ct_addon: "premium_voice" }];
+      for (const meta of invalid) {
+        expect(entitlementFromItems([base, item("price_test_archived", meta, 3)], only), JSON.stringify(meta)).toMatchObject({ plan: "team", premium: false });
+        expect(entitlementFromItems([base, item(L.premium.month!, meta, 3)], L), JSON.stringify(meta)).toMatchObject({ plan: "team", premium: false });
+      }
+    });
+    it("R3: a base product carrying ct_addon=premium_voice is refused, so it cannot grant", () => {
+      expect(entitlementFromItems([item("price_test_archived", { ct_plan: "pro", ct_addon: "premium_voice", ct_version: "1" }, 1)], L)).toBeNull();
+      expect(entitlementFromItems([item(L.team.month!, { ...TEAM_META, ct_addon: "premium_voice" }, 3)], L)).toBeNull();
+      // ct_addon=none (or absent) is fine on a base product.
+      expect(entitlementFromItems([item(L.team.month!, { ...TEAM_META, ct_addon: "none" }, 3)], L)).toMatchObject({ plan: "team" });
+    });
+    it("control: a Team base plus an allowlisted valid Premium add-on grants Premium", () => {
+      expect(entitlementFromItems([item(L.team.month!, TEAM_META, 3), item(L.premium.month!, { ct_plan: "addon", ct_addon: "premium_voice", ct_version: "1" }, 3)], L)).toEqual({ plan: "team", seats: 3, premium: true, interval: "month" });
+    });
+    it("Premium needs ct_plan=addon, ct_addon=premium_voice and ct_version=1; anything else is skipped and grants no Premium", () => {
+      const team = item(L.team.month!, TEAM_META, 3);
+      const bad: Record<string, string>[] = [
+        { ct_plan: "premium", ct_version: "1" },
+        { ct_plan: "premium", ct_addon: "premium_voice", ct_version: "1" },
+        { ct_addon: "premium_voice", ct_version: "1" },
+        { ct_plan: "enterprise", plan: "premium", ct_version: "1" },
+      ];
+      for (const meta of bad) {
+        // Non-allowlisted, and on the allowlisted Premium slot (A2): skipped, Team base still grants.
+        expect(entitlementFromItems([team, item("price_test_archived", meta, 3)], L), JSON.stringify(meta)).toEqual({ plan: "team", seats: 3, premium: false, interval: "month" });
+        expect(entitlementFromItems([team, item(L.premium.month!, meta, 3)], L), JSON.stringify(meta)).toEqual({ plan: "team", seats: 3, premium: false, interval: "month" });
+      }
+      expect(entitlementFromItems([team, item("price_test_archived", PREMIUM_META, 3)], L)).toMatchObject({ plan: "team", premium: true });
+      // An allowlisted Premium price whose product claims a base plan still refuses the whole subscription.
+      expect(entitlementFromItems([team, item(L.premium.month!, PRO_META, 3)], L)).toBeNull();
+    });
+    it("an allowlisted base price whose product is an invalid add-on is a mismatch: nothing is granted, even next to a valid base", () => {
+      const pro = item(L.pro.month!, PRO_META);
+      const metas: Record<string, string>[] = [{ ct_plan: "addon", ct_version: "1" }, { ct_plan: "addon", ct_addon: "none", ct_version: "1" }, { ct_plan: "addon", ct_addon: "premium_voice", ct_version: "1" }];
+      for (const meta of metas) {
+        expect(entitlementFromItems([pro, item(L.team.month!, meta, 3)], L), JSON.stringify(meta)).toBeNull();
+        expect(entitlementFromItems([pro, item(L.pro.year!, meta, 1)], L), JSON.stringify(meta)).toBeNull();
+      }
+    });
+    it("priceAllowlist reads the six _MONTHLY and _ANNUAL variables and nothing else", () => {
+      const env = {
+        STRIPE_PRICE_PRO_MONTHLY: "p1", STRIPE_PRICE_PRO_ANNUAL: "p2", STRIPE_PRICE_TEAM_MONTHLY: "t1", STRIPE_PRICE_TEAM_ANNUAL: "t2",
+        STRIPE_PRICE_PREMIUM_MONTHLY: "a1", STRIPE_PRICE_PREMIUM_ANNUAL: " a2 ",
+        STRIPE_PRICE_PRO_MONTH: "old", STRIPE_PRICE_TEAM_YEAR: "old",
+      } as unknown as NodeJS.ProcessEnv;
+      expect(priceAllowlist(env)).toEqual({ pro: { month: "p1", year: "p2" }, team: { month: "t1", year: "t2" }, premium: { month: "a1", year: "a2" } });
+      expect(priceAllowlist({ STRIPE_PRICE_PRO_MONTH: "old" } as unknown as NodeJS.ProcessEnv).pro.month).toBeUndefined();
+      expect(Object.values(PRICE_ENV).flatMap((p) => Object.values(p)).sort()).toEqual(Object.keys(env).filter((k) => /_(MONTHLY|ANNUAL)$/.test(k)).sort());
+    });
+    it("an empty allowlist trusts no price id, so only the ct_version=1 fallback can grant", () => {
+      const empty: PriceIds = { pro: { month: undefined, year: undefined }, team: { month: undefined, year: undefined }, premium: { month: undefined, year: undefined } };
+      expect(entitlementFromItems([item(L.pro.month!, { ct_plan: "pro" })], empty)).toBeNull();
+      expect(entitlementFromItems([item(L.pro.month!, PRO_META)], empty)).toMatchObject({ plan: "pro" });
+    });
   });
 
-  it("missing, invalid or conflicting metadata grants nothing", () => {
-    expect(entitlementFromItems([{ quantity: 3, lookupKey: "calltrainer_team_monthly", productMetadata: {} }])).toBeNull();
-    expect(entitlementFromItems([{ quantity: 3, lookupKey: "calltrainer_team_monthly", productMetadata: null }])).toBeNull();
-    for (const plan of ["enterprise", "Team", "", "free"]) expect(entitlementFromItems([{ quantity: 3, productMetadata: { plan } }])).toBeNull();
-    // The lookup key says Team but the product says Pro, and the reverse.
-    expect(entitlementFromItems([{ quantity: 3, lookupKey: "calltrainer_team_annual", productMetadata: { plan: "pro" } }])).toBeNull();
-    expect(entitlementFromItems([{ quantity: 1, lookupKey: "calltrainer_pro_annual", productMetadata: { plan: "team" } }])).toBeNull();
-    // Two products declaring different plans on one subscription.
-    expect(entitlementFromItems([{ quantity: 1, productMetadata: { plan: "pro" } }, { quantity: 3, productMetadata: { plan: "team" } }])).toBeNull();
+  it("#13 canceled, unpaid and paused subscriptions are Free", async () => {
+    for (const status of ["canceled", "unpaid", "paused"]) {
+      await update({ team: 3 });
+      expect(org().planTier).toBe("team");
+      await update({ team: 3, status });
+      expect(org().planTier, status).toBe("free");
+    }
   });
 
-  it("an item with no lookup key resolves by metadata alone", () => {
-    expect(entitlementFromItems([{ quantity: 6, lookupKey: null, productMetadata: { plan: "team", pooled_minutes_per_seat: "300" } }])).toEqual({ plan: "team", seats: 6, premium: false });
+  it("#15 src/lib/billing.ts has no lookup_key reads", () => {
+    expect(readFileSync(join(process.cwd(), "src/lib/billing.ts"), "utf8")).not.toMatch(/lookup_key|lookupKey|LOOKUP_KEYS|lookupPlan/);
   });
 
   it("asks Stripe for the subscription with its products expanded", async () => {
@@ -1070,4 +1318,106 @@ describe("a Team that cancels or goes unpaid carries this month's pool usage int
       expect(await beginCall("owner-1", scnInfo)).toMatchObject({ ok: true, remaining: 6 });
     });
   }
+});
+
+describe("a new purchase that fails item validation", () => {
+  const teamItems = (quantity: number) => [{ quantity, price: TEAM_PRICE }];
+  const purchase = async (subId: string, quantity: number) => {
+    liveStripe.set(subId, { ...sub({ id: subId, customer: "cus_test_new", metadata: { organizationId: "org-1" } }), items: { data: teamItems(quantity) } });
+    await deliverRaw(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_new", subscription: subId, metadata: { plan: "team", userId: "owner-1", organizationId: "org-1", seats: "2" } }));
+  };
+  const post = () => checkout(new NextRequest("http://localhost/api/billing/checkout", { method: "POST", body: JSON.stringify({ plan: "team", interval: "month", seats: 3 }), headers: { "content-type": "application/json" } }));
+
+  it("grants nothing but records the billing link, so a second purchase is refused", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await purchase("sub_test_bad", 2);
+    expect(org()).toMatchObject({ planTier: "free", stripeSubscriptionId: "sub_test_bad", stripeCustomerId: "cus_test_new" });
+    expect(allowance("organizationId", "org-1")).toMatchObject({ planTier: "free", minutesCap: 10 });
+    const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_dup", url: "https://checkout.example/dup" });
+    const res = await post();
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("already_subscribed");
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("a second subscription for the same account is cancelled as a duplicate", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await purchase("sub_test_bad", 2);
+    await purchase("sub_test_bad2", 2);
+    expect(cancelSpy).toHaveBeenCalledWith("sub_test_bad2");
+    expect(org().stripeSubscriptionId).toBe("sub_test_bad");
+  });
+
+  it("fixing the quantity on that subscription then grants Team", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await purchase("sub_test_bad", 2);
+    liveStripe.set("sub_test_bad", { ...sub({ id: "sub_test_bad", customer: "cus_test_new", metadata: { organizationId: "org-1" } }), items: { data: teamItems(3) } });
+    await deliverRaw(event("customer.subscription.updated", { id: "sub_test_bad", customer: "cus_test_new", status: "active", metadata: { organizationId: "org-1" } }));
+    expect(org()).toMatchObject({ planTier: "team", seatCount: 3, stripeSubscriptionId: "sub_test_bad" });
+  });
+
+  it("an ended or unknown-owner failed subscription links nothing", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    liveStripe.set("sub_test_ended", { ...sub({ id: "sub_test_ended", customer: "cus_test_new", metadata: { organizationId: "org-1" }, status: "incomplete_expired" }), items: { data: teamItems(2) } });
+    await deliverRaw(event("customer.subscription.updated", { id: "sub_test_ended", customer: "cus_test_new", status: "incomplete_expired", metadata: { organizationId: "org-1" } }));
+    liveStripe.set("sub_test_nobody", { ...sub({ id: "sub_test_nobody", customer: "cus_nobody", metadata: {} }), items: { data: teamItems(2) } });
+    await deliverRaw(event("customer.subscription.updated", { id: "sub_test_nobody", customer: "cus_nobody", status: "active", metadata: {} }));
+    expect(org().stripeSubscriptionId ?? null).toBeNull();
+  });
+
+  describe("webhook to checkout transitions keep the link while the status blocks checkout", () => {
+    const setStatus = (status: string, items = teamItems(3)) => {
+      liveStripe.set("sub_test_live", { ...sub({ id: "sub_test_live", customer: "cus_test_new", metadata: { organizationId: "org-1" }, status }), items: { data: items } });
+      return deliverRaw(event("customer.subscription.updated", { id: "sub_test_live", customer: "cus_test_new", status, metadata: { organizationId: "org-1" } }));
+    };
+    const tryCheckout = async () => {
+      const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_next", url: "https://checkout.example/next" });
+      const res = await post();
+      return { status: res.status, created: create.mock.calls.length };
+    };
+
+    for (const status of ["unpaid", "paused"]) {
+      it(`a paid Team that goes ${status} drops to Free, keeps the link, and cannot buy another subscription`, async () => {
+        await setStatus("active");
+        expect(org()).toMatchObject({ planTier: "team", stripeSubscriptionId: "sub_test_live" });
+        await setStatus(status);
+        expect(org()).toMatchObject({ planTier: "free", subscriptionStatus: status, stripeSubscriptionId: "sub_test_live" });
+        expect(await tryCheckout()).toEqual({ status: 409, created: 0 });
+      });
+
+      it(`an invalid-items subscription that is ${status} keeps the link too`, async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        await setStatus("active");
+        await setStatus(status, teamItems(2));
+        expect(org()).toMatchObject({ planTier: "free", subscriptionStatus: status, stripeSubscriptionId: "sub_test_live" });
+        expect(await tryCheckout()).toEqual({ status: 409, created: 0 });
+      });
+    }
+
+    it("past_due keeps Team and blocks checkout; canceled and a deleted subscription unlink and allow it", async () => {
+      await setStatus("active");
+      await setStatus("past_due");
+      expect(org()).toMatchObject({ planTier: "team", stripeSubscriptionId: "sub_test_live" });
+      expect((await tryCheckout()).status).toBe(409);
+      await setStatus("canceled");
+      expect(org()).toMatchObject({ planTier: "free", subscriptionStatus: "canceled" });
+      expect(org().stripeSubscriptionId ?? null).toBeNull();
+      expect((await tryCheckout()).status).toBe(200);
+    });
+
+    it("a deleted subscription event unlinks and allows checkout again", async () => {
+      await setStatus("unpaid");
+      expect(org().stripeSubscriptionId).toBe("sub_test_live");
+      await deliverRaw(event("customer.subscription.deleted", { id: "sub_test_live", customer: "cus_test_new" }));
+      expect(org().stripeSubscriptionId ?? null).toBeNull();
+      expect((await tryCheckout()).status).toBe(200);
+    });
+
+    it("a new purchase that fails validation and is unpaid links the subscription and blocks checkout", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      await setStatus("unpaid", teamItems(2));
+      expect(org()).toMatchObject({ planTier: "free", stripeSubscriptionId: "sub_test_live" });
+      expect((await tryCheckout()).status).toBe(409);
+    });
+  });
 });

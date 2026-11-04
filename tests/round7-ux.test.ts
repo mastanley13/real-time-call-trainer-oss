@@ -60,6 +60,8 @@ beforeEach(() => {
   vi.stubEnv("DATABASE_URL", "postgresql://ci:ci@localhost:5432/ci");
   vi.stubEnv("DEMO_MODE", "");
   vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
+  // Checkout only asks Stripe about allowlisted price ids.
+  vi.stubEnv("STRIPE_PRICE_PRO_MONTHLY", "price_test_pro_m");
   resetPriceCache();
 });
 afterEach(() => {

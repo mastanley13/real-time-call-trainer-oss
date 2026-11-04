@@ -19,7 +19,7 @@ import { stripeApi, StripeApiError, type StripeParams } from "./stripe";
 export type Interval = "month" | "year";
 export type PaidPlan = Exclude<PlanTier, "free">;
 
-// ---- Prices (resolved by lookup key; no price id lives in code or env) --------------------------
+// ---- Prices (an env allowlist of price ids, checked against product metadata) -------------------
 
 export interface PriceIds {
   pro: Record<Interval, string | undefined>;
@@ -27,55 +27,93 @@ export interface PriceIds {
   premium: Record<Interval, string | undefined>;
 }
 
-/** Lookup keys set on the test-mode prices. They are labels, not secrets. */
-export const LOOKUP_KEYS = {
-  pro: { month: "calltrainer_pro_monthly", year: "calltrainer_pro_annual" },
-  team: { month: "calltrainer_team_monthly", year: "calltrainer_team_annual" },
-  premium: { month: "calltrainer_premium_monthly", year: "calltrainer_premium_annual" },
+type PriceSlot = keyof PriceIds;
+
+/** Env vars holding the six allowlisted price ids. Price ids are not secrets. */
+export const PRICE_ENV = {
+  pro: { month: "STRIPE_PRICE_PRO_MONTHLY", year: "STRIPE_PRICE_PRO_ANNUAL" },
+  team: { month: "STRIPE_PRICE_TEAM_MONTHLY", year: "STRIPE_PRICE_TEAM_ANNUAL" },
+  premium: { month: "STRIPE_PRICE_PREMIUM_MONTHLY", year: "STRIPE_PRICE_PREMIUM_ANNUAL" },
 } as const;
 
-const emptyPrices = (): PriceIds => ({ pro: { month: undefined, year: undefined }, team: { month: undefined, year: undefined }, premium: { month: undefined, year: undefined } });
-// Prices are only for building checkouts. What a subscription grants comes from its items' product metadata.
+const SLOTS: PriceSlot[] = ["pro", "team", "premium"];
+const INTERVALS: Interval[] = ["month", "year"];
 
-const PriceList = z.object({
-  data: z.array(z.object({
-    id: z.string(),
-    lookup_key: z.string().nullish(),
-    active: z.boolean().optional(),
-    type: z.string().optional(),
-    recurring: z.object({ usage_type: z.string().optional() }).nullish(),
-    product: z.union([z.string(), z.object({ metadata: z.record(z.string()).nullish() })]).nullish(),
-  })),
+const emptyPrices = (): PriceIds => ({ pro: { month: undefined, year: undefined }, team: { month: undefined, year: undefined }, premium: { month: undefined, year: undefined } });
+
+/** The allowlist as configured now. An unset or blank variable leaves its slot undefined. */
+export function priceAllowlist(env: NodeJS.ProcessEnv = process.env): PriceIds {
+  const ids = emptyPrices();
+  for (const slot of SLOTS) for (const interval of INTERVALS) ids[slot][interval] = env[PRICE_ENV[slot][interval]]?.trim() || undefined;
+  return ids;
+}
+
+/** Which slot an allowlisted price id fills, or null when the id is not on the list. */
+function slotOf(id: string, list: PriceIds): { slot: PriceSlot; interval: Interval } | null {
+  for (const slot of SLOTS) for (const interval of INTERVALS) if (list[slot][interval] === id) return { slot, interval };
+  return null;
+}
+
+/**
+ * What a product declares itself to be: "pro", "team" or "premium" (the add-on). New ct_* format only; the
+ * older plan and addon keys are never read. Null means no valid declaration.
+ * - pro or team: ct_plan is that plan and ct_addon is absent or "none".
+ * - premium: ct_plan=addon, ct_addon=premium_voice and ct_version=1.
+ */
+function productKind(meta: Record<string, string> | null | undefined): PriceSlot | null {
+  if (!meta) return null;
+  if (!Object.keys(meta).some((k) => k.startsWith("ct_"))) {
+    console.warn("[billing] product has no ct_* metadata");
+    return null;
+  }
+  if (meta.ct_plan === "pro" || meta.ct_plan === "team") {
+    return meta.ct_addon === undefined || meta.ct_addon === "none" ? meta.ct_plan : null;
+  }
+  return meta.ct_plan === "addon" && meta.ct_addon === "premium_voice" && meta.ct_version === "1" ? "premium" : null;
+}
+
+const PriceObject = z.object({
+  id: z.string(),
+  active: z.boolean().optional(),
+  type: z.string().optional(),
+  recurring: z.object({ usage_type: z.string().optional(), interval: z.string().optional() }).nullish(),
+  product: z.union([z.string(), z.object({ metadata: z.record(z.string()).nullish() })]).nullish(),
 });
 
 const PRICE_CACHE_MS = 5 * 60 * 1000;
-let priceCache: { at: number; ids: PriceIds } | null = null;
+let priceCache: { at: number; key: string; ids: PriceIds } | null = null;
 export const resetPriceCache = (): void => { priceCache = null; };
 
 /**
- * Looks up the six prices with stripe.prices.list({ lookup_keys }). A key with no active price, a metered
- * price (none are allowed) or a product whose `plan` metadata disagrees with the key resolves to undefined,
- * which checkout reports as price_not_configured and the webhook treats as "not our price".
- * Cached for a few minutes so a webhook burst makes one list call.
+ * Checks each allowlisted price id with stripe.prices.retrieve (product expanded). A blank variable, an
+ * unknown or inactive price, a non-recurring or metered price, or a product whose plan disagrees with the
+ * slot resolves to undefined, which checkout reports as price_not_configured. Cached for a few minutes.
  */
-export async function resolvePriceIds(api: Pick<typeof stripeApi, "listPricesByLookupKeys"> = stripeApi, nowMs = Date.now()): Promise<PriceIds> {
-  if (priceCache && nowMs - priceCache.at < PRICE_CACHE_MS) return priceCache.ids;
-  const intervals: Interval[] = ["month", "year"];
-  const wanted = (Object.keys(LOOKUP_KEYS) as (keyof typeof LOOKUP_KEYS)[]).flatMap((plan) => intervals.map((interval) => ({ plan, interval, key: LOOKUP_KEYS[plan][interval] })));
-  const list = PriceList.parse(await api.listPricesByLookupKeys(wanted.map((w) => w.key)));
+export async function resolvePriceIds(api: Pick<typeof stripeApi, "retrievePrice"> = stripeApi, nowMs = Date.now(), env: NodeJS.ProcessEnv = process.env): Promise<PriceIds> {
+  const list = priceAllowlist(env);
+  const key = JSON.stringify(list);
+  if (priceCache && priceCache.key === key && nowMs - priceCache.at < PRICE_CACHE_MS) return priceCache.ids;
   const ids = emptyPrices();
-  for (const w of wanted) {
-    const price = list.data.find((p) => p.lookup_key === w.key && p.active !== false);
-    if (!price) continue;
-    if (price.type && price.type !== "recurring") continue;
-    if (price.recurring?.usage_type && price.recurring.usage_type !== "licensed") continue;
-    const productPlan = typeof price.product === "object" && price.product ? price.product.metadata?.plan : undefined;
-    // Pro and Team products must declare the plan they are sold as. Reconciliation grants nothing without it,
-    // so a price that would charge a customer and leave them on Free is refused before checkout exists.
-    if (w.plan !== "premium" && productPlan !== w.plan) continue;
-    ids[w.plan][w.interval] = price.id;
+  for (const slot of SLOTS) {
+    for (const interval of INTERVALS) {
+      const id = list[slot][interval];
+      if (!id) continue;
+      let price: z.infer<typeof PriceObject>;
+      try {
+        price = PriceObject.parse(await api.retrievePrice(id));
+      } catch (e) {
+        if (e instanceof StripeApiError && e.status === 404) { console.warn("[billing] allowlisted price not found", id); continue; }
+        throw e;
+      }
+      if (price.id !== id || price.active === false) continue;
+      if (price.type !== "recurring" || price.recurring?.usage_type !== "licensed") { console.warn("[billing] allowlisted price is not flat licensed recurring", id); continue; }
+      if (price.recurring.interval && price.recurring.interval !== interval) { console.warn("[billing] allowlisted price interval mismatch", id); continue; }
+      const meta = typeof price.product === "object" && price.product ? price.product.metadata : null;
+      if (productKind(meta) !== slot) { console.warn("[billing] allowlisted price and product plan disagree", id); continue; }
+      ids[slot][interval] = id;
+    }
   }
-  priceCache = { at: nowMs, ids };
+  priceCache = { at: nowMs, key, ids };
   return ids;
 }
 
@@ -265,8 +303,8 @@ const SubscriptionObject = z.object({
       quantity: z.number().nullish(),
       price: z.object({
         id: z.string(),
-        /** Null once the key has moved to a replacement price, so it is never the source of the plan. */
-        lookup_key: z.string().nullish(),
+        type: z.string().nullish(),
+        recurring: z.object({ usage_type: z.string().nullish(), interval: z.string().nullish() }).nullish(),
         /** Expanded by retrieveSubscription. A bare id carries no metadata and is not interpreted. */
         product: z.union([z.string(), z.object({ metadata: z.record(z.string()).nullish() })]).nullish(),
       }),
@@ -278,44 +316,82 @@ type LiveSubscription = z.infer<typeof SubscriptionObject>;
 /** Stripe statuses that keep a paid plan. Anything else (canceled, unpaid, incomplete_expired, paused) is Free. */
 const ENTITLED = new Set(["active", "trialing", "past_due"]);
 
-interface Entitlement { plan: PlanTier; seats: number; premium: boolean }
+/** A linked subscription in one of these statuses blocks a new checkout (send the customer to the portal). */
+const CHECKOUT_BLOCKING = new Set(["active", "trialing", "past_due", "unpaid", "paused"]);
+export const blocksCheckout = (status: string | null | undefined): boolean => !!status && CHECKOUT_BLOCKING.has(status);
+
+interface Entitlement { plan: PlanTier; seats: number; premium: boolean; interval?: Interval }
 
 export interface SubscriptionItemInfo {
   quantity?: number | null;
-  /** The price's lookup key, if it still has one. Only used to catch a mismatch with the product. */
-  lookupKey?: string | null;
-  /** The product's metadata. `plan` ("pro" or "team") decides the tier. */
+  priceId?: string | null;
+  /** The price's `type` and recurring details as Stripe returns them. */
+  priceType?: string | null;
+  usageType?: string | null;
+  interval?: string | null;
+  /** The expanded product's metadata. Null or undefined when the product was not expanded. */
   productMetadata?: Record<string, string> | null;
 }
 
-const lookupPlan = (key: string | null | undefined): PaidPlan | null =>
-  key?.startsWith("calltrainer_team_") ? "team" : key?.startsWith("calltrainer_pro_") ? "pro" : null;
-
-const isPremiumItem = (it: SubscriptionItemInfo): boolean =>
-  (it.lookupKey ?? "").startsWith("calltrainer_premium_") || it.productMetadata?.plan === "premium" || it.productMetadata?.addon === "premium_voice";
+const refuse = (reason: string, it?: SubscriptionItemInfo): null => {
+  console.warn("[billing] plan sync refused:", reason, it?.priceId ?? "");
+  return null;
+};
 
 /**
- * Reads plan, seats and the premium flag from the subscription's own items, independent of which prices
- * are current. The tier comes only from each product's `plan` metadata, so a price that was archived or lost
- * its lookup key still resolves, and a product without valid metadata never grants anything. Null when no
- * item declares a valid plan, when a lookup key contradicts its product, or when items declare different plans.
+ * Reads plan, seats and the premium flag from the subscription's own items.
+ * 1. A price on the env allowlist is trusted only if its product's ct_plan agrees with the price's slot.
+ * 2. Any other price (archived or replaced) needs product metadata with ct_version=1 and a valid ct_plan.
+ * Fails closed (null, so the account stays Free) on an unknown base price or product, a mismatch between an
+ * allowlisted price and its product, a metered or non-recurring price, an unexpanded product, two different
+ * base plans, or Team below the product's seat minimum. Any other item that is neither a valid base plan nor
+ * a valid Premium add-on, and does not declare ct_plan pro or team, is skipped with a warning and the base
+ * plan still grants (no valid base left still means null). A non-allowlisted item that declares ct_plan pro or
+ * team but is otherwise invalid refuses the whole subscription. Premium counts only with quantity above 0
+ * next to a base plan.
  */
-export function entitlementFromItems(items: SubscriptionItemInfo[]): Entitlement | null {
+export function entitlementFromItems(items: SubscriptionItemInfo[], allowlist: PriceIds = priceAllowlist()): Entitlement | null {
   const plans = new Set<PaidPlan>();
   let seats = 1;
   let premium = false;
+  let interval: Interval | undefined;
   for (const it of items) {
     const qty = Math.max(0, it.quantity ?? 1);
-    const declared = it.productMetadata?.plan;
-    if (declared === "pro" || declared === "team") {
-      const byKey = lookupPlan(it.lookupKey);
-      if (byKey && byKey !== declared) return null;
-      plans.add(declared);
-      if (declared === "team") seats = Math.min(TEAM_MAX_SEATS, Math.max(TEAM_MIN_SEATS, qty));
-    } else if (isPremiumItem(it) && qty > 0) premium = true;
+    if (it.priceType !== "recurring" || it.usageType !== "licensed") return refuse("price is not flat licensed recurring", it);
+    const meta = it.productMetadata;
+    if (!meta) return refuse("product not expanded or has no metadata", it);
+    const hit = it.priceId ? slotOf(it.priceId, allowlist) : null;
+    const kind = productKind(meta);
+    // The allowlisted slot is checked first, so no add-on skip can hide a mismatch on a base price.
+    if (hit && hit.slot !== "premium" && kind !== hit.slot) return refuse("allowlisted price and product plan disagree", it);
+    if (hit && hit.slot === "premium" && (kind === "pro" || kind === "team")) return refuse("allowlisted Premium price and product plan disagree", it);
+    // Anything that is not a valid base plan and does not claim to be one (ct_plan pro or team) is an add-on
+    // candidate: if it is not a valid Premium add-on it is skipped, and a valid base still grants.
+    const claimsBase = meta.ct_plan === "pro" || meta.ct_plan === "team";
+    if (kind !== "premium" && kind !== "pro" && kind !== "team" && !claimsBase) {
+      console.warn("[billing] item is not a valid base plan or Premium add-on; skipped", it.priceId ?? "");
+      continue;
+    }
+    if (hit && hit.slot === "premium" && kind !== "premium") return refuse("allowlisted price and product plan disagree", it);
+    if (!hit && (meta.ct_version !== "1" || !kind)) {
+      return refuse("price is not allowlisted and its product has no valid ct_plan with ct_version=1", it);
+    }
+    if (kind === "premium") {
+      if (qty > 0) premium = true;
+      continue;
+    }
+    if (kind === "team") {
+      const min = Number.parseInt(meta.ct_seat_min ?? "", 10) || TEAM_MIN_SEATS;
+      if (qty < min) return refuse(`Team quantity ${qty} is below the seat minimum ${min}; flag for support`, it);
+      seats = Math.min(TEAM_MAX_SEATS, qty);
+    }
+    plans.add(kind as PaidPlan);
+    interval = hit?.interval ?? (it.interval === "month" || it.interval === "year" ? it.interval : undefined);
   }
-  if (plans.size !== 1) return null;
-  return { plan: [...plans][0], seats: plans.has("team") ? seats : 1, premium };
+  if (plans.size > 1) return refuse("items declare two different base plans");
+  if (plans.size === 0) return null;
+  const plan = [...plans][0];
+  return { plan, seats: plan === "team" ? seats : 1, premium, interval };
 }
 
 type Subject = { kind: "user"; id: string } | { kind: "organization"; id: string };
@@ -373,7 +449,10 @@ async function applyEntitlement(
 ): Promise<Applied> {
   const keepIds = {
     ...(stripe.customerId ? { stripeCustomerId: stripe.customerId } : {}),
-    stripeSubscriptionId: next.plan === "free" ? null : (stripe.subscriptionId ?? undefined),
+    // Free unlinks the subscription only once it is over (canceled, incomplete_expired, gone). While its status
+    // still blocks checkout (active, trialing, past_due, unpaid, paused) the link stays, whether access was
+    // revoked for failed validation or for non-payment, so no second subscription can be bought.
+    stripeSubscriptionId: next.plan === "free" && !(stripe.subscriptionId && blocksCheckout(stripe.status)) ? null : (stripe.subscriptionId ?? undefined),
     subscriptionStatus: stripe.status,
     // A paid subscription is in place, so the checkout that produced it is no longer outstanding.
     ...(next.plan === "free" ? {} : { stripeCheckoutSessionId: null, stripeCheckoutFingerprint: null, stripeCheckoutUrl: null, stripeCheckoutExpiresAt: null }),
@@ -425,15 +504,27 @@ async function reconcile(
   if (live.status === "incomplete") return null;
   const found = entitlementFromItems(live.items.data.map((i) => ({
     quantity: i.quantity,
-    lookupKey: i.price.lookup_key,
+    priceId: i.price.id,
+    priceType: i.price.type,
+    usageType: i.price.recurring?.usage_type,
+    interval: i.price.recurring?.interval,
     productMetadata: typeof i.price.product === "object" ? i.price.product?.metadata : null,
   })));
   if (!found) {
-    // Items that declare no valid plan never grant access. A subscription that is no longer paid still
-    // revokes it from whoever holds it, so an unpaid or canceled state is honored whatever the items say.
-    if (ENTITLED.has(live.status)) return null;
+    // Items that fail validation never grant access, and they revoke it too: the subject whose CURRENT
+    // subscription this is drops to Free (fail closed), whatever the status. A subscription nobody holds,
+    // or an old one a newer subscription replaced, finds no holder and changes nothing. While Stripe is still
+    // billing it (entitled status) the link is kept, so the account cannot start a second subscription.
     const holder = await subjectOfSubscription(tx, live.id);
-    return holder ? applyEntitlement(tx, holder, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status }, now) : null;
+    if (holder) return applyEntitlement(tx, holder, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status }, now);
+    // Nobody holds it yet: a new purchase that failed validation. If Stripe is billing it, record the link
+    // (without granting anything) so checkout is blocked and a duplicate is detected, as for a valid purchase.
+    if (!blocksCheckout(live.status)) return null;
+    const owner = await findSubject(tx, { subscriptionId: live.id, customerId: live.customer, metadata: { ...(hint.metadata ?? {}), ...(live.metadata ?? {}) } });
+    if (!owner) return null;
+    const heldByOwner = await currentSubscriptionId(tx, owner);
+    if (heldByOwner && heldByOwner !== live.id) return { event: null, cancelSubscriptionId: live.id };
+    return applyEntitlement(tx, owner, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status }, now);
   }
   const subject = await findSubject(tx, { subscriptionId: live.id, customerId: live.customer, metadata: { ...(hint.metadata ?? {}), ...(live.metadata ?? {}) } });
   if (!subject) return null;
