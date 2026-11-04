@@ -31,6 +31,17 @@ export default function TermsPage() {
           <p className="mt-2">Free accounts include 10 voice minutes a month and unlimited text practice. Paid plans are listed at /pricing and are not on sale yet. Before we charge for anything, we will open checkout and update these terms. There are no overage charges.</p>
         </section>
 
+        <section aria-labelledby="cancel-h">
+          <h2 id="cancel-h" className="text-xl font-bold text-ink">Billing, cancellation and refunds</h2>
+          <ul className="mt-2 list-disc space-y-2 pl-5">
+            <li>Subscriptions renew automatically, monthly or annually depending on the plan you choose.</li>
+            <li>You can cancel anytime from Settings &gt; Billing.</li>
+            <li>After you cancel, you keep access until the end of the period you have paid for.</li>
+            <li>Payments to StrategixAI LLC are non-refundable except where the law requires.</li>
+          </ul>
+          <p className="mt-2">Questions about a charge: support@calltrainer.tech.</p>
+        </section>
+
         <section aria-labelledby="use-h">
           <h2 id="use-h" className="text-xl font-bold text-ink">Acceptable use</h2>
           <ul className="mt-2 list-disc space-y-2 pl-5">
