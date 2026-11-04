@@ -3,6 +3,7 @@ import { ArrowRight, FileJson, GitPullRequest, KeyRound, LibraryBig, MessageSqua
 import HeroDeck from "@/components/landing/HeroDeck";
 import PublicFooter from "@/components/landing/PublicFooter";
 import { LIBRARY } from "@/lib/personas";
+import { registerHref } from "@/lib/pricing";
 import { pageMetadata } from "@/lib/seo";
 
 export const metadata = pageMetadata({
@@ -33,19 +34,17 @@ export default function Home() {
       <section className="deck border-b border-line">
         <div className="page grid gap-12 py-14 sm:py-20 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-center">
           <div className="enter">
-            <p className="eyebrow">Open source · MIT · bring your own key</p>
+            <p className="eyebrow">Free tier · no card · text or voice</p>
             <h1 className="mt-4 text-4xl font-bold leading-[1.05] sm:text-[56px]">
-              Practice the call.<br /><span className="text-primary">Get coached while you talk.</span>
+              Sales call practice, <span className="text-primary">no setup required</span>
             </h1>
             <p className="mt-5 max-w-xl text-lg leading-relaxed text-ink-soft">
-              Rehearse sales and service calls against AI personas from {families} sales jobs. A live coach scores every turn and
-              cues you when an objection lands. The debrief backs every score with your own words.
+              Practice real sales calls against {LIBRARY.length} AI buyer personas. No API keys, no database, just sign in and start talking.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link href="/library" className="btn-primary btn-xl">Browse {LIBRARY.length} personas <ArrowRight size={18} aria-hidden /></Link>
-              <Link href="/trainer" className="btn-ghost btn-xl">Start a practice call</Link>
+              <Link href={registerHref({ src: "home_hero" })} className="btn-primary btn-xl">Start free <ArrowRight size={18} aria-hidden /></Link>
+              <Link href="/pricing" className="btn-ghost btn-xl">See pricing</Link>
             </div>
-            <p className="mt-5 font-mono text-xs text-ink-muted">Hosted for you, no keys or setup · text or voice · self-host with your own OpenAI-compatible key</p>
           </div>
           <div className="enter [animation-delay:120ms]"><HeroDeck /></div>
         </div>
@@ -106,7 +105,7 @@ export default function Home() {
       <section className="deck" aria-labelledby="oss-h">
         <div className="page grid gap-8 py-14 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-center">
           <div>
-            <p className="eyebrow">Contribute</p>
+            <p className="eyebrow">Open source · MIT · bring your own key</p>
             <h2 id="oss-h" className="mt-1 text-2xl font-bold sm:text-3xl">Add the persona your team actually sells to</h2>
             <p className="mt-3 max-w-lg text-ink-soft">Build one with the wizard, export the pack file, and open a pull request. Packs are checked against the same schema the app uses.</p>
             <div className="mt-6 flex flex-wrap gap-3">
@@ -119,7 +118,7 @@ export default function Home() {
             <pre className="font-mono text-[12.5px] leading-relaxed text-ink-soft">{`git clone https://github.com/mastanley13/real-time-call-trainer-oss
 cd real-time-call-trainer-oss && npm install
 cp .env.example .env   # add OPENAI_API_KEY for the AI coach and voice
-DEMO_MODE=true npm run dev`}</pre>
+npm run dev`}</pre>
           </div>
         </div>
       </section>

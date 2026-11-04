@@ -1,10 +1,10 @@
-import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import PricingCards, { tierAction } from "@/components/landing/PricingCards";
 import PricingSummary from "@/components/landing/PricingSummary";
 import PricingPage from "@/app/pricing/page";
+import Home from "@/app/page";
 import { OPEN_SOON_LINE, PREMIUM_COMING_SOON } from "@/lib/pricing";
 import { billingOn } from "@/lib/serverConfig";
 
@@ -136,9 +136,30 @@ describe("pricing page", () => {
 });
 
 describe("landing hero line", () => {
-  it("describes the hosted product, not demo mode", () => {
-    const src = readFileSync("src/app/page.tsx", "utf8");
-    expect(src).not.toMatch(/demo mode/i);
-    expect(src).toContain("Hosted for you, no keys or setup");
+  const html = renderToStaticMarkup(createElement(Home));
+  const hero = html.slice(0, html.indexOf("how-h"));
+
+  it("leads with the hosted pitch and the two CTAs", () => {
+    expect(hero).toContain("Sales call practice, <span");
+    expect(hero.replace(/<[^>]+>/g, "")).toContain("Sales call practice, no setup required");
+    expect(hero).toContain("Practice real sales calls against 54 AI buyer personas. No API keys, no database, just sign in and start talking.");
+    expect(hrefs(hero)).toEqual(expect.arrayContaining(["/register?src=home_hero", "/pricing"]));
+    expect(hero).toContain(">Start free <");
+    expect(hero).toContain(">See pricing<");
+  });
+
+  it("keeps demo mode and bring your own key out of the hero", () => {
+    expect(hero).not.toMatch(/demo mode|DEMO_MODE|bring your own key/i);
+    expect(html).not.toContain("DEMO_MODE");
+  });
+
+  it("puts the open source message in the self-host section with a setup that has no demo mode", () => {
+    const oss = html.slice(html.indexOf("oss-h"));
+    expect(oss).toContain("bring your own key");
+    expect(oss).toContain("npm run dev");
+  });
+
+  it("uses no em dashes", () => {
+    expect(html).not.toContain("—");
   });
 });
