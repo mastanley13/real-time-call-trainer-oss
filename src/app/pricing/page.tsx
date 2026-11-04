@@ -33,7 +33,7 @@ const COMPARE: CompareRow[] = [
   { feature: "Persona wizard", self: "Yes", free: "No", pro: "Yes", team: "Yes" },
   { feature: "Team view for managers", self: "You host it", free: "No", pro: "No", team: "Managed" },
   { feature: "Assignments", self: "You host it", free: "No", pro: "No", team: "Yes" },
-  { feature: "Two-factor sign-in (MFA)", self: "You configure it", free: "Yes", pro: "Yes", team: "Enforced for team" },
+  { feature: "Two-factor sign-in (MFA)", self: "You configure it", free: "Available", pro: "Available", team: "Available" },
   { feature: "Premium AI voice", self: "Your keys", free: "No", pro: "No", team: PREMIUM_COMING_SOON },
   { feature: "Updates and backups", self: "You handle them", free: "Automatic", pro: "Automatic", team: "Automatic" },
   { feature: "Support", self: "GitHub community", free: "Community", pro: "Email", team: "Priority email" },

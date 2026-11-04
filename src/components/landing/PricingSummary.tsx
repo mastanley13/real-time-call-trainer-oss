@@ -21,7 +21,7 @@ export default function PricingSummary({ src, seg, billingEnabled }: { src: stri
     },
     {
       name: "Team", price: `$${PRICE.team.month}/seat/mo`, note: `or $${PRICE.team.year}/seat/yr, ${TEAM_MIN_SEATS}-seat minimum`,
-      body: `${TEAM_VOICE_MIN_PER_SEAT} pooled voice minutes per seat, Team view, assignments, enforced two-factor sign-in (MFA).`,
+      body: `${TEAM_VOICE_MIN_PER_SEAT} pooled voice minutes per seat, everything in Pro, priority email support. Managers get Team view and assignments on any plan.`,
       href: registerHref({ plan: "team", interval: "month", seg, src }), cta: billingEnabled ? "Start with Team" : "Start free", soon: !billingEnabled,
     },
   ];

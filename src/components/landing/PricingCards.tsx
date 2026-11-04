@@ -19,7 +19,7 @@ const TIERS = [
   },
   {
     id: "team", name: "Team", blurb: `Built for a manager plus reps: ${TEAM_MIN_SEATS}-seat minimum.`, cta: "Start with Team",
-    features: [`${TEAM_VOICE_MIN_PER_SEAT} voice minutes per seat, pooled across the team`, "Everything in Pro", "Managed Team view: every rep's calls, scores and trends", "Assignments: give reps a persona and a due date", "Two-factor sign-in (MFA) enforced for the whole team", "Priority email support"],
+    features: [`${TEAM_VOICE_MIN_PER_SEAT} voice minutes per seat, pooled across the team`, "Everything in Pro", "Priority email support", "Team view and assignments for managers, available on any plan"],
   },
 ] as const;
 

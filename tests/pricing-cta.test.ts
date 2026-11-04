@@ -146,6 +146,14 @@ describe("pricing page", () => {
     expect(html).toContain(">Two-factor sign-in (MFA)</th>");
   });
 
+  it("never claims MFA is enforced: nothing in code enforces it", () => {
+    for (const h of [html, cards(false), cards(true), summary(false), summary(true)]) expect(h).not.toMatch(/enforce/i);
+    const row = html.slice(html.indexOf(">Two-factor sign-in (MFA)</th>"));
+    const cells = [...row.slice(0, row.indexOf("</tr>")).matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((m) => m[1]);
+    expect(cells).toEqual(["You configure it", "Available", "Available", "Available"]);
+    expect(summary(false)).toContain("300 pooled voice minutes per seat, everything in Pro, priority email support. Managers get Team view and assignments on any plan.");
+  });
+
   it("prices are unchanged", () => {
     for (const s of ["$29", "$290", "$59", "$590", "3-seat"]) expect(html).toContain(s);
   });
