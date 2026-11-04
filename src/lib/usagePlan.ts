@@ -21,6 +21,8 @@ export const PREMIUM_VOICE_SHARE = 0.6;
 export const MAX_CALL_SECONDS = 24 * 60 * 60;
 /** A failure that ends a call this early is credited back. */
 export const DROP_CREDIT_SECONDS = 30;
+/** At most this many calls per user may be credited as dropped in any rolling 24 hours; later ones bill normally. */
+export const DAILY_DROP_CREDIT_CAP = 3;
 /** Last heartbeat plus this long ends a call whose client went silent. */
 export const HEARTBEAT_TIMEOUT_SECONDS = 30;
 /** How long a client has to open the data channel after the server minted the session. */
@@ -123,8 +125,14 @@ export function settleCall(input: {
   endedAt: Date;
   reason: CallEndReasonId;
   remainingMinutes: number;
+  /** The server recorded a heartbeat after the call connected: the client was alive, so it is not a drop. */
+  heartbeatSeen?: boolean;
+  /** Calls this user already had credited as dropped in the last 24 hours. */
+  recentCreditedDrops?: number;
 }): CallSettlement {
   const { connectedAt, endedAt, reason } = input;
+  const heartbeatSeen = input.heartbeatSeen ?? false;
+  const recentCreditedDrops = input.recentCreditedDrops ?? 0;
   if (!connectedAt) {
     return { outcome: "failed_connect", billableSeconds: 0, grossMinutes: 0, creditMinutes: 0, netMinutes: 0, endReason: "failed_connect" };
   }
@@ -139,9 +147,13 @@ export function settleCall(input: {
     seconds = remaining * 60;
     endReason = "cap_reached";
   }
-  const gross = billedMinutes(seconds);
+  const failure = FAILURE_REASONS.has(endReason);
   // Only a failure within the window is credited. A user hang-up at 5 seconds still costs a minute.
-  const credited = FAILURE_REASONS.has(endReason) && seconds <= DROP_CREDIT_SECONDS;
+  // A call the server saw heartbeating, or a user already at the daily cap, is billed as normal.
+  const credited = failure && seconds <= DROP_CREDIT_SECONDS && !heartbeatSeen && recentCreditedDrops < DAILY_DROP_CREDIT_CAP;
+  // A failure that is not credited costs at least one minute, even at zero seconds, so a client cannot keep
+  // releasing minted sessions for free. Never more than the allowance has left.
+  const gross = failure && !credited && remaining >= 1 ? Math.max(1, billedMinutes(seconds)) : billedMinutes(seconds);
   return {
     outcome: credited ? "dropped_credited" : "billed",
     billableSeconds: seconds,

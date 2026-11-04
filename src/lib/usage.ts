@@ -515,6 +515,9 @@ interface Booking {
   premiumNet: number;
 }
 
+/** End reasons that can earn a dropped-call credit; a credited call is one of these with 0 billed minutes. */
+const DROP_REASONS: CallEndReasonId[] = ["network_drop", "provider_error", "server_error"];
+
 async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId, now: Date): Promise<CallResult | null> {
   const target = await chargeTarget(tx, original, now);
   if (!target) return null;
@@ -538,7 +541,24 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
     billedEnd = new Date(Math.min(naturalEnd.getTime(), confirmedMs + s.reservedMinutes * 60 * 1000));
   }
   const endedAt = connected ? billedEnd : now;
-  const st = settleCall({ connectedAt: connected ? start : null, endedAt, reason, remainingMinutes: bounded ? target.remaining : Number.POSITIVE_INFINITY });
+  // The connect heartbeat sets lastHeartbeatAt to the start itself, so only a later one proves the client kept running.
+  const heartbeatSeen = !!s.lastHeartbeatAt && s.lastHeartbeatAt.getTime() > start.getTime();
+  // Only a call that could still be credited needs the 24 hour count. The user row is locked first, so two of this
+  // user's drops settle one after the other and the second sees the first one's credit. A credited drop is any drop
+  // reason with 0 billed minutes, zero-second calls included: every other client-reported failure bills at least 1.
+  let recentCreditedDrops = 0;
+  if (connected && !heartbeatSeen && DROP_REASONS.includes(reason)) {
+    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${s.userId} FOR UPDATE`;
+    recentCreditedDrops = await tx.trainerSession.count({
+      where: {
+        userId: s.userId,
+        endedAt: { gte: new Date(now.getTime() - 24 * 60 * 60 * 1000) },
+        endReason: { in: DROP_REASONS },
+        billedMinutes: 0,
+      },
+    });
+  }
+  const st = settleCall({ connectedAt: connected ? start : null, endedAt, reason, remainingMinutes: bounded ? target.remaining : Number.POSITIVE_INFINITY, heartbeatSeen, recentCreditedDrops });
   // A stale call keeps its own reason when the reservation is what clamped it.
   let endReason: CallEndReasonId = requested === "heartbeat_timeout" && st.endReason === "cap_reached" ? "heartbeat_timeout" : st.endReason;
 
@@ -577,11 +597,17 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   }
 
   // Whoever flips endedAt from null owns the settlement, so a repeated end event writes nothing.
+  // The heartbeat the credit decision saw must still be the latest: a heartbeat that committed since the read
+  // means this call was not a drop, so the settlement is redone from the fresh row.
   const won = await tx.trainerSession.updateMany({
-    where: { id: s.id, endedAt: null },
+    where: { id: s.id, endedAt: null, lastHeartbeatAt: s.lastHeartbeatAt ?? null },
     data: { endedAt, endReason: b.endReason, billableSeconds: b.billableSeconds, billedMinutes: b.net + b.priorNet },
   });
-  if (won.count === 0) return null;
+  if (won.count === 0) {
+    const current = await tx.trainerSession.findUnique({ where: { id: s.id }, select: { endedAt: true } });
+    if (current && !current.endedAt) throw new StaleAllowanceError();
+    return null;
+  }
 
   // When the call really ran, written on every call entry so it outlives the TrainerSession row (see usedInOtherAllowances).
   const ran = b.billableSeconds > 0 ? { ranFrom: start, ranTo: new Date(start.getTime() + b.billableSeconds * 1000) } : {};

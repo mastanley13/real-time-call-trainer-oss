@@ -113,6 +113,7 @@ OpenAI Realtime is used whenever an OpenAI key is available. The server mints a 
 3. Copy the agent id into `ELEVENLABS_AGENT_ID`, and create an API key (with Agents access) for `ELEVENLABS_API_KEY`.
 4. If the agent requires authentication (recommended), the app uses a server-minted token, so nothing public is exposed.
 5. Optional: set a `voiceId` per scenario in the editor.
+6. On every ElevenLabs agent (standard and premium), set **Max conversation duration** (`conversation_config.conversation.max_duration_seconds`) to 3600, which matches the longest call the server reserves. Leave the duration override disabled in the Security tab. The server cannot end an ElevenLabs call, and a per-call duration sent by the browser is not trusted, so this agent setting is the only hard stop on provider spend.
 
 ### Grading and re-grades
 - `/api/evaluate-call` grades the transcript against the persona's rubric with `LLM_MODEL`. Without a key, or when the model call fails, a rules-based grader scores rubric coverage and the debrief marks it "Estimate. Rules-based grade, not AI-graded."
