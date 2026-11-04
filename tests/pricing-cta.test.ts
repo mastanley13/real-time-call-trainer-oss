@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -40,8 +41,8 @@ describe("PricingCards, billing on", () => {
   const html = cards(true);
 
   it("keeps the paid labels and drops the open-soon line", () => {
-    expect(html).toContain("Start with Pro");
-    expect(html).toContain("Start with Team");
+    expect(html).toContain(">Start with Pro</a>");
+    expect(html).toContain(">Start with Team</a>");
     expect(html).not.toContain(OPEN_SOON_LINE);
   });
 
@@ -202,6 +203,29 @@ describe("pricing page", () => {
     expect(text.endsWith("Pricing will be announced when it launches.")).toBe(true);
   });
 
+  it("the old open-soon copy is gone in both billing states", () => {
+    for (const h of [html, cards(false), cards(true), summary(false), summary(true)]) expect(h).not.toMatch(/open soon/i);
+  });
+
+  it("plan copy names MFA as two-factor sign-in, never bare", () => {
+    const text = (h: string) => h.replace(/<[^>]+>/g, "\n");
+    for (const h of [html, cards(false), summary(false)]) {
+      expect(h).toContain("wo-factor sign-in (MFA)");
+      // Every MFA mention is the parenthetical after "two-factor sign-in".
+      expect(text(h).match(/\bMFA\b/g)?.length).toBe(text(h).match(/[Tt]wo-factor sign-in \(MFA\)/g)?.length);
+    }
+    expect(cards(false)).toContain(">Two-factor sign-in (MFA)</li>");
+    expect(html).toContain(">Two-factor sign-in (MFA)</th>");
+  });
+
+  it("never claims MFA is enforced: nothing in code enforces it", () => {
+    for (const h of [html, cards(false), cards(true), summary(false), summary(true)]) expect(h).not.toMatch(/enforce/i);
+    const row = html.slice(html.indexOf(">Two-factor sign-in (MFA)</th>"));
+    const cells = [...row.slice(0, row.indexOf("</tr>")).matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((m) => m[1]);
+    expect(cells).toEqual(["You configure it", "Available", "Available", "Available"]);
+    expect(summary(false)).toContain("300 pooled voice minutes per seat, everything in Pro, priority email support. Managers get Team view and assignments on any plan.");
+  });
+
   it("shows no Premium price anywhere", () => {
     expect(html).not.toMatch(/\+\$30|\$300/);
   });
@@ -282,6 +306,10 @@ describe("landing hero line", () => {
     expect(hero).toContain("Live estimate");
     expect(hero).toContain("not final");
     expect(hero).toContain("Talk track");
+  });
+
+  it(".page still carries its own vertical padding, which pt-0 on the features section has to cancel", () => {
+    expect(readFileSync("src/app/globals.css", "utf8")).toMatch(/\.page \{ @apply [^}]*\bpy-8\b[^}]*\bsm:py-10\b/);
   });
 
   it("uses no em dashes", () => {
