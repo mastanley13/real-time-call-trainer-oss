@@ -3,7 +3,7 @@
 Any Node 22+ host works (Vercel, Fly, Render, a VPS). You need a Postgres database for accounts.
 
 ## Checklist
-1. **Database**: provision Postgres; set `DATABASE_URL`. Run `npm run db:migrate` (use the direct, non-pooled URL for migrations on Neon/Supabase). Run it again on every deploy that adds a migration; the team view needs `20261027000000_training_assignments`.
+1. **Database**: provision Postgres; set `DATABASE_URL`. Run `npm run db:migrate` (use the direct, non-pooled URL for migrations on Neon/Supabase). Run it again on every deploy that adds a migration; the team view needs `20261027000000_training_assignments`, and billing needs `20261103000000_past_due_since`.
 2. **Secrets**: `JWT_SECRET` (`node generate-jwt-secret.js`; it also keys the grade seal and the access-code cookie, so rotating it signs everyone out), `CRON_SECRET`.
 3. **Voice**: OpenAI Realtime needs only an OpenAI key (`OPENAI_REALTIME_API_KEY`, or `OPENAI_API_KEY`). ElevenLabs is optional: `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`, with overrides enabled on the agent (see README). With both, `VOICE_ENGINE` picks the default.
 4. **Coach, grading and wizard** (optional): `LLM_API_KEY` (+ `LLM_BASE_URL`, `LLM_MODEL`). Check it from Settings, Models after deploying. `OPENAI_API_KEY` stands in for `LLM_API_KEY` only while `LLM_BASE_URL` points at OpenAI; a custom base URL needs its own `LLM_API_KEY`.
