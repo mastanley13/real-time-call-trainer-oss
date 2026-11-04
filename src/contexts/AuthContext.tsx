@@ -14,9 +14,10 @@ export interface RegisterFormData {
   email: string;
   phone?: string;
   password: string;
-  /** Exactly one of these two is supplied. */
+  /** Exactly one of these three is supplied. An invite signs up without a team; the invite page then joins it. */
   joinOrgCode?: string;
   newOrgName?: string;
+  inviteToken?: string;
   /** Sign-up link context, already whitelisted by the register page. The server whitelists it again. */
   plan?: "pro" | "team";
   interval?: "month" | "year";

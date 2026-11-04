@@ -168,6 +168,7 @@ Every limit is a fixed window in memory, per server instance, and resets on rest
 | `/api/elevenlabs/token` (ElevenLabs voice) | `RATE_LIMIT_TOKEN_MAX` (10 per 3600 s) | Set 1 and start two ElevenLabs calls |
 | `/api/usage/heartbeat`, `/api/usage/end`, `/api/usage/credit` (voice metering) | `RATE_LIMIT_USAGE_MAX` (1200 per 600 s) | Full mode only. Set 3, then `curl` `/api/usage/end` four times with a signed-in cookie |
 | `/api/billing/checkout` + `/api/billing/portal` (Stripe, shared) | `RATE_LIMIT_BILLING_MAX` (20 per 3600 s) | Needs `STRIPE_SECRET_KEY=sk_test_...`. Set 2 and press **Choose Pro** three times |
+| `/api/team/invites*`, `DELETE /api/team/members/[id]`, `/api/invites/preview` + `/accept` (members and invites, shared) | `RATE_LIMIT_INVITES_MAX` (60 per 900 s) | Full mode with a Team-plan owner. Set 2 and press **Resend** three times |
 | `/api/auth/google/start` + `/callback` (Google sign-in, shared) | `RATE_LIMIT_GOOGLE_MAX` (30 per 900 s) | Needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL`. Set 2 and `curl -i` the start route three times |
 | `/api/llm/check` (Models page) | fixed, 6 per 10 min | Press **Check connection** seven times |
 | `/api/access` | fixed, 10 per 15 min | See Access code above |
@@ -188,6 +189,7 @@ Each `_MAX` has a matching `_WINDOW_SEC`.
 | `/api/realtime/session` | 6 per minute |
 | `/api/realtime/sdp` | 10 per minute |
 | `/api/usage/*` (heartbeat, end, credit) | 60 per minute |
+| Members and invites (create, resend, revoke, remove, preview, accept, shared) | 30 per minute |
 | `/api/billing/checkout` + `/api/billing/portal` (shared) | 20 per hour |
 | `/api/elevenlabs/token` | 20 per minute |
 | `POST /api/transcripts` (save a session) | 30 per minute |

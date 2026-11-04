@@ -8,6 +8,7 @@ import AuthShell from "@/components/AuthShell";
 import GoogleButton from "@/components/GoogleButton";
 import { afterSignin, intentFromQuery, rememberNotice } from "@/lib/checkoutStart";
 import { planSummary } from "@/lib/pricing";
+import { isInviteToken } from "@/lib/invites";
 import LegalLinks from "@/components/LegalLinks";
 
 export default function RegisterPage() {
@@ -27,11 +28,15 @@ function RegisterForm() {
   const router = useRouter();
   // The link's plan, period, src and seg, whitelisted. Anything else in the query is dropped.
   const intent = intentFromQuery(useSearchParams());
-  const summary = planSummary(intent);
+  // Arriving from a team invite: the account is made without a team, then the invite page joins it.
+  const rawInvite = useSearchParams().get("invite");
+  const invite = isInviteToken(rawInvite) ? rawInvite : null;
+  const summary = invite ? null : planSummary(intent);
   const billingEnabled = capabilities?.billing === true;
 
-  /** Billing on with a plan goes to checkout; otherwise /trainer, with a one-time notice when a plan was asked for. */
+  /** Billing on with a plan goes to checkout; otherwise /trainer, with a one-time notice when a plan was asked for. An invite goes back to its page. */
   function goAfterSignin() {
+    if (invite) { router.replace(`/invite/${invite}`); return; }
     const next = afterSignin(billingEnabled, intent);
     if (next.notice) rememberNotice(next.notice);
     router.replace(next.path);
@@ -61,7 +66,7 @@ function RegisterForm() {
         lastName: f.lastName,
         email: f.email,
         password: f.password,
-        ...(mode === "create" ? { newOrgName: f.orgName } : { joinOrgCode: f.orgCode }),
+        ...(invite ? { inviteToken: invite } : mode === "create" ? { newOrgName: f.orgName } : { joinOrgCode: f.orgCode }),
         ...intent,
       });
       goAfterSignin();
@@ -73,7 +78,7 @@ function RegisterForm() {
   }
 
   return (
-    <AuthShell title="Create your account" subtitle="Start a team workspace or join one with a code.">
+    <AuthShell title="Create your account" subtitle={invite ? "Sign up to accept your team invite." : "Start a team workspace or join one with a code."}>
       {capabilities && !capabilities.database && !capabilities.demoMode && (
         <div className="banner-warn mb-4">Registration needs a database. Set <code>DATABASE_URL</code> or use <code>DEMO_MODE=true</code>.</div>
       )}
@@ -85,7 +90,7 @@ function RegisterForm() {
           {summary.seats && <p className="text-sm text-ink-muted">{summary.seats}</p>}
         </div>
       )}
-      <GoogleButton carryIntent />
+      {invite ? <GoogleButton next={`/invite/${invite}`} /> : <GoogleButton carryIntent />}
       <form onSubmit={onSubmit} className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div><label htmlFor="fn" className="label">First name</label><input id="fn" className="input" value={f.firstName} onChange={set("firstName")} required /></div>
@@ -94,14 +99,18 @@ function RegisterForm() {
         <div><label htmlFor="em" className="label">Email</label><input id="em" type="email" className="input" autoComplete="email" value={f.email} onChange={set("email")} required /></div>
         <div><label htmlFor="pw" className="label">Password (10+ characters)</label><input id="pw" type="password" minLength={10} className="input" autoComplete="new-password" value={f.password} onChange={set("password")} required /></div>
 
-        <div className="grid grid-cols-2 gap-2 rounded-xl bg-sunken p-1 text-sm font-semibold">
-          {(["create", "join"] as const).map((m) => (
-            <button type="button" key={m} onClick={() => setMode(m)} aria-pressed={mode === m} className={`min-h-[40px] rounded-lg ${mode === m ? "bg-surface text-primary shadow-sm" : "text-ink-muted"}`}>
-              {m === "create" ? "New team" : "Join a team"}
-            </button>
-          ))}
-        </div>
-        {mode === "create" ? (
+        {invite ? (
+          <p className="rounded-lg border border-line bg-sunken p-3 text-sm text-ink">Use the email address the invite was sent to. You can accept the invite as soon as your account is ready.</p>
+        ) : (
+          <div className="grid grid-cols-2 gap-2 rounded-xl bg-sunken p-1 text-sm font-semibold">
+            {(["create", "join"] as const).map((m) => (
+              <button type="button" key={m} onClick={() => setMode(m)} aria-pressed={mode === m} className={`min-h-[40px] rounded-lg ${mode === m ? "bg-surface text-primary shadow-sm" : "text-ink-muted"}`}>
+                {m === "create" ? "New team" : "Join a team"}
+              </button>
+            ))}
+          </div>
+        )}
+        {invite ? null : mode === "create" ? (
           <div><label htmlFor="org" className="label">Team name</label><input id="org" className="input" value={f.orgName} onChange={set("orgName")} required minLength={2} /></div>
         ) : (
           <div><label htmlFor="code" className="label">Team code</label><input id="code" className="input" inputMode="numeric" pattern="[0-9]{3,8}" value={f.orgCode} onChange={set("orgCode")} required /></div>
@@ -109,7 +118,7 @@ function RegisterForm() {
         {error && <p role="alert" className="text-sm text-alert">{error}</p>}
         <button className="btn-primary w-full" disabled={busy || !configKnown}>{busy ? "Creating…" : "Create account"}</button>
       </form>
-      <p className="mt-5 text-center text-sm text-ink-muted">Already registered? <Link href="/login" className="font-semibold text-primary">Sign in</Link></p>
+      <p className="mt-5 text-center text-sm text-ink-muted">Already registered? <Link href={invite ? `/login?next=${encodeURIComponent(`/invite/${invite}`)}` : "/login"} className="font-semibold text-primary">Sign in</Link></p>
       <LegalLinks />
     </AuthShell>
   );
