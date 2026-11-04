@@ -6,6 +6,7 @@ import PricingCards, { tierAction } from "@/components/landing/PricingCards";
 import PricingSummary from "@/components/landing/PricingSummary";
 import PricingPage from "@/app/pricing/page";
 import Home from "@/app/page";
+import { LANDINGS } from "@/lib/landing";
 import { OPEN_SOON_LINE, PREMIUM_COMING_SOON } from "@/lib/pricing";
 import { billingOn } from "@/lib/serverConfig";
 
@@ -61,12 +62,83 @@ describe("PricingCards, billing on", () => {
 });
 
 describe("Premium add-on card", () => {
-  it.each([false, true])("shows the coming-soon label, the price and no button (billing %s)", (on) => {
+  it.each([false, true])("shows the coming-soon label, no price and no button (billing %s)", (on) => {
     const html = cards(on);
     const addon = html.slice(html.indexOf("Add-on: Premium AI voice"));
     expect(addon).toContain(PREMIUM_COMING_SOON);
-    expect(addon).toContain("+$30");
+    expect(addon).not.toMatch(/\+\$30|\$300/);
     expect(addon).not.toMatch(/<a |<button|href=/);
+  });
+});
+
+describe("plan features match what each plan unlocks", () => {
+  const html = cards(false);
+  const tier = (id: string) => html.slice(html.indexOf(`id="tier-${id}"`), html.indexOf("</section>", html.indexOf(`id="tier-${id}"`)));
+
+  it("Free lists the full library, the wizard, history and two-factor sign-in", () => {
+    for (const f of ["Full persona library across every sales role", "Persona wizard for your own buyers", "Call history and score trends", "Two-factor sign-in (MFA)"]) expect(tier("free")).toContain(f);
+    expect(html).not.toContain("Core persona library");
+  });
+
+  it("Pro adds minutes on top of Free, without relisting Free features or promising email support", () => {
+    const pro = tier("pro");
+    for (const f of ["200 voice minutes per month", "Everything in Free", "Reviewed persona packs (coming soon)"]) expect(pro).toContain(f);
+    for (const f of ["Persona wizard", "Full persona library", "Call history", "MFA"]) expect(pro).not.toContain(f);
+    expect(pro).not.toMatch(/email support/i);
+  });
+
+  it("uses Start with Pro and Start with Team, never Start Pro", () => {
+    for (const html of [cards(true), summary(true)]) {
+      expect(html).toContain(">Start with Pro<");
+      expect(html).toContain(">Start with Team<");
+      expect(html).not.toContain("Start Pro");
+    }
+  });
+
+  it("Team says Team view and assignments are on any plan and claims no MFA enforcement", () => {
+    const team = tier("team");
+    for (const f of ["300 voice minutes per seat, pooled across the team", "Everything in Pro", "Priority email support", "Team view and assignments for managers, available on any plan"]) expect(team).toContain(f);
+    expect(team).not.toMatch(/MFA|two-factor|Managed Team view/i);
+  });
+
+  it("the summary cards say the same", () => {
+    const s = summary(false);
+    expect(s).toContain("10 voice minutes a month, unlimited text sim, live coach, graded debriefs, full persona library, persona wizard, score trends, two-factor sign-in (MFA).");
+    expect(s).toContain("200 voice minutes a month, everything in Free. Reviewed persona packs: coming soon.");
+    expect(s).toContain("300 pooled voice minutes per seat, everything in Pro, priority email support. Managers get Team view and assignments on any plan.");
+    expect(s).not.toMatch(/core persona/i);
+  });
+});
+
+/** MFA is opt-in per user (nothing enforces it), and Team view and assignments are gated by role (canManageTeam), not plan. */
+describe("Team and MFA copy matches the code", () => {
+  const enforcedMfa = /(enforc|requir|mandator)\w*[^.]{0,40}(MFA|two-factor)|(MFA|two-factor)[^.]{0,40}(enforc|requir|mandator)/i;
+  const planGatedTeam = /On Team, (yes|the Team view)|Managers on Team|Managed Team view/i;
+  const pages = () => [
+    renderToStaticMarkup(createElement(PricingPage)),
+    cards(false),
+    summary(false),
+    renderToStaticMarkup(createElement(Home)),
+    JSON.stringify(LANDINGS),
+  ];
+
+  it("no pricing or landing copy claims MFA is enforced or required", () => {
+    for (const html of pages()) expect(html).not.toMatch(enforcedMfa);
+  });
+
+  it("no copy ties Team view or assignments to the Team plan", () => {
+    for (const html of pages()) expect(html).not.toMatch(planGatedTeam);
+  });
+
+  it("the compare table shows Team view, assignments and MFA as available on every plan", () => {
+    const html = renderToStaticMarkup(createElement(PricingPage));
+    const cellsOf = (feature: string) => {
+      const row = html.slice(html.indexOf(`>${feature}</th>`));
+      return [...row.slice(0, row.indexOf("</tr>")).matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((m) => m[1]);
+    };
+    expect(cellsOf("Team view")).toEqual(["You host it", "Available to managers", "Available to managers", "Available to managers"]);
+    expect(cellsOf("Assignments")).toEqual(["You host it", "Available to managers", "Available to managers", "Available to managers"]);
+    expect(cellsOf("Two-factor sign-in (MFA)")).toEqual(["You configure it", "Available", "Available", "Available"]);
   });
 });
 
@@ -123,12 +195,12 @@ describe("pricing page", () => {
     expect(cells).toEqual(["Your keys", "No", "No", PREMIUM_COMING_SOON]);
   });
 
-  it("the Premium FAQ starts with the label, says Team first and keeps the price", () => {
+  it("the Premium FAQ starts with the label, says Team first and ends without a price", () => {
     const answer = html.slice(html.indexOf("What does Premium AI voice add?"));
     const text = answer.slice(answer.indexOf("<p"), answer.indexOf("</p>"));
     expect(text).toMatch(new RegExp(`^<p[^>]*>${PREMIUM_COMING_SOON.replace(/[()]/g, "\\$&")}\\.`));
     expect(text).toContain("Team add-on first");
-    expect(text).toContain("+$30 per seat per month ($300 per seat per year)");
+    expect(text.endsWith("Pricing will be announced when it launches.")).toBe(true);
   });
 
   it("the old open-soon copy is gone in both billing states", () => {
@@ -152,6 +224,47 @@ describe("pricing page", () => {
     const cells = [...row.slice(0, row.indexOf("</tr>")).matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((m) => m[1]);
     expect(cells).toEqual(["You configure it", "Available", "Available", "Available"]);
     expect(summary(false)).toContain("300 pooled voice minutes per seat, everything in Pro, priority email support. Managers get Team view and assignments on any plan.");
+  });
+
+  it("shows no Premium price anywhere", () => {
+    expect(html).not.toMatch(/\+\$30|\$300/);
+  });
+
+  it("states USD and tax under the plan cards", () => {
+    const plans = html.slice(html.indexOf('id="plans"'), html.indexOf("compare-h"));
+    expect(plans).toContain("Prices in USD. Sales tax or VAT may be added at checkout where required.");
+  });
+
+  it("explains when voice minutes reset on paid plans and on Free", () => {
+    expect(html).toContain("Voice calls pause until your minutes reset: at your next billing cycle on paid plans, or monthly from your signup date on Free.");
+  });
+
+  it("keeps the no-refunds policy", () => {
+    expect(html).toContain("There are no refunds. Payments to StrategixAI LLC are non-refundable except where the law requires.");
+  });
+
+  it("Free gets the full persona library and the persona wizard in the compare table", () => {
+    const cellsOf = (feature: string) => {
+      const row = html.slice(html.indexOf(`>${feature}</th>`));
+      return [...row.slice(0, row.indexOf("</tr>")).matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((m) => m[1]);
+    };
+    expect(cellsOf("Persona library")).toEqual(["Yes", "Full", "Full", "Full"]);
+    expect(cellsOf("Persona wizard")).toEqual(["Yes", "Yes", "Yes", "Yes"]);
+  });
+
+  it("the Support row promises Pro nothing beyond what Free gets", () => {
+    const row = html.slice(html.indexOf(">Support</th>"));
+    const cells = [...row.slice(0, row.indexOf("</tr>")).matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((m) => m[1]);
+    expect(cells).toEqual(["GitHub community", "Community", "Community", "Priority email"]);
+  });
+
+  it("the Free FAQ names the library and the wizard", () => {
+    const answer = html.slice(html.indexOf("What do I get on Free?"));
+    expect(answer.slice(0, answer.indexOf("</p>"))).toContain("It includes the full persona library, the persona wizard, the live coach and graded debriefs.");
+  });
+
+  it("says nothing about a core or partial persona set", () => {
+    expect(html).not.toMatch(/core (persona|set)|Core set/i);
   });
 
   it("prices are unchanged", () => {
@@ -183,18 +296,16 @@ describe("landing hero line", () => {
     expect(oss).toContain("npm run dev");
   });
 
-  it("keeps the model table off the hosted home page and links to the self-hosting docs", () => {
-    expect(html).not.toMatch(/Under the hood|Which model does what|LLM_BASE_URL|gpt-4\.1-mini/);
-    const oss = html.slice(html.indexOf("oss-h"));
-    expect(oss).toContain('href="https://github.com/mastanley13/real-time-call-trainer-oss#which-model-does-what"');
-    expect(oss).toContain(">Self-hosting</a>");
+  it("describes the coach rail as a running estimate, talk track and Coached cues, not a per-turn score", () => {
+    const how = html.slice(html.indexOf("how-h"), html.indexOf("models-h"));
+    expect(how).toContain("A coach rail only you can see keeps a running score estimate and your talk-track progress, and in Coached mode cues your next move.");
+    expect(html).not.toMatch(/scores each turn|scores every turn/);
   });
 
-  it("leaves one section gap between How it works and the features, not two", () => {
-    const sectionClass = (id: string) => html.match(new RegExp(`<section class="([^"]*)" aria-labelledby="${id}"`))?.[1];
-    expect(sectionClass("how-h")).toBe("page py-14 sm:py-16");
-    // .page sets py-8 sm:py-10 itself, so the features section must zero its top padding explicitly.
-    expect(sectionClass("feat-h")).toBe("page pt-0 pb-14 sm:pb-16");
+  it("the hero demo uses the real rail labels", () => {
+    expect(hero).toContain("Live estimate");
+    expect(hero).toContain("not final");
+    expect(hero).toContain("Talk track");
   });
 
   it(".page still carries its own vertical padding, which pt-0 on the features section has to cancel", () => {
