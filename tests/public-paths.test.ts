@@ -7,7 +7,7 @@ describe("isPublicPath", () => {
   it.each([
     "/pricing", "/register", "/login", "/robots.txt", "/sitemap.xml",
     "/for/insurance", "/for/solar", "/for/staffing", "/for/home-services", "/for/saas-sdr", "/for/coaches",
-    "/api/auth/login", "/api/auth/mfa/challenge", "/opengraph-image", "/opengraph-image-1a2b3c", "/twitter-image", "/pricing/",
+    "/api/auth/login", "/api/auth/mfa/challenge", "/auth/complete", "/opengraph-image", "/opengraph-image-1a2b3c", "/twitter-image", "/pricing/",
     "/twitter-image-9f8e7d", "/opengraph-image?abc123", "/opengraph-image-1a2b3c?v=2#top", "/twitter-image?x=1",
     "/for/insurance/opengraph-image", "/for/solar/twitter-image", "/for/coaches/opengraph-image-1a2b3c",
     "/for/saas-sdr/twitter-image?abc123", "/for/home-services/opengraph-image-1a2b3c?v=2#x", "/sitemap.xml?x=1", "/robots.txt#a",
@@ -15,7 +15,7 @@ describe("isPublicPath", () => {
 
   it.each([
     "/dashboard", "/trainer", "/team", "/settings/security", "/library", "/api/config", "/api/transcripts",
-    "/api/auth", "/for", "/for/unknown", "/pricing-x", "/privacy/evil", "/register/x",
+    "/api/auth", "/for", "/for/unknown", "/pricing-x", "/privacy/evil", "/register/x", "/auth", "/auth/complete/x", "/auth/other",
     "/opengraph-imagex/evil", "/opengraph-image-evil/x", "/for/unknown/opengraph-image", "/for/solar/opengraph-image/x",
     "/dashboard?next=/opengraph-image", "/api/config#/robots.txt", "/dashboard/opengraph-image",
   ])("keeps %s gated", (p) => expect(isPublicPath(p)).toBe(false));
@@ -40,6 +40,17 @@ describe("middleware with TRAINER_ACCESS_CODE set", () => {
       expect(res.headers.get("location"), p).toBeNull();
       expect(res.status, p).toBe(200);
     }
+  });
+
+  it("keeps Google sign-in reachable for existing users without an access cookie, like password login", async () => {
+    // Button discovery, the redirect out and back, the session hand-off, and the landing page that stores it.
+    for (const p of ["/api/auth/google/status", "/api/auth/google/start", "/api/auth/google/callback?code=x&state=y", "/api/auth/session", "/auth/complete?next=%2Flibrary"]) {
+      const res = await run(p);
+      expect(res.headers.get("location"), p).toBeNull();
+      expect(res.status, p).toBe(200);
+    }
+    // The gated capability endpoint is not what the button depends on.
+    expect((await run("/api/config")).status).toBe(401);
   });
 
   it("still redirects /dashboard to /access", async () => {

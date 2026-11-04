@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
+import GoogleButton from "@/components/GoogleButton";
 import { afterSignin, intentFromQuery, rememberNotice } from "@/lib/checkoutStart";
 import LegalLinks from "@/components/LegalLinks";
 
@@ -74,6 +75,7 @@ function RegisterForm() {
       {capabilities && !capabilities.database && !capabilities.demoMode && (
         <div className="banner-warn mb-4">Registration needs a database. Set <code>DATABASE_URL</code> or use <code>DEMO_MODE=true</code>.</div>
       )}
+      <GoogleButton carryIntent />
       <form onSubmit={onSubmit} className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div><label htmlFor="fn" className="label">First name</label><input id="fn" className="input" value={f.firstName} onChange={set("firstName")} required /></div>
