@@ -5,6 +5,7 @@ import PricingCards, { tierAction } from "@/components/landing/PricingCards";
 import PricingSummary from "@/components/landing/PricingSummary";
 import PricingPage from "@/app/pricing/page";
 import Home from "@/app/page";
+import { LANDINGS } from "@/lib/landing";
 import { OPEN_SOON_LINE, PREMIUM_COMING_SOON } from "@/lib/pricing";
 import { billingOn } from "@/lib/serverConfig";
 
@@ -73,22 +74,61 @@ describe("plan features match what each plan unlocks", () => {
   const html = cards(false);
   const tier = (id: string) => html.slice(html.indexOf(`id="tier-${id}"`), html.indexOf("</section>", html.indexOf(`id="tier-${id}"`)));
 
-  it("Free lists the full library, the wizard, history and MFA", () => {
-    for (const f of ["Full persona library across every sales role", "Persona wizard for your own buyers", "Call history and score trends", "MFA"]) expect(tier("free")).toContain(f);
+  it("Free lists the full library, the wizard, history and two-factor sign-in", () => {
+    for (const f of ["Full persona library across every sales role", "Persona wizard for your own buyers", "Call history and score trends", "Two-factor sign-in (MFA)"]) expect(tier("free")).toContain(f);
     expect(html).not.toContain("Core persona library");
   });
 
   it("Pro adds minutes and email support on top of Free, without relisting Free features", () => {
     const pro = tier("pro");
     for (const f of ["200 voice minutes per month", "Everything in Free", "Email support", "Reviewed persona packs (coming soon)"]) expect(pro).toContain(f);
-    for (const f of ["Persona wizard", "Full persona library", "Call history", ">MFA<"]) expect(pro).not.toContain(f);
+    for (const f of ["Persona wizard", "Full persona library", "Call history", "MFA"]) expect(pro).not.toContain(f);
+  });
+
+  it("Team says Team view and assignments are on any plan and claims no MFA enforcement", () => {
+    const team = tier("team");
+    for (const f of ["300 voice minutes per seat, pooled across the team", "Everything in Pro", "Priority email support", "Team view and assignments for managers, available on any plan"]) expect(team).toContain(f);
+    expect(team).not.toMatch(/MFA|two-factor|Managed Team view/i);
   });
 
   it("the summary cards say the same", () => {
     const s = summary(false);
-    expect(s).toContain("10 voice minutes a month, unlimited text sim, live coach, graded debriefs, full persona library, persona wizard, score trends, MFA.");
+    expect(s).toContain("10 voice minutes a month, unlimited text sim, live coach, graded debriefs, full persona library, persona wizard, score trends, two-factor sign-in (MFA).");
     expect(s).toContain("200 voice minutes a month, everything in Free, email support. Reviewed persona packs: coming soon.");
+    expect(s).toContain("300 pooled voice minutes per seat, everything in Pro, priority email support. Managers get Team view and assignments on any plan.");
     expect(s).not.toMatch(/core persona/i);
+  });
+});
+
+/** MFA is opt-in per user (nothing enforces it), and Team view and assignments are gated by role (canManageTeam), not plan. */
+describe("Team and MFA copy matches the code", () => {
+  const enforcedMfa = /(enforc|requir|mandator)\w*[^.]{0,40}(MFA|two-factor)|(MFA|two-factor)[^.]{0,40}(enforc|requir|mandator)/i;
+  const planGatedTeam = /On Team, (yes|the Team view)|Managers on Team|Managed Team view/i;
+  const pages = () => [
+    renderToStaticMarkup(createElement(PricingPage)),
+    cards(false),
+    summary(false),
+    renderToStaticMarkup(createElement(Home)),
+    JSON.stringify(LANDINGS),
+  ];
+
+  it("no pricing or landing copy claims MFA is enforced or required", () => {
+    for (const html of pages()) expect(html).not.toMatch(enforcedMfa);
+  });
+
+  it("no copy ties Team view or assignments to the Team plan", () => {
+    for (const html of pages()) expect(html).not.toMatch(planGatedTeam);
+  });
+
+  it("the compare table shows Team view, assignments and MFA as available on every plan", () => {
+    const html = renderToStaticMarkup(createElement(PricingPage));
+    const cellsOf = (feature: string) => {
+      const row = html.slice(html.indexOf(`>${feature}</th>`));
+      return [...row.slice(0, row.indexOf("</tr>")).matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((m) => m[1]);
+    };
+    expect(cellsOf("Team view")).toEqual(["You host it", "Available to managers", "Available to managers", "Available to managers"]);
+    expect(cellsOf("Assignments")).toEqual(["You host it", "Available to managers", "Available to managers", "Available to managers"]);
+    expect(cellsOf("Two-factor sign-in (MFA)")).toEqual(["You configure it", "Available", "Available", "Available"]);
   });
 });
 

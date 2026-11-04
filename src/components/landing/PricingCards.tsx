@@ -11,7 +11,7 @@ import {
 const TIERS = [
   {
     id: "free", name: "Free", blurb: "Try it solo, no card.", cta: "Start free, no card",
-    features: [FREE_SUMMARY, "Unlimited text sim", "Live coach channel", "Graded debriefs with transcript quotes", "Full persona library across every sales role", "Persona wizard for your own buyers", "Call history and score trends", "MFA"],
+    features: [FREE_SUMMARY, "Unlimited text sim", "Live coach channel", "Graded debriefs with transcript quotes", "Full persona library across every sales role", "Persona wizard for your own buyers", "Call history and score trends", "Two-factor sign-in (MFA)"],
   },
   {
     id: "pro", name: "Pro", blurb: "For individual reps who practice weekly.", cta: "Start Pro",
@@ -19,7 +19,7 @@ const TIERS = [
   },
   {
     id: "team", name: "Team", blurb: `Built for a manager plus reps: ${TEAM_MIN_SEATS}-seat minimum.`, cta: "Start with Team",
-    features: [`${TEAM_VOICE_MIN_PER_SEAT} voice minutes per seat, pooled across the team`, "Everything in Pro", "Managed Team view: every rep's calls, scores and trends", "Assignments: give reps a persona and a due date", "Enforced MFA for the whole team", "Priority email support"],
+    features: [`${TEAM_VOICE_MIN_PER_SEAT} voice minutes per seat, pooled across the team`, "Everything in Pro", "Priority email support", "Team view and assignments for managers, available on any plan"],
   },
 ] as const;
 
