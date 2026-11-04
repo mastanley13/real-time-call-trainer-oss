@@ -10,7 +10,7 @@ vi.mock("@/lib/apiAuth", async () => ({
   isDemoUser: () => false,
 }));
 
-import { beginCall, endCall, ensureAllowance, heartbeat } from "@/lib/usage";
+import { beginCall, endCall, ensureAllowance, heartbeat, usageSummary } from "@/lib/usage";
 import { BUILT_IN_SCENARIOS, buildAgentPrompt } from "@/lib/scenarios";
 import { hangupCall, PROVIDER_HANGUP_LEASE_MS } from "@/lib/providerHangup";
 import { HARD_SESSION_CAP_SECONDS, PROVIDER_LIMIT_GRACE_SECONDS, providerDeadlineSeconds } from "@/lib/usagePlan";
@@ -296,11 +296,35 @@ describe("server hangup triggers", () => {
     const deadline = HARD_SESSION_CAP_SECONDS + PROVIDER_LIMIT_GRACE_SECONDS;
     expect(await heartbeat(id, callId, "ok", at(deadline - 10))).toMatchObject({ stop: false });
     expect(await heartbeat(id, callId, "ok", at(deadline))).toMatchObject({ stop: true, reason: "max_duration" });
-    expect(session(callId).billedMinutes).toBe(Math.ceil(deadline / 60));
+    // The 20 seconds of grace bill as nothing: stopped at 30:20, billed 30 minutes.
+    expect(session(callId).billedMinutes).toBe(HARD_SESSION_CAP_SECONDS / 60);
     expect(fake.rows("usageAllowance").find((a) => a.userId === id)).toMatchObject({ minutesReserved: 0 });
     await heartbeat(id, callId, "ok", at(deadline + 600));
-    expect(session(callId).billedMinutes).toBe(Math.ceil(deadline / 60));
+    expect(session(callId).billedMinutes).toBe(HARD_SESSION_CAP_SECONDS / 60);
     expect(hangups()).toEqual([providerCallId]);
+  });
+
+  describe("billing is clamped to the call deadline (without grace)", () => {
+    it("a silent Pro call reserving 60 minutes, settled at 55 minutes with no sweep, bills 30", async () => {
+      const id = newUser({ planTier: "pro" });
+      const { callId } = await connectedCall();
+      expect(session(callId).reservedMinutes).toBe(60);
+      await usageSummary(id, at(55 * 60)); // the owner's next read reaps the silent call
+      expect(session(callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 30, billableSeconds: HARD_SESSION_CAP_SECONDS });
+      expect(fake.rows("usageAllowance").find((a) => a.userId === id)).toMatchObject({ minutesUsed: 30, minutesReserved: 0 });
+    });
+
+    it("a call ending at 30:10, inside the grace, bills 30 minutes, not 31", async () => {
+      const id = newUser({ planTier: "pro" });
+      const { callId } = await connectedCall();
+      expect(await endCall(id, callId, "user_hangup", at(HARD_SESSION_CAP_SECONDS + 10))).toMatchObject({ billedMinutes: 30, billableSeconds: HARD_SESSION_CAP_SECONDS });
+    });
+
+    it("billing under the deadline is unchanged: a 10 minute call bills 10, to the second", async () => {
+      const id = newUser({ planTier: "pro" });
+      const { callId } = await connectedCall();
+      expect(await endCall(id, callId, "user_hangup", at(600))).toMatchObject({ billedMinutes: 10, billableSeconds: 600 });
+    });
   });
 
   it("a user hang-up through /api/usage/end also hangs the provider call up, once", async () => {

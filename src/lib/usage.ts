@@ -5,7 +5,7 @@ import { billingActive } from "./serverConfig";
 import { storedPlanEntitled } from "./subscriptionStatus";
 import {
   CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, MAX_CONNECT_LAG_SECONDS, MAX_RESERVE_MINUTES,
-  DAILY_SESSION_MINT_CAP, OVERRUN_GRACE_SECONDS, VOICE_BLOCK_SECONDS,
+  DAILY_SESSION_MINT_CAP, HARD_SESSION_CAP_SECONDS, OVERRUN_GRACE_SECONDS, VOICE_BLOCK_SECONDS,
   capFor, effectivePlan, maxMinutesAfter, midCallCapApplies, periodFor, premiumVoiceCap, providerDeadlineSeconds, settleCall, splitAcrossBoundary,
   type CallEndReasonId, type CallOutcome, type PlanTier,
 } from "./usagePlan";
@@ -423,9 +423,20 @@ const maxSecondsOf = (reservedMinutes: number, capApplies = true) => (capApplies
  * based on this; it only bounds how long the provider session can outlive the server's own stop.
  */
 export function callDeadlineMs(s: Pick<OpenSession, "createdAt" | "reservedMinutes" | "allowanceId" | "capEnforced">): number {
-  const max = s.allowanceId ? maxSecondsOf(s.reservedMinutes, callCapApplies(s)) : MAX_CALL_SECONDS;
-  return s.createdAt.getTime() + providerDeadlineSeconds(max) * 1000;
+  return s.createdAt.getTime() + providerDeadlineSeconds(callMaxSeconds(s)) * 1000;
 }
+
+/** The call's maximum length: its reservation (24 hours for Free, and for a legacy call with no reservation). */
+const callMaxSeconds = (s: Pick<OpenSession, "reservedMinutes" | "allowanceId" | "capEnforced">): number =>
+  s.allowanceId ? maxSecondsOf(s.reservedMinutes, callCapApplies(s)) : MAX_CALL_SECONDS;
+
+/**
+ * The latest moment a call can be billed to: the mint time plus its maximum length, capped at HARD_SESSION_CAP_SECONDS.
+ * This is the deadline without the provider grace, so the 20 seconds of grace bill as nothing, and a call settled late
+ * (the sweep missed it, or the owner's next mint reaped it) is never billed past what it could have run.
+ */
+const billingCapMs = (s: Pick<OpenSession, "createdAt" | "reservedMinutes" | "allowanceId" | "capEnforced">): number =>
+  s.createdAt.getTime() + Math.min(callMaxSeconds(s), HARD_SESSION_CAP_SECONDS) * 1000;
 
 /** An open call nobody is heartbeating: none within the connect window, or none for HEARTBEAT_TIMEOUT_SECONDS (rule 3). */
 const isSilent = (s: Pick<OpenSession, "createdAt" | "lastHeartbeatAt">, now: Date): boolean =>
@@ -602,6 +613,9 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
     const confirmedMs = Math.max(start.getTime(), s.lastHeartbeatAt?.getTime() ?? 0);
     billedEnd = new Date(Math.min(naturalEnd.getTime(), confirmedMs + s.reservedMinutes * 60 * 1000));
   }
+  // Whatever the settle time, billing stops at the call's deadline without grace (never before it started billing).
+  const capClamped = billedEnd.getTime() > billingCapMs(s);
+  if (capClamped) billedEnd = new Date(Math.max(start.getTime(), billingCapMs(s)));
   const endedAt = connected ? billedEnd : now;
   // The connect heartbeat sets lastHeartbeatAt to the start itself, so only a later one proves the client kept running.
   const heartbeatSeen = !!s.lastHeartbeatAt && s.lastHeartbeatAt.getTime() > start.getTime();
@@ -626,6 +640,12 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   const st = settleCall({ connectedAt: connected ? start : null, endedAt, reason, remainingMinutes: bounded ? target.remaining : Number.POSITIVE_INFINITY, heartbeatSeen, recentCreditedDrops });
   // A stale call keeps its own reason when the reservation is what clamped it.
   let endReason: CallEndReasonId = requested === "heartbeat_timeout" && st.endReason === "cap_reached" ? "heartbeat_timeout" : st.endReason;
+  // A call the deadline trimmed ran past its limit, so a client-reported ending (a late hang-up) is recorded as the server's
+  // reason: cap_reached when its reservation was the limit, max_duration when the 30 minute ceiling was. That keeps the
+  // overrun check below (it only looks at server reasons) working for late end events.
+  if (capClamped && connected && !SERVER_ENDED.has(endReason)) {
+    endReason = bounded && callMaxSeconds(s) <= HARD_SESSION_CAP_SECONDS ? "cap_reached" : "max_duration";
+  }
 
   const hasReservation = !!s.allowanceId;
   let b: Booking;

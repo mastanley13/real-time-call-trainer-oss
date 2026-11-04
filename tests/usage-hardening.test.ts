@@ -131,8 +131,8 @@ describe("Premium voice limit", () => {
       const first = await begin("u-1");
       expect(first.engine).toBe("premium");
       await heartbeat("u-1", first.callId, "connected", at(0));
-      await endCall("u-1", first.callId, "user_hangup", at(60 * 40)); // 40 premium minutes
-      expect(orgAllowance()).toMatchObject({ minutesUsed: 40, premiumMinutesUsed: 40 });
+      await endCall("u-1", first.callId, "user_hangup", at(60 * 25)); // 25 premium minutes
+      expect(orgAllowance()).toMatchObject({ minutesUsed: 25, premiumMinutesUsed: 25 });
       orgAllowance()!.premiumMinutesUsed = 540; // 60% of 900
       expect((await begin("u-2", 3000)).engine).toBe("standard");
     });
@@ -239,8 +239,9 @@ describe("heartbeat trust: usage is settled from the server's mint time", () => 
     await heartbeat("u-1", c.callId, "connected", at(0));
     // The browser went quiet but may still hold the provider connection. The next read by this user settles it.
     await usageSummary("u-1", at(7200));
-    expect(session(c.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 60 });
-    expect(allowanceOf("u-1").minutesUsed).toBe(60);
+    // Billed to the 30 minute hard deadline, not the 60 minute reservation.
+    expect(session(c.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 30 });
+    expect(allowanceOf("u-1").minutesUsed).toBe(30);
   });
 
   it("a call with no heartbeat at all is settled after the connect window and billed from the cutoff", async () => {

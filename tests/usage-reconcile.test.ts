@@ -131,12 +131,13 @@ describe("a call that crosses the monthly reset", () => {
 
   it("a long call is split between the two periods in the ledger and only the new part counts now", async () => {
     addUser("u-1", { planTier: "pro" });
-    const c = await begin("u-1", utc("10-10T11:30:00"));
-    await endCall("u-1", c.callId, "user_hangup", utc("10-10T12:10:00"));
-    expect(session(c.callId)).toMatchObject({ billableSeconds: 2400, billedMinutes: 40 });
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
+    // 30 minutes (the hard deadline), from 11:50 to 12:20, so 10 minutes fall before the reset and 20 after.
+    const c = await begin("u-1", utc("10-10T11:50:00"));
+    await endCall("u-1", c.callId, "user_hangup", utc("10-10T12:20:00"));
+    expect(session(c.callId)).toMatchObject({ billableSeconds: 1800, billedMinutes: 30 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 20, minutesReserved: 0 });
     const kinds = Object.fromEntries(fake.rows("usageEntry").map((e) => [e.kind as string, e.minutes]));
-    expect(kinds).toEqual({ voice_call: 10, voice_call_prior: 30 });
+    expect(kinds).toEqual({ voice_call: 20, voice_call_prior: 10 });
   });
 
   it("concurrent old-period calls cannot spend more than the new period's cap", async () => {
@@ -207,8 +208,8 @@ describe("a call that crosses the monthly reset", () => {
     const b = await begin("u-2", utc("10-10T11:59:00"));
     await endCall("u-1", a.callId, "user_hangup", utc("10-10T12:30:00"));
     await endCall("u-2", b.callId, "user_hangup", utc("10-10T12:30:00"));
-    // 31 minutes each: 1 before the reset, 30 after.
-    expect(orgAllowance()).toMatchObject({ minutesUsed: 60, minutesReserved: 0 });
+    // 30 minutes each (billed to the hard deadline, 12:29): 1 before the reset, 29 after.
+    expect(orgAllowance()).toMatchObject({ minutesUsed: 58, minutesReserved: 0 });
     expect(fake.rows("usageEntry").filter((e) => e.kind === "voice_call_prior").map((e) => e.minutes)).toEqual([1, 1]);
   });
 });
@@ -241,8 +242,8 @@ describe("calls that outlive their reservation", () => {
     expect(session(c.callId).abuseFlagged).toBe(true);
     expect((userRow("u-1").voiceBlockedUntil as Date).getTime()).toBe(flaggedAt.getTime() + VOICE_BLOCK_SECONDS * 1000);
     expect(fake.rows("auditEvent").filter((e) => e.action === "usage.abuse_flagged")).toHaveLength(1);
-    // The charge is still capped at the reservation.
-    expect(allowanceOf("u-1").minutesUsed).toBe(60);
+    // The charge is still capped: at the 30 minute hard deadline (below its 60 minute reservation).
+    expect(allowanceOf("u-1").minutesUsed).toBe(30);
   });
 
   it("the next mint is refused for 10 minutes, then allowed", async () => {
@@ -272,7 +273,7 @@ describe("calls that outlive their reservation", () => {
     addUser("u-1", { planTier: "pro" });
     const late = await begin("u-1", at(0));
     await endCall("u-1", late.callId, "user_hangup", at(RESERVED + 300));
-    expect(session(late.callId)).toMatchObject({ abuseFlagged: true, billedMinutes: 60 });
+    expect(session(late.callId)).toMatchObject({ abuseFlagged: true, billedMinutes: 30 }); // billed to the 30 minute hard deadline
 
     addUser("u-2", { planTier: "pro" });
     const ok = await begin("u-2", at(0));
@@ -293,7 +294,7 @@ describe("calls that outlive their reservation", () => {
     addUser("u-1", { planTier: "pro" });
     const c = await begin("u-1", at(0));
     const next = await beginCall("u-1", scn, at(RESERVED + OVERRUN_GRACE_SECONDS + 5)); // reaps the silent call, then checks the block
-    expect(session(c.callId)).toMatchObject({ abuseFlagged: true, billedMinutes: 60 });
+    expect(session(c.callId)).toMatchObject({ abuseFlagged: true, billedMinutes: 30 }); // billed to the 30 minute hard deadline
     expect(next).toMatchObject({ ok: false, error: "voice_blocked", retryAfterSeconds: VOICE_BLOCK_SECONDS });
     expect(fake.rows("auditEvent").filter((e) => e.action === "usage.abuse_flagged")).toHaveLength(1);
   });

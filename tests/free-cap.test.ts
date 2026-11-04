@@ -146,7 +146,7 @@ describe("the cap is checked only when a call starts", () => {
     const deadline = HARD_SESSION_CAP_SECONDS + PROVIDER_LIMIT_GRACE_SECONDS;
     expect(await heartbeat("u-1", begun.callId, "ok", at(deadline - 10))).toMatchObject({ found: true, stop: false });
     expect(await heartbeat("u-1", begun.callId, "ok", at(40 * 60))).toMatchObject({ found: true, stop: true, reason: "max_duration" });
-    expect(session(begun.callId)).toMatchObject({ endReason: "max_duration", billedMinutes: Math.ceil((40 * 60) / 60) });
+    expect(session(begun.callId)).toMatchObject({ endReason: "max_duration", billedMinutes: HARD_SESSION_CAP_SECONDS / 60 }); // billed to the deadline, not to when it was noticed
   });
 
   it("the call length limit still applies to a Free call", async () => {
@@ -156,7 +156,8 @@ describe("the cap is checked only when a call starts", () => {
     await heartbeat("u-1", begun.callId, "connected", at(0));
     const r = await heartbeat("u-1", begun.callId, "ok", at(MAX_CALL_SECONDS + 5));
     expect(r).toMatchObject({ found: true, stop: true, reason: "max_duration" });
-    expect(session(begun.callId)).toMatchObject({ endReason: "max_duration", billedMinutes: MAX_CALL_SECONDS / 60 });
+    // The 24 hour limit is now behind the 30 minute hard deadline, so a call noticed this late is billed only to the deadline.
+    expect(session(begun.callId)).toMatchObject({ endReason: "max_duration", billedMinutes: HARD_SESSION_CAP_SECONDS / 60 });
   });
 
   it("a plan change mid-call does not change the rule the call started under", async () => {
