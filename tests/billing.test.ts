@@ -14,7 +14,7 @@ vi.mock("@/lib/apiAuth",() => ({ requireAuth: () => ({ id: mocks.authId, email: 
 
 import { buildCheckoutParams, CheckoutConfigError, entitlementFromItems, PRICE_ENV, priceAllowlist, resetPriceCache, resolvePriceIds, type PriceIds } from "@/lib/billing";
 import { isTeamPlan } from "@/lib/usagePlan";
-import { billingGate, encodeForm, stripeApi, StripeApiError, stripeSecretKey, stripeStatus, StripeConfigError, verifyWebhookSignature } from "@/lib/stripe";
+import { billingGate, encodeForm, stripeApi, StripeApiError, stripeLiveMode, stripeReady, stripeSecretKey, stripeStatus, stripeTestMode, StripeConfigError, verifyWebhookSignature } from "@/lib/stripe";
 import { classifyPlanChange, setBillingEventSink, type BillingLifecycleEvent } from "@/lib/billingEvents";
 import { POST as webhook } from "@/app/api/stripe/webhook/route";
 import { POST as checkout } from "@/app/api/billing/checkout/route";
@@ -80,12 +80,75 @@ afterEach(() => {
   setBillingEventSink(null);
 });
 
-describe("test-mode only", () => {
-  it("accepts only sk_test_ keys", () => {
+describe("stripe mode", () => {
+  it("test keys are ready; live keys need STRIPE_LIVE_MODE=true", () => {
     expect(stripeStatus({ STRIPE_SECRET_KEY: "sk_test_abc" })).toBe("ready");
+    expect(stripeStatus({ STRIPE_SECRET_KEY: "rk_test_abc" })).toBe("ready");
     expect(stripeStatus({ STRIPE_SECRET_KEY: "sk_live_abc" })).toBe("live_key_refused");
     expect(stripeStatus({ STRIPE_SECRET_KEY: "rk_live_abc" })).toBe("live_key_refused");
-    expect(stripeStatus({ STRIPE_SECRET_KEY: "rk_test_abc" })).toBe("live_key_refused");
+    expect(stripeStatus({ STRIPE_SECRET_KEY: "sk_live_abc", STRIPE_LIVE_MODE: "true" })).toBe("ready_live");
+    expect(stripeStatus({ STRIPE_SECRET_KEY: "rk_live_abc", STRIPE_LIVE_MODE: "true" })).toBe("ready_live");
+  });
+
+  it("only the exact string true enables live mode", () => {
+    for (const v of ["TRUE", "1", "yes", " true", "false", ""]) {
+      expect(stripeStatus({ STRIPE_SECRET_KEY: "sk_live_abc", STRIPE_LIVE_MODE: v })).toBe("live_key_refused");
+    }
+  });
+
+  it("unknown key shapes are refused, flag or not", () => {
+    expect(stripeStatus({ STRIPE_SECRET_KEY: "pk_live_abc" })).toBe("live_key_refused");
+    expect(stripeStatus({ STRIPE_SECRET_KEY: "garbage", STRIPE_LIVE_MODE: "true" })).toBe("live_key_refused");
+  });
+
+  it("a test key with STRIPE_LIVE_MODE=true is a mode mismatch, and a live key without the flag is refused", () => {
+    expect(stripeStatus({ STRIPE_SECRET_KEY: "sk_test_abc", STRIPE_LIVE_MODE: "true" })).toBe("mode_mismatch");
+    expect(stripeStatus({ STRIPE_SECRET_KEY: "rk_test_abc", STRIPE_LIVE_MODE: "true" })).toBe("mode_mismatch");
+    expect(() => stripeSecretKey({ STRIPE_SECRET_KEY: "sk_test_abc", STRIPE_LIVE_MODE: "true" })).toThrow(expect.objectContaining({ code: "stripe_mode_mismatch" }));
+    expect(() => stripeSecretKey({ STRIPE_SECRET_KEY: "sk_live_abc" })).toThrow(expect.objectContaining({ code: "stripe_live_key_refused", message: expect.stringContaining("STRIPE_LIVE_MODE=true") }));
+    expect(stripeSecretKey({ STRIPE_SECRET_KEY: " sk_live_abc ", STRIPE_LIVE_MODE: "true" })).toBe("sk_live_abc");
+  });
+
+  it("mismatch and disabled take the gate's 503 / demo behaviour without leaking the key", async () => {
+    vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
+    vi.stubEnv("STRIPE_LIVE_MODE", "true");
+    const gate = billingGate();
+    expect(gate?.status).toBe(503);
+    const body = await gate!.json();
+    expect(body.error).toBe("stripe_mode_mismatch");
+    expect(JSON.stringify(body)).not.toContain("sk_test_placeholder");
+    expect(stripeStatus({ STRIPE_SECRET_KEY: "sk_live_abc", STRIPE_LIVE_MODE: "true", DEMO_MODE: "true" })).toBe("disabled");
+  });
+
+  it("live mode is ready for the gate and drops the test-mode note", () => {
+    const live = { STRIPE_SECRET_KEY: "sk_live_abc", STRIPE_LIVE_MODE: "true" };
+    expect(billingGate(live)).toBeNull();
+    expect(stripeTestMode(live)).toBe(false);
+    expect(stripeReady(live)).toBe(true);
+    expect(stripeLiveMode(live)).toBe(true);
+    expect(stripeLiveMode({ STRIPE_SECRET_KEY: "sk_test_abc" })).toBe(false);
+  });
+
+  it("webhook ignores events from the other mode with no database writes", async () => {
+    const before = JSON.stringify(fake.rows("user"));
+    const sub = { id: "sub_test_1", customer: "cus_test_1", status: "active", metadata: {}, items: { data: [] } };
+    // Test server, live event.
+    let res = await deliverRaw(event("customer.subscription.updated", sub, "evt_live_on_test", true));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ received: true, ignored: "mode_mismatch" });
+    // Live server, test event.
+    vi.stubEnv("STRIPE_SECRET_KEY", "sk_live_placeholder");
+    vi.stubEnv("STRIPE_LIVE_MODE", "true");
+    res = await deliverRaw(event("customer.subscription.updated", sub, "evt_test_on_live", false));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ received: true, ignored: "mode_mismatch" });
+    expect(retrieveSpy).not.toHaveBeenCalled();
+    expect(JSON.stringify(fake.rows("user"))).toBe(before);
+  });
+
+  it("webhook rejects an event with no livemode field", async () => {
+    const res = await deliverRaw({ id: "evt_no_mode", type: "customer.subscription.updated", data: { object: {} } });
+    expect(res.status).toBe(400);
   });
 
   it("is off with no key and in demo mode, even with a good key", () => {
@@ -439,6 +502,19 @@ describe("portal route", () => {
     expect(spy.mock.calls[0][0]).toMatchObject({ customer: "cus_test_org", return_url: "http://localhost/settings/billing" });
   });
 
+  it("passes configuration only when STRIPE_PORTAL_CONFIGURATION is set", async () => {
+    fake.rows("organization")[0].stripeCustomerId = "cus_test_org";
+    const spy = vi.spyOn(stripeApi, "createPortalSession").mockResolvedValue({ url: "https://portal.example/test" });
+    await open();
+    expect(spy.mock.calls[0][0]).not.toHaveProperty("configuration");
+    vi.stubEnv("STRIPE_PORTAL_CONFIGURATION", "  bpc_test_placeholder ");
+    await open();
+    expect(spy.mock.calls[1][0]).toMatchObject({ customer: "cus_test_org", configuration: "bpc_test_placeholder" });
+    vi.stubEnv("STRIPE_PORTAL_CONFIGURATION", "   ");
+    await open();
+    expect(spy.mock.calls[2][0]).not.toHaveProperty("configuration");
+  });
+
   it("a trainee only ever gets their own customer, and 404 when there is none", async () => {
     fake.seed("user", { id: "rep-1", email: "rep-1@example.test", organizationId: "org-1", role: "trainee" });
     fake.rows("organization")[0].stripeCustomerId = "cus_test_org";
@@ -457,7 +533,7 @@ const sign = (raw: string, t = Math.floor(Date.now() / 1000), secret = WHSEC) =>
   `t=${t},v1=${createHmac("sha256", secret).update(`${t}.${raw}`).digest("hex")}`;
 
 let eventSeq = 0;
-const event = (type: string, object: Record<string, unknown>, id = `evt_test_${++eventSeq}`) => ({ id, type, data: { object } });
+const event = (type: string, object: Record<string, unknown>, id = `evt_test_${++eventSeq}`, livemode = false) => ({ id, type, livemode, data: { object } });
 const deliverRaw = (e: unknown, header?: string | null) => {
   const raw = JSON.stringify(e);
   return webhook(new NextRequest("http://localhost/api/stripe/webhook", {

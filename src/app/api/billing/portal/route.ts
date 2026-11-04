@@ -29,7 +29,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const session = await stripeApi.createPortalSession({ customer, return_url: `${appBaseUrl(req)}/settings/billing` });
+    // Optional dedicated portal configuration (bpc_...); without it Stripe uses the account default.
+    const configuration = process.env.STRIPE_PORTAL_CONFIGURATION?.trim();
+    const session = await stripeApi.createPortalSession({ customer, return_url: `${appBaseUrl(req)}/settings/billing`, ...(configuration ? { configuration } : {}) });
     return NextResponse.json({ url: session.url });
   } catch (e) {
     console.error("[billing/portal]", e instanceof StripeApiError ? `stripe status ${e.status}` : "unexpected error");

@@ -2,37 +2,56 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 /**
- * Stripe, test mode only. A thin typed client over Stripe's form-encoded REST API (no SDK dependency)
+ * Stripe, test mode by default; live keys need STRIPE_LIVE_MODE=true. A thin typed client over Stripe's form-encoded REST API (no SDK dependency)
  * plus webhook signature verification. Never logs or returns a key or a Stripe response body.
  */
 
-export type StripeStatus = "disabled" | "live_key_refused" | "ready";
+export type StripeStatus = "disabled" | "live_key_refused" | "mode_mismatch" | "ready" | "ready_live";
 
 type Env = Record<string, string | undefined>;
 
-/** Off without a key and in demo mode; "live_key_refused" when the key is not an sk_test_ key. */
+/**
+ * Off without a key and in demo mode. Test keys (sk_test_, rk_test_) are "ready". Live keys (sk_live_, rk_live_)
+ * are "ready_live" only when STRIPE_LIVE_MODE is exactly "true", otherwise "live_key_refused". STRIPE_LIVE_MODE=true
+ * with a test key is "mode_mismatch" (a half-flipped env). Anything else is "live_key_refused".
+ */
 export function stripeStatus(env: Env = process.env): StripeStatus {
   if (env.DEMO_MODE === "true") return "disabled";
   const key = env.STRIPE_SECRET_KEY?.trim();
   if (!key) return "disabled";
-  return key.startsWith("sk_test_") ? "ready" : "live_key_refused";
+  const liveFlag = env.STRIPE_LIVE_MODE === "true";
+  if (key.startsWith("sk_test_") || key.startsWith("rk_test_")) return liveFlag ? "mode_mismatch" : "ready";
+  if (key.startsWith("sk_live_") || key.startsWith("rk_live_")) return liveFlag ? "ready_live" : "live_key_refused";
+  return "live_key_refused";
 }
+
+/** True when Stripe is configured and usable, in test or live mode. */
+export const stripeReady = (env: Env = process.env): boolean => {
+  const s = stripeStatus(env);
+  return s === "ready" || s === "ready_live";
+};
 
 /** True when Stripe is running with a test-mode key. The UI shows its "test cards only" note only then. */
 export const stripeTestMode = (env: Env = process.env): boolean => stripeStatus(env) === "ready";
 
+/** The livemode value Stripe events must carry for this server's configuration. */
+export const stripeLiveMode = (env: Env = process.env): boolean => stripeStatus(env) === "ready_live";
+
 export class StripeConfigError extends Error {
-  constructor(public code: "billing_not_configured" | "stripe_live_key_refused", message: string) {
+  constructor(public code: "billing_not_configured" | "stripe_live_key_refused" | "stripe_mode_mismatch", message: string) {
     super(message);
   }
 }
 
-/** The secret key, or a StripeConfigError. Every Stripe call goes through here, so a live key is refused everywhere. */
+/** The secret key, or a StripeConfigError. Every Stripe call goes through here, so an unapproved or mismatched key is refused everywhere. */
 export function stripeSecretKey(env: Env = process.env): string {
   const status = stripeStatus(env);
   if (status === "disabled") throw new StripeConfigError("billing_not_configured", "Billing is not set up on this server.");
   if (status === "live_key_refused") {
-    throw new StripeConfigError("stripe_live_key_refused", "STRIPE_SECRET_KEY is not a test key. Only Stripe test mode keys (sk_test_) are accepted. Replace it and restart.");
+    throw new StripeConfigError("stripe_live_key_refused", "STRIPE_SECRET_KEY is not a test key. Test keys (sk_test_) are accepted, and live keys only when STRIPE_LIVE_MODE=true. Replace the key or set STRIPE_LIVE_MODE=true, then restart.");
+  }
+  if (status === "mode_mismatch") {
+    throw new StripeConfigError("stripe_mode_mismatch", "STRIPE_LIVE_MODE=true needs a live Stripe key (sk_live_ or rk_live_), but STRIPE_SECRET_KEY is a test key. Use a live key or unset STRIPE_LIVE_MODE, then restart.");
   }
   return env.STRIPE_SECRET_KEY!.trim();
 }
