@@ -103,7 +103,7 @@ export const LANDINGS: Record<VerticalSlug, Landing> = {
     faq: [
       { q: "Does it cover door-to-door or kitchen-table sits?", a: "It covers phone and video style calls: estimate requests, follow-ups and discovery. Use the persona wizard to model your own sit." },
       { q: "Will it make claims about savings for my reps?", a: "No. Personas are buyers. Your reps practice explaining your real numbers honestly." },
-      { q: "Can managers see who is improving?", a: "On Team, yes. Team view shows each rep's calls, scores and trends, and you can assign personas with due dates." },
+      { q: "Can managers see who is improving?", a: "Yes. Managers and owners get Team view on any plan. It shows each rep's calls, scores and trends, and you can assign personas with due dates." },
       NO_CARD,
     ],
   },
@@ -132,7 +132,7 @@ export const LANDINGS: Record<VerticalSlug, Landing> = {
     faq: [
       { q: "Is it only for agency recruiters?", a: "No. In-house talent teams use the same screens and intakes." },
       { q: "Can I model my own reqs?", a: "Yes. Paste a job description into the persona wizard to build a candidate or hiring manager." },
-      { q: "Can I track my desk?", a: "On Team, the Team view shows each recruiter's calls, scores and trends, and you can assign practice." },
+      { q: "Can I track my desk?", a: "Yes. Managers and owners get Team view on any plan. It shows each recruiter's calls, scores and trends, and you can assign practice." },
       NO_CARD,
     ],
   },
@@ -192,7 +192,7 @@ export const LANDINGS: Record<VerticalSlug, Landing> = {
       { name: "Teodora Petrov", tag: "AE discovery", blurb: "Agency founder who requested a demo." },
     ],
     faq: [
-      { q: "Does it replace call shadowing?", a: "It gives every rep reps between shadows. Managers on Team see scores and trends and can assign specific personas." },
+      { q: "Does it replace call shadowing?", a: "It gives every rep reps between shadows. Managers see scores and trends in Team view and can assign specific personas, on any plan." },
       { q: "Can it use our ICP and messaging?", a: "Yes. The persona wizard builds a prospect from a job description, product page or CRM notes." },
       { q: "Voice or text?", a: "Both. Voice for realistic dials, text sim when there is no mic or to save minutes." },
       NO_CARD,
