@@ -47,6 +47,17 @@ export const MAX_CONNECT_LAG_SECONDS = 60;
  * time, up to this, so one long call cannot lock a whole Team pool away from everyone else.
  */
 export const MAX_RESERVE_MINUTES = 60;
+/**
+ * No voice call runs longer than this on the provider, whatever its reservation (Free calls included, even though
+ * their maxSeconds is 24 hours). The server hangs the provider call up at the call's deadline: the smaller of its
+ * maxSeconds and this, counted from mint, plus PROVIDER_LIMIT_GRACE_SECONDS. A fixed limit, not an env var.
+ */
+export const HARD_SESSION_CAP_SECONDS = 30 * 60;
+/** The server's own stop (heartbeat, settlement) normally fires first; the provider hangup is the backstop this much later. */
+export const PROVIDER_LIMIT_GRACE_SECONDS = 20;
+
+/** Seconds after mint at which the server hangs the provider call up, for a call whose maximum length is `maxSeconds`. */
+export const providerDeadlineSeconds = (maxSeconds: number): number => Math.min(maxSeconds, HARD_SESSION_CAP_SECONDS) + PROVIDER_LIMIT_GRACE_SECONDS;
 
 export function isPlanTier(v: unknown): v is PlanTier {
   return v === "free" || v === "pro" || v === "team";

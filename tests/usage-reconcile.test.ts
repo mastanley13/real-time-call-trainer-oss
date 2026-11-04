@@ -94,14 +94,19 @@ describe("Premium minutes are reserved at mint", () => {
     // a ends after 10 minutes: 10 premium minutes used, the other 50 it held go back.
     await endCall("u-1", a.callId, "user_hangup", at(600));
     expect(allowanceOf("u-1")).toMatchObject({ premiumMinutesUsed: 10, premiumMinutesReserved: 60 });
-    // That freed Premium share goes to the next call, which holds all 50 and can run no longer than that.
+    // Another 25 Premium minutes already used this period (set directly, so the timeline stays inside b's and c's connect window):
+    // the freed share left for the next call is then 25 minutes, under the 30 minute hard deadline, so the reservation stops it.
+    const allowance = allowanceOf("u-1");
+    allowance.premiumMinutesUsed = (allowance.premiumMinutesUsed as number) + 25;
+    allowance.minutesUsed = (allowance.minutesUsed as number) + 25;
+    // That freed Premium share goes to the next call, which holds all 25 and can run no longer than that.
     const d = await beginCall("u-1", scn, at(700));
     if (!d.ok) throw new Error(d.error);
-    expect(d).toMatchObject({ engine: "premium", maxSeconds: 50 * 60 });
-    expect(session(d.callId)).toMatchObject({ premiumReservedMinutes: 50, reservedMinutes: 50 });
+    expect(d).toMatchObject({ engine: "premium", maxSeconds: 25 * 60 });
+    expect(session(d.callId)).toMatchObject({ premiumReservedMinutes: 25, reservedMinutes: 25 });
     await heartbeat("u-1", d.callId, "connected", at(700));
-    expect(await heartbeat("u-1", d.callId, "ok", at(700 + 49 * 60))).toMatchObject({ found: true, stop: false });
-    expect(await heartbeat("u-1", d.callId, "ok", at(700 + 50 * 60))).toMatchObject({ found: true, stop: true, reason: "cap_reached" });
+    expect(await heartbeat("u-1", d.callId, "ok", at(700 + 24 * 60))).toMatchObject({ found: true, stop: false });
+    expect(await heartbeat("u-1", d.callId, "ok", at(700 + 25 * 60))).toMatchObject({ found: true, stop: true, reason: "cap_reached" });
     // Every minute of d booked as Premium; none drifted onto the standard rate.
     expect(allowanceOf("u-1")).toMatchObject({ premiumMinutesUsed: 60, premiumMinutesReserved: 60, minutesUsed: 60 });
   });
@@ -214,6 +219,8 @@ describe("calls that outlive their reservation", () => {
   async function flaggedCall() {
     addUser("u-1", { planTier: "pro" });
     const c = await begin("u-1", at(0));
+    // Connected at the start, so the reservation (not the 30 minute hard deadline) is what ends the call at RESERVED.
+    await heartbeat("u-1", c.callId, "connected", at(0));
     const stop = await heartbeat("u-1", c.callId, "ok", at(RESERVED));
     expect(stop).toMatchObject({ found: true, stop: true, reason: "cap_reached" });
     return c;

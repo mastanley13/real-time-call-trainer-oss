@@ -13,7 +13,7 @@ const UNIQUE: Record<string, string[][]> = {
   organization: [["id"], ["code"], ["stripeCustomerId"], ["stripeSubscriptionId"]],
   usageAllowance: [["id"], ["userId"], ["organizationId"]],
   usageEntry: [["id"], ["trainerSessionId", "kind"]],
-  trainerSession: [["id"]],
+  trainerSession: [["id"], ["providerCallId"]],
   stripeEvent: [["id"]],
   auditEvent: [["id"]],
 };
@@ -25,7 +25,7 @@ const DEFAULTS: Record<string, () => Record<string, unknown>> = {
   organization: () => ({ planTier: "free", seatCount: 1, premiumVoice: false, stripeCustomerId: null, stripeSubscriptionId: null, subscriptionStatus: null, pastDueSince: null, ...NO_CHECKOUT, createdAt: new Date() }),
   usageAllowance: () => ({ userId: null, organizationId: null, minutesUsed: 0, minutesReserved: 0, premiumMinutesUsed: 0, premiumMinutesReserved: 0, version: 0 }),
   usageEntry: () => ({ trainerSessionId: null, ranFrom: null, ranTo: null, createdAt: new Date() }),
-  trainerSession: () => ({ connectedAt: null, endedAt: null, endReason: null, lastHeartbeatAt: null, degradedAt: null, billableSeconds: 0, billedMinutes: 0, durationSeconds: 0, allowanceId: null, allowancePeriodStart: null, reservedMinutes: 0, engineTier: "standard", premiumReservedMinutes: 0, carriedMinutes: 0, carriedPremiumMinutes: 0, abuseFlagged: false, capEnforced: true, createdAt: new Date() }),
+  trainerSession: () => ({ connectedAt: null, endedAt: null, endReason: null, lastHeartbeatAt: null, degradedAt: null, billableSeconds: 0, billedMinutes: 0, durationSeconds: 0, allowanceId: null, allowancePeriodStart: null, reservedMinutes: 0, engineTier: "standard", premiumReservedMinutes: 0, carriedMinutes: 0, carriedPremiumMinutes: 0, abuseFlagged: false, capEnforced: true, providerCallId: null, providerHangupAt: null, createdAt: new Date() }),
   stripeEvent: () => ({ processedAt: new Date() }),
   auditEvent: () => ({}),
 };
@@ -37,8 +37,9 @@ function matches(row: Row, where: Where): boolean {
     const have = row[k] ?? null;
     if (isDate(v)) return isDate(have) && have.getTime() === v.getTime();
     if (v && typeof v === "object") {
-      const o = v as { lt?: Date; gte?: Date; gt?: number; in?: unknown[] };
+      const o = v as { lt?: Date; gte?: Date; gt?: number; in?: unknown[]; not?: null };
       if (o.in) return o.in.includes(have);
+      if (o.not === null) return have !== null;
       if (o.gt !== undefined) return typeof have === "number" && have > o.gt;
       if (o.lt) return isDate(have) && have.getTime() < o.lt.getTime();
       if (o.gte) return isDate(have) && have.getTime() >= o.gte.getTime();

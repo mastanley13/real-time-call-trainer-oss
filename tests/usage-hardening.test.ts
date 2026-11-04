@@ -13,7 +13,7 @@ vi.mock("@/lib/apiAuth", async () => ({
 import { beginCall, chooseEngine, endCall, ensureAllowance, heartbeat, usageSummary } from "@/lib/usage";
 import { elevenLabsAgentFor, realtimeModelFor } from "@/lib/serverConfig";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
-import { MAX_CALL_SECONDS } from "@/lib/usagePlan";
+import { MAX_CALL_SECONDS, PROVIDER_LIMIT_GRACE_SECONDS } from "@/lib/usagePlan";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
 import { GET as elevenLabsToken } from "@/app/api/elevenlabs/token/route";
 
@@ -88,16 +88,10 @@ describe("Premium voice limit", () => {
   });
 
   describe("OpenAI Realtime sessions", () => {
-    let bodies: { expires_after: { seconds: number }; session: { model: string } }[];
     beforeEach(() => {
-      bodies = [];
       vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
       vi.stubEnv("REALTIME_MODEL", "model-premium-test");
       vi.stubEnv("REALTIME_MODEL_STANDARD", "model-standard-test");
-      vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
-        bodies.push(JSON.parse(init.body as string));
-        return new Response(JSON.stringify({ value: "ek_test", expires_at: 9999999999 }), { status: 200 });
-      }));
     });
     const mint = () => realtimeSession(new NextRequest("http://localhost/api/realtime/session", { method: "POST", body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }), headers: { "content-type": "application/json" } }));
 
@@ -107,7 +101,7 @@ describe("Premium voice limit", () => {
       allowanceOf("u-1").premiumMinutesUsed = 119; // 120 of 200 minutes is the Premium limit
 
       const first = await (await mint()).json();
-      expect(bodies[0].session.model).toBe("model-premium-test");
+      expect(first.model).toBe("model-premium-test");
       expect(first.maxSeconds).toBe(60); // the whole call is the one Premium minute it holds
       await heartbeat("u-1", first.callId, "connected", at(0));
       expect(await heartbeat("u-1", first.callId, "ok", at(30))).toMatchObject({ found: true, stop: false });
@@ -116,7 +110,6 @@ describe("Premium voice limit", () => {
 
       vi.setSystemTime(at(310));
       const second = await (await mint()).json();
-      expect(bodies[1].session.model).toBe("model-standard-test");
       expect(second.model).toBe("model-standard-test");
       await heartbeat("u-1", second.callId, "connected", at(310));
       await endCall("u-1", second.callId, "user_hangup", at(310 + 180));
@@ -128,8 +121,7 @@ describe("Premium voice limit", () => {
 
     it("a user without the add-on gets the standard model from the first session", async () => {
       addUser("u-1", { planTier: "pro", premiumVoice: false });
-      await (await mint()).json();
-      expect(bodies[0].session.model).toBe("model-standard-test");
+      expect((await (await mint()).json()).model).toBe("model-standard-test");
     });
 
     it("a Team pool with the add-on counts premium minutes across members", async () => {
@@ -148,7 +140,7 @@ describe("Premium voice limit", () => {
     it("without metering (no database) the configured model runs as before", async () => {
       vi.stubEnv("DATABASE_URL", "");
       const body = await (await mint()).json();
-      expect(bodies[0].session.model).toBe("model-premium-test");
+      expect(body.model).toBe("model-premium-test");
       expect(body.callId).toBeUndefined();
     });
   });
@@ -287,48 +279,42 @@ describe("heartbeat trust: usage is settled from the server's mint time", () => 
     expect(stopped).toMatchObject({ stop: true, reason: "cap_reached" });
     expect(session(c.callId)).toMatchObject({ billedMinutes: 2, endReason: "cap_reached" });
 
-    // A client that never reports 'connected' is on the same clock, starting 60 seconds after the mint.
+    // A client that never reports 'connected' is on the same clock, starting 60 seconds after the mint. That start is
+    // later than the call's hard deadline (maxSeconds + 20 s grace from the mint), so the server's stop for it now comes
+    // at the deadline (max_duration), not at the lagged cap_reached; it is still stopped without a 'connected' heartbeat.
     addUser("u-2", { planTier: "pro" });
     await ensureAllowance(fake.db as never, { userId: "u-2" }, base);
     allowanceOf("u-2").minutesUsed = 198;
     const d = await begin("u-2");
-    expect(await heartbeat("u-2", d.callId, "ok", at(60 + 119))).toMatchObject({ stop: false });
-    expect(await heartbeat("u-2", d.callId, "ok", at(60 + 120))).toMatchObject({ stop: true, reason: "cap_reached" });
+    const deadline = 120 + PROVIDER_LIMIT_GRACE_SECONDS;
+    expect(await heartbeat("u-2", d.callId, "ok", at(deadline - 1))).toMatchObject({ stop: false });
+    expect(await heartbeat("u-2", d.callId, "ok", at(deadline))).toMatchObject({ stop: true, reason: "max_duration" });
   });
 
   describe("provider session expiry", () => {
     const mint = () => realtimeSession(new NextRequest("http://localhost/api/realtime/session", { method: "POST", body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }), headers: { "content-type": "application/json" } }));
-    let bodies: { expires_after: { seconds: number } }[];
     beforeEach(() => {
-      bodies = [];
       vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
-      vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
-        bodies.push(JSON.parse(init.body as string));
-        return new Response(JSON.stringify({ value: "ek_test", expires_at: 9999999999 }), { status: 200 });
-      }));
     });
 
-    it("passes the call's reserved length to the provider as the secret's lifetime, and returns it to the client", async () => {
+    it("returns the call's reserved length to the client", async () => {
       addUser("u-1", { planTier: "pro" });
       await ensureAllowance(fake.db as never, { userId: "u-1" }, base);
       allowanceOf("u-1").minutesUsed = 198;
       const body = await (await mint()).json();
       expect(body.maxSeconds).toBe(120);
-      expect(bodies[0].expires_after.seconds).toBe(120);
     });
 
-    it("never asks for longer than the 10 minute default", async () => {
+    it("a Pro call reserves up to 60 minutes (the server hangs it up at the 30 minute hard ceiling; see realtime-hangup.test.ts)", async () => {
       addUser("u-1", { planTier: "pro" });
       const body = await (await mint()).json();
       expect(body.maxSeconds).toBe(3600);
-      expect(bodies[0].expires_after.seconds).toBe(600);
     });
 
-    it("a Free call is not limited by the plan cap: only the call length limit, and the secret lifetime stays 10 minutes", async () => {
+    it("a Free call is not limited by the plan cap: only the call length limit", async () => {
       addUser("u-1");
       const body = await (await mint()).json();
       expect(body.maxSeconds).toBe(MAX_CALL_SECONDS);
-      expect(bodies[0].expires_after.seconds).toBe(600);
       expect(allowanceOf("u-1").minutesReserved).toBe(10);
     });
   });
@@ -361,7 +347,7 @@ describe("reservations", () => {
     const second = await mint();
     expect(second.status).toBe(409);
     expect((await second.json()).error).toBe("minutes_reserved");
-    expect(sent).toHaveBeenCalledTimes(1);
+    expect(sent).not.toHaveBeenCalled(); // minting calls no provider any more
   });
 
   it("two calls cannot both spend the last minutes: the second is refused and the first is clamped to its reservation", async () => {

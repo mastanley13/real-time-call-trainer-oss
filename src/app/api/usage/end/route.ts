@@ -4,6 +4,7 @@ import { requireAuth } from "@/lib/apiAuth";
 import { ipLimitResponse, userLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { meteringEnabled } from "@/lib/serverConfig";
 import { endCall } from "@/lib/usage";
+import { hangupCall } from "@/lib/providerHangup";
 import { CLIENT_END_REASONS } from "@/lib/usagePlan";
 
 // A client says why the call ended. It never says when or for how long: the server's clock decides what is billed.
@@ -32,5 +33,8 @@ export async function POST(req: NextRequest) {
 
   const result = await endCall(auth.id, body.callId, body.reason);
   if (!result) return NextResponse.json({ error: "not_found", message: "That call was not found." }, { status: 404 });
+  // The caller owns this call (endCall checked). Whatever the reason, the call is over: close the provider side too, so
+  // a client that says "ended" and keeps its media open does not keep the session. Repeats are no-ops.
+  await hangupCall(body.callId);
   return NextResponse.json(result);
 }

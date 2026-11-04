@@ -104,7 +104,7 @@ export const IP_LIMITS = {
   caller: () => ({ limit: envInt("RATE_LIMIT_CALLER_MAX", 30), windowMs: envInt("RATE_LIMIT_CALLER_WINDOW_SEC", 300) * 1000 }),
   grading: () => ({ limit: envInt("RATE_LIMIT_GRADING_MAX", 10), windowMs: envInt("RATE_LIMIT_GRADING_WINDOW_SEC", 3600) * 1000 }),
   token: () => ({ limit: envInt("RATE_LIMIT_TOKEN_MAX", 10), windowMs: envInt("RATE_LIMIT_TOKEN_WINDOW_SEC", 3600) * 1000 }),
-  /** OpenAI Realtime client secrets: one per voice call. */
+  /** OpenAI Realtime voice calls: one mint per call. */
   realtime: () => ({ limit: envInt("RATE_LIMIT_REALTIME_MAX", 10), windowMs: envInt("RATE_LIMIT_REALTIME_WINDOW_SEC", 3600) * 1000 }),
   access: () => ({ limit: 10, windowMs: 15 * 60_000 }),
   /** Live coach: one call per finished turn, so this is much looser than grading. */

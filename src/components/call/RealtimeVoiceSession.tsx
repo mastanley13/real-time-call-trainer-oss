@@ -5,6 +5,7 @@ import type { Scenario } from "@/lib/scenarios";
 import type { StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
 import { CallMeter, type MeterEndReason } from "@/lib/callMeter";
+import { HARD_SESSION_CAP_SECONDS } from "@/lib/usagePlan";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
 
 /** Same render-prop contract as the ElevenLabs VoiceSession in TrainerClient. */
@@ -28,6 +29,9 @@ interface Handlers {
 }
 
 const EXPIRED = "The voice session expired before it connected. Start the call again.";
+const TIME_LIMIT = "The call reached its time limit.";
+/** A close this close to the call's limit counts as reaching it (the browser's clock and the server's differ a little). */
+const TIME_LIMIT_SLACK_MS = 30_000;
 /** Grace period on hang-up so the trainee's last words still get transcribed. */
 const END_GRACE_MS = 1500;
 
@@ -57,6 +61,9 @@ class RealtimeCall {
   private audioTimer?: ReturnType<typeof setInterval>;
   /** Reports connect, heartbeats and the end to the server, which meters the call. A no-op without a callId. */
   private meter?: CallMeter;
+  /** When the server minted the call and its maximum length, to tell reaching the time limit from a dropped session. */
+  private mintedAt = 0;
+  private maxSeconds?: number;
 
   constructor(private scenario: Scenario, private h: Handlers) {}
 
@@ -80,21 +87,23 @@ class RealtimeCall {
     mic.getAudioTracks().forEach((t) => (t.enabled = !this.view.muted));
     this.set({ phase: "connecting" });
 
-    let secret: { clientSecret?: string; expiresAt?: number; message?: string; callId?: string };
+    // No credential comes back: the server opens the provider call itself when it gets the offer (see /api/realtime/sdp).
+    let minted: { message?: string; callId?: string; maxSeconds?: number };
     try {
       const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario }) });
-      secret = await res.json().catch(() => ({}));
-      if (!res.ok || !secret.clientSecret) return this.fail(secret.message || "Could not start the voice call. Try again, or switch to Text.");
+      minted = await res.json().catch(() => ({}));
+      if (!res.ok) return this.fail(minted.message || "Could not start the voice call. Try again, or switch to Text.");
     } catch {
       return this.fail("Could not reach the server to start the voice call. Check your connection, then try again.");
     }
     if (this.closed) return;
-    this.meter = new CallMeter(secret.callId, {
+    this.mintedAt = Date.now();
+    this.maxSeconds = minted.maxSeconds;
+    this.meter = new CallMeter(minted.callId, {
       // The server has already stopped and billed the call; this ends the client side.
       onStop: (m) => this.fail(m, "user_hangup"),
       onGiveUp: () => this.fail("The voice connection dropped. Check your network. Your transcript so far is kept.", "network_drop"),
     });
-    if (secret.expiresAt && secret.expiresAt * 1000 <= Date.now()) return this.fail(EXPIRED, "failed_connect");
 
     try {
       void this.ctx?.resume().catch(() => {});
@@ -114,7 +123,8 @@ class RealtimeCall {
         this.watchFirstAudio(pc);
       };
       pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "failed") this.fail("The voice connection dropped. Check your network. Your transcript so far is kept.", "network_drop");
+        // A hangup from the server can surface as a failed connection, so it is told apart by how far the call had run.
+        if (pc.connectionState === "failed") this.providerClosed("The voice connection dropped. Check your network. Your transcript so far is kept.");
         // A disconnect gets 10 seconds to recover; the same call and the same rounding continue if it does.
         else if (pc.connectionState === "disconnected") this.meter?.trouble();
         else if (pc.connectionState === "connected") this.meter?.recovered();
@@ -124,19 +134,30 @@ class RealtimeCall {
       this.dc = dc;
       dc.onopen = () => this.opened();
       dc.onmessage = (e) => this.message(e.data);
-      dc.onclose = () => { if (!this.closed && !this.ending) this.fail("The voice session closed unexpectedly. Your transcript so far is kept.", "network_drop"); };
+      dc.onclose = () => { if (!this.closed && !this.ending) this.providerClosed(); };
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      // Same-origin relay of the documented SDP exchange; see src/app/api/realtime/sdp/route.ts.
-      const res = await fetch("/api/realtime/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientSecret: secret.clientSecret, sdp: offer.sdp }) });
+      // The server opens the provider call with this offer and returns the answer; see src/app/api/realtime/sdp/route.ts.
+      // A metered call uses the persona the server stored at mint; the persona is sent only when metering is off.
+      const res = await fetch("/api/realtime/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId: minted.callId, sdp: offer.sdp, ...(minted.callId ? {} : { scenario: this.scenario }) }) });
       const data = await res.json().catch(() => ({}));
       if (this.closed) return;
-      if (!res.ok || typeof data.sdp !== "string") return this.fail(data.error === "realtime_secret_expired" ? EXPIRED : data.message || "OpenAI could not connect the voice call. Try again, or switch to Text.", "failed_connect");
+      if (!res.ok || typeof data.sdp !== "string") return this.fail(data.error === "realtime_session_expired" ? EXPIRED : data.message || "OpenAI could not connect the voice call. Try again, or switch to Text.", "failed_connect");
       await pc.setRemoteDescription({ type: "answer", sdp: data.sdp });
     } catch {
       this.fail("Could not connect the voice call. Check your network and try again, or switch to Text.", "failed_connect");
     }
+  }
+
+  /**
+   * The provider closed the call and the rep did not hang up. Near the call's time limit that is the server's hangup
+   * (or the provider's own limit), not a fault: say so and end the meter once as a hang-up. Earlier it is a dropped session.
+   */
+  private providerClosed(dropMessage = "The voice session closed unexpectedly. Your transcript so far is kept.") {
+    const limitMs = Math.min(this.maxSeconds ?? HARD_SESSION_CAP_SECONDS, HARD_SESSION_CAP_SECONDS) * 1000;
+    if (this.mintedAt && Date.now() - this.mintedAt >= limitMs - TIME_LIMIT_SLACK_MS) this.fail(TIME_LIMIT, "user_hangup");
+    else this.fail(dropMessage, "network_drop");
   }
 
   /** The first inbound audio packet is the last of the three conditions for "connected" (see CallMeter). */

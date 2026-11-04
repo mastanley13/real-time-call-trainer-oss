@@ -34,8 +34,8 @@ Server routes (src/app/api)
   ├─ coach/turn        live coach: estimate, talk-track steps, one cue (LLM or rules-based)
   ├─ persona/generate  persona wizard (LLM structured JSON, or a template draft)
   ├─ persona/fetch-url SSRF-safe product-page import for the wizard
-  ├─ realtime/session  mints a short-lived OpenAI Realtime client secret per call (API key stays server-side)
-  ├─ realtime/sdp      relays the browser's WebRTC offer to OpenAI, so the CSP stays same-origin
+  ├─ realtime/session  starts an OpenAI Realtime call: cap check and reservation, returns the call id, model and voice (no OpenAI credential)
+  ├─ realtime/sdp      opens the call at OpenAI with the server's key from the browser's WebRTC offer, stores the provider call id, returns the answer
   ├─ elevenlabs/token  mints a WebRTC conversation token (API key stays server-side)
   ├─ evaluate-call     grades a transcript against the scenario rubric (LLM or heuristic) and seals the grade
   ├─ simulate/turn     text-mode caller (LLM or scripted)
@@ -47,7 +47,7 @@ Server routes (src/app/api)
   ├─ usage, usage/heartbeat, usage/end, usage/credit   voice minute metering (on when `USAGE_CAPS=on` or Stripe is set): the ledger is the source of truth. Free is 10 voice minutes a month, checked only when a call starts (a started call runs to its end); text practice is never capped. Per user, 3 uncharged failed calls (quick drops or never-connected calls) and 20 voice sessions per rolling 24 hours
   ├─ billing/checkout, billing/portal   Stripe Checkout (subscription) and Billing Portal, test mode only
   ├─ stripe/webhook    signature-verified, idempotent plan sync from Stripe's current subscription state (checkout completed, async payment succeeded and expired, subscription updated and deleted)
-  └─ auth/*, access, me, health, config, cron/purge-expired
+  └─ auth/*, access, me, health, config, cron/purge-expired, cron/enforce-voice-deadlines
 ```
 Design tokens (daylight, dark and the call "deck") live in `src/app/globals.css`; the coach contract is `src/lib/coach-types.ts`; the wizard contract is `src/lib/wizard-types.ts`.
 Scenario definitions and the agent prompt builder are in `src/lib/scenarios.ts`; grading is in `src/lib/grader.ts`, with the grader's caps and the re-grade rule in `src/lib/gradable.ts`.
@@ -79,7 +79,7 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `LLM_MODEL` | Optional | Default `gpt-4.1-mini` |
 | `DATABASE_URL` | For accounts | Postgres connection string |
 | `JWT_SECRET` | For accounts | 32+ random bytes (`node generate-jwt-secret.js`). Also keys the grade seal and the access-code cookie |
-| `CRON_SECRET` | Optional | Bearer secret for `/api/cron/purge-expired`. The route accepts only `Authorization: Bearer $CRON_SECRET` (Vercel Cron sends it when the variable is set) and returns 401 without it |
+| `CRON_SECRET` | Optional | Bearer secret for `/api/cron/purge-expired` and `/api/cron/enforce-voice-deadlines`. The routes accept only `Authorization: Bearer $CRON_SECRET` (Vercel Cron sends it when the variable is set) and return 401 without it. Set it wherever voice is metered: without it the voice deadline sweep cannot run |
 | `APP_URL` | Optional | Public origin for canonical URLs, Open Graph images and the sitemap. Defaults to `https://calltrainer.tech`; `VERCEL_URL` and preview hosts are never used. Google sign-in has no default: it stays off until `APP_URL` is set, and its redirect URI is built from it, never from the Host header |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Optional | Turns on Continue with Google on `/login` and `/register`. Needs `APP_URL` and `DATABASE_URL` too: without a database Google sign-in stays off. Unset, the button is hidden and `/api/auth/google/*` return 404. See Google sign-in below |
 | `RATE_LIMIT_GOOGLE_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/auth/google/start` and `/callback`. Default 30 per 900 s |
@@ -107,7 +107,7 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Optional | Used by `npm run db:seed` to create a platform admin. `ADMIN_FIRST_NAME` and `ADMIN_LAST_NAME` set its name (default Platform Admin) |
 
 ### Voice engines
-OpenAI Realtime is used whenever an OpenAI key is available. The server mints a 10-minute client secret per call and relays the WebRTC offer through `/api/realtime/sdp`, so the browser never sees your key and the page only connects to its own origin. When ElevenLabs is also set up, the briefing lets each trainee choose, and `VOICE_ENGINE` sets which one is picked first. With neither, calls run in text, which needs no voice keys.
+OpenAI Realtime is used whenever an OpenAI key is available. The browser's WebRTC offer goes to `/api/realtime/sdp`, and the server opens the call at OpenAI with your key (the unified interface), so the browser never holds an OpenAI credential of any kind and the page only connects to its own origin. Because the server owns each call, it ends it too: it hangs the call up when it settles a call with a server reason, when it answers a heartbeat with stop, on a user hang-up, and at a hard deadline of 30 minutes from the start (`HARD_SESSION_CAP_SECONDS`, whatever the plan, Free included) plus 20 seconds of grace. A call whose browser went silent is ended by `/api/cron/enforce-voice-deadlines`, which `vercel.json` runs every minute (Vercel Pro; same `CRON_SECRET` bearer as the purge job), so a provider call outlives its deadline by about a minute at most. With metering off there is no call row and no sweep: the deadline is an in-process timer, best effort only. When ElevenLabs is also set up, the briefing lets each trainee choose, and `VOICE_ENGINE` sets which one is picked first. With neither, calls run in text, which needs no voice keys.
 
 ### ElevenLabs agent setup
 1. In ElevenLabs, create an agent (Agents Platform → Create agent). Any placeholder system prompt and first message will do; they are overridden per call.
@@ -115,7 +115,7 @@ OpenAI Realtime is used whenever an OpenAI key is available. The server mints a 
 3. Copy the agent id into `ELEVENLABS_AGENT_ID`, and create an API key (with Agents access) for `ELEVENLABS_API_KEY`.
 4. If the agent requires authentication (recommended), the app uses a server-minted token, so nothing public is exposed.
 5. Optional: set a `voiceId` per scenario in the editor.
-6. On every ElevenLabs agent (standard and premium), set **Max conversation duration** (`conversation_config.conversation.max_duration_seconds`) to 3600, which matches the longest call the server reserves. Leave the duration override disabled in the Security tab. The server cannot end an ElevenLabs call, and a per-call duration sent by the browser is not trusted, so this agent setting is the only hard stop on provider spend.
+6. On every ElevenLabs agent (standard and premium), set **Max conversation duration** (`conversation_config.conversation.max_duration_seconds`) to 1800, which matches the 30 minute hard ceiling on OpenAI calls. Leave the duration override disabled in the Security tab. The server cannot end an ElevenLabs call, and a per-call duration sent by the browser is not trusted, so this agent setting is the only hard stop on provider spend.
 
 ### Grading and re-grades
 - `/api/evaluate-call` grades the transcript against the persona's rubric with `LLM_MODEL`. Without a key, or when the model call fails, a rules-based grader scores rubric coverage and the debrief marks it "Estimate. Rules-based grade, not AI-graded."

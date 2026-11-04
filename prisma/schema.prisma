@@ -173,6 +173,17 @@ model TrainerSession {
   /// False for a Free call: the plan cap was checked when it started and never stops or clamps it afterwards.
   /// Recorded at mint so a plan change mid-call cannot change the rule the call was started under.
   capEnforced        Boolean  @default(true)
+  /// OpenAI Realtime call id (from the Location header of POST /v1/realtime/calls), stored once by /api/realtime/sdp.
+  /// The server hangs this call up; the browser never holds an OpenAI credential.
+  providerCallId     String?  @unique
+  /// When the provider accepted the server's hangup (or said the call was already gone). Written only after that; never re-sent once set.
+  providerHangupAt   DateTime?
+  /// A hangup attempt in flight. A lease: it expires after PROVIDER_HANGUP_LEASE_MS, so a crashed attempt is retried.
+  providerHangupLeaseAt DateTime?
+  /// Set once, atomically, by the one /api/realtime/sdp request allowed to open the provider call for this mint.
+  providerConnectClaimAt DateTime?
+  /// The validated persona stored at mint. The provider session is built only from this, never from a later request.
+  providerSession    Json?
   usageEntries       UsageEntry[]
   /// Raw transcript turns.
   transcript         Json

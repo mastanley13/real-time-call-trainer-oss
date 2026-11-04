@@ -122,7 +122,7 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 ### 12. Voice: OpenAI Realtime
 1. Set `OPENAI_REALTIME_API_KEY` (or `OPENAI_API_KEY`). In the briefing choose Voice and **Start call**, then allow the mic.
 2. The persona greets you with its opening line; both sides appear in the live transcript; coach cues still arrive; Mute (Space) works; **End & grade** lands on the debrief.
-3. In the browser's network tab, `/api/realtime/session` returns a short-lived client secret, never your API key.
+3. In the browser's network tab, `/api/realtime/session` returns only the model and voice (and a call id and length when metered), and `/api/realtime/sdp` returns only the SDP answer. No OpenAI credential appears in any response.
 4. Without an OpenAI key, `POST /api/realtime/session` returns 503 `realtime_not_configured` and the briefing points you to Text.
 
 ### 13. Voice: ElevenLabs

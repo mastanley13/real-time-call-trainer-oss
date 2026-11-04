@@ -38,7 +38,7 @@ Out of scope:
 
 `OPENAI_API_KEY` is used for the coach, grading, wizard and text caller only while `LLM_BASE_URL` is unset or points at `https://api.openai.com`. With any other base URL the server sends `LLM_API_KEY` or no key at all, so an OpenAI key set for voice never goes to a third-party endpoint.
 
-**Server-minted voice tokens.** The browser never receives a voice provider's API key. `/api/elevenlabs/token` and `/api/realtime/session` require a session, are rate-limited, and mint a short-lived credential for one call: an ElevenLabs conversation token, or an OpenAI Realtime client secret.
+**Server-minted voice tokens.** The browser never receives a voice provider's API key. `/api/elevenlabs/token` and `/api/realtime/session` require a session, are rate-limited, and `/api/elevenlabs/token` mints a short-lived conversation token for one call. OpenAI Realtime hands the browser no credential at all: `/api/realtime/sdp` opens the call with the server's key and keeps the provider call id, so the server can hang the call up at its deadline whatever the browser does.
 
 **SSRF guard on URL import.** The wizard's "Product page" import (`/api/persona/fetch-url`) fetches through `fetchPublicPage`, which:
 

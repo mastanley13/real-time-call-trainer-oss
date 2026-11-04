@@ -432,22 +432,15 @@ describe("caps", () => {
     expect(upstream).not.toHaveBeenCalled();
   });
 
-  it("realtime session: mints with a callId when there is room, and settles the call if the mint fails", async () => {
+  it("realtime session: mints with a callId when there is room, and calls no provider (the sdp route opens the call; see realtime-hangup.test.ts)", async () => {
     addUser("u-1");
     vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ value: "ek_test", expires_at: 9999999999 }), { status: 200 })));
-    const mint = () => realtimeSession(new NextRequest("http://localhost/api/realtime/session", { method: "POST", body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }), headers: { "content-type": "application/json" } }));
-    const ok = await (await mint()).json();
+    const upstream = vi.fn();
+    vi.stubGlobal("fetch", upstream);
+    const ok = await (await realtimeSession(new NextRequest("http://localhost/api/realtime/session", { method: "POST", body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }), headers: { "content-type": "application/json" } }))).json();
     expect(typeof ok.callId).toBe("string");
     expect(session(ok.callId).userId).toBe("u-1");
-    await endCall("u-1", ok.callId, "user_hangup"); // the first call holds all 10 minutes until it ends
-
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 500 })));
-    const bad = await mint();
-    expect(bad.status).toBe(502);
-    const failed = fake.rows("trainerSession").filter((s) => s.id !== ok.callId);
-    expect(failed).toHaveLength(1);
-    expect(failed[0]).toMatchObject({ endReason: "failed_connect", billedMinutes: 0 });
+    expect(upstream).not.toHaveBeenCalled();
   });
 
   it("13: a Pro user with 2 minutes left who talks 5 minutes is stopped at 2m and billed 2", async () => {
@@ -501,9 +494,10 @@ describe("caps", () => {
     fake.seed("organization", { id: "org-1", code: "123", planTier: "team", seatCount: 3, createdAt: MAR10 });
     addUser("rep-b");
     await ensureAllowance(fake.db as never, { organizationId: "org-1" }, at(0));
-    fake.rows("usageAllowance")[0].minutesUsed = 850;
+    // 20 minutes left: the call reserves 20, which is under the 30 minute hard deadline, so the pool is what stops it.
+    fake.rows("usageAllowance")[0].minutesUsed = 880;
     const { result } = await runCall("rep-b", { endAt: 3600 });
-    expect(result).toMatchObject({ billedMinutes: 50, endReason: "cap_reached" });
+    expect(result).toMatchObject({ billedMinutes: 20, endReason: "cap_reached" });
     expect(fake.rows("usageAllowance")[0].minutesUsed).toBe(900);
     expect((await beginCall("rep-b", scn, at(4000))).ok).toBe(false);
   });
