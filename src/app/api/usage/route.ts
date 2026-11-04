@@ -3,7 +3,7 @@ import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { meteringEnabled } from "@/lib/serverConfig";
 import { VOICE_UNAVAILABLE_MESSAGE } from "@/lib/billingUi";
-import { stripeReady, stripeStatus, stripeTestMode } from "@/lib/stripe";
+import { stripeReady, stripeTestMode } from "@/lib/stripe";
 import { usageSummary } from "@/lib/usage";
 
 /**

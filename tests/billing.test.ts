@@ -29,7 +29,7 @@ const PRICES: PriceIds = {
 };
 // What stripe.prices.retrieve returns in these tests, by price id: no network, placeholder ids.
 const priceRow = (id: string, metadata: Record<string, string> | null, extra: Record<string, unknown> = {}) =>
-  ({ id, active: true, type: "recurring", recurring: { usage_type: "licensed" }, product: metadata ? { metadata } : "prod_not_expanded", ...extra });
+  ({ id, active: true, livemode: false, type: "recurring", recurring: { usage_type: "licensed" }, product: metadata ? { metadata } : "prod_not_expanded", ...extra });
 const PRO_META = { ct_plan: "pro", ct_addon: "none", ct_seat_min: "1", ct_voice_minutes: "200", ct_minutes_basis: "user", ct_version: "1" };
 const TEAM_META = { ct_plan: "team", ct_addon: "none", ct_seat_min: "3", ct_voice_minutes: "300", ct_minutes_basis: "seat_pooled", ct_version: "1" };
 const PREMIUM_META = { ct_plan: "addon", ct_addon: "premium_voice", ct_seat_min: "1", ct_voice_minutes: "0", ct_minutes_basis: "none", ct_version: "1" };
@@ -257,8 +257,52 @@ describe("checkout params per plan", () => {
     expect(withCustomer).not.toHaveProperty("customer_email");
     const fresh = buildCheckoutParams({ ...base, plan: "team", seats: 3, organizationId: "org-1", premium: true }, PRICES);
     expect(fresh.customer_email).toBe("owner-1@example.test");
-    expect(fresh.metadata).toMatchObject({ plan: "team", seats: "3", premium: "true", userId: "owner-1", organizationId: "org-1" });
+    expect(fresh.metadata).toMatchObject({ app: "calltrainer", plan: "team", seats: "3", premium: "true", userId: "owner-1", organizationId: "org-1" });
     expect((fresh.subscription_data as { metadata: unknown }).metadata).toEqual(fresh.metadata);
+    expect((fresh.subscription_data as { metadata: Record<string, string> }).metadata.app).toBe("calltrainer");
+    expect(withCustomer.metadata).toMatchObject({ app: "calltrainer" });
+  });
+
+  it("a price whose livemode differs from the configured mode, or has none, is not configured", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const none = { month: undefined, year: undefined };
+    const allRows = (extra: Record<string, unknown>) => Object.fromEntries(Object.entries(PRICE_ROWS).map(([id, row]) => [id, { ...(row as object), ...extra }]));
+    // Test mode server, live price.
+    retrieveFrom(allRows({ livemode: true }));
+    expect(await resolvePriceIds()).toEqual({ pro: none, team: none, premium: none });
+    // A price that does not report livemode fails closed.
+    resetPriceCache();
+    retrieveFrom(allRows({ livemode: undefined }));
+    expect(await resolvePriceIds()).toEqual({ pro: none, team: none, premium: none });
+    // Live mode server: live prices resolve, test prices do not.
+    vi.stubEnv("STRIPE_SECRET_KEY", "sk_live_placeholder");
+    vi.stubEnv("STRIPE_LIVE_MODE", "true");
+    resetPriceCache();
+    retrieveFrom(allRows({ livemode: true }));
+    expect(await resolvePriceIds()).toEqual(PRICES);
+    resetPriceCache();
+    retrieveFrom(allRows({ livemode: false }));
+    const resolved = await resolvePriceIds();
+    expect(resolved).toEqual({ pro: none, team: none, premium: none });
+    // The unresolved slots make checkout answer price_not_configured.
+    expect(() => buildCheckoutParams({ ...base, plan: "pro" }, resolved)).toThrow(expect.objectContaining({ code: "price_not_configured" }));
+  });
+
+  it("a mode change is not served from the price cache", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const none = { month: undefined, year: undefined };
+    const allRows = (livemode: boolean) => Object.fromEntries(Object.entries(PRICE_ROWS).map(([id, row]) => [id, { ...(row as object), livemode }]));
+    // Test mode: test prices resolve and are cached.
+    retrieveFrom(allRows(false));
+    expect(await resolvePriceIds()).toEqual(PRICES);
+    // Flip to live with no cache reset: the same ids are checked again and the test prices fail closed.
+    vi.stubEnv("STRIPE_SECRET_KEY", "sk_live_placeholder");
+    vi.stubEnv("STRIPE_LIVE_MODE", "true");
+    expect(await resolvePriceIds()).toEqual({ pro: none, team: none, premium: none });
+    // Back to test mode: not stuck on the unavailable slots.
+    vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
+    vi.stubEnv("STRIPE_LIVE_MODE", "");
+    expect(await resolvePriceIds()).toEqual(PRICES);
   });
 
   it("reports a missing price instead of sending an empty one", () => {
