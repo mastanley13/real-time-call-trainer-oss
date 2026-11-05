@@ -15,7 +15,7 @@ import type { LiveCue, RubricChip, useCoach } from "./useCoach";
 
 export interface DeckText {
   value: string; onChange: (v: string) => void; onSend: () => void; hungUp: boolean; typing: boolean;
-  /** Who plays the persona, e.g. "Text · AI" or "Text · scripted". Never a model id. */
+  /** Who plays the persona: "Text · AI" or "Text · scripted". Never a model id. */
   caller?: string;
 }
 export interface DeckVoice {

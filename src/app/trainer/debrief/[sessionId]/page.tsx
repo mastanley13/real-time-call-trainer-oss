@@ -98,12 +98,18 @@ export default function DebriefPage() {
       return;
     }
     if (!isAuthenticated) { router.replace("/login"); return; }
+    // The voice label comes from its own route so the session view stays an exact allowlist. It is optional:
+    // a failed lookup only hides the label.
+    const voice: Promise<"premium" | "standard" | null> = fetch(`/api/transcripts/${encodeURIComponent(sessionId)}/voice`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => (d?.voiceUsed === "premium" || d?.voiceUsed === "standard" ? d.voiceUsed : null))
+      .catch(() => null);
     fetch(`/api/transcripts/${sessionId}`)
       .then(async (r) => {
         if (!r.ok) throw new Error(r.status === 404 ? "Session not found." : "Could not load this session.");
         const { session } = await r.json();
         const sc = listScenarios().find((x) => x.id === session.scenarioId);
-        setView({ title: session.scenarioTitle ?? session.scenarioId, scenario: sc, scenarioId: session.scenarioId, role: sc?.role, createdAt: session.createdAt, durationSeconds: session.durationSeconds, transcript: session.transcript, evaluation: session.evaluation, supervisorNotes: session.supervisorNotes, callerName: sc?.aiPersona.name ?? "Caller", local: false, ownerId: session.userId, voiceUsed: session.voiceUsed === "premium" || session.voiceUsed === "standard" ? session.voiceUsed : null });
+        setView({ title: session.scenarioTitle ?? session.scenarioId, scenario: sc, scenarioId: session.scenarioId, role: sc?.role, createdAt: session.createdAt, durationSeconds: session.durationSeconds, transcript: session.transcript, evaluation: session.evaluation, supervisorNotes: session.supervisorNotes, callerName: sc?.aiPersona.name ?? "Caller", local: false, ownerId: session.userId, voiceUsed: await voice });
       })
       .catch((e) => setError(e.message));
   }, [sessionId, capabilities, isLoading, isAuthenticated, router]);
@@ -251,7 +257,7 @@ export default function DebriefPage() {
                 <div className="panel p-4">
                   <p className="label">Live coach</p>
                   <p className="text-sm"><span className="mono">{cues.length}</span> cues · <span className="mono">{cues.filter((c) => c.used).length}</span> used · {view.coach.mode} mode</p>
-                  <p className="mt-1 font-mono text-[11px] text-ink-muted">{view.coach.source === "llm" ? "AI coach" : "rules-based"}{view.coach.p50Ms != null ? ` · p50 ${(view.coach.p50Ms / 1000).toFixed(1)}s` : ""}</p>
+                  <p className="mt-1 font-mono text-[11px] text-ink-muted">{view.coach.source === "llm" ? "AI" : "rules-based"}{view.coach.p50Ms != null ? ` · p50 ${(view.coach.p50Ms / 1000).toFixed(1)}s` : ""}</p>
                 </div>
               )}
 

@@ -21,12 +21,12 @@ const STEPS = [
   { title: "Debrief", body: "Every score cites your own words. Jump to the moment you lost points and retry the call from that turn." },
 ];
 
-// Neutral labels only: no model ids on any page. Provider names stay so self-hosters know which key to set.
+// Provider names only, never model ids: operators pick models with LLM_MODEL and REALTIME_MODEL on the server.
 const MODELS = [
-  { job: "Live coach", model: "AI coach", note: "Per-turn cues and rubric estimate, as validated JSON" },
-  { job: "Grading", model: "AI", note: "Full-transcript rubric grade with verbatim evidence checks" },
-  { job: "Persona wizard", model: "AI", note: "Builds a persona, objections and rubric from your context" },
-  { job: "Voice", model: "OpenAI Realtime or ElevenLabs", note: "OpenAI Realtime over WebRTC, the default when an OpenAI key is set. ElevenLabs Agents also supported" },
+  { job: "Live coach", engine: "Your chat model", note: "Per-turn cues and rubric estimate, as validated JSON" },
+  { job: "Grading", engine: "Your chat model", note: "Full-transcript rubric grade with verbatim evidence checks" },
+  { job: "Persona wizard", engine: "Your chat model", note: "Builds a persona, objections and rubric from your context" },
+  { job: "Voice", engine: "OpenAI Realtime", note: "Over WebRTC, the default when an OpenAI key is set. ElevenLabs Agents also supported" },
 ];
 
 export default function Home() {
@@ -70,15 +70,15 @@ export default function Home() {
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <p className="eyebrow">Under the hood</p>
-              <h2 id="models-h" className="mt-1 text-2xl font-bold">Where AI does the work</h2>
+              <h2 id="models-h" className="mt-1 text-2xl font-bold">What runs each job</h2>
             </div>
-            <p className="max-w-md text-sm text-ink-muted">Coaching, grades, wizard drafts and text-call replies say when AI produced them, or when a rules-based fallback did. Point <span className="mono">LLM_BASE_URL</span> at any OpenAI-compatible API, with its own <span className="mono">LLM_API_KEY</span>, to swap providers.</p>
+            <p className="max-w-md text-sm text-ink-muted">Coaching, grades, wizard drafts and text-call replies say whether AI produced them or a rules-based fallback did. Point <span className="mono">LLM_BASE_URL</span> at any OpenAI-compatible API, with its own <span className="mono">LLM_API_KEY</span>, and set <span className="mono">LLM_MODEL</span> to swap models.</p>
           </div>
           <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {MODELS.map((m) => (
               <div key={m.job} className="rounded-panel border border-line p-4">
                 <p className="label !mb-1">{m.job}</p>
-                <p className="chip-model">{m.model}</p>
+                <p className="chip-model">{m.engine}</p>
                 <p className="mt-2 text-sm text-ink-soft">{m.note}</p>
               </div>
             ))}

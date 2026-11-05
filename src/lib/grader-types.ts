@@ -17,7 +17,10 @@ export const GRADER_VERSIONS = { llm: "llm-v2", heuristic: "heuristic-v2" } as c
 export interface Evaluation {
   method: "llm" | "heuristic";
   graderVersion?: string;
-  /** Model that produced an LLM grade, recorded at grading time. Unset for rules-based grades and older AI grades. */
+  /**
+   * Legacy only: AI grades saved before model ids were removed from user-visible output may still carry one.
+   * New grades never set it, the UI never shows it, and API responses strip it (withoutModelId in gradable.ts).
+   */
   model?: string;
   /** ISO time the grade was produced (set by the API routes). */
   evaluatedAt?: string;
@@ -45,9 +48,8 @@ export function goalStatusOf(ev: Pick<Evaluation, "goalAchievement">): GoalStatu
 export const isLegacyGrader = (ev: Pick<Evaluation, "graderVersion" | "method"> | null | undefined) => !!ev && !ev.graderVersion && ev.method !== "llm";
 
 /**
- * Who produced this grade, for provenance lines: "AI" for AI grades and
- * "rules-based" for the heuristic. The stored model id stays in the record
- * for operators but is never shown to users.
+ * Who produced this grade, for provenance lines: "AI" for model grades and "rules-based" for the heuristic.
+ * Never a model id, even when a legacy grade still carries one.
  */
 export function graderLabel(ev: Pick<Evaluation, "method">): string {
   return ev.method === "llm" ? "AI" : "rules-based";

@@ -8,8 +8,9 @@ import { ScenarioSchema } from "@/lib/scenarios";
 import { LIBRARY } from "@/lib/personas";
 import { evaluateCall } from "@/lib/grader";
 import type { Evaluation } from "@/lib/grader-types";
-import { canRegrade, gradable, gradedNote, isAiGrade } from "@/lib/gradable";
-import { getCapabilities, llmKey } from "@/lib/serverConfig";
+import { canRegrade, gradable, gradedNote, isAiGrade, withoutModelId } from "@/lib/gradable";
+import { getCapabilities, llmKey, llmModel } from "@/lib/serverConfig";
+import { SESSION_VIEW_SELECT, sessionView } from "@/lib/sessionView";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -33,18 +34,11 @@ export async function GET(req: NextRequest, { params }: Params) {
   if (auth instanceof NextResponse) return auth;
   const { id } = await params;
 
-  const session = await prisma.trainerSession.findUnique({ where: { id } });
+  // Allowlisted columns only, and an allowlisted response: realtimeModel, metering fields and future columns never leave.
+  const session = await prisma.trainerSession.findUnique({ where: { id }, select: SESSION_VIEW_SELECT });
   if (!session) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (!(await canAccess(auth.id, session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  // The model id is a server-side cost log and never goes to the browser. The debrief shows only the voice tier.
-  const { realtimeModel, ...visible } = session;
-  return NextResponse.json({ session: { ...visible, voiceUsed: voiceUsedOf({ ...session, realtimeModel }) } });
-}
-
-/** "premium" or "standard" for a voice call (metered, or with a logged model); null for text calls. */
-function voiceUsedOf(s: { allowanceId: string | null; realtimeModel: string | null; engineTier: string }): "premium" | "standard" | null {
-  if (!s.allowanceId && !s.realtimeModel) return null;
-  return s.engineTier === "premium" ? "premium" : "standard";
+  return NextResponse.json({ session: sessionView(session) });
 }
 
 /**
@@ -140,7 +134,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 
   const note = gradedNote(evaluation.note, graded.length, turns.length);
-  const stored: Evaluation = { ...evaluation, ...(note ? { note } : {}), evaluatedAt: new Date().toISOString() };
+  const stored: Evaluation = { ...withoutModelId(evaluation), ...(note ? { note } : {}), evaluatedAt: new Date().toISOString() };
   const previous = session.evaluation as { method?: string; model?: string } | null;
   try {
     await prisma.$transaction([
@@ -170,7 +164,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
             previousMethod: previous?.method ?? null,
             previousModel: previous?.model ?? null,
             overallScore: stored.overallScore,
-            model: stored.model ?? null,
+            // Server-side audit only: the operator can still see which model graded, the browser never does.
+            model: llmModel(),
             graderVersion: stored.graderVersion ?? null,
           } satisfies Prisma.InputJsonValue,
         },

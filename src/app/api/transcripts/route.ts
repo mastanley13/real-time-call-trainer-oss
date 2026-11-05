@@ -5,7 +5,7 @@ import { requireAuth, isDemoUser } from "@/lib/apiAuth";
 import { rateLimit, readJsonLimited } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { verifySeal } from "@/lib/gradeSeal";
-import { readMintReceipt } from "@/lib/mintReceipt";
+import { isReceiptReplay, receiptRowId, verifyMintReceipt } from "@/lib/mintReceipt";
 import { HAS_TRANSCRIPT } from "@/lib/usage";
 
 const Body = z.object({
@@ -24,8 +24,9 @@ const Body = z.object({
   evaluation: z.record(z.unknown()).optional(),
   seal: z.string().max(128).optional(),
   /**
-   * Signed receipt from /api/realtime/session. The logged model comes from inside a receipt that verifies for
-   * this user; a model id sent by the client is never read (unknown keys such as `realtimeModel` are stripped).
+   * Encrypted receipt from /api/realtime/session. The logged model comes from inside a receipt that opens for
+   * this user AND for `sessionId` (the call id the receipt was minted for), once per call. A model id sent by
+   * the client is never read (unknown keys such as `realtimeModel` are stripped).
    */
   realtimeReceipt: z.string().max(512).optional(),
 });
@@ -66,16 +67,15 @@ export async function POST(req: NextRequest) {
   const sealed = !!body.evaluation && verifySeal({ userId: dbUser.id, scenarioId: body.scenario.id, transcript: body.transcript, evaluation: body.evaluation }, body.seal);
   const grade = sealed ? GradeFields.safeParse(body.evaluation) : null;
   const ev = grade?.success ? grade.data : undefined;
+  // Cost log only (not billing; engineTier is). A receipt counts only for the call it was minted for: it must name
+  // exactly this sessionId, so a receipt from another call, or on a text save, logs nothing.
+  const receiptModel = verifyMintReceipt(body.realtimeReceipt, dbUser.id, body.sessionId);
+  let receiptLogged = false;
   try {
     // A metered voice call already has its row (created when the call started, empty transcript). Fill it so the
     // call has one row. durationSeconds is display only: billing never reads it, so a client cannot change what it is charged.
-    const metered = body.callId ? await prisma.trainerSession.findUnique({ where: { id: body.callId }, select: { userId: true, transcript: true, realtimeModel: true } }) : null;
+    const metered = body.callId ? await prisma.trainerSession.findUnique({ where: { id: body.callId }, select: { userId: true, transcript: true } }) : null;
     const fillExisting = !!body.callId && !!metered && metered.userId === dbUser.id && Array.isArray(metered.transcript) && metered.transcript.length === 0;
-    // A receipt minted for one metered call cannot label another: its signed call id must match the call being saved.
-    const receipt = readMintReceipt(body.realtimeReceipt, dbUser.id);
-    const receiptFits = !!receipt && (!receipt.callId || receipt.callId === body.callId);
-    // The mint route already wrote a metered call's model and tier on the server; the receipt never overrides that.
-    const minted = fillExisting && !!metered?.realtimeModel;
     const fields = {
       realtimeSessionId: body.sessionId,
       scenarioId: body.scenario.id,
@@ -88,18 +88,45 @@ export async function POST(req: NextRequest) {
       overallScore: ev ? Math.round(ev.overallScore) : null,
       grade: ev?.grade ?? null,
       goalAchieved: ev?.goalAchievement.achieved ?? null,
-      // Cost log only (not billing). Null for text calls and for any receipt that does not verify or belongs to another call.
-      ...(minted ? {} : { realtimeModel: receiptFits ? receipt!.model : null }),
-      // Effective voice tier for a call the meter did not record (unmetered installs): from the signed receipt only.
-      ...(!fillExisting && receiptFits && receipt!.tier ? { engineTier: receipt!.tier } : {}),
     };
-    const created = fillExisting
-      ? await prisma.trainerSession.update({ where: { id: body.callId }, data: fields })
-      : await prisma.trainerSession.create({ data: { userId: dbUser.id, organizationId: dbUser.organizationId, ...fields } });
+    const owner = { userId: dbUser.id, organizationId: dbUser.organizationId };
+    // Where a verified receipt may log its model. A metered call's receipt is bound to its metering call id, so the
+    // model belongs on that call's own row (the one beginCall created) and nowhere else. An unmetered call has no
+    // row yet, so it logs on the row whose primary key is receiptRowId(sessionId).
+    const meteredReceiptRow = !receiptModel ? null
+      : body.callId === body.sessionId ? metered
+      : await prisma.trainerSession.findUnique({ where: { id: body.sessionId }, select: { userId: true } });
+    let created: { id: string };
+    if (fillExisting) {
+      // The model is not part of the fill; it is set once, below, so a fill can never overwrite or repeat it.
+      created = await prisma.trainerSession.update({ where: { id: body.callId }, data: fields });
+    } else if (receiptModel && !meteredReceiptRow) {
+      // Single use: the row's primary key comes from the receipt's call id, so a second save of the same
+      // receipt is a unique violation. That save is kept, without a model.
+      try {
+        created = await prisma.trainerSession.create({ data: { id: receiptRowId(body.sessionId), ...owner, ...fields, realtimeModel: receiptModel } });
+        receiptLogged = true;
+      } catch (e) {
+        if (!isReceiptReplay(e)) throw e;
+        created = await prisma.trainerSession.create({ data: { ...owner, ...fields } });
+      }
+    } else {
+      created = await prisma.trainerSession.create({ data: { ...owner, ...fields } });
+    }
+    if (receiptModel && meteredReceiptRow && meteredReceiptRow.userId === dbUser.id) {
+      // Single use on the metered row: the model is written only while it is still unset, in one conditional
+      // update, so a replayed or concurrent save of the same receipt changes nothing.
+      const logged = await prisma.trainerSession.updateMany({ where: { id: body.sessionId, userId: dbUser.id, realtimeModel: null }, data: { realtimeModel: receiptModel } });
+      receiptLogged = logged.count === 1;
+    }
     await prisma.auditEvent.create({
       data: {
         userId: dbUser.id, action: "session.saved", resource: created.id,
-        metadata: { scenarioId: body.scenario.id, overallScore: ev?.overallScore ?? null, ...(body.evaluation && !ev ? { gradeRejected: true } : {}) },
+        metadata: {
+          scenarioId: body.scenario.id, overallScore: ev?.overallScore ?? null,
+          ...(body.evaluation && !ev ? { gradeRejected: true } : {}),
+          ...(body.realtimeReceipt && !receiptLogged ? { receiptRejected: true } : {}),
+        },
       },
     });
     return NextResponse.json({ id: created.id, graded: !!ev });

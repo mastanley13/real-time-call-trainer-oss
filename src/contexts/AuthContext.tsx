@@ -41,6 +41,7 @@ export interface Capabilities {
   realtime?: boolean;
   /** Voice engines in the server's preference order; empty or missing means text only. */
   voiceEngines?: ("openai" | "elevenlabs")[];
+  /** An AI model is configured for the coach, grading, wizard and text caller. /api/config never names the model. */
   llm: boolean;
   database: boolean;
   /** Stripe test-mode billing is on. Absent or false hides the Billing tab. */
@@ -49,10 +50,6 @@ export interface Capabilities {
   hosted?: boolean;
   /** Premium Voice can be bought on this server. Absent or false hides every Premium buy control. */
   premiumOnSale?: boolean;
-  /**
-   * Provider of the AI for coach, grading and wizard. Shown by name ("OpenAI") so self-hosters know which key to
-   * set. /api/config never sends model ids; the UI says "AI".
-   */
   provider?: "openai" | "custom";
 }
 

@@ -13,7 +13,7 @@ import {
   type RubricCriterion,
   type Scenario,
 } from "./scenarios";
-import { llmKey, llmModel } from "./serverConfig";
+import { llmKey } from "./serverConfig";
 import { CONTEXT_LABELS, type FieldSource, type WizardInput, type WizardOutput } from "./wizard-types";
 
 /**
@@ -348,7 +348,7 @@ async function generateWithLlm(input: WizardInput): Promise<WizardOutput> {
     },
     family,
   );
-  return { scenario, sources: verifySources(out.sources as Record<string, unknown>, input), method: "llm", model: llmModel() };
+  return { scenario, sources: verifySources(out.sources as Record<string, unknown>, input), method: "llm" };
 }
 
 // ---------------------------------------------------------------------------

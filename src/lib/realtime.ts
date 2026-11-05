@@ -25,7 +25,7 @@ export const VOICE_ENGINE_LABELS: Record<VoiceEngine, string> = { openai: "OpenA
 export const REALTIME_VOICES = ["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"] as const;
 export type RealtimeVoice = (typeof REALTIME_VOICES)[number];
 
-/* The Realtime model id per voice tier lives in src/lib/voiceModels.ts (server-only), not here. */
+/* The Realtime model per voice tier (and REALTIME_MODEL) is resolved in src/lib/voiceModels.ts, on the server. */
 export const DEFAULT_REALTIME_VOICE: RealtimeVoice = "marin";
 export const DEFAULT_TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe";
 
@@ -225,13 +225,14 @@ export function applyRealtimeEvent(asm: TurnAssembler, ev: RealtimeServerEvent, 
 }
 
 /**
- * Upstream status from client_secrets -> a message an operator can act on. Never includes the upstream body
- * or the model id, because the trainee sees it. Env var names are fine; the provider name stays.
+ * Upstream status from client_secrets -> a message an operator can act on. The browser sees this, so it never
+ * includes the upstream body or the configured model id; it names the env vars to check instead.
  */
 export function realtimeUpstreamMessage(status: number): string {
   if (status === 401) return "OpenAI rejected the API key. Check OPENAI_API_KEY.";
   if (status === 403) return "This OpenAI key cannot use the Realtime API. Check the project's model access in the OpenAI dashboard.";
-  if (status === 404 || status === 400) return "OpenAI did not accept the voice session settings. Check that REALTIME_MODEL_STANDARD, REALTIME_MODEL_PREMIUM and REALTIME_VOICE are valid.";
+  // The voice tier picks the model (src/lib/voiceModels.ts), so name every variable that can set it, never its value.
+  if (status === 404 || status === 400) return "OpenAI did not accept the voice session settings. Check that REALTIME_MODEL_STANDARD, REALTIME_MODEL, REALTIME_MODEL_PREMIUM and REALTIME_VOICE are valid.";
   if (status === 429) return "OpenAI rate-limited this key or it is out of quota. Check your plan and billing, then try again.";
   return "OpenAI's Realtime API had a problem starting the call. Try again in a minute, or switch to Text.";
 }

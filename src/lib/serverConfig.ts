@@ -35,8 +35,9 @@ export const premiumOnSale = (env: Record<string, string | undefined> = process.
 type Env = Record<string, string | undefined>;
 
 /*
- * The OpenAI Realtime model for a session is picked by voice tier (src/lib/voiceTier.ts mintVoiceTier,
- * src/lib/voiceModels.ts resolveTierModel), in /api/realtime/session. It is never sent to the browser.
+ * The OpenAI Realtime model for a session is picked by the organization's voice tier in /api/realtime/session
+ * (orgVoiceTierForUser in src/lib/voiceTierServer.ts, resolveTierModel in src/lib/voiceModels.ts), not by the
+ * metered engine. The engine still drives minute caps and billing (src/lib/usage.ts) and the ElevenLabs agent below.
  */
 
 /**
@@ -50,7 +51,12 @@ export function elevenLabsAgentFor(engine: "premium" | "standard", env: Env = pr
   return { agentId: engine === "standard" && standard ? standard : main, standardAvailable: Boolean(standard) };
 }
 
-/** Runtime capability flags. Everything is optional; the UI degrades gracefully. */
+/**
+ * Runtime capability flags. Everything is optional; the UI degrades gracefully. /api/config returns this object
+ * unauthenticated, so it carries booleans and provider names only. Model ids (LLM_MODEL and the REALTIME_MODEL
+ * variables) stay on the server: read them with llmModel() and voiceModelFor() (src/lib/voiceTierServer.ts) where a
+ * provider request needs them.
+ */
 export function getCapabilities() {
   const elevenlabs = Boolean(process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_AGENT_ID);
   const realtime = Boolean(realtimeKey());
@@ -70,10 +76,6 @@ export function getCapabilities() {
     hosted: billingActive(),
     /** Premium Voice is on sale (PREMIUM_VOICE_ON_SALE=true with billing on). False hides every Premium buy control. */
     premiumOnSale: premiumOnSale(),
-    /*
-     * No model ids here: this object is the public /api/config payload. LLM_MODEL and the Realtime models stay
-     * on the server (llmModel(), src/lib/voiceModels.ts). The UI says "AI" and names only the provider.
-     */
     /** "openai" when LLM_BASE_URL is unset or points at api.openai.com; the URL itself is never exposed. */
     provider: isOpenAiBaseUrl(llmBaseUrl()) ? ("openai" as const) : ("custom" as const),
   };

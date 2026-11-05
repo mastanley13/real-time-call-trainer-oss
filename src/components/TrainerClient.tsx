@@ -6,7 +6,7 @@ import { ConversationProvider, useConversation } from "@elevenlabs/react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Scenario, ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { listScenarios } from "@/lib/scenarioStore";
-import { getLocalSession, saveSession, type CoachLog, type StoredTurn } from "@/lib/sessionStore";
+import { getLocalSession, saveSession, type CoachLog, type MintedCall, type StoredTurn } from "@/lib/sessionStore";
 import type { Evaluation } from "@/lib/grader-types";
 import type { CoachMode } from "@/lib/coach-types";
 import type { AgentState } from "@/components/CallOrb";
@@ -132,7 +132,7 @@ export default function TrainerClient() {
   /** The voice tier this call was minted on (a static label for the whole call) and the next-call notice. */
   const [voiceInfo, setVoiceInfo] = useState<VoiceInfo | null>(null);
   const onVoiceInfo = useCallback((info: VoiceInfo) => setVoiceInfo(info), []);
-  /** Who wrote the latest text-call reply: the configured AI, or the scripted fallback. */
+  /** Who wrote the latest text-call reply: the configured model, or the scripted fallback. */
   const [callerSource, setCallerSource] = useState<"llm" | "scripted" | null>(null);
   const [busy, setBusy] = useState(false);
   const [hungUp, setHungUp] = useState(false);
@@ -142,8 +142,8 @@ export default function TrainerClient() {
   const startedAt = useRef(0);
   const endVoice = useRef<() => void>(() => {});
   const finishing = useRef(false);
-  /** Signed mint receipt for this OpenAI Realtime call; the server logs the model inside it on save. Never shown. */
-  const realtimeReceiptRef = useRef<string | null>(null);
+  /** The OpenAI Realtime call the server minted (sessionId, receipt, metering callId); saved with the call. Never shown. */
+  const mintedCallRef = useRef<MintedCall | null>(null);
   const turnsRef = useRef<StoredTurn[]>([]);
   const [replyTalking, setReplyTalking] = useState(false);
   const talkTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -309,9 +309,9 @@ export default function TrainerClient() {
       cues: c.cues.map((q) => ({ triggerTurn: q.triggerTurn, type: q.type, title: q.title, used: q.status === "used" })),
     };
     const useServer = !!capabilities?.database && !capabilities?.demoMode;
-    const realtimeReceipt = mode === "voice" ? realtimeReceiptRef.current ?? undefined : undefined;
-    realtimeReceiptRef.current = null;
-    const id = await saveSession({ mode, durationSeconds: duration, scenario, transcript, evaluation, coach: coachLog }, useServer, { realtimeReceipt });
+    const call = mode === "voice" ? mintedCallRef.current ?? undefined : undefined;
+    mintedCallRef.current = null;
+    const id = await saveSession({ mode, durationSeconds: duration, scenario, transcript, evaluation, coach: coachLog }, useServer, { call });
     router.push(`/trainer/debrief/${id}`);
   }, [scenario, mode, capabilities, router, coachMode]);
 
@@ -326,7 +326,7 @@ export default function TrainerClient() {
     turnsRef.current = seed;
     setTurns(seed);
     finishing.current = false;
-    realtimeReceiptRef.current = null;
+    mintedCallRef.current = null;
     setVoiceInfo(null);
     setReplyTalking(false);
     setHungUp(false);
@@ -403,7 +403,7 @@ export default function TrainerClient() {
     const src = coach.result?.source;
     const latency = coach.p50 != null ? ` · p50 ${coach.p50 < 100 ? "<0.1" : (coach.p50 / 1000).toFixed(1)}s` : "";
     if (src === "heuristic" || (!src && !capabilities?.llm)) return `Coach: rules-based${latency}`;
-    return `AI coach${latency}`;
+    return `Coach: AI${latency}`;
   }, [coachMode, coach.result, coach.p50, capabilities]);
 
   if (!scenario || !capabilities) return <PageSkeleton rows={2} />;
@@ -431,7 +431,7 @@ export default function TrainerClient() {
       ),
     };
     // Coach cues stay on the trainee's screen: neither engine is ever sent coach output.
-    if (engine === "openai") return <RealtimeVoiceSession {...voiceProps} onReceipt={(r) => { realtimeReceiptRef.current = r; }} />;
+    if (engine === "openai") return <RealtimeVoiceSession {...voiceProps} onMinted={(c) => { mintedCallRef.current = c; }} />;
     return (
       <ConversationProvider>
         <VoiceSession {...voiceProps} />
@@ -445,7 +445,7 @@ export default function TrainerClient() {
     : hungUp ? { label: `${name} hung up`, tone: "caution" as const }
     : busy ? { label: `${name} is typing…`, tone: "signal" as const }
     : { label: "Your turn", tone: "ok" as const };
-  // Name what is playing the persona: AI, or the scripted fallback (no key, or the AI call failed). Never a model id.
+  // Name what is playing the persona: AI, or the scripted fallback (no key, or the model call failed). Never a model id.
   const caller = (callerSource ?? (capabilities.llm ? "llm" : "scripted")) === "llm" ? "Text · AI" : "Text · scripted";
   return (
     <Deck {...shared} orbState={textOrb} status={status} onEnd={hangUp}

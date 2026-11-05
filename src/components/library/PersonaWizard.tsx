@@ -52,7 +52,7 @@ function SourceChip({ src }: { src?: FieldSource }) {
   const [pinned, setPinned] = useState(false);
   const pressing = useRef(false);
   if (!src) return null;
-  const label = src.kind === "chips" ? "Your picks" : src.kind === "model" ? "AI" : CONTEXT_LABELS[src.kind];
+  const label = src.kind === "chips" ? "Your picks" : src.kind === "model" ? "Model" : CONTEXT_LABELS[src.kind];
   return (
     <span className="relative inline-flex" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <button type="button" className="inline-flex cursor-help items-center rounded border border-primary/40 bg-primary-soft/50 px-1.5 font-mono text-[10px] font-medium text-primary"

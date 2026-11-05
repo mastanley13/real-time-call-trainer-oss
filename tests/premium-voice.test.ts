@@ -15,7 +15,6 @@ import { beginCall, endCall, ensureAllowance, heartbeat, premiumMintInfo, resolv
 import { PREMIUM_STATUSES, premiumBlock, premiumEntitled, premiumMinutesCapFor, premiumMinutesLeft } from "@/lib/premiumVoice";
 import { addonQuantitySync, addonSyncRequest, invoiceSubscriptionId, parseLiveSubscription, periodEndOf, PRICE_ENV, resetPriceCache } from "@/lib/billing";
 import { setPremiumEventSink, type PremiumEvent } from "@/lib/billingEvents";
-import { readMintReceipt, signMintReceipt } from "@/lib/mintReceipt";
 import { PREMIUM_DOM_EVENT, resetPremiumUpsellSeen, trackPremiumUpsell } from "@/lib/premiumEventTypes";
 import { stripeApi, StripeApiError } from "@/lib/stripe";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
@@ -23,6 +22,7 @@ import { POST as realtimeSession } from "@/app/api/realtime/session/route";
 import { POST as webhook } from "@/app/api/stripe/webhook/route";
 import { POST as saveTranscript } from "@/app/api/transcripts/route";
 import { GET as getTranscript } from "@/app/api/transcripts/[id]/route";
+import { GET as getVoice } from "@/app/api/transcripts/[id]/voice/route";
 
 const MAR10 = new Date("2026-03-10T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -196,10 +196,10 @@ describe("mint check: the next call is Standard whenever Premium is not entitled
     expect(r).toMatchObject({ engine: "standard", maxSeconds: 3600 });
     expect(r.premium).toMatchObject({ source: null, cap: 0, fallback: "not_on_sale" });
     expect(allowanceOf("u-1")).toMatchObject({ minutesCap: 200, premiumMinutesCap: 0 });
-    // Comped is independent of the flag.
+    // Comped is independent of the flag: the route mints the Premium model; billing stays on the standard engine.
     const c = await begin("u-1", 5, { compedPremium: true });
-    expect(c).toMatchObject({ engine: "premium" });
-    expect(c.premium.source).toBe("comped");
+    expect(c).toMatchObject({ engine: "standard", maxSeconds: 3600 });
+    expect(c.premium).toMatchObject({ source: "comped", fallback: null });
   });
 
   it("the past_due base plan keeps its grace (still Pro minutes) while Premium is off", async () => {
@@ -330,7 +330,7 @@ describe("comped overrides billing", () => {
     const body = await (await mint()).json();
     expect(models[0]).toBe("model-premium-test");
     expect(body).toMatchObject({ voiceTier: "premium", nextCallStandard: false });
-    expect(session(body.callId)).toMatchObject({ engineTier: "premium", premiumReservedMinutes: 0 });
+    expect(session(body.callId)).toMatchObject({ engineTier: "standard", premiumReservedMinutes: 0 });
     // Comped is not a paid fallback.
     expect(events.some((e) => e.name === "premium_fallback_to_standard")).toBe(false);
   });
@@ -352,7 +352,7 @@ describe("comped overrides billing", () => {
     const body = await (await mint()).json();
     expect(models[0]).toBe("model-premium-test");
     expect(body).toMatchObject({ voiceTier: "premium", maxSeconds: 3600 });
-    expect(session(body.callId)).toMatchObject({ engineTier: "premium", premiumReservedMinutes: 0 });
+    expect(session(body.callId)).toMatchObject({ engineTier: "standard", premiumReservedMinutes: 0 });
     expect(events.some((e) => e.name === "premium_fallback_to_standard")).toBe(false);
   });
 
@@ -458,7 +458,12 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
     const end = new Date(base.getTime() + 2 * DAY);
     live = liveSub("active", { premium: 1, cancelAtPeriodEnd: true, periodEnd: Math.floor(end.getTime() / 1000) });
     await deliver("customer.subscription.updated", { id: "sub_test_pro", customer: "cus_test_pro" });
-    expect((await begin("u-1")).engine).toBe("premium");
+    const before = await begin("u-1");
+    expect(before.engine).toBe("premium");
+    // End that call normally. Left open, the stale-call sweep two days later would settle it as an overrun and block voice.
+    await heartbeat("u-1", before.callId, "connected", at(0));
+    await endCall("u-1", before.callId, "user_hangup", at(120));
+    expect(user().voiceBlockedUntil ?? null).toBeNull();
     vi.setSystemTime(new Date(end.getTime() + 60_000));
     const r = await beginCall("u-1", scn, new Date(end.getTime() + 60_000));
     if (!r.ok) throw new Error(r.error);
@@ -482,7 +487,7 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
     expect(org()).toMatchObject({ planTier: "free", premiumVoice: false, voiceModelComped: true, voiceModelTier: "premium" });
     // The mint route reads comped from the database (the route passes compedPremium); paid Premium is gone.
     const r = await begin("u-1", 0, { compedPremium: true });
-    expect(r).toMatchObject({ engine: "premium" });
+    expect(r).toMatchObject({ engine: "standard" });
     expect(r.premium.source).toBe("comped");
   });
 
@@ -584,47 +589,77 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
 
 // ---- Session logging: model and effective tier, with receipt integrity -----------------------------------
 
-describe("session log: realtimeModel and effective tier", () => {
-  it("receipts carry the tier and call id sealed: readable only by the server, for the same user", () => {
-    const r = signMintReceipt("u-1", "model-x", Date.now(), JWT, { tier: "premium", callId: "call-1" })!;
-    expect(readMintReceipt(r, "u-1", Date.now(), JWT)).toEqual({ model: "model-x", tier: "premium", callId: "call-1" });
-    const raw = Buffer.from(r.slice(r.indexOf(".") + 1), "base64url");
-    raw[raw.length - 1] ^= 0x01;
-    expect(readMintReceipt(`${r.slice(0, r.indexOf(".") + 1)}${raw.toString("base64url")}`, "u-1", Date.now(), JWT)).toBeNull();
-    expect(readMintReceipt(r, "u-2", Date.now(), JWT)).toBeNull();
+describe("session log: model provenance from the mr3 receipt, tier label from its own route", () => {
+  let models: string[];
+  beforeEach(() => {
+    models = [];
+    vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
+    vi.stubEnv("REALTIME_MODEL", "");
+    vi.stubEnv("REALTIME_MODEL_PREMIUM", "model-premium-test");
+    vi.stubEnv("REALTIME_MODEL_STANDARD", "model-standard-test");
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      models.push(JSON.parse(init.body as string).session.model);
+      return new Response(JSON.stringify({ value: "ek_test", expires_at: 9999999999 }), { status: 200 });
+    }));
   });
-
-  const save = (body: Record<string, unknown>) => saveTranscript(new NextRequest("http://localhost/api/transcripts", {
+  const mint = async () => (await realtimeSession(new NextRequest("http://localhost/api/realtime/session", { method: "POST", body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }), headers: { "content-type": "application/json" } }))).json();
+  const save = (minted: { sessionId: string; callId?: string; receipt?: string }) => saveTranscript(new NextRequest("http://localhost/api/transcripts", {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sessionId: "s-1", transcript: [{ role: "user", text: "Hi" }], scenario: { id: scn.id }, ...body }),
+    body: JSON.stringify({ sessionId: minted.sessionId, callId: minted.callId, transcript: [{ role: "user", text: "Hi" }], scenario: { id: scn.id }, realtimeReceipt: minted.receipt }),
   }));
+  const voiceOf = async (id: string) => {
+    const res = await getVoice(new NextRequest(`http://localhost/api/transcripts/${id}/voice`), { params: Promise.resolve({ id }) });
+    return { status: res.status, text: await res.text() };
+  };
 
-  it("a receipt minted for one call cannot relabel another, and the mint-time log is never overwritten", async () => {
+  it("a paid Premium call: the receipt logs the Premium model once on the call's own row; the label says Premium", async () => {
     addUser("u-1", proPremium());
-    const a = await begin("u-1");
-    fake.rows("trainerSession").find((s) => s.id === a.callId)!.realtimeModel = "model-standard-test";
-    const premiumReceipt = signMintReceipt("u-1", "model-premium-test", Date.now(), JWT, { tier: "premium", callId: "some-other-call" });
-    expect((await save({ callId: a.callId, realtimeReceipt: premiumReceipt })).status).toBe(200);
-    expect(session(a.callId)).toMatchObject({ realtimeModel: "model-standard-test", engineTier: "premium" });
+    const minted = await mint();
+    expect(models).toEqual(["model-premium-test"]);
+    expect(minted.sessionId).toBe(minted.callId);
+    // Nothing is logged at mint; the model arrives with the save, from the sealed receipt only.
+    expect(session(minted.callId)).toMatchObject({ engineTier: "premium", realtimeModel: null });
+    expect((await save(minted)).status).toBe(200);
+    expect(session(minted.callId)).toMatchObject({ engineTier: "premium", realtimeModel: "model-premium-test" });
+    const v = await voiceOf(minted.callId);
+    expect(v).toEqual({ status: 200, text: JSON.stringify({ voiceUsed: "premium" }) });
+    // The session view itself stays the exact allowlist: no tier, no model.
+    const detail = await (await getTranscript(new NextRequest(`http://localhost/api/transcripts/${minted.callId}`), { params: Promise.resolve({ id: minted.callId }) })).text();
+    expect(detail).not.toMatch(/model-premium-test|realtimeModel|engineTier|voiceUsed|"premium"/);
   });
 
-  it("an unmetered call logs the model and tier from a receipt with no call id", async () => {
+  it("a comped call stays on the standard billing engine, and the label still says Premium (from the logged model)", async () => {
+    addUser("u-1", { planTier: "pro", organization: { voiceModelTier: "premium", voiceModelComped: true } });
+    const minted = await mint();
+    expect(models).toEqual(["model-premium-test"]);
+    await save(minted);
+    expect(session(minted.callId)).toMatchObject({ engineTier: "standard", premiumReservedMinutes: 0, realtimeModel: "model-premium-test" });
+    expect(JSON.parse((await voiceOf(minted.callId)).text).voiceUsed).toBe("premium");
+  });
+
+  it("a Standard call reads Standard; a text session reads null; another trainee gets 403 and a manager gets the label", async () => {
     addUser("u-1");
-    const receipt = signMintReceipt("u-1", "model-premium-test", Date.now(), JWT, { tier: "premium" });
-    const res = await save({ realtimeReceipt: receipt });
-    const { id } = await res.json();
-    expect(session(id)).toMatchObject({ realtimeModel: "model-premium-test", engineTier: "premium" });
+    const minted = await mint();
+    await save(minted);
+    expect(JSON.parse((await voiceOf(minted.callId)).text).voiceUsed).toBe("standard");
+    const text = fake.seed("trainerSession", { userId: "u-1", organizationId: "org-1", scenarioId: scn.id, transcript: [{ role: "user", text: "Hi" }] });
+    expect(JSON.parse((await voiceOf(text.id)).text).voiceUsed).toBeNull();
+    addUser("p-1", { role: "trainee" });
+    mocks.authId = "p-1";
+    expect((await voiceOf(minted.callId)).status).toBe(403);
+    addUser("m-1", { role: "manager" });
+    mocks.authId = "m-1";
+    expect(JSON.parse((await voiceOf(minted.callId)).text).voiceUsed).toBe("standard");
+    expect((await voiceOf("missing-id")).status).toBe(404);
   });
 
-  it("GET /api/transcripts/[id] shows the voice used, never the model id", async () => {
+  it("call A's receipt does not label call B", async () => {
     addUser("u-1", proPremium());
-    const a = await begin("u-1");
-    Object.assign(session(a.callId), { realtimeModel: "model-premium-test", transcript: [{ role: "user", text: "Hi" }] });
-    const res = await getTranscript(new NextRequest(`http://localhost/api/transcripts/${a.callId}`), { params: Promise.resolve({ id: a.callId }) });
-    const text = await res.text();
-    expect(JSON.parse(text).session.voiceUsed).toBe("premium");
-    expect(text).not.toContain("model-premium-test");
-    expect(JSON.parse(text).session).not.toHaveProperty("realtimeModel");
+    const a = await mint();
+    vi.setSystemTime(at(5));
+    const b = await mint();
+    await save({ ...b, receipt: a.receipt });
+    expect(session(b.callId).realtimeModel).toBeNull();
   });
 });
 

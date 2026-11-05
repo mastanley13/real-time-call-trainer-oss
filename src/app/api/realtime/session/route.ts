@@ -1,16 +1,17 @@
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { meteringEnabled } from "@/lib/serverConfig";
-import { beginCall, endCall, recordMintedModel, type PremiumMintInfo, type VoiceEngine } from "@/lib/usage";
+import { beginCall, endCall, type PremiumMintInfo } from "@/lib/usage";
 import { emitPremiumEvent } from "@/lib/billingEvents";
+import { mintVoiceTier } from "@/lib/voiceTier";
 import { capReached, dailySessionLimit, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
 import { realtimeKey, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
-import { mintVoiceTier } from "@/lib/voiceTier";
 import { orgVoiceTierForUser, voiceModelFor } from "@/lib/voiceTierServer";
-import { signMintReceipt } from "@/lib/mintReceipt";
+import { sealMintReceipt } from "@/lib/mintReceipt";
 
 const Body = z.object({ scenario: ScenarioSchema });
 
@@ -23,8 +24,10 @@ const SECRET_TTL_SEC = 600;
  * Docs: https://developers.openai.com/api/reference/resources/realtime/subresources/client_secrets/methods/create
  *
  * The model is picked here, on the server, from the organization's voice tier (Standard or Premium, comped gate,
- * src/lib/voiceTier.ts) and is never sent to the browser. `receipt` (src/lib/mintReceipt.ts) is signed proof of
- * that model; the client hands it back when it saves the session so the server can log the model it really minted.
+ * src/lib/voiceTier.ts) or the verified paid Premium entitlement (mintVoiceTier); the client never chooses it, and the
+ * response never names it (a metered call gets only the tier label). `receipt`
+ * (src/lib/mintReceipt.ts) is that model, encrypted and bound to this user and this call's `sessionId`; the client saves the call under that sessionId with the receipt, so the server
+ * can log the model it really minted, once, on that call only.
  */
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
@@ -58,11 +61,12 @@ export async function POST(req: NextRequest) {
   const orgTier = await orgVoiceTierForUser(auth.id);
 
   // Cap check before minting (rule 11). The returned callId keys every later metering write for this call.
-  // The engine is chosen here, per session, from the database: paid Premium while the add-on is entitled (active or
-  // trialing, period not over) and at least one whole Premium minute is left, else Standard for this session. A running
-  // call is never switched to another engine; a paid Premium call's maxSeconds is min(call allowance, Premium left).
+  // The engine is chosen here, per session, from the database: paid Premium only while PREMIUM_VOICE_ON_SALE is exactly
+  // "true", the add-on is entitled (active or trialing, quantity above 0, period not over) and at least one whole Premium
+  // minute is left, else Standard for this session. A running call is never switched to another engine; a paid Premium
+  // call's maxSeconds is min(call allowance, Premium left). The engine drives caps and billing (TrainerSession.engineTier);
+  // a comped call stays on the standard billing engine and uses no paid Premium minutes.
   let callId: string | undefined;
-  let engine: VoiceEngine = "standard";
   let maxSeconds = SECRET_TTL_SEC;
   let premium: PremiumMintInfo | undefined;
   if (meteringEnabled()) {
@@ -78,18 +82,22 @@ export async function POST(req: NextRequest) {
     if (!begun.ok && begun.error === "daily_session_limit") return dailySessionLimit();
     if (!begun.ok) return voiceUnavailable();
     callId = begun.callId;
-    engine = begun.engine;
     maxSeconds = begun.maxSeconds;
     premium = begun.premium;
   }
 
-  // A comped org on Premium gets the Premium model. A metered call on the paid Premium engine gets the Premium model it
-  // pays for. Everything else is Standard.
-  const tier = mintVoiceTier(orgTier, { metered: Boolean(callId), engine });
+  // The model, read from the database on every call; the client never chooses it. Premium only when the org is comped
+  // AND set to premium (effectiveVoiceTier), or when the meter started this call on the paid Premium entitlement
+  // (premium.source === "paid", which needs the exact sale flag and an entitled add-on). A stored add-on flag alone, or
+  // any other engine choice, never reaches the Premium model.
+  const tier = mintVoiceTier(orgTier, { paidPremium: premium?.source === "paid" });
   const model = voiceModelFor(tier);
   if (premium?.fallback) {
     await emitPremiumEvent({ name: "premium_fallback_to_standard", subject: "user", subjectId: auth.id, reason: premium.fallback });
   }
+  // One id per call, fixed before the secret is minted: the metering call id when metered, else a fresh UUID.
+  // The receipt is bound to it and the client saves the call under it, so a receipt can't move to another call.
+  const sessionId = callId ?? randomUUID();
   const voice = realtimeVoice(scenario.aiPersona.realtimeVoice);
   const session = {
     type: "realtime",
@@ -131,15 +139,15 @@ export async function POST(req: NextRequest) {
     const data = (await res.json().catch(() => null)) as { value?: unknown; expires_at?: unknown } | null;
     if (!data || typeof data.value !== "string" || !data.value) throw new Error("no client secret in response");
     const expiresAt = typeof data.expires_at === "number" ? data.expires_at : Math.floor(Date.now() / 1000) + SECRET_TTL_SEC;
-    // A metered call's row gets the model straight from the server (cost log); the effective tier is already its engineTier.
-    if (callId) await recordMintedModel(auth.id, callId, model).catch(() => console.error("[realtime/session] model log failed"));
-    // No model id in the response: the browser does not need it. The receipt carries it, signed and opaque to the client,
-    // with the tier and call id. A metered call's browser also gets the tier label and whether the next call drops to
-    // Standard (the hosted Premium Voice UI); an unmetered self-hosted call's answer is unchanged.
-    const receipt = signMintReceipt(auth.id, model, Date.now(), undefined, { tier, callId });
+    // The model id stays server-side: the browser needs only the secret, and the SDP relay never names a model.
+    // The receipt is the minted model encrypted (AES-GCM) for this user and this call (sessionId), opaque to the
+    // browser. POST /api/transcripts logs the model only from a receipt that opens for the sessionId it is saved
+    // under, and only once. A metered call's browser also gets the tier label and whether the next call drops to
+    // Standard (the hosted Premium Voice UI); an unmetered call's answer keeps upstream's exact keys.
+    const receipt = sealMintReceipt(auth.id, sessionId, model);
     return NextResponse.json(
       {
-        clientSecret: data.value, expiresAt, voice,
+        clientSecret: data.value, expiresAt, voice, sessionId,
         ...(callId ? { callId, maxSeconds, voiceTier: tier, nextCallStandard: premium?.nextCallStandard ?? false } : {}),
         ...(receipt ? { receipt } : {}),
       },

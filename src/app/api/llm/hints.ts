@@ -1,7 +1,7 @@
 /**
  * Plain-language results for POST /api/llm/check. Pure and client-safe so the
  * Models page can share the result type. Hints name env vars, never values:
- * no key, no endpoint URL, no provider error text.
+ * no key, no endpoint URL, no model id, no provider error text.
  */
 
 export type CheckFailure = "no_key" | "http" | "timeout" | "network" | "bad_response";
@@ -10,7 +10,6 @@ export interface LlmCheckResult {
   ok: boolean;
   /** Round-trip time of the test call; null when no call was made or it never answered. */
   latencyMs: number | null;
-  /* No model id: LLM_MODEL stays on the server, like the key and the base URL. */
   /** Provider HTTP status; null when there was no response. */
   status: number | null;
   hint: string;
@@ -18,9 +17,8 @@ export interface LlmCheckResult {
 
 export const CHECK_TIMEOUT_MS = 15_000;
 
-/** Never names the model id: the Models page shows these hints to users. */
 export function checkHint({ ok, status, failure }: { ok: boolean; status: number | null; failure?: CheckFailure }): string {
-  if (ok) return "Connected. The key works and the AI answered.";
+  if (ok) return "Connected. The key works and the configured model answered.";
   switch (failure) {
     case "no_key":
       return "No API key is set. Add LLM_API_KEY to the server environment and restart. Until then the app uses the rules-based coach and grader, the scripted caller and the template wizard.";

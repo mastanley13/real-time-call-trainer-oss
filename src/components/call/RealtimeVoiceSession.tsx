@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Scenario } from "@/lib/scenarios";
-import type { StoredTurn } from "@/lib/sessionStore";
+import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
 import { CallMeter, type MeterEndReason } from "@/lib/callMeter";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
@@ -25,8 +25,11 @@ interface Handlers {
   onEnded: () => void;
   onError: (msg: string) => void;
   onView: (v: CallView) => void;
-  /** The server's signed mint receipt, handed back on save so it can log the model it minted. Opaque here. */
-  onReceipt: (receipt: string) => void;
+  /**
+   * Which call the server minted: its sessionId, the receipt bound to it, and the metering callId when metered.
+   * The call is saved with all three, so the server logs the minted model on this call's own row. Opaque here.
+   */
+  onMinted: (c: MintedCall) => void;
   /** The voice tier this call was minted on, and whether the next call drops to Standard. Labels only, no model id. */
   onVoiceInfo: (info: VoiceInfo) => void;
 }
@@ -92,7 +95,7 @@ class RealtimeCall {
     mic.getAudioTracks().forEach((t) => (t.enabled = !this.view.muted));
     this.set({ phase: "connecting" });
 
-    let secret: { clientSecret?: string; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; voiceTier?: unknown; nextCallStandard?: unknown };
+    let secret: { clientSecret?: string; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown };
     try {
       const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario }) });
       secret = await res.json().catch(() => ({}));
@@ -101,7 +104,13 @@ class RealtimeCall {
       return this.fail("Could not reach the server to start the voice call. Check your connection, then try again.");
     }
     if (this.closed) return;
-    if (typeof secret.receipt === "string") this.h.onReceipt(secret.receipt);
+    if (typeof secret.sessionId === "string" && secret.clientSecret) {
+      this.h.onMinted({
+        sessionId: secret.sessionId,
+        ...(typeof secret.receipt === "string" ? { receipt: secret.receipt } : {}),
+        ...(typeof secret.callId === "string" ? { callId: secret.callId } : {}),
+      });
+    }
     const info = voiceInfoFrom(secret);
     if (info) this.h.onVoiceInfo(info);
     this.meter = new CallMeter(secret.callId, {
@@ -287,14 +296,14 @@ class RealtimeCall {
 }
 
 /** Voice session on the OpenAI Realtime API. Drop-in for the ElevenLabs VoiceSession. */
-export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onReceipt, onVoiceInfo, registerEnd, render }: {
+export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onMinted, onVoiceInfo, registerEnd, render }: {
   scenario: Scenario;
   active: boolean;
   grading: boolean;
   onTurn: (t: StoredTurn) => void;
   onEnded: () => void;
   onError: (msg: string) => void;
-  onReceipt?: (receipt: string) => void;
+  onMinted?: (c: MintedCall) => void;
   onVoiceInfo?: (info: VoiceInfo) => void;
   registerEnd: (fn: () => void) => void;
   render: (v: VoiceRender) => React.ReactNode;
@@ -302,8 +311,8 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   const [view, setView] = useState<CallView>({ phase: "mic", speaking: false, muted: false });
   const callRef = useRef<RealtimeCall | null>(null);
   // Latest callbacks without restarting the call when the parent re-renders.
-  const cb = useRef({ onTurn, onEnded, onError, onReceipt, onVoiceInfo });
-  useEffect(() => { cb.current = { onTurn, onEnded, onError, onReceipt, onVoiceInfo }; });
+  const cb = useRef({ onTurn, onEnded, onError, onMinted, onVoiceInfo });
+  useEffect(() => { cb.current = { onTurn, onEnded, onError, onMinted, onVoiceInfo }; });
 
   useEffect(() => {
     if (!active) return;
@@ -312,7 +321,7 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
       onEnded: () => cb.current.onEnded(),
       onError: (m) => cb.current.onError(m),
       onView: (v) => { if (callRef.current === call) setView(v); },
-      onReceipt: (r) => cb.current.onReceipt?.(r),
+      onMinted: (c) => cb.current.onMinted?.(c),
       onVoiceInfo: (i) => cb.current.onVoiceInfo?.(i),
     });
     callRef.current = call;

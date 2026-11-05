@@ -40,12 +40,13 @@ export function canEditVoiceTier(role: string | null | undefined, isPlatformAdmi
 }
 
 /**
- * The tier /api/realtime/session mints a call on. The organization's effective tier (comped gate) decides,
- * with one exception that keeps today's billing intact: a metered call that the usage meter started on the
- * paid Premium Voice engine (entitled add-on with Premium minutes left, decided by beginCall from the database) keeps the
- * Premium model it is paying for. Without metering the engine is always "premium" by default, so it is ignored.
- * The engine and its minute caps are untouched here; this only picks the model.
+ * The tier /api/realtime/session mints a call on. Exactly two ways onto Premium:
+ * - the organization is comped AND set to premium (`orgTier`, from effectiveVoiceTier), or
+ * - the usage meter started this call on the paid Premium Voice entitlement (`paidPremium`): PREMIUM_VOICE_ON_SALE
+ *   exactly "true", an active or trialing subscription with the add-on and a period that has not ended, and at least
+ *   one Premium minute left. beginCall decides that from the database; a stored add-on flag alone never qualifies.
+ * Everything else is Standard. This only picks the model; minute caps and engineTier are the meter's.
  */
-export function mintVoiceTier(orgTier: VoiceTier, paid: { metered: boolean; engine: "premium" | "standard" }): VoiceTier {
-  return orgTier === "premium" || (paid.metered && paid.engine === "premium") ? "premium" : "standard";
+export function mintVoiceTier(orgTier: VoiceTier, paid: { paidPremium: boolean }): VoiceTier {
+  return orgTier === "premium" || paid.paidPremium ? "premium" : "standard";
 }

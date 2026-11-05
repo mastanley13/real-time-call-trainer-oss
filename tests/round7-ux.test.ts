@@ -500,11 +500,24 @@ describe("5. focus rings on the billing controls", () => {
     for (const cls of ["has-[:focus-visible]:outline", "has-[:focus-visible]:outline-2", "has-[:focus-visible]:outline-offset-2", "has-[:focus-visible]:outline-primary"]) expect(chip).toContain(cls);
   });
 
-  it("the Premium Voice checkbox keeps the global focus ring: nothing removes its outline", () => {
+  it("every Premium Voice control keeps a visible focus ring: nothing interactive removes its outline", () => {
     expect(css).toMatch(/:focus-visible \{ @apply outline-2 outline-offset-2 outline-primary; \}/);
-    // The checkbox now lives in its own component, which renders in both billing states.
-    const box = read("src/components/settings/PremiumVoiceControl.tsx").split("\n").find((l) => l.includes('type="checkbox"'))!;
-    expect(box).not.toMatch(/outline-(none|0)|appearance-none|sr-only/);
+    const control = read("src/components/settings/PremiumVoiceControl.tsx");
+    // Buttons and the native checkboxes rely on the global ring, so no class on them may remove it. The only
+    // outline-none in the add-on row sits on programmatic focus targets (tabIndex={-1} headings and status lines).
+    for (const line of control.split("\n").filter((l) => /outline-(none|0)\b|appearance-none/.test(l))) {
+      expect(line, line.trim()).toContain("tabIndex={-1}");
+      expect(line).not.toMatch(/<(button|input|a)\b/);
+    }
+    // The seat box uses .input, which drops the outline, so it carries the explicit 2px primary ring itself.
+    const seatBox = control.slice(control.indexOf('id="premium-seats"'), control.indexOf("aria-describedby=\"premium-seats-help\""));
+    for (const c of ["focus-visible:outline", "focus-visible:outline-2", "focus-visible:outline-offset-2", "focus-visible:outline-primary"]) expect(seatBox).toContain(c);
+    // The new-buyer Premium checkbox (billing settings and the checkout step) is a plain visible native checkbox.
+    for (const file of ["src/components/settings/BillingClient.tsx", "src/components/CheckoutStartClient.tsx"]) {
+      const boxes = read(file).split("\n").filter((l) => l.includes('type="checkbox"'));
+      expect(boxes.length, file).toBeGreaterThan(0);
+      for (const box of boxes) expect(box).not.toMatch(/outline-(none|0)|appearance-none|sr-only/);
+    }
   });
 
   it("the seats field has an explicit 2px primary outline, because .input drops the outline and keeps only a border change", () => {

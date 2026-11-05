@@ -72,7 +72,7 @@ export default function ModelsClient() {
       <header>
         <p className="eyebrow">Settings</p>
         <h1 className="mt-1 text-3xl font-bold">Models</h1>
-        <p className="mt-2 max-w-2xl text-ink-soft">Each AI job in the app, whether AI runs it now, and what takes over without a working key. Keys and endpoint URLs stay on the server and never appear here.</p>
+        <p className="mt-2 max-w-2xl text-ink-soft">Each AI job in the app, whether AI runs it, and what takes over without a working key. Keys, model ids and endpoint URLs stay on the server and never appear here.</p>
       </header>
 
       <section className="panel p-4 sm:p-5" aria-labelledby="provider-h">
@@ -86,8 +86,8 @@ export default function ModelsClient() {
             <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-6 gap-y-2 text-sm">
               <dt className="text-ink-muted">API key</dt>
               <dd className="flex items-center gap-2"><span className={`lamp ${keySet ? "lamp-ok" : "lamp-off"}`} aria-hidden />{keySet ? "Set on the server" : "Not set"}</dd>
-              <dt className="text-ink-muted">AI</dt>
-              <dd><span className="chip-model">{keySet ? "Configured" : "Off"}</span></dd>
+              <dt className="text-ink-muted">Model</dt>
+              <dd>{keySet ? <>Set by <code className="kbd">LLM_MODEL</code> on the server</> : "Not in use"}</dd>
             </dl>
           </div>
           {/* aria-disabled, not disabled, so keyboard focus stays on the button while the check runs. */}
@@ -97,7 +97,7 @@ export default function ModelsClient() {
           </button>
         </div>
         <div role="status" aria-live="polite"><CheckResult check={check} keySet={keySet} /></div>
-        <p className="mt-4 text-xs text-ink-muted">The check sends one tiny request (a single output token) with the server&rsquo;s key and settings. You can run it 6 times every 10 minutes.</p>
+        <p className="mt-4 text-xs text-ink-muted">The check sends one tiny request (a single output token) with the server&rsquo;s key and model. You can run it 6 times every 10 minutes.</p>
       </section>
 
       <section aria-labelledby="jobs-h" className="space-y-3">
@@ -150,7 +150,7 @@ export default function ModelsClient() {
                 </div>
                 <p className="mt-1 flex items-center gap-2 text-sm"><span className={`lamp ${v.available ? "lamp-ok" : "lamp-off"}`} aria-hidden />{v.available ? "Ready for voice calls" : "Not set up"}</p>
                 <p className="mt-1 text-xs text-ink-muted">
-                  {!v.available ? v.setup : v.id === "elevenlabs" ? "The voice and language are chosen in your ElevenLabs agent." : v.id === "realtime" ? "Speaks as the persona and transcribes you, live in the browser." : "Plays the persona on voice calls."}
+                  {!v.available ? v.setup : v.id === "elevenlabs" ? "The voice, language and model are chosen in your ElevenLabs agent." : v.id === "realtime" ? "Speaks as the persona and transcribes you, live in the browser." : "Plays the persona on voice calls."}
                 </p>
               </div>
             </li>
@@ -161,7 +161,7 @@ export default function ModelsClient() {
 
       <section className="panel p-4 sm:p-5" aria-labelledby="nokey-h">
         <h2 id="nokey-h" className="label">When there&rsquo;s no working key</h2>
-        <p className="text-sm text-ink-soft">Practice keeps working. With no key, every job above uses its fallback. With a key that fails, only the failed request falls back, and the next one tries the AI again. Rules-based grades show as estimates on the debrief, and you can re-grade them with AI once the key works.</p>
+        <p className="text-sm text-ink-soft">Practice keeps working. With no key, every job above uses its fallback. With a key that fails, only the failed request falls back, and the next one tries the model again. Rules-based grades show as estimates on the debrief, and you can re-grade them with AI once the key works.</p>
         <p className="mt-3 text-sm text-ink-soft">To turn AI on, set <code className="kbd">LLM_API_KEY</code> on the server and restart it. <code className="kbd">LLM_MODEL</code> picks the model and <code className="kbd">LLM_BASE_URL</code> points at any OpenAI-compatible endpoint. The README has the details.</p>
       </section>
     </div>

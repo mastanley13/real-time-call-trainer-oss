@@ -209,7 +209,7 @@ export default function TeamPage() {
         {notice && <p className="rounded-lg border border-ok/40 bg-ok-soft px-3 py-2 text-sm text-ink">{notice}</p>}
       </div>
 
-      {/* Renders nothing unless the team is comped for Premium voice quality, or the viewer is a platform admin. */}
+      {/* Renders nothing unless the viewer can change it: the owner of a comped team, or a platform admin. */}
       {!data.sample && !local && capabilities?.realtime && <VoicePanel />}
 
       <TeamKpis kpis={data.kpis} days={data.days} />

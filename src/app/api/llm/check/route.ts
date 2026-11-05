@@ -19,9 +19,10 @@ function limited(retryAfterMs: number, what: string) {
   );
 }
 
-/** Built field by field so the model id (or anything else) can never ride along into the response. */
+/** Builds the response field by field, so nothing beyond ok, latency, status and the hint can reach the browser. */
 function result(r: Omit<LlmCheckResult, "hint">, failure?: CheckFailure) {
-  return NextResponse.json({ ok: r.ok, latencyMs: r.latencyMs, status: r.status, hint: checkHint({ ok: r.ok, status: r.status, failure }) } satisfies LlmCheckResult);
+  const body: LlmCheckResult = { ok: r.ok, latencyMs: r.latencyMs, status: r.status, hint: checkHint({ ok: r.ok, status: r.status, failure }) };
+  return NextResponse.json(body);
 }
 
 /**

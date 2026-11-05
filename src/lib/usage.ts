@@ -7,7 +7,7 @@ import { premiumMinutesCapFor, premiumMinutesLeft } from "./premiumVoice";
 import {
   CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, MAX_CONNECT_LAG_SECONDS, MAX_RESERVE_MINUTES,
   DAILY_SESSION_MINT_CAP, MIN_PREMIUM_SECONDS, OVERRUN_GRACE_SECONDS, PREMIUM_MINUTES_PER_UNIT, VOICE_BLOCK_SECONDS,
-  capFor, effectivePlan, isPlanTier, maxMinutesAfter, midCallCapApplies, periodFor, settleCall, splitAcrossBoundary,
+  capFor, effectivePlan, maxMinutesAfter, midCallCapApplies, periodFor, settleCall, splitAcrossBoundary,
   type CallEndReasonId, type CallOutcome, type PlanTier,
 } from "./usagePlan";
 
@@ -78,8 +78,6 @@ export interface Resolved {
   /** remaining minus what open calls have reserved: what a new call can take. */
   available: number;
 }
-
-const planOf = (v: unknown): PlanTier => (isPlanTier(v) ? v : "free");
 
 /**
  * A past_due row with no recorded start (accounts that were past_due before pastDueSince existed) starts its grace
@@ -357,7 +355,8 @@ const RESERVE_ATTEMPTS = 5;
  * of them. `standardAvailable: false` means the server has no standard engine configured: a call that is not entitled
  * to Premium is then refused rather than run on Premium for free. `compedPremium: true` (a comped organization on the
  * Premium tier, read from the database by the mint route) runs Premium without drawing on the paid Premium minutes:
- * comped overrides billing, so its call keeps the normal reservation and is never clamped to Premium minutes.
+ * comped overrides billing, so its call stays on the standard billing engine, keeps the normal reservation and is never
+ * clamped to Premium minutes; the mint route picks the Premium model for it.
  */
 export async function beginCall(userId: string, scenario: ScenarioInfo, now = new Date(), opts: { standardAvailable?: boolean; compedPremium?: boolean } = {}): Promise<BeginResult> {
   return runMetered(async (tx) => {
@@ -389,10 +388,12 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
       // last minutes, even if that holds up to half a minute more than is left.
       const wanted = Math.min(Math.max(1, Math.ceil(r.available)), MAX_RESERVE_MINUTES);
       const comped = opts.compedPremium === true;
-      const { engine, premiumMinutes } = comped ? { engine: "premium" as const, premiumMinutes: 0 } : chooseEngine(r, wanted);
+      // Comped overrides billing: the call runs the Premium model (the route decides that) on the standard billing
+      // engine, holds no paid Premium minutes and keeps the normal reservation. engineTier stays the billing engine.
+      const { engine, premiumMinutes } = comped ? { engine: "standard" as const, premiumMinutes: 0 } : chooseEngine(r, wanted);
       // A paid Premium call may use only the Premium minutes it holds, so that share is its reservation (and maxSeconds):
-      // min(the normal call allowance, the Premium minutes left). A comped call keeps the normal reservation.
-      const reserve = engine === "premium" && !comped ? premiumMinutes : wanted;
+      // min(the normal call allowance, the Premium minutes left).
+      const reserve = engine === "premium" ? premiumMinutes : wanted;
       if (engine === "standard" && opts.standardAvailable === false) return { ok: false, error: "standard_unavailable" } as const;
       const premium = premiumMintInfo(r, engine, premiumMinutes, comped);
       const claimed = await tx.usageAllowance.updateMany({
@@ -425,14 +426,6 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
     }
     return { ok: false, error: "minutes_reserved" } as const;
   });
-}
-
-/**
- * Cost log: the OpenAI Realtime model this metered call was minted with, written by the mint route itself (never from
- * the browser). Only the caller's own row, and only once. The effective tier is the row's engineTier, set by beginCall.
- */
-export async function recordMintedModel(userId: string, callId: string, model: string): Promise<void> {
-  await prisma.trainerSession.updateMany({ where: { id: callId, userId, realtimeModel: null }, data: { realtimeModel: model.slice(0, 80) } });
 }
 
 // ---- Server-side clock ------------------------------------------------------------------------

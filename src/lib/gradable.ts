@@ -38,6 +38,17 @@ export function isAiGrade(evaluation: unknown): boolean {
 }
 
 /**
+ * A stored evaluation without the legacy `model` field, for API responses. AI grades saved before model ids were
+ * removed from user-visible output may still carry one in the database; it must not reach the browser.
+ */
+export function withoutModelId<T>(evaluation: T): T {
+  if (!evaluation || typeof evaluation !== "object" || Array.isArray(evaluation) || !("model" in evaluation)) return evaluation;
+  const { model: _drop, ...rest } = evaluation as Record<string, unknown>;
+  void _drop;
+  return rest as T;
+}
+
+/**
  * Managers and owners of the session's org, and platform admins, can always re-grade it.
  * The session's own trainee can re-grade only while it has no AI grade, so a rep can't
  * re-roll an AI score that team views and assignment completion read.
