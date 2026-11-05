@@ -14,8 +14,13 @@ export const PRO_MINUTES = 200;
 export const TEAM_MINUTES_PER_SEAT = 300;
 export const TEAM_MIN_SEATS = 3;
 export const TEAM_MAX_SEATS = 500;
-/** Premium voice may use at most this share of the plan's minutes. */
-export const PREMIUM_VOICE_SHARE = 0.6;
+/**
+ * Premium minutes per entitlement unit each month: Pro has one unit, Team has min(add-on quantity, seats), pooled.
+ * They come out of the plan's minutes (not on top), reset with the plan period, never roll over, never overage.
+ */
+export const PREMIUM_MINUTES_PER_UNIT = 40;
+/** A Premium call needs at least one whole Premium minute (60 seconds) left at mint; otherwise it starts on Standard. */
+export const MIN_PREMIUM_SECONDS = 60;
 
 /** A call longer than this is ended by the server regardless of the cap. */
 export const MAX_CALL_SECONDS = 24 * 60 * 60;
@@ -83,8 +88,22 @@ export function midCallCapApplies(plan: PlanTier): boolean {
   return plan !== "free";
 }
 
-export function premiumVoiceCap(planCap: number): number {
-  return Math.floor(planCap * PREMIUM_VOICE_SHARE);
+/**
+ * Entitlement units: Pro is 1 while the add-on quantity is above 0. Team is min(add-on quantity, seats), so a seat
+ * count that dropped below the add-on quantity (or an add-on that lags a seat increase) never grants more than paid for.
+ */
+export function premiumUnits(plan: PlanTier, addonQuantity: number, seats = 1): number {
+  const qty = Math.max(0, Math.floor(addonQuantity || 0));
+  if (qty <= 0) return 0;
+  if (plan === "pro") return 1;
+  if (plan === "team") return Math.max(0, Math.min(qty, Math.floor(seats || 0)));
+  return 0;
+}
+
+/** Premium minutes a period for this many units: a flat 40 each. Never more than the plan's own minutes. */
+export function premiumVoiceCap(units: number, planCap = Number.POSITIVE_INFINITY): number {
+  const u = Math.max(0, Math.floor(units || 0));
+  return Math.max(0, Math.min(u * PREMIUM_MINUTES_PER_UNIT, Math.floor(planCap)));
 }
 
 // ---- Rounding and call outcome -------------------------------------------------------------

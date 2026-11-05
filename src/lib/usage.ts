@@ -1,12 +1,13 @@
 import "server-only";
 import type { Prisma, TrainerSession, UsageAllowance } from "@prisma/client";
 import { prisma } from "./db";
-import { billingActive } from "./serverConfig";
+import { billingActive, premiumOnSale } from "./serverConfig";
 import { storedPlanEntitled } from "./subscriptionStatus";
+import { premiumMinutesCapFor, premiumMinutesLeft } from "./premiumVoice";
 import {
   CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, MAX_CONNECT_LAG_SECONDS, MAX_RESERVE_MINUTES,
-  DAILY_SESSION_MINT_CAP, OVERRUN_GRACE_SECONDS, VOICE_BLOCK_SECONDS,
-  capFor, effectivePlan, isPlanTier, maxMinutesAfter, midCallCapApplies, periodFor, premiumVoiceCap, settleCall, splitAcrossBoundary,
+  DAILY_SESSION_MINT_CAP, MIN_PREMIUM_SECONDS, OVERRUN_GRACE_SECONDS, PREMIUM_MINUTES_PER_UNIT, VOICE_BLOCK_SECONDS,
+  capFor, effectivePlan, isPlanTier, maxMinutesAfter, midCallCapApplies, periodFor, settleCall, splitAcrossBoundary,
   type CallEndReasonId, type CallOutcome, type PlanTier,
 } from "./usagePlan";
 
@@ -64,7 +65,12 @@ export interface Resolved {
   /** True when minutes come from the organization's Team pool. */
   pooled: boolean;
   plan: PlanTier;
+  /** Entitled to paid Premium right now: the allowance has Premium minutes this period (premiumMinutesCap above 0). */
   premiumVoice: boolean;
+  /** The add-on flag is stored on the billing subject, entitled or not. Used to tell a fallback from "never bought". */
+  premiumConfigured: boolean;
+  /** PREMIUM_VOICE_ON_SALE is on (with billing). Off means no paid Premium at mint, whatever the subscription says. */
+  premiumSaleOpen: boolean;
   /** Free members only: minutes already used this period from a Team pool that has ended. Counts against the cap. */
   usedElsewhere: number;
   /** Cap minus used: what the plan still has this period. */
@@ -101,35 +107,43 @@ async function stampPastDue<T extends { subscriptionStatus: string | null; pastD
  * and a plan change keeps minutesUsed; only a new period resets it, with no rollover.
  */
 
+const PREMIUM_FIELDS = { premiumVoice: true, premiumVoiceQuantity: true, subscriptionPeriodEnd: true } as const;
+
 export async function ensureAllowance(db: Tx, subject: Subject, now: Date, depth = 0): Promise<UsageAllowance> {
   let plan: PlanTier;
   let cap: number;
+  let premiumCap: number;
   let anchor: Date;
   let existing: UsageAllowance | null;
   if ("userId" in subject) {
-    const loaded = await db.user.findUniqueOrThrow({ where: { id: subject.userId }, select: { planTier: true, subscriptionStatus: true, stripeSubscriptionId: true, pastDueSince: true, usageAnchorAt: true } });
+    const loaded = await db.user.findUniqueOrThrow({ where: { id: subject.userId }, select: { planTier: true, subscriptionStatus: true, stripeSubscriptionId: true, pastDueSince: true, usageAnchorAt: true, ...PREMIUM_FIELDS } });
     const user = await stampPastDue(db, "user", subject.userId, loaded, now);
     plan = effectivePlan(storedPlanEntitled(user, now) ? user.planTier : "free", billingActive());
     cap = capFor(plan);
+    // Read from the database on every resolve (so at every mint): the stricter Premium rule, no past_due grace, and
+    // paid Premium only while PREMIUM_VOICE_ON_SALE is exactly "true". Comped Premium does not come through here.
+    premiumCap = premiumOnSale() ? premiumMinutesCapFor(plan, user, now, 1, cap) : 0;
     anchor = user.usageAnchorAt;
     existing = await db.usageAllowance.findUnique({ where: { userId: subject.userId } });
   } else {
-    const loadedOrg = await db.organization.findUniqueOrThrow({ where: { id: subject.organizationId }, select: { planTier: true, subscriptionStatus: true, stripeSubscriptionId: true, pastDueSince: true, seatCount: true, createdAt: true } });
+    const loadedOrg = await db.organization.findUniqueOrThrow({ where: { id: subject.organizationId }, select: { planTier: true, subscriptionStatus: true, stripeSubscriptionId: true, pastDueSince: true, seatCount: true, createdAt: true, ...PREMIUM_FIELDS } });
     const org = await stampPastDue(db, "organization", subject.organizationId, loadedOrg, now);
     plan = org.planTier === "team" && storedPlanEntitled(org, now) && billingActive() ? "team" : "free";
     cap = capFor(plan, org.seatCount);
+    premiumCap = premiumOnSale() ? premiumMinutesCapFor(plan, org, now, org.seatCount, cap) : 0;
     anchor = org.createdAt;
     existing = await db.usageAllowance.findUnique({ where: { organizationId: subject.organizationId } });
   }
   const period = periodFor(anchor, now);
   if (!existing) {
     return db.usageAllowance.create({
-      data: { ...subject, planTier: plan, minutesCap: cap, anchorAt: anchor, periodStart: period.start, periodEnd: period.end, minutesUsed: 0 },
+      data: { ...subject, planTier: plan, minutesCap: cap, premiumMinutesCap: premiumCap, anchorAt: anchor, periodStart: period.start, periodEnd: period.end, minutesUsed: 0 },
     });
   }
   const data: Prisma.UsageAllowanceUpdateInput = {};
   if (existing.planTier !== plan) data.planTier = plan;
   if (existing.minutesCap !== cap) data.minutesCap = cap;
+  if (existing.premiumMinutesCap !== premiumCap) data.premiumMinutesCap = premiumCap;
   if (existing.anchorAt.getTime() !== anchor.getTime()) data.anchorAt = anchor;
   // Periods only move forward: a caller whose clock reading is slightly behind a rollover that just committed
   // (a settlement retried after one) keeps the newer period instead of rolling it back.
@@ -137,7 +151,7 @@ export async function ensureAllowance(db: Tx, subject: Subject, now: Date, depth
     // A new period starts clean, except that calls still open from the old one may run into it: each holds
     // the minutes it can still use here (its carry), so nothing else can take them before it settles.
     // Only one caller wins the swap on periodStart, so the carry is computed and written once.
-    const carry = await openCarry(db, existing, period.start, cap);
+    const carry = await openCarry(db, existing, period.start, cap, premiumCap);
     const won = await db.usageAllowance.updateMany({
       where: { id: existing.id, periodStart: existing.periodStart, version: existing.version },
       data: {
@@ -167,9 +181,8 @@ export async function ensureAllowance(db: Tx, subject: Subject, now: Date, depth
  * What each open call of this allowance holds in the period starting at `boundary`: the minutes it can still
  * use after that moment, taken in start order until the new cap (and the Premium limit) is used up.
  */
-async function openCarry(db: Tx, existing: UsageAllowance, boundary: Date, cap: number) {
+async function openCarry(db: Tx, existing: UsageAllowance, boundary: Date, cap: number, premiumCap: number) {
   const open = await db.trainerSession.findMany({ where: { allowanceId: existing.id, endedAt: null }, orderBy: { createdAt: "asc" } });
-  const premiumCap = premiumVoiceCap(cap);
   let minutes = 0;
   let premium = 0;
   const calls: { id: string; minutes: number; premium: number }[] = [];
@@ -208,9 +221,13 @@ export async function resolveAllowance(db: Tx, userId: string, now: Date): Promi
     allowance,
     pooled,
     plan,
-    // The add-on follows paid access: once the plan is Free (grace ran out, or the status is not entitled) it is off,
-    // even though the stored flag stays true until the next webhook.
-    premiumVoice: pooled ? org.premiumVoice : plan === "pro" && user.premiumVoice,
+    // Premium follows the stricter add-on rule ensureAllowance just applied from the database (active or trialing, add-on
+    // quantity above 0, period end in the future): no Premium minutes this period means no Premium for the next call,
+    // even while the base plan is still inside its past_due grace or the stored flag is still true.
+    premiumVoice: allowance.premiumMinutesCap > 0,
+    // The stored flag stays until the next webhook, so a lapsed plan with it still set is a fallback, not "never bought".
+    premiumConfigured: pooled ? !!org.premiumVoice : !!user.premiumVoice,
+    premiumSaleOpen: premiumOnSale(),
     usedElsewhere,
     remaining: roundMinutes(Math.max(0, allowance.minutesCap - used)),
     available: roundMinutes(Math.max(0, allowance.minutesCap - used - allowance.minutesReserved)),
@@ -271,19 +288,53 @@ export function checkCap(r: Pick<Resolved, "remaining">): { ok: true } | { ok: f
 export type VoiceEngine = "premium" | "standard";
 
 /**
- * Which engine the NEXT minted session uses, and how many Premium minutes it holds. Premium needs the add-on
- * and a free share of the 60% Premium limit: used plus reserved by open calls, so concurrent calls cannot all
- * pick Premium. A premium call holds at most what is left of that share (up to its own reservation). beginCall makes
- * that share the call's whole reservation: the provider session cannot change engine mid-call, so the call is
- * stopped when its Premium minutes run out instead of drifting onto the standard rate.
+ * Which engine the NEXT minted session uses, and how many Premium minutes it holds. Premium needs the add-on entitlement
+ * (premiumMinutesCap above 0, re-derived from the database at this mint) and at least one whole Premium minute
+ * (MIN_PREMIUM_SECONDS) not used and not held by open calls, so concurrent calls cannot all pick Premium. A premium call
+ * holds at most what is left (up to its own reservation). beginCall makes that the call's whole reservation, so its
+ * maxSeconds is min(the normal call allowance, the Premium seconds left): the provider session cannot change engine
+ * mid-call, and the call is never moved onto another model.
  */
 export function chooseEngine(
-  r: Pick<Resolved, "premiumVoice"> & { allowance: Pick<UsageAllowance, "minutesCap" | "premiumMinutesUsed" | "premiumMinutesReserved"> },
+  r: Pick<Resolved, "premiumVoice"> & { allowance: Pick<UsageAllowance, "premiumMinutesCap" | "premiumMinutesUsed" | "premiumMinutesReserved"> },
   reserve: number,
 ): { engine: VoiceEngine; premiumMinutes: number } {
   if (!r.premiumVoice) return { engine: "standard", premiumMinutes: 0 };
-  const left = premiumVoiceCap(r.allowance.minutesCap) - r.allowance.premiumMinutesUsed - r.allowance.premiumMinutesReserved;
-  return left >= 1 ? { engine: "premium", premiumMinutes: Math.min(reserve, left) } : { engine: "standard", premiumMinutes: 0 };
+  const left = premiumMinutesLeft(r.allowance);
+  return left * 60 >= MIN_PREMIUM_SECONDS ? { engine: "premium", premiumMinutes: Math.min(reserve, left) } : { engine: "standard", premiumMinutes: 0 };
+}
+
+/** What the mint tells the caller about Premium for this call. No model ids. */
+export interface PremiumMintInfo {
+  /** Why this call runs Premium: the paid add-on, a comped organization, or neither (null = Standard). */
+  source: "paid" | "comped" | null;
+  /** Premium minutes this billing subject has this period (0 without the add-on). */
+  cap: number;
+  /** Whole paid Premium minutes left for later calls once this call's hold is taken. */
+  leftAfter: number;
+  /**
+   * The add-on is on the account but this call started on Standard: its minutes are used, billing is not in good
+   * standing, or Premium is not on sale (PREMIUM_VOICE_ON_SALE off).
+   */
+  fallback: "minutes_used" | "not_entitled" | "not_on_sale" | null;
+  /** This call is Premium on the paid add-on and holds the last Premium minutes: the next call will be Standard. */
+  nextCallStandard: boolean;
+}
+
+/** Pure: the Premium summary for a call minted with `engine`, given what the allowance had before the hold. */
+export function premiumMintInfo(
+  r: Pick<Resolved, "premiumVoice" | "premiumConfigured"> & Partial<Pick<Resolved, "premiumSaleOpen">> & { allowance: Pick<UsageAllowance, "premiumMinutesCap" | "premiumMinutesUsed" | "premiumMinutesReserved"> },
+  engine: VoiceEngine, premiumMinutes: number, comped: boolean,
+): PremiumMintInfo {
+  const left = premiumMinutesLeft(r.allowance);
+  const cap = r.allowance.premiumMinutesCap;
+  if (comped) return { source: "comped", cap, leftAfter: left, fallback: null, nextCallStandard: false };
+  if (engine === "premium" && premiumMinutes > 0) {
+    const leftAfter = Math.max(0, left - premiumMinutes);
+    return { source: "paid", cap, leftAfter, fallback: null, nextCallStandard: leftAfter * 60 < MIN_PREMIUM_SECONDS };
+  }
+  const fallback = r.premiumVoice ? "minutes_used" : !r.premiumConfigured ? null : r.premiumSaleOpen === false ? "not_on_sale" : "not_entitled";
+  return { source: null, cap, leftAfter: left, fallback, nextCallStandard: false };
 }
 
 // ---- Starting a call --------------------------------------------------------------------------
@@ -291,7 +342,7 @@ export function chooseEngine(
 export interface ScenarioInfo { id: string; title?: string; industry?: string; difficulty?: string }
 
 export type BeginResult =
-  | { ok: true; callId: string; remaining: number; pooled: boolean; engine: VoiceEngine; maxSeconds: number }
+  | { ok: true; callId: string; remaining: number; pooled: boolean; engine: VoiceEngine; maxSeconds: number; premium: PremiumMintInfo }
   | { ok: false; error: "cap_reached" | "minutes_reserved" | "no_organization" | "user_not_found" | "standard_unavailable" | "daily_session_limit" }
   | { ok: false; error: "voice_blocked"; retryAfterSeconds: number };
 
@@ -302,11 +353,13 @@ const RESERVE_ATTEMPTS = 5;
  * minting a provider session. A user who already minted DAILY_SESSION_MINT_CAP voice sessions in the last 24 hours
  * gets `daily_session_limit`. The reservation is what the call may use at most (`maxSeconds`), and it is
  * taken with a compare-and-swap on the allowance row, so two calls (or two Team members) cannot reserve
- * the same minutes. The Premium share is reserved in the same swap. `standardAvailable: false` means the
- * server has no standard engine configured: a call that is not entitled to Premium is then refused rather
- * than run on Premium for free.
+ * the same minutes. The Premium minutes are reserved in the same swap, so concurrent mints cannot both spend the last
+ * of them. `standardAvailable: false` means the server has no standard engine configured: a call that is not entitled
+ * to Premium is then refused rather than run on Premium for free. `compedPremium: true` (a comped organization on the
+ * Premium tier, read from the database by the mint route) runs Premium without drawing on the paid Premium minutes:
+ * comped overrides billing, so its call keeps the normal reservation and is never clamped to Premium minutes.
  */
-export async function beginCall(userId: string, scenario: ScenarioInfo, now = new Date(), opts: { standardAvailable?: boolean } = {}): Promise<BeginResult> {
+export async function beginCall(userId: string, scenario: ScenarioInfo, now = new Date(), opts: { standardAvailable?: boolean; compedPremium?: boolean } = {}): Promise<BeginResult> {
   return runMetered(async (tx) => {
     await settleStale(tx, userId, now);
     const user = await tx.user.findUnique({ where: { id: userId }, select: { organizationId: true, voiceBlockedUntil: true } });
@@ -335,10 +388,13 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
       // Reservations are whole minutes and round up: a call holds at least one so a second start cannot take the same
       // last minutes, even if that holds up to half a minute more than is left.
       const wanted = Math.min(Math.max(1, Math.ceil(r.available)), MAX_RESERVE_MINUTES);
-      const { engine, premiumMinutes } = chooseEngine(r, wanted);
-      // A Premium call may use only the Premium minutes it holds, so that share is its reservation (and maxSeconds).
-      const reserve = engine === "premium" ? premiumMinutes : wanted;
+      const comped = opts.compedPremium === true;
+      const { engine, premiumMinutes } = comped ? { engine: "premium" as const, premiumMinutes: 0 } : chooseEngine(r, wanted);
+      // A paid Premium call may use only the Premium minutes it holds, so that share is its reservation (and maxSeconds):
+      // min(the normal call allowance, the Premium minutes left). A comped call keeps the normal reservation.
+      const reserve = engine === "premium" && !comped ? premiumMinutes : wanted;
       if (engine === "standard" && opts.standardAvailable === false) return { ok: false, error: "standard_unavailable" } as const;
+      const premium = premiumMintInfo(r, engine, premiumMinutes, comped);
       const claimed = await tx.usageAllowance.updateMany({
         where: { id: r.allowance.id, version: r.allowance.version },
         data: { version: { increment: 1 }, minutesReserved: { increment: reserve }, premiumMinutesReserved: { increment: premiumMinutes } },
@@ -365,10 +421,18 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
       });
       // Free calls are not limited by the plan cap once started, only by the call length limit.
       const maxSeconds = capApplies ? reserve * 60 : MAX_CALL_SECONDS;
-      return { ok: true, callId: session.id, remaining: r.remaining, pooled: r.pooled, engine, maxSeconds } as const;
+      return { ok: true, callId: session.id, remaining: r.remaining, pooled: r.pooled, engine, maxSeconds, premium } as const;
     }
     return { ok: false, error: "minutes_reserved" } as const;
   });
+}
+
+/**
+ * Cost log: the OpenAI Realtime model this metered call was minted with, written by the mint route itself (never from
+ * the browser). Only the caller's own row, and only once. The effective tier is the row's engineTier, set by beginCall.
+ */
+export async function recordMintedModel(userId: string, callId: string, model: string): Promise<void> {
+  await prisma.trainerSession.updateMany({ where: { id: callId, userId, realtimeModel: null }, data: { realtimeModel: model.slice(0, 80) } });
 }
 
 // ---- Server-side clock ------------------------------------------------------------------------
@@ -757,7 +821,11 @@ export interface UsageSummary {
   remaining: number;
   periodStart: string;
   periodEnd: string;
-  premiumVoice: { enabled: boolean; minutesCap: number; minutesUsed: number };
+  /**
+   * Paid Premium Voice for this billing subject, from the allowance re-derived just now. `remaining` is whole minutes
+   * not used and not held by open calls; `units` is minutesCap / 40 (Team: min(add-on quantity, seats)).
+   */
+  premiumVoice: { enabled: boolean; configured: boolean; minutesCap: number; minutesUsed: number; remaining: number; units: number };
   entries: { id: string; kind: string; minutes: number; createdAt: string }[];
 }
 
@@ -782,8 +850,11 @@ export async function usageSummary(userId: string, now = new Date()): Promise<Us
       periodEnd: r.allowance.periodEnd.toISOString(),
       premiumVoice: {
         enabled: r.premiumVoice,
-        minutesCap: r.premiumVoice ? premiumVoiceCap(r.allowance.minutesCap) : 0,
+        configured: r.premiumConfigured,
+        minutesCap: r.allowance.premiumMinutesCap,
         minutesUsed: r.allowance.premiumMinutesUsed,
+        remaining: premiumMinutesLeft(r.allowance),
+        units: Math.floor(r.allowance.premiumMinutesCap / PREMIUM_MINUTES_PER_UNIT),
       },
       entries: entries.map((e) => ({ id: e.id, kind: e.kind, minutes: e.minutes, createdAt: e.createdAt.toISOString() })),
     };

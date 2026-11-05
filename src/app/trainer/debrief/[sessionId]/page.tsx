@@ -15,6 +15,7 @@ import { canRegrade, isAiGrade, wasCapped } from "@/lib/gradable";
 import { canManageTeam } from "@/lib/team";
 import { CUE_LABELS } from "@/lib/coach-types";
 import { formatDuration } from "@/lib/format";
+import { voiceLabel } from "@/lib/billingUi";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import { PersonaAvatar } from "@/components/ui/Persona";
 import { CUE_ICON } from "@/components/call/CopilotRail";
@@ -34,6 +35,8 @@ interface View {
   local: boolean;
   /** The trainee who made a server-stored call. */
   ownerId?: string;
+  /** Voice tier the call ran on, for server-stored voice calls. Never a model id. */
+  voiceUsed?: "premium" | "standard" | null;
 }
 
 /** Older heuristic sessions stored keyword-stem rationales; never show those to users. */
@@ -100,7 +103,7 @@ export default function DebriefPage() {
         if (!r.ok) throw new Error(r.status === 404 ? "Session not found." : "Could not load this session.");
         const { session } = await r.json();
         const sc = listScenarios().find((x) => x.id === session.scenarioId);
-        setView({ title: session.scenarioTitle ?? session.scenarioId, scenario: sc, scenarioId: session.scenarioId, role: sc?.role, createdAt: session.createdAt, durationSeconds: session.durationSeconds, transcript: session.transcript, evaluation: session.evaluation, supervisorNotes: session.supervisorNotes, callerName: sc?.aiPersona.name ?? "Caller", local: false, ownerId: session.userId });
+        setView({ title: session.scenarioTitle ?? session.scenarioId, scenario: sc, scenarioId: session.scenarioId, role: sc?.role, createdAt: session.createdAt, durationSeconds: session.durationSeconds, transcript: session.transcript, evaluation: session.evaluation, supervisorNotes: session.supervisorNotes, callerName: sc?.aiPersona.name ?? "Caller", local: false, ownerId: session.userId, voiceUsed: session.voiceUsed === "premium" || session.voiceUsed === "standard" ? session.voiceUsed : null });
       })
       .catch((e) => setError(e.message));
   }, [sessionId, capabilities, isLoading, isAuthenticated, router]);
@@ -186,7 +189,7 @@ export default function DebriefPage() {
           <div className="min-w-0">
             <p className="eyebrow">Black-box debrief</p>
             <h1 className="mt-1 text-2xl font-bold sm:text-3xl">{view.title}</h1>
-            <p className="mt-1 font-mono text-xs text-ink-muted">{new Date(view.createdAt).toLocaleString()} · {formatDuration(view.durationSeconds)} · {view.transcript.length} turns{view.coach ? ` · coach ${view.coach.mode}` : ""}</p>
+            <p className="mt-1 font-mono text-xs text-ink-muted">{new Date(view.createdAt).toLocaleString()} · {formatDuration(view.durationSeconds)} · {view.transcript.length} turns{view.coach ? ` · coach ${view.coach.mode}` : ""}{view.voiceUsed ? ` · ${voiceLabel(view.voiceUsed)}` : ""}</p>
           </div>
           <div className="flex flex-wrap gap-2 print:hidden">
             <button className="btn-ghost" onClick={() => window.print()}><Printer size={16} aria-hidden /> Print</button>

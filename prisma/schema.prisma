@@ -33,8 +33,17 @@ model Organization {
   planTier  String   @default("free")
   /// Paid seats on the Team plan; the voice pool is seatCount x 300 minutes. 1 while on Free.
   seatCount Int      @default(1)
-  /// Premium Voice add-on (quantity = seats). Premium voice is capped at 60% of plan minutes.
+  /// Premium Voice add-on (quantity = seats). 40 Premium minutes per unit a month, taken from the plan pool
+  /// (src/lib/premiumVoice.ts). Set by the webhook only.
   premiumVoice Boolean @default(false)
+  /// Quantity of the Premium Voice add-on item on the subscription. The pool is 40 x min(this, seatCount).
+  premiumVoiceQuantity Int @default(0)
+  /// The subscription's current_period_end as Stripe last reported it. Premium needs it in the future.
+  subscriptionPeriodEnd DateTime?
+  /// When a scheduled removal of the add-on takes effect (period end). Null when none is scheduled.
+  premiumVoiceRemoveAt DateTime?
+  /// Seat count the subscription drops to at renewal when a seat decrease is scheduled. Null when none is.
+  seatCountAtRenewal Int?
   /// Stripe ids (test mode only for now). Set by the webhook, never by the client.
   stripeCustomerId     String? @unique
   stripeSubscriptionId String? @unique
@@ -99,6 +108,10 @@ model User {
   /// Individual plan: free | pro. Team members draw from their organization's pool instead.
   planTier         String   @default("free")
   premiumVoice     Boolean  @default(false)
+  /// See Organization: add-on item quantity (Pro is 1), subscription period end and scheduled removal.
+  premiumVoiceQuantity  Int     @default(0)
+  subscriptionPeriodEnd DateTime?
+  premiumVoiceRemoveAt  DateTime?
   stripeCustomerId     String? @unique
   stripeSubscriptionId String? @unique
   subscriptionStatus   String?
@@ -166,7 +179,8 @@ model TrainerSession {
   allowancePeriodStart DateTime?
   /// Minutes held for this call at mint time. Also the server-side maximum length of the call.
   reservedMinutes    Int      @default(0)
-  /// Voice engine the session was minted for: "premium" or "standard".
+  /// Effective voice tier the session was minted on: "premium" or "standard". Written by the server at mint (paid add-on
+  /// or comped); only premiumReservedMinutes draws on the paid Premium pool.
   engineTier         String   @default("standard")
   /// OpenAI Realtime model id the call was minted with, from a verified mint receipt (src/lib/mintReceipt.ts).
   /// Cost log only; billing reads engineTier. Null for text, ElevenLabs and unverified calls.
@@ -229,7 +243,10 @@ model UsageAllowance {
   /// Minutes held by calls that have started and not settled. A new call can only take what is left after
   /// used and reserved, which is what stops two calls from spending the same minutes.
   minutesReserved Int     @default(0)
-  /// Net minutes this period that ran on the premium voice engine (the 60% Premium limit counts these).
+  /// Premium minutes this period: 40 per entitlement unit, part of minutesCap (not extra). Re-derived at every resolve
+  /// from the owner's row, so a lapsed or removed add-on is 0 for the next call.
+  premiumMinutesCap Int    @default(0)
+  /// Net minutes this period that ran on the paid Premium engine (premiumMinutesCap counts these).
   premiumMinutesUsed Int  @default(0)
   /// Premium minutes held by open calls. Premium is only chosen for a call while used + reserved is under the limit.
   premiumMinutesReserved Int @default(0)

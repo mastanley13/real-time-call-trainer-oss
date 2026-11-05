@@ -8,9 +8,10 @@ import { CALL_TYPE_LABELS, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps, typ
 import { VOICE_ENGINE_LABELS, averageLevel, micErrorMessage, type VoiceEngine } from "@/lib/realtime";
 import type { Capabilities } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
-import { isCapMessage, type UsageSnapshot } from "@/lib/billingUi";
+import { isCapMessage, type PremiumSnapshot, type UsageSnapshot } from "@/lib/billingUi";
 import CallError from "./CallError";
 import MinutesLeft from "./MinutesLeft";
+import PremiumMinutes from "./PremiumMinutes";
 import VoiceUnavailable, { VOICE_UNAVAILABLE_ID } from "./VoiceUnavailable";
 import { ModeDial, radioKeys } from "./CopilotRail";
 
@@ -124,7 +125,9 @@ function MicCheck({ onResult }: { onResult: (r: MicResult) => void }) {
   );
 }
 
-export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, usage, canUpgrade = true, usageUnavailable }: {
+export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, usage, canUpgrade = true, usageUnavailable, premium }: {
+  /** Premium minutes left, or the locked Add Premium voice / Ask your admin state. Null when not metered. */
+  premium?: PremiumSnapshot | null;
   scenario: Scenario;
   capabilities: Capabilities;
   mode: "voice" | "text";
@@ -308,6 +311,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
 
             {/* Minutes near Start, in every state: voice keys set up or not. */}
             <MinutesLeft usage={usage ?? null} mode={mode} canUpgrade={canUpgrade} />
+            {mode === "voice" && <PremiumMinutes premium={premium ?? null} />}
 
             {voiceLookupFailed && <VoiceUnavailable onUseText={() => onModeChange("text")} />}
             {outOfMinutes && !voiceLookupFailed && <button type="button" className="btn-ghost btn-sm w-full" onClick={() => onModeChange("text")}>Switch to text practice</button>}

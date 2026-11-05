@@ -145,17 +145,22 @@ describe("mint receipts", () => {
     expect(verifyMintReceipt(r, "u-a", NOW + MINT_RECEIPT_TTL_MS, TEST_KEY)).toBe("gpt-realtime-2.1");
   });
 
-  it("rejects another user, another key, an edited model, a stale or future receipt, and junk", () => {
+  it("rejects another user, another key, an edited receipt, a stale or future receipt, and junk", () => {
     const r = signMintReceipt("u-a", "gpt-realtime-2.1-mini", NOW, TEST_KEY)!;
     expect(verifyMintReceipt(r, "u-b", NOW, TEST_KEY)).toBeNull();
     expect(verifyMintReceipt(r, "u-a", NOW, "some-other-key")).toBeNull();
     expect(verifyMintReceipt(r, "u-a", NOW + MINT_RECEIPT_TTL_MS + 1000, TEST_KEY)).toBeNull();
     expect(verifyMintReceipt(signMintReceipt("u-a", "gpt-realtime-2.1", NOW + 5 * 60_000, TEST_KEY), "u-a", NOW, TEST_KEY)).toBeNull();
-    // Swap Premium into the payload but keep the Standard signature.
-    const [body, sig] = r.split(".");
-    const forged = Buffer.from(Buffer.from(body, "base64url").toString("utf8").replace("gpt-realtime-2.1-mini", "gpt-realtime-2.1")).toString("base64url");
-    expect(verifyMintReceipt(`${forged}.${sig}`, "u-a", NOW, TEST_KEY)).toBeNull();
-    for (const junk of [undefined, null, "", "abc", "abc.def", `${body}.${"0".repeat(64)}`, "x".repeat(600)]) expect(verifyMintReceipt(junk, "u-a", NOW, TEST_KEY)).toBeNull();
+    // The receipt is sealed (AES-GCM): the model is not readable, and flipping any byte fails the tag.
+    const prefix = r.slice(0, r.indexOf(".") + 1);
+    const raw = Buffer.from(r.slice(prefix.length), "base64url");
+    expect(raw.toString("utf8")).not.toMatch(/gpt-|realtime/);
+    for (const at of [0, 14, raw.length - 1]) {
+      const flipped = Buffer.from(raw);
+      flipped[at] ^= 0x01;
+      expect(verifyMintReceipt(prefix + flipped.toString("base64url"), "u-a", NOW, TEST_KEY)).toBeNull();
+    }
+    for (const junk of [undefined, null, "", "abc", "abc.def", `${prefix}${"0".repeat(64)}`, "x".repeat(600)]) expect(verifyMintReceipt(junk, "u-a", NOW, TEST_KEY)).toBeNull();
   });
 
   it("signs and verifies nothing without JWT_SECRET", () => {
@@ -387,11 +392,14 @@ describe("POST /api/transcripts logs the voice model", () => {
     await save({ realtimeModel: PREMIUM_REALTIME_MODEL });
     expect(loggedModel()).toBeNull();
 
-    // The client edits the receipt's payload to say Premium.
+    // The client cannot read the sealed receipt, and any edit to it fails authentication.
     mocks.prisma.trainerSession.create.mockClear();
-    const [body, sig] = String(minted.receipt).split(".");
-    const forged = Buffer.from(Buffer.from(body, "base64url").toString("utf8").replace(STANDARD_REALTIME_MODEL, PREMIUM_REALTIME_MODEL)).toString("base64url");
-    await save({ realtimeReceipt: `${forged}.${sig}` });
+    const sealed = String(minted.receipt);
+    const prefix = sealed.slice(0, sealed.indexOf(".") + 1);
+    const raw = Buffer.from(sealed.slice(prefix.length), "base64url");
+    expect(raw.toString("utf8")).not.toContain(STANDARD_REALTIME_MODEL);
+    raw[raw.length - 20] ^= 0x01;
+    await save({ realtimeReceipt: prefix + raw.toString("base64url") });
     expect(loggedModel()).toBeNull();
   });
 

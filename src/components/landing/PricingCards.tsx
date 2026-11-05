@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect } from "react";
 import { Check } from "lucide-react";
 import { useBilling } from "@/components/landing/BillingContext";
 import {
-  FREE_SUMMARY, OPEN_SOON_LINE, PREMIUM_COMING_SOON, PREMIUM_VOICE_CAP_PCT, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT,
-  registerHref, type Billing,
+  FREE_SUMMARY, OPEN_SOON_LINE, PREMIUM_COMING_SOON, PREMIUM_DISCLOSURE_PRO, PREMIUM_DISCLOSURE_TEAM, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT,
+  premiumPriceLine, registerHref, type Billing,
 } from "@/lib/pricing";
+import { trackPremiumUpsell } from "@/lib/premiumEventTypes";
 
 const TIERS = [
   {
@@ -15,11 +17,11 @@ const TIERS = [
   },
   {
     id: "pro", name: "Pro", blurb: "For individual reps who practice weekly.", cta: "Start Pro",
-    features: [`${PRO_VOICE_MIN} voice minutes per month`, "Everything in Free", "Full persona library across every sales role", "Reviewed persona packs (coming soon)", "Persona wizard for your own buyers", "Call history and score trends", "MFA"],
+    features: [`${PRO_VOICE_MIN} voice minutes per month`, "Standard voice included", "Everything in Free", "Full persona library across every sales role", "Reviewed persona packs (coming soon)", "Persona wizard for your own buyers", "Call history and score trends", "MFA"],
   },
   {
     id: "team", name: "Team", blurb: `Built for a manager plus reps: ${TEAM_MIN_SEATS}-seat minimum.`, cta: "Start with Team",
-    features: [`${TEAM_VOICE_MIN_PER_SEAT} voice minutes per seat, pooled across the team`, "Everything in Pro", "Managed Team view: every rep's calls, scores and trends", "Assignments: give reps a persona and a due date", "Enforced MFA for the whole team", "Priority email support"],
+    features: [`${TEAM_VOICE_MIN_PER_SEAT} voice minutes per seat, pooled across the team`, "Standard voice included", "Everything in Pro", "Managed Team view: every rep's calls, scores and trends", "Assignments: give reps a persona and a due date", "Enforced MFA for the whole team", "Priority email support"],
   },
 ] as const;
 
@@ -39,9 +41,14 @@ export function tierAction(id: string, cta: string, billingEnabled: boolean, int
   return billingEnabled ? { cta, href, soon: false } : { cta: "Start free", href, soon: true };
 }
 
-/** Billing toggle, tier cards and the Premium AI voice add-on. `billingEnabled` comes from the server. */
-export default function PricingCards({ billingEnabled }: { billingEnabled: boolean }) {
+/**
+ * Billing toggle, tier cards and the Premium AI voice add-on row under them (one row, never a fourth card).
+ * `billingEnabled` and `premiumOnSale` come from the server. The add-on row has no button: Premium is chosen at checkout
+ * or added in billing settings, and off sale it carries the coming-soon label.
+ */
+export default function PricingCards({ billingEnabled, premiumOnSale = false }: { billingEnabled: boolean; premiumOnSale?: boolean }) {
   const { billing, setBilling } = useBilling();
+  useEffect(() => { if (premiumOnSale) trackPremiumUpsell("pricing"); }, [premiumOnSale]);
   return (
     <div>
       <div role="group" aria-label="Billing period" className="inline-flex rounded-lg border border-line bg-sunken p-1">
@@ -87,14 +94,18 @@ export default function PricingCards({ billingEnabled }: { billingEnabled: boole
       <div className="panel mt-4 p-5">
         <div className="flex flex-wrap items-center gap-3">
           <h3 className="text-base font-bold">Add-on: Premium AI voice</h3>
-          <span className="chip">{PREMIUM_COMING_SOON}</span>
+          <span className="chip">{premiumOnSale ? "Pro and Team" : PREMIUM_COMING_SOON}</span>
         </div>
-        <p className="mt-2 flex items-baseline gap-1">
+        <p className="mt-2 flex flex-wrap items-baseline gap-1">
           <span className="font-heading text-2xl font-bold">+${PRICE.premium[billing]}</span>
-          <span className="text-sm text-ink-muted">/seat /{billing === "month" ? "month" : "year"}</span>
+          <span className="text-sm text-ink-muted">/{billing === "month" ? "month" : "year"} on Pro, /seat /{billing === "month" ? "month" : "year"} on Team</span>
         </p>
-        <p className="mt-2 max-w-2xl text-sm text-ink-soft">
-          The full realtime voice model for your buyers, more lifelike and expressive. It can use up to {PREMIUM_VOICE_CAP_PCT}% of your plan minutes. After that, calls fall back to standard voice and never stop. No extra minute charges.
+        <ul className="mt-2 max-w-2xl space-y-1 text-sm text-ink-soft">
+          <li>{premiumPriceLine("pro", billing)}</li>
+          <li>{premiumPriceLine("team", billing)}</li>
+        </ul>
+        <p className="mt-2 max-w-2xl text-sm text-ink-muted">
+          A more lifelike, expressive voice for your buyers. Premium minutes come out of your plan minutes, not on top. {PREMIUM_DISCLOSURE_PRO} On Team: {PREMIUM_DISCLOSURE_TEAM.charAt(0).toLowerCase() + PREMIUM_DISCLOSURE_TEAM.slice(1)}
         </p>
       </div>
     </div>

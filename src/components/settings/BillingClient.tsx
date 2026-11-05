@@ -8,6 +8,8 @@ import { PageSkeleton } from "@/components/ui/Skeleton";
 import { ALREADY_SUBSCRIBED_NOTICE, noticeStatus } from "@/lib/checkoutStart";
 import { ACTIVE_NOTICE, PORTAL_FAILED_MESSAGE, type CheckoutNotice, checkoutFailure, checkoutNotice, formatMinutes, freeOverCapNotice, planPriceLine, proButtonLabel, seatsOnBlur, teamButtonLabel, usageHeaderCopy } from "@/lib/billingUi";
 import { TEAM_MIN_SEATS } from "@/lib/usagePlan";
+import { PREMIUM_DISCLOSURE_BOTH, premiumPriceLine } from "@/lib/pricing";
+import { trackPremiumUpsell } from "@/lib/premiumEventTypes";
 import BillingAlert from "./BillingAlert";
 import BillingNotice from "./BillingNotice";
 import PremiumVoiceControl from "./PremiumVoiceControl";
@@ -22,9 +24,12 @@ interface Usage {
   minutesUsed?: number;
   remaining?: number;
   periodEnd?: string;
-  premiumVoice?: { enabled: boolean; minutesCap: number };
+  premiumVoice?: { enabled: boolean; configured?: boolean; minutesCap: number; remaining?: number; canBuy?: boolean; onSale?: boolean; removeAt?: string | null };
   entries?: { id: string; kind: string; minutes: number; createdAt: string }[];
-  billing: { enabled: boolean; testMode?: boolean; canBuyTeam?: boolean; hasPortal?: boolean; seats?: number; status?: string | null };
+  billing: {
+    enabled: boolean; testMode?: boolean; canBuyTeam?: boolean; hasPortal?: boolean; seats?: number; status?: string | null;
+    seatsAtRenewal?: number | null; hasSubscription?: boolean; renewsAt?: string | null;
+  };
 }
 
 const PLAN_NAME = { free: "Free", pro: "Pro", team: "Team" } as const;
@@ -49,7 +54,12 @@ export default function BillingClient() {
   /** The 409 and unavailable-plan banner. It replaces the plain error banner for those answers. */
   const [notice, setNotice] = useState<CheckoutNotice | null>(null);
   const [portalFailure, setPortalFailure] = useState<string | null>(null);
+  /** New-buyer Premium checkbox. Shown only while Premium is on sale and the account has no paid plan yet. */
+  const [addPremium, setAddPremium] = useState(false);
   const headlineRef = useRef<HTMLParagraphElement>(null);
+  const premiumOnSale = !!capabilities?.premiumOnSale;
+  const newBuyerPremium = premiumOnSale && usage?.plan === "free" && !!usage?.billing.enabled;
+  useEffect(() => { if (newBuyerPremium) trackPremiumUpsell("billing"); }, [newBuyerPremium]);
 
   // On show: scroll the banner into view (a jump when motion is reduced) and move focus to its headline.
   useEffect(() => {
@@ -122,7 +132,8 @@ export default function BillingClient() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(kind === "portal" ? {} : { plan: kind, interval, premium: false, ...(kind === "team" ? { seats } : {}) }),
+        // premium is true only when the new-buyer box is ticked while Premium is on sale; the server checks the sale again.
+        body: JSON.stringify(kind === "portal" ? {} : { plan: kind, interval, premium: newBuyerPremium && addPremium, ...(kind === "team" ? { seats } : {}) }),
       });
     } catch {
       // The request never got an answer (offline or timed out): the only case where trying again is the advice.
@@ -177,7 +188,7 @@ export default function BillingClient() {
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-sunken" role="img" aria-label={`${pct}% of voice minutes used`}>
             <div className={`h-full ${pct >= 90 ? "bg-alert" : "bg-primary"}`} style={{ width: `${pct}%` }} />
           </div>
-          {u.premiumVoice?.enabled && <p className="mt-3 text-sm text-ink-soft">Premium voice is on. It can use up to {u.premiumVoice.minutesCap} of your {u.minutesCap} minutes.</p>}
+          {u.premiumVoice?.enabled && <p className="mt-3 text-sm text-ink-soft">Premium voice is on: {u.premiumVoice.minutesCap} of your {u.minutesCap} minutes can run on Premium this month. They come out of your plan minutes, not on top.</p>}
           {(u.entries?.length ?? 0) > 0 && (
             <ul className="mt-4 divide-y divide-line text-sm">
               {u.entries!.map((e) => (
@@ -194,7 +205,7 @@ export default function BillingClient() {
         <p className="panel p-4 text-sm text-ink-soft">Voice minutes are not tracked in this environment.</p>
       )}
 
-      <PremiumVoiceControl />
+      <PremiumVoiceControl usage={u} onSale={premiumOnSale} onChanged={load} />
 
       {u?.billing.enabled && (
         <section className="panel p-4 sm:p-5" aria-labelledby="plans-h">
@@ -210,6 +221,20 @@ export default function BillingClient() {
               ))}
             </fieldset>
           </div>
+
+          {newBuyerPremium && (
+            <div className="mt-4 rounded-lg border border-line p-4 text-sm">
+              <label className="flex items-start gap-2">
+                <input type="checkbox" className="mt-1" checked={addPremium} onChange={(e) => setAddPremium(e.target.checked)} disabled={!!busy} aria-describedby="premium-buy-help" />
+                <span className="font-medium">Add Premium voice</span>
+              </label>
+              <div id="premium-buy-help" className="mt-1 space-y-1 pl-6 text-ink-muted">
+                <p>{premiumPriceLine("pro", interval)}</p>
+                <p>{premiumPriceLine("team", interval)}</p>
+                <p>{PREMIUM_DISCLOSURE_BOTH}</p>
+              </div>
+            </div>
+          )}
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <div className="rounded-lg border border-line p-4">

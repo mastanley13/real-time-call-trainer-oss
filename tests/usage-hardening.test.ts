@@ -52,6 +52,8 @@ beforeEach(() => {
   vi.stubEnv("DATABASE_URL", "postgresql://ci:ci@localhost:5432/ci");
   vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
   vi.stubEnv("DEMO_MODE", "");
+  // Paid Premium at mint also needs the sale flag; these suites exercise the paid engine.
+  vi.stubEnv("PREMIUM_VOICE_ON_SALE", "true");
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -59,22 +61,25 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-// ---- Premium voice: 60% limit, standard engine for the next session ---------------------------------
+// ---- Premium voice: flat 40 per unit, standard engine for the next session ---------------------------------
+
+/** An entitled Premium add-on on a Pro row: active, quantity 1, period end in the future. */
+const PRO_PREMIUM = { planTier: "pro", premiumVoice: true, premiumVoiceQuantity: 1, stripeSubscriptionId: "sub_test_prem", subscriptionStatus: "active", subscriptionPeriodEnd: new Date("2027-06-01T00:00:00Z") };
 
 describe("Premium voice limit", () => {
-  it("chooseEngine: premium needs the add-on and stays premium below 60% of the plan's minutes", () => {
-    const a = (used: number, cap = 200, reserved = 0) => ({ minutesCap: cap, premiumMinutesUsed: used, premiumMinutesReserved: reserved });
-    expect(chooseEngine({ premiumVoice: true, allowance: a(0) }, 60)).toEqual({ engine: "premium", premiumMinutes: 60 });
-    expect(chooseEngine({ premiumVoice: true, allowance: a(119) }, 60)).toEqual({ engine: "premium", premiumMinutes: 1 });
-    expect(chooseEngine({ premiumVoice: true, allowance: a(120) }, 60).engine).toBe("standard");
-    expect(chooseEngine({ premiumVoice: true, allowance: a(900, 900) }, 60).engine).toBe("standard");
+  it("chooseEngine: premium needs the entitlement and at least one whole Premium minute left", () => {
+    const a = (used: number, cap = 40, reserved = 0) => ({ premiumMinutesCap: cap, premiumMinutesUsed: used, premiumMinutesReserved: reserved });
+    expect(chooseEngine({ premiumVoice: true, allowance: a(0) }, 60)).toEqual({ engine: "premium", premiumMinutes: 40 });
+    expect(chooseEngine({ premiumVoice: true, allowance: a(39) }, 60)).toEqual({ engine: "premium", premiumMinutes: 1 });
+    expect(chooseEngine({ premiumVoice: true, allowance: a(40) }, 60).engine).toBe("standard");
+    expect(chooseEngine({ premiumVoice: true, allowance: a(0, 120) }, 60)).toEqual({ engine: "premium", premiumMinutes: 60 });
     expect(chooseEngine({ premiumVoice: false, allowance: a(0) }, 60).engine).toBe("standard");
   });
 
   it("chooseEngine: Premium minutes held by open calls count against the limit", () => {
-    const a = (used: number, reserved: number) => ({ minutesCap: 200, premiumMinutesUsed: used, premiumMinutesReserved: reserved });
-    expect(chooseEngine({ premiumVoice: true, allowance: a(50, 60) }, 60)).toEqual({ engine: "premium", premiumMinutes: 10 });
-    expect(chooseEngine({ premiumVoice: true, allowance: a(60, 60) }, 60).engine).toBe("standard");
+    const a = (used: number, reserved: number) => ({ premiumMinutesCap: 40, premiumMinutesUsed: used, premiumMinutesReserved: reserved });
+    expect(chooseEngine({ premiumVoice: true, allowance: a(20, 10) }, 60)).toEqual({ engine: "premium", premiumMinutes: 10 });
+    expect(chooseEngine({ premiumVoice: true, allowance: a(30, 10) }, 60).engine).toBe("standard");
   });
 
   it("the model tier and agent each engine maps to", () => {
@@ -107,27 +112,32 @@ describe("Premium voice limit", () => {
     const mint = () => realtimeSession(new NextRequest("http://localhost/api/realtime/session", { method: "POST", body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }), headers: { "content-type": "application/json" } }));
 
     it("a call holding the last Premium minute is stopped when it ends; the NEXT session is minted on the standard model", async () => {
-      addUser("u-1", { planTier: "pro", premiumVoice: true });
+      addUser("u-1", PRO_PREMIUM);
       await ensureAllowance(fake.db as never, { userId: "u-1" }, base);
-      allowanceOf("u-1").premiumMinutesUsed = 119; // 120 of 200 minutes is the Premium limit
+      allowanceOf("u-1").premiumMinutesUsed = 39; // 40 Premium minutes per Pro account
 
       const first = await (await mint()).json();
       expect(bodies[0].session.model).toBe("model-premium-test");
       expect(first.maxSeconds).toBe(60); // the whole call is the one Premium minute it holds
+      expect(first).toMatchObject({ voiceTier: "premium", nextCallStandard: true });
+      // The server logged the minted model and tier on the call row itself.
+      expect(session(first.callId)).toMatchObject({ realtimeModel: "model-premium-test", engineTier: "premium" });
       await heartbeat("u-1", first.callId, "connected", at(0));
       expect(await heartbeat("u-1", first.callId, "ok", at(30))).toMatchObject({ found: true, stop: false });
       expect(await heartbeat("u-1", first.callId, "ok", at(60))).toMatchObject({ found: true, stop: true, reason: "cap_reached" });
-      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 1, premiumMinutesUsed: 120, premiumMinutesReserved: 0, minutesReserved: 0 });
+      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 1, premiumMinutesUsed: 40, premiumMinutesReserved: 0, minutesReserved: 0 });
 
       vi.setSystemTime(at(310));
       const second = await (await mint()).json();
       expect(bodies[1].session.model).toBe("model-standard-test");
       // The model id never goes to the browser.
       expect(second).not.toHaveProperty("model");
+      expect(JSON.stringify(second)).not.toContain("model-standard-test");
+      expect(second).toMatchObject({ voiceTier: "standard", nextCallStandard: false });
       await heartbeat("u-1", second.callId, "connected", at(310));
       await endCall("u-1", second.callId, "user_hangup", at(310 + 180));
-      // Standard minutes count against the plan but not against the Premium share.
-      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 4, premiumMinutesUsed: 120 });
+      // Standard minutes count against the plan but not against the Premium minutes.
+      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 4, premiumMinutesUsed: 40 });
       expect(session(first.callId).engineTier).toBe("premium");
       expect(session(second.callId).engineTier).toBe("standard");
     });
@@ -138,16 +148,21 @@ describe("Premium voice limit", () => {
       expect(bodies[0].session.model).toBe("model-standard-test");
     });
 
-    it("a Team pool with the add-on counts premium minutes across members", async () => {
-      fake.seed("organization", { id: "org-1", code: "123", createdAt: MAR10, planTier: "team", seatCount: 3, premiumVoice: true });
+    it("a Team pool with the add-on counts premium minutes across members (40 x 3 seats, pooled)", async () => {
+      fake.seed("organization", { id: "org-1", code: "123", createdAt: MAR10, planTier: "team", seatCount: 3, premiumVoice: true, premiumVoiceQuantity: 3, stripeSubscriptionId: "sub_test_team", subscriptionStatus: "active", subscriptionPeriodEnd: new Date("2027-06-01T00:00:00Z") });
       addUser("u-1");
       addUser("u-2");
       const first = await begin("u-1");
       expect(first.engine).toBe("premium");
+      expect(orgAllowance()).toMatchObject({ premiumMinutesCap: 120 });
       await heartbeat("u-1", first.callId, "connected", at(0));
       await endCall("u-1", first.callId, "user_hangup", at(60 * 40)); // 40 premium minutes
       expect(orgAllowance()).toMatchObject({ minutesUsed: 40, premiumMinutesUsed: 40 });
-      orgAllowance()!.premiumMinutesUsed = 540; // 60% of 900
+      // A second member draws on the same pool: 80 left.
+      const second = await begin("u-2", 2500);
+      expect(second.engine).toBe("premium");
+      await endCall("u-2", second.callId, "failed_connect", at(2505));
+      orgAllowance()!.premiumMinutesUsed = 120; // 40 x 3, all used
       expect((await begin("u-2", 3000)).engine).toBe("standard");
     });
 
@@ -158,12 +173,19 @@ describe("Premium voice limit", () => {
       expect(body.callId).toBeUndefined();
     });
 
-    it("a comped Premium org gets the Premium model on the standard engine; billing stays standard", async () => {
+    it("a comped Premium org gets the Premium model without using any paid Premium minutes (comped overrides billing)", async () => {
       // fakePrisma ignores `select`, so the org's voice fields ride on the user row for orgVoiceTierForUser.
       addUser("u-1", { planTier: "pro", premiumVoice: false, organization: { voiceModelTier: "premium", voiceModelComped: true } });
       const minted = await (await mint()).json();
       expect(bodies[0].session.model).toBe("model-premium-test");
-      expect(session(minted.callId).engineTier).toBe("standard");
+      // The effective tier is logged as premium; nothing is held against (or booked to) the paid Premium minutes,
+      // and the call keeps the normal reservation instead of being clamped to Premium minutes.
+      expect(session(minted.callId)).toMatchObject({ engineTier: "premium", premiumReservedMinutes: 0, realtimeModel: "model-premium-test" });
+      expect(minted).toMatchObject({ voiceTier: "premium", nextCallStandard: false, maxSeconds: 3600 });
+      expect(allowanceOf("u-1")).toMatchObject({ premiumMinutesReserved: 0 });
+      await heartbeat("u-1", minted.callId, "connected", at(0));
+      await endCall("u-1", minted.callId, "user_hangup", at(300));
+      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 5, premiumMinutesUsed: 0 });
     });
 
     it("a stored Premium tier without the comped flag stays on the standard model", async () => {
@@ -186,22 +208,25 @@ describe("Premium voice limit", () => {
     });
     const mint = () => elevenLabsToken(new NextRequest("http://localhost/api/elevenlabs/token?scenarioId=quote-follow-up"));
 
-    it("switches to the standard agent once the Premium share is used, and records the engine", async () => {
+    it("switches to the standard agent once the Premium minutes are used, and records the engine", async () => {
       vi.stubEnv("ELEVENLABS_AGENT_ID_STANDARD", "agent-std");
-      addUser("u-1", { planTier: "pro", premiumVoice: true });
+      addUser("u-1", PRO_PREMIUM);
       const a = await (await mint()).json();
       expect(urls[0]).toContain("agent_id=agent-main");
       expect(session(a.callId).engineTier).toBe("premium");
+      expect(a).toMatchObject({ voiceTier: "premium" });
+      expect(JSON.stringify(a)).not.toContain("agent-");
       await endCall("u-1", a.callId, "failed_connect", at(5));
 
-      allowanceOf("u-1").premiumMinutesUsed = 120;
+      allowanceOf("u-1").premiumMinutesUsed = 40;
       const b = await (await mint()).json();
       expect(urls[1]).toContain("agent_id=agent-std");
       expect(session(b.callId).engineTier).toBe("standard");
+      expect(b).toMatchObject({ voiceTier: "standard" });
     });
 
     it("with no standard agent configured, a Premium-entitled call runs on the main agent as premium", async () => {
-      addUser("u-1", { planTier: "pro", premiumVoice: true });
+      addUser("u-1", PRO_PREMIUM);
       const a = await (await mint()).json();
       expect(urls[0]).toContain("agent_id=agent-main");
       expect(session(a.callId).engineTier).toBe("premium");
@@ -217,10 +242,10 @@ describe("Premium voice limit", () => {
       expect(allowanceOf("u-1")).toMatchObject({ minutesReserved: 0, premiumMinutesReserved: 0 });
     });
 
-    it("with no standard agent configured, an exhausted Premium share is refused too, not overridden", async () => {
-      addUser("u-1", { planTier: "pro", premiumVoice: true });
+    it("with no standard agent configured, exhausted Premium minutes are refused too, not overridden", async () => {
+      addUser("u-1", PRO_PREMIUM);
       await ensureAllowance(fake.db as never, { userId: "u-1" }, base);
-      allowanceOf("u-1").premiumMinutesUsed = 120;
+      allowanceOf("u-1").premiumMinutesUsed = 40;
       expect((await mint()).status).toBe(503);
       expect(urls).toHaveLength(0);
     });

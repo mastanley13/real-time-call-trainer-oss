@@ -5,7 +5,7 @@ import { requireAuth, isDemoUser } from "@/lib/apiAuth";
 import { rateLimit, readJsonLimited } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { verifySeal } from "@/lib/gradeSeal";
-import { verifyMintReceipt } from "@/lib/mintReceipt";
+import { readMintReceipt } from "@/lib/mintReceipt";
 import { HAS_TRANSCRIPT } from "@/lib/usage";
 
 const Body = z.object({
@@ -69,8 +69,13 @@ export async function POST(req: NextRequest) {
   try {
     // A metered voice call already has its row (created when the call started, empty transcript). Fill it so the
     // call has one row. durationSeconds is display only: billing never reads it, so a client cannot change what it is charged.
-    const metered = body.callId ? await prisma.trainerSession.findUnique({ where: { id: body.callId }, select: { userId: true, transcript: true } }) : null;
+    const metered = body.callId ? await prisma.trainerSession.findUnique({ where: { id: body.callId }, select: { userId: true, transcript: true, realtimeModel: true } }) : null;
     const fillExisting = !!body.callId && !!metered && metered.userId === dbUser.id && Array.isArray(metered.transcript) && metered.transcript.length === 0;
+    // A receipt minted for one metered call cannot label another: its signed call id must match the call being saved.
+    const receipt = readMintReceipt(body.realtimeReceipt, dbUser.id);
+    const receiptFits = !!receipt && (!receipt.callId || receipt.callId === body.callId);
+    // The mint route already wrote a metered call's model and tier on the server; the receipt never overrides that.
+    const minted = fillExisting && !!metered?.realtimeModel;
     const fields = {
       realtimeSessionId: body.sessionId,
       scenarioId: body.scenario.id,
@@ -83,8 +88,10 @@ export async function POST(req: NextRequest) {
       overallScore: ev ? Math.round(ev.overallScore) : null,
       grade: ev?.grade ?? null,
       goalAchieved: ev?.goalAchievement.achieved ?? null,
-      // Cost log only (not billing; engineTier is). Null for text calls and for any receipt that does not verify.
-      realtimeModel: verifyMintReceipt(body.realtimeReceipt, dbUser.id),
+      // Cost log only (not billing). Null for text calls and for any receipt that does not verify or belongs to another call.
+      ...(minted ? {} : { realtimeModel: receiptFits ? receipt!.model : null }),
+      // Effective voice tier for a call the meter did not record (unmetered installs): from the signed receipt only.
+      ...(!fillExisting && receiptFits && receipt!.tier ? { engineTier: receipt!.tier } : {}),
     };
     const created = fillExisting
       ? await prisma.trainerSession.update({ where: { id: body.callId }, data: fields })

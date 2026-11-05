@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
-import { meteringEnabled } from "@/lib/serverConfig";
+import { meteringEnabled, premiumOnSale } from "@/lib/serverConfig";
 import { VOICE_UNAVAILABLE_MESSAGE } from "@/lib/billingUi";
 import { stripeReady, stripeTestMode } from "@/lib/stripe";
 import { usageSummary } from "@/lib/usage";
@@ -28,9 +28,17 @@ export async function GET(req: NextRequest) {
   const [summary, user] = loaded;
   if (!summary || !user) return NextResponse.json({ error: "not_found" }, { status: 404 });
   const manages = user.role === "owner" || user.role === "manager";
+  const subjectRow = summary.pooled ? user.organization : user;
   return NextResponse.json({
     metered: true,
     ...summary,
+    premiumVoice: {
+      ...summary.premiumVoice,
+      // Buy controls show only while Premium is on sale. A Team member who is not the owner is sent to their admin.
+      onSale: premiumOnSale(),
+      canBuy: summary.pooled ? user.role === "owner" : true,
+      removeAt: subjectRow?.premiumVoiceRemoveAt?.toISOString() ?? null,
+    },
     billing: {
       enabled: stripeReady(),
       testMode: stripeTestMode(),
@@ -39,6 +47,11 @@ export async function GET(req: NextRequest) {
       canUpgrade: !(summary.pooled && !manages),
       hasPortal: !!((manages && user.organization?.stripeCustomerId) || user.stripeCustomerId),
       seats: summary.pooled ? user.organization?.seatCount ?? 1 : 1,
+      /** Seats the Team drops to at renewal, when a decrease is scheduled. */
+      seatsAtRenewal: summary.pooled ? user.organization?.seatCountAtRenewal ?? null : null,
+      /** A paid subscription the app can change in place (Premium add, removal, seats). */
+      hasSubscription: !!subjectRow?.stripeSubscriptionId && (summary.plan === "pro" || summary.plan === "team"),
+      renewsAt: subjectRow?.subscriptionPeriodEnd?.toISOString() ?? null,
       status: (summary.pooled ? user.organization?.subscriptionStatus : user.subscriptionStatus) ?? null,
     },
   });

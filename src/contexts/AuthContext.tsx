@@ -47,6 +47,8 @@ export interface Capabilities {
   billing?: boolean;
   /** Hosted build: paid plans are configured on the server. Absent means self-host. */
   hosted?: boolean;
+  /** Premium Voice can be bought on this server. Absent or false hides every Premium buy control. */
+  premiumOnSale?: boolean;
   /**
    * Provider of the AI for coach, grading and wizard. Shown by name ("OpenAI") so self-hosters know which key to
    * set. /api/config never sends model ids; the UI says "AI".

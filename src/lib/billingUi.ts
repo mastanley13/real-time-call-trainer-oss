@@ -1,4 +1,5 @@
 import { FREE_MINUTES, PRO_MINUTES, TEAM_MAX_SEATS, TEAM_MIN_SEATS, TEAM_MINUTES_PER_SEAT, type PlanTier } from "./usagePlan";
+import { PRICE as PLAN_PRICE } from "./pricing";
 
 /**
  * Wording and small pure helpers for the billing page and the call screens. Client-safe: no env, no database.
@@ -133,12 +134,11 @@ export function freeOverCapNotice(input: { plan: PlanTier | undefined; used: num
 
 export type Interval = "month" | "year";
 
-/** Display prices in dollars. Annual is ten months for twelve. The Stripe prices are the source of truth at checkout. */
-export const PRICE = {
-  pro: { month: 29, year: 290 },
-  team: { month: 59, year: 590 },
-  premium: { month: 30, year: 300 },
-} as const;
+/**
+ * Display prices in dollars. Annual is ten months for twelve. The Stripe prices are the source of truth at checkout.
+ * The same object as pricing.ts, so the billing page and the pricing page cannot drift (Premium: $20/mo, $200/yr).
+ */
+export const PRICE = PLAN_PRICE;
 
 const per = (i: Interval) => (i === "month" ? "month" : "year");
 
@@ -147,7 +147,80 @@ export function planPriceLine(plan: "pro" | "team", interval: Interval): string 
   return `$${PRICE.team[interval]} per seat per ${per(interval)}, ${TEAM_MIN_SEATS} seats minimum. ${TEAM_MINUTES_PER_SEAT} pooled minutes per seat each month.`;
 }
 
-export const premiumLabel = (interval: Interval): string => `Add Premium Voice (+$${PRICE.premium[interval]} per seat per ${per(interval)})`;
+/** The new-buyer checkbox label. Pro is one account, so it never says "per seat". */
+export const premiumLabel = (interval: Interval, plan: "pro" | "team" = "team"): string =>
+  `Add Premium voice (+$${PRICE.premium[interval]}${plan === "team" ? " per seat" : ""} per ${per(interval)})`;
+
+// ---- Premium voice: setup, live call, results and billing ---------------------------------------------------
+
+/** What the call setup and billing page know about Premium, from /api/usage. Never a model id. */
+export interface PremiumSnapshot {
+  /** Entitled now: Premium minutes this period. */
+  enabled: boolean;
+  /** Whole Premium minutes left that a new call can use. */
+  remaining: number;
+  /** Premium minutes this period (40 per unit; Team scaled by min(add-on quantity, seats)). */
+  cap: number;
+  plan: "pro" | "team" | "free";
+  /** Premium can be bought on this server now (PREMIUM_VOICE_ON_SALE). */
+  onSale: boolean;
+  /** This person may buy or change it (Pro subscriber, Team owner). */
+  canBuy: boolean;
+  /** ISO date a scheduled removal takes effect, or null. */
+  removeAt: string | null;
+}
+
+/** "Premium: 12 of 40 min left". */
+export const premiumLeftLabel = (p: Pick<PremiumSnapshot, "remaining" | "cap">): string => `Premium: ${formatMinutes(p.remaining)} of ${formatMinutes(p.cap)} min left`;
+
+export const ADD_PREMIUM_LABEL = "Add Premium voice";
+export const ASK_ADMIN_PREMIUM = "Ask your admin";
+/** Live call, shown once (aria-live polite) when this Premium call holds the last Premium minutes. */
+export const NEXT_CALL_STANDARD_NOTICE = "Your Premium minutes are used up after this call. Your next call uses Standard voice.";
+/** Live call voice label. Static for the whole call: the voice never changes mid-call. */
+export const voiceLabel = (tier: "premium" | "standard"): string => (tier === "premium" ? "Premium voice" : "Standard voice");
+/** Billing page line for a scheduled removal. */
+export const premiumFallbackLine = (dateIso: string | null | undefined): string => {
+  const d = formatResetDate(dateIso ?? undefined);
+  return d ? `Falls back to Standard on ${d}.` : "Falls back to Standard at the end of this billing period.";
+};
+
+/** Premium state from a /api/usage response, or null when minutes are not metered or the answer is unusable. */
+export function premiumSnapshotFromUsage(data: unknown): PremiumSnapshot | null {
+  const d = data as { metered?: unknown; plan?: unknown; premiumVoice?: { enabled?: unknown; remaining?: unknown; minutesCap?: unknown; onSale?: unknown; canBuy?: unknown; removeAt?: unknown } } | null;
+  const p = d?.premiumVoice;
+  if (d?.metered !== true || !p || typeof p.remaining !== "number" || typeof p.minutesCap !== "number") return null;
+  if (!Number.isFinite(p.remaining) || !Number.isFinite(p.minutesCap)) return null;
+  const plan = d.plan === "pro" || d.plan === "team" ? d.plan : "free";
+  return {
+    enabled: p.enabled === true,
+    remaining: Math.max(0, p.remaining),
+    cap: Math.max(0, p.minutesCap),
+    plan,
+    onSale: p.onSale === true,
+    canBuy: p.canBuy === true,
+    removeAt: typeof p.removeAt === "string" ? p.removeAt : null,
+  };
+}
+
+/**
+ * What the call setup shows for Premium. `left` with the count; `used_up` with the nudge (calls continue on Standard);
+ * `locked` with Add Premium voice (a buyer) or Ask your admin (a Team member); nothing on Free, or when Premium is
+ * off sale and not on the account (no new paid controls while the sale is off).
+ */
+export function premiumSetupState(p: PremiumSnapshot | null): { kind: "left" | "used_up" | "locked_buy" | "locked_ask" | "none" } {
+  if (!p || p.plan === "free") return { kind: "none" };
+  if (p.enabled) return { kind: p.remaining >= 1 ? "left" : "used_up" };
+  if (!p.onSale) return { kind: "none" };
+  return { kind: p.canBuy ? "locked_buy" : "locked_ask" };
+}
+
+/** "$12.34" from cents. Currency code shown only when it is not USD. */
+export function formatCents(cents: number | null | undefined, currency = "usd"): string {
+  if (cents == null || !Number.isFinite(cents)) return "Unavailable";
+  const amount = (cents / 100).toFixed(2);
+  return currency.toLowerCase() === "usd" ? `$${amount}` : `${amount} ${currency.toUpperCase()}`;
+}
 
 /** The Pro button: a Team member already has Pro's minutes, so it says so. */
 export function proButtonLabel(plan: PlanTier | undefined): string {

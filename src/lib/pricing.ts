@@ -9,20 +9,61 @@ export const MINUTES_ROUNDED_NOTE = "Calls are counted in whole minutes, rounded
 export const PRO_VOICE_MIN = 200;
 export const TEAM_VOICE_MIN_PER_SEAT = 300;
 export const TEAM_MIN_SEATS = 3;
-export const PREMIUM_VOICE_CAP_PCT = 60;
+/** Must equal PREMIUM_MINUTES_PER_UNIT in usagePlan: Premium minutes per Pro account, or per Team seat (shared). */
+export const PREMIUM_MINUTES = 40;
 
+/** Display prices in dollars. Premium is per account on Pro and per seat on Team, on the base plan's interval. */
 export const PRICE = {
   pro: { month: 29, year: 290 },
   team: { month: 59, year: 590 },
-  premium: { month: 30, year: 300 },
+  premium: { month: 20, year: 200 },
 } as const;
 
 export type Billing = "month" | "year";
 
-/** Premium AI voice is held off sale. The label shows on the card, the comparison table and the FAQ. */
+/** Premium voice is held off sale until PREMIUM_VOICE_ON_SALE=true. The label shows on the card, the table and the FAQ. */
 export const PREMIUM_COMING_SOON = "Coming soon (not on sale yet)";
-/** The checkout route rejects premium:true while this is false. Flip it only when Premium goes on sale. */
-export const PREMIUM_VOICE_ON_SALE = false;
+/** The env var that puts Premium on sale. Only the exact string "true" turns it on; unset or anything else is off. */
+export const PREMIUM_VOICE_ON_SALE_ENV = "PREMIUM_VOICE_ON_SALE";
+/**
+ * Whether Premium Voice is on sale: new checkouts with premium:true, the add-to-subscription preview and confirm, the
+ * buy controls, and paid Premium at mint (off means every paid call mints Standard). Off by default. Comped Premium and
+ * removing the add-on do not depend on it. Read on the server (serverConfig.premiumOnSale).
+ */
+export const isPremiumOnSale = (env: Record<string, string | undefined>): boolean => env[PREMIUM_VOICE_ON_SALE_ENV] === "true";
+
+// ---- Premium voice copy (spec Nov 5 2026 with the Margin amendment; Pro never says "per seat") --------------
+
+/** The add-on line under the plan cards and on billing. Interval always matches the base plan. */
+export function premiumPriceLine(plan: PlanIntent, interval: Billing = "month"): string {
+  const p = PRICE.premium[interval];
+  if (plan === "pro") {
+    return interval === "year"
+      ? `Premium voice: +$${p} a year. ${PREMIUM_MINUTES} Premium minutes a month, then Standard.`
+      : `Premium voice: +$${p} a month. ${PREMIUM_MINUTES} Premium minutes, then Standard.`;
+  }
+  return interval === "year"
+    ? `Premium voice: +$${p} per seat a year. ${PREMIUM_MINUTES} Premium minutes per seat each month, shared, then Standard.`
+    : `Premium voice: +$${p} per seat a month. ${PREMIUM_MINUTES} Premium minutes per seat, shared, then Standard.`;
+}
+
+/** Where the plan's interval is not known yet (billing page before the preview): the annual price, same unit. */
+export const premiumAnnualNote = (plan: PlanIntent): string => `Annual plans: $${PRICE.premium.year}${plan === "team" ? " per seat" : ""} a year.`;
+
+/** What happens when the Premium minutes run out. Pro and Team differ: Team minutes are pooled. */
+export const PREMIUM_DISCLOSURE_PRO = `After your ${PREMIUM_MINUTES} Premium minutes, your next call switches to Standard voice automatically. You are never charged extra.`;
+export const PREMIUM_DISCLOSURE_TEAM = `${PREMIUM_MINUTES} Premium minutes per seat, shared across your team. When they run out, your next call switches to Standard voice automatically. You are never charged extra.`;
+export const premiumDisclosure = (plan: PlanIntent): string => (plan === "team" ? PREMIUM_DISCLOSURE_TEAM : PREMIUM_DISCLOSURE_PRO);
+/** Where Pro and Team are offered side by side (checkout choice): true for both, implies no per-rep cap. */
+export const PREMIUM_DISCLOSURE_BOTH = "When your Premium minutes run out, your next call switches to Standard voice automatically. You are never charged extra.";
+
+/** Shown once the month's Premium minutes are used. */
+export const PREMIUM_NUDGE_PRO = "You've used this month's Premium minutes. Calls continue on Standard voice, free. Premium minutes reset next month.";
+export const PREMIUM_NUDGE_TEAM = `You've used this month's Premium minutes. Calls continue on Standard voice, free. Add a seat for ${PREMIUM_MINUTES} more.`;
+export const premiumNudge = (plan: PlanIntent): string => (plan === "team" ? PREMIUM_NUDGE_TEAM : PREMIUM_NUDGE_PRO);
+
+/** FAQ answer once Premium is on sale. */
+export const PREMIUM_FAQ = `Premium AI voice is a paid add-on for Pro and Team. Pro: +$${PRICE.premium.month}/mo with ${PREMIUM_MINUTES} Premium minutes. Team: +$${PRICE.premium.month}/seat/mo with ${PREMIUM_MINUTES} Premium minutes per seat, shared across the team. Those minutes come out of your plan minutes, not on top. After they are used, your next call uses Standard. No overages. Annual is $${PRICE.premium.year} (Pro) or $${PRICE.premium.year}/seat (Team).`;
 /** Under "Start free" on Pro and Team only when checkout is not configured on this server (billingEnabled is false). */
 export const OPEN_SOON_LINE = "Pro and Team checkout is not set up on this server. Free is live today, no card.";
 

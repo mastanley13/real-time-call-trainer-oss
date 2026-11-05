@@ -16,6 +16,7 @@ import {
   ASK_ADMIN_MESSAGE, canUpgradeFromUsage, capCopy,
   CAP_REACHED_MESSAGE, CAP_STOPPED_MESSAGE, PRICE, clampSeats, formatMinutes, freeOverCapNotice, isCapMessage, minutesLeftFromUsage, minutesLeftLabel,
   planPriceLine, premiumLabel, proButtonLabel, teamButtonLabel, usageHeaderCopy,
+  ADD_PREMIUM_LABEL, ASK_ADMIN_PREMIUM, NEXT_CALL_STANDARD_NOTICE, premiumFallbackLine, premiumLeftLabel, voiceLabel,
 } from "@/lib/billingUi";
 import { stripeTestMode } from "@/lib/stripe";
 import { capReached } from "@/lib/usageResponses";
@@ -51,6 +52,8 @@ describe("copy rules", () => {
     CAP_REACHED_MESSAGE, CAP_STOPPED_MESSAGE, usageHeaderCopy("free"), usageHeaderCopy("pro"), usageHeaderCopy("team"), usageHeaderCopy(undefined),
     planPriceLine("pro", "month"), planPriceLine("pro", "year"), planPriceLine("team", "month"), planPriceLine("team", "year"),
     premiumLabel("month"), premiumLabel("year"), proButtonLabel("team"), minutesLeftLabel(0.5),
+    premiumLabel("month", "pro"), NEXT_CALL_STANDARD_NOTICE, premiumFallbackLine("2026-12-05T00:00:00Z"), premiumFallbackLine(null),
+    premiumLeftLabel({ remaining: 12, cap: 40 }), voiceLabel("premium"), voiceLabel("standard"), ADD_PREMIUM_LABEL, ASK_ADMIN_PREMIUM,
   ];
   it("has no em or en dashes", () => {
     for (const s of all) expect(s).not.toMatch(new RegExp("[\\u2013\\u2014]"));
@@ -149,8 +152,11 @@ describe("annual prices (item 9)", () => {
     expect(planPriceLine("pro", "year")).toMatch(/^\$290 per user per year\./);
     expect(planPriceLine("team", "month")).toMatch(/^\$59 per seat per month, 3 seats minimum\./);
     expect(planPriceLine("team", "year")).toMatch(/^\$590 per seat per year, 3 seats minimum\./);
-    expect(premiumLabel("month")).toBe("Add Premium Voice (+$30 per seat per month)");
-    expect(premiumLabel("year")).toBe("Add Premium Voice (+$300 per seat per year)");
+    // Premium: $20/mo, $200/yr. Team says per seat; Pro never does.
+    expect(premiumLabel("month")).toBe("Add Premium voice (+$20 per seat per month)");
+    expect(premiumLabel("year")).toBe("Add Premium voice (+$200 per seat per year)");
+    expect(premiumLabel("month", "pro")).toBe("Add Premium voice (+$20 per month)");
+    expect(premiumLabel("year", "pro")).toBe("Add Premium voice (+$200 per year)");
   });
 
   it("annual is ten months for twelve, as the Annual, 2 months free label says", () => {

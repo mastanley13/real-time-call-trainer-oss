@@ -593,6 +593,8 @@ const itemPrice = (id: string, metadata: Record<string, string> | null, extra: R
 const PRO_PRICE = itemPrice("price_test_pro_y", PRO_META, { recurring: { usage_type: "licensed", interval: "year" } });
 const TEAM_PRICE = itemPrice("price_test_team_m", TEAM_META);
 const PREMIUM_PRICE = itemPrice("price_test_prem_m", PREMIUM_META);
+/** The add-on bills on the base plan's interval, so the annual Pro price above pairs with the annual add-on. */
+const PREMIUM_PRICE_Y = itemPrice("price_test_prem_y", PREMIUM_META, { recurring: { usage_type: "licensed", interval: "year" } });
 
 /** Stripe's current state by subscription id. A missing id answers 404, like a subscription Stripe no longer has. */
 const liveStripe = new Map<string, unknown>();
@@ -618,7 +620,7 @@ function mirrorSnapshot(e: { type: string; data: { object: Record<string, unknow
       id: o.subscription, customer: o.customer ?? "cus_test_1", status: "active", metadata: m,
       items: { data: [
         m.plan === "team" ? { quantity: seats, price: TEAM_PRICE } : { quantity: 1, price: PRO_PRICE },
-        ...(m.premium === "true" ? [{ quantity: seats, price: PREMIUM_PRICE }] : []),
+        ...(m.premium === "true" ? [{ quantity: m.plan === "team" ? seats : 1, price: m.plan === "team" ? PREMIUM_PRICE : PREMIUM_PRICE_Y }] : []),
       ] },
     });
   }
@@ -636,7 +638,7 @@ const sub = (o: { id?: string; customer?: string; status?: string; team?: number
   items: { data: [
     ...(o.team ? [{ quantity: o.team, price: TEAM_PRICE }] : []),
     ...(o.pro ? [{ quantity: 1, price: PRO_PRICE }] : []),
-    ...(o.premium ? [{ quantity: o.premium, price: PREMIUM_PRICE }] : []),
+    ...(o.premium ? [{ quantity: o.premium, price: o.pro && !o.team ? PREMIUM_PRICE_Y : PREMIUM_PRICE }] : []),
   ] },
 });
 
@@ -672,7 +674,7 @@ describe("webhook signature", () => {
   });
 
   it("acknowledges a valid event of a type it does not handle", async () => {
-    const res = await deliver(event("invoice.paid", {}));
+    const res = await deliver(event("invoice.finalized", {}));
     expect(await res.json()).toEqual({ received: true, result: "ignored" });
   });
 });
@@ -928,7 +930,7 @@ describe("customer.subscription.updated", () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("skipped"), "price_unknown");
     });
     it("#9 Team plus Premium monthly items grant Team with premium", () => {
-      expect(entitlementFromItems([item(L.team.month!, TEAM_META, 4), item(L.premium.month!, PREMIUM_META, 4)], L)).toEqual({ plan: "team", seats: 4, premium: true, interval: "month" });
+      expect(entitlementFromItems([item(L.team.month!, TEAM_META, 4), item(L.premium.month!, PREMIUM_META, 4)], L)).toEqual({ plan: "team", seats: 4, premium: true, premiumQuantity: 4, interval: "month" });
     });
     it("#10 a Premium item alone grants nothing", () => {
       expect(entitlementFromItems([item(L.premium.month!, PREMIUM_META, 3)], L)).toBeNull();
@@ -991,7 +993,11 @@ describe("customer.subscription.updated", () => {
       expect(entitlementFromItems([item(L.team.month!, { ...TEAM_META, ct_addon: "none" }, 3)], L)).toMatchObject({ plan: "team" });
     });
     it("control: a Team base plus an allowlisted valid Premium add-on grants Premium", () => {
-      expect(entitlementFromItems([item(L.team.month!, TEAM_META, 3), item(L.premium.month!, { ct_plan: "addon", ct_addon: "premium_voice", ct_version: "1" }, 3)], L)).toEqual({ plan: "team", seats: 3, premium: true, interval: "month" });
+      expect(entitlementFromItems([item(L.team.month!, TEAM_META, 3), item(L.premium.month!, { ct_plan: "addon", ct_addon: "premium_voice", ct_version: "1" }, 3)], L)).toEqual({ plan: "team", seats: 3, premium: true, premiumQuantity: 3, interval: "month" });
+    });
+    it("Premium on a different interval from the base plan grants no Premium; the base plan still grants", () => {
+      expect(entitlementFromItems([item(L.team.month!, TEAM_META, 3), item(L.premium.year!, PREMIUM_META, 3)], L)).toEqual({ plan: "team", seats: 3, premium: false, interval: "month" });
+      expect(entitlementFromItems([item(L.pro.year!, PRO_META), item(L.premium.year!, PREMIUM_META, 1)], L)).toEqual({ plan: "pro", seats: 1, premium: true, premiumQuantity: 1, interval: "year" });
     });
     it("Premium needs ct_plan=addon, ct_addon=premium_voice and ct_version=1; anything else is skipped and grants no Premium", () => {
       const team = item(L.team.month!, TEAM_META, 3);

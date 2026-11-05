@@ -3,9 +3,11 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "./db";
 import { ensureAllowance } from "./usage";
-import { emitBillingLifecycle, classifyPlanChange, type BillingLifecycleEvent } from "./billingEvents";
+import { emitBillingLifecycle, emitPremiumEvent, classifyPlanChange, type BillingLifecycleEvent, type PremiumEvent } from "./billingEvents";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS, isPlanTier, nextAnchorUnix, type PlanTier } from "./usagePlan";
 import { blocksCheckout, isEntitled, nextPastDueSince } from "./subscriptionStatus";
+import { PREMIUM_STATUSES } from "./premiumVoice";
+import { premiumOnSale } from "./serverConfig";
 import { stripeApi, StripeApiError, stripeLiveMode, type StripeParams } from "./stripe";
 
 /**
@@ -303,12 +305,22 @@ const SubscriptionObject = z.object({
   customer: z.string(),
   status: z.string(),
   metadata: Meta,
+  /** Unix seconds. Older API versions put it here; newer ones only on each item (read both, see periodEndOf). */
+  current_period_end: z.number().nullish(),
+  cancel_at_period_end: z.boolean().nullish(),
+  /** A subscription schedule managing this subscription (a scheduled removal or seat decrease), if any. */
+  schedule: z.union([z.string(), z.object({ id: z.string() })]).nullish(),
   items: z.object({
     data: z.array(z.object({
+      id: z.string().optional(),
       quantity: z.number().nullish(),
+      current_period_end: z.number().nullish(),
       price: z.object({
         id: z.string(),
         type: z.string().nullish(),
+        /** Cents. Used only to show the renewal total on the Premium confirm screen. */
+        unit_amount: z.number().nullish(),
+        currency: z.string().nullish(),
         recurring: z.object({ usage_type: z.string().nullish(), interval: z.string().nullish() }).nullish(),
         /** Expanded by retrieveSubscription. A bare id carries no metadata and is not interpreted. */
         product: z.union([z.string(), z.object({ metadata: z.record(z.string()).nullish() })]).nullish(),
@@ -316,12 +328,36 @@ const SubscriptionObject = z.object({
     })),
   }),
 });
-type LiveSubscription = z.infer<typeof SubscriptionObject>;
+export type LiveSubscription = z.infer<typeof SubscriptionObject>;
+
+/** Parses a subscription as Stripe returns it (items expanded). Throws on a shape this module cannot read. */
+export const parseLiveSubscription = (raw: unknown): LiveSubscription => SubscriptionObject.parse(raw);
+
+/** The current period end: the subscription's own field, else the latest item period end. Null when Stripe gave neither. */
+export function periodEndOf(live: Pick<LiveSubscription, "current_period_end" | "items">): Date | null {
+  const own = live.current_period_end;
+  const items = live.items.data.map((i) => i.current_period_end ?? 0).filter((n) => n > 0);
+  const secs = own && own > 0 ? own : items.length ? Math.max(...items) : 0;
+  return secs > 0 ? new Date(secs * 1000) : null;
+}
+
+/** What kind of item this is, by the same metadata rule entitlement uses. Null when it is neither a plan nor the add-on. */
+export function itemKind(price: LiveSubscription["items"]["data"][number]["price"]): PriceSlot | null {
+  const meta = typeof price.product === "object" && price.product ? price.product.metadata : null;
+  return productKind(meta ?? null);
+}
 
 // Which statuses keep a paid plan, and which block a new checkout, is decided only in subscriptionStatus.ts.
 export { blocksCheckout };
 
-interface Entitlement { plan: PlanTier; seats: number; premium: boolean; interval?: Interval }
+interface Entitlement {
+  plan: PlanTier;
+  seats: number;
+  premium: boolean;
+  /** Present when premium is true: the add-on item's quantity (Team units are min(this, seats)). */
+  premiumQuantity?: number;
+  interval?: Interval;
+}
 
 export interface SubscriptionItemInfo {
   quantity?: number | null;
@@ -349,12 +385,15 @@ const refuse = (reason: string, it?: SubscriptionItemInfo): null => {
  * a valid Premium add-on, and does not declare ct_plan pro or team, is skipped with a warning and the base
  * plan still grants (no valid base left still means null). A non-allowlisted item that declares ct_plan pro or
  * team but is otherwise invalid refuses the whole subscription. Premium counts only with quantity above 0
- * next to a base plan.
+ * next to a base plan, and only on the same billing interval as the base plan (a mismatched add-on grants no Premium,
+ * the base plan still grants). `premiumQuantity` is the add-on item quantity.
  */
 export function entitlementFromItems(items: SubscriptionItemInfo[], allowlist: PriceIds = priceAllowlist()): Entitlement | null {
   const plans = new Set<PaidPlan>();
   let seats = 1;
   let premium = false;
+  let premiumQuantity = 0;
+  const premiumIntervals = new Set<string>();
   let interval: Interval | undefined;
   for (const it of items) {
     const qty = Math.max(0, it.quantity ?? 1);
@@ -378,7 +417,12 @@ export function entitlementFromItems(items: SubscriptionItemInfo[], allowlist: P
       return refuse("price is not allowlisted and its product has no valid ct_plan with ct_version=1", it);
     }
     if (kind === "premium") {
-      if (qty > 0) premium = true;
+      if (qty > 0) {
+        premium = true;
+        premiumQuantity += qty;
+        const pi = hit?.interval ?? it.interval;
+        if (pi) premiumIntervals.add(pi);
+      }
       continue;
     }
     if (kind === "team") {
@@ -392,7 +436,12 @@ export function entitlementFromItems(items: SubscriptionItemInfo[], allowlist: P
   if (plans.size > 1) return refuse("items declare two different base plans");
   if (plans.size === 0) return null;
   const plan = [...plans][0];
-  return { plan, seats: plan === "team" ? seats : 1, premium, interval };
+  // The add-on bills on the base plan's interval. One on another interval (or two intervals) is not a valid add-on.
+  if (premium && interval && [...premiumIntervals].some((pi) => pi !== interval)) {
+    console.warn("[billing] Premium add-on interval does not match the base plan; Premium not granted");
+    premium = false;
+  }
+  return { plan, seats: plan === "team" ? seats : 1, premium, ...(premium ? { premiumQuantity } : {}), interval };
 }
 
 type Subject = { kind: "user"; id: string } | { kind: "organization"; id: string };
@@ -448,12 +497,65 @@ interface Applied {
   event: BillingLifecycleEvent | null;
   /** A second subscription for a subject that already has one: cancel it at Stripe after the transaction commits. */
   cancelSubscriptionId?: string;
+  /** Premium Voice events to emit after commit (premium_added, premium_removed). */
+  premiumEvents?: PremiumEvent[];
+  /** The add-on quantity drifted from the seats (a portal seat change): bring it back in step after commit. */
+  addonSync?: AddonSync;
 }
 
-/** Writes plan, seats, premium and Stripe ids onto the subject, then re-derives its UsageAllowance cap and period. */
+export interface AddonSync { subscriptionId: string; itemId: string; quantity: number; direction: "up" | "down" }
+
+/**
+ * Seats changed outside the app (the Billing Portal changes only the base item), so the Premium add-on quantity no longer
+ * equals the seats. Returns the one item update that restores quantity = seats (Pro: 1), or null when nothing should be
+ * written: no add-on, already in step, not active or trialing, a schedule owns the next quantities (a removal or seat
+ * decrease made in the app), or the subscription is ending at period end.
+ * - up: more seats. Prorated on the next invoice (create_prorations), nothing charged at once; the pool grows when it lands.
+ * - down: fewer seats. No proration and no credit (the period is paid), so in effect it bills from renewal. Entitlement
+ *   already uses min(add-on quantity, seats), so the pool shrinks with the seats, never later.
+ */
+export function addonQuantitySync(live: LiveSubscription): AddonSync | null {
+  if (!(PREMIUM_STATUSES as readonly string[]).includes(live.status) || live.schedule || live.cancel_at_period_end) return null;
+  let base: LiveSubscription["items"]["data"][number] | undefined;
+  let premium: LiveSubscription["items"]["data"][number] | undefined;
+  for (const it of live.items.data) {
+    const kind = itemKind(it.price);
+    if (kind === "pro" || kind === "team") base = it;
+    else if (kind === "premium" && (it.quantity ?? 1) > 0) premium = it;
+  }
+  if (!base || !premium?.id) return null;
+  const kind = itemKind(base.price);
+  const target = kind === "team" ? Math.max(0, Math.floor(base.quantity ?? 1)) : 1;
+  const current = premium.quantity ?? 1;
+  if (target <= 0 || target === current) return null;
+  return { subscriptionId: live.id, itemId: premium.id, quantity: target, direction: target > current ? "up" : "down" };
+}
+
+interface StripeState { customerId?: string | null; subscriptionId?: string | null; status: string; periodEnd?: Date | null }
+
+const premiumStatus = (s: string | null | undefined): boolean => (PREMIUM_STATUSES as readonly string[]).includes(s ?? "");
+
+/**
+ * premium_added or premium_removed when Premium flips: the add-on flag together with a status that allows Premium
+ * (active or trialing). Nothing when it stays the same.
+ */
+function premiumFlip(subject: Subject, plan: PlanTier, before: boolean, after: boolean, units: number, status: string): PremiumEvent[] {
+  if (before === after) return [];
+  const reason = premiumStatus(status) ? "ended" : `status_${status}`;
+  const paid = plan === "pro" || plan === "team" ? plan : undefined;
+  return [after
+    ? { name: "premium_added", subject: subject.kind, subjectId: subject.id, plan: paid, units }
+    : { name: "premium_removed", subject: subject.kind, subjectId: subject.id, plan: paid, reason }];
+}
+
+/**
+ * Writes plan, seats, premium, add-on quantity, period end and Stripe ids onto the subject, then re-derives its
+ * UsageAllowance cap, Premium minutes and period. Never writes voiceModelComped or voiceModelTier: comped overrides
+ * billing and Stripe never clears it.
+ */
 async function applyEntitlement(
   tx: Tx, subject: Subject, next: Entitlement,
-  stripe: { customerId?: string | null; subscriptionId?: string | null; status: string }, now: Date,
+  stripe: StripeState, now: Date,
 ): Promise<Applied> {
   const keepIds = {
     ...(stripe.customerId ? { stripeCustomerId: stripe.customerId } : {}),
@@ -465,24 +567,50 @@ async function applyEntitlement(
     // A paid subscription is in place, so the checkout that produced it is no longer outstanding.
     ...(next.plan === "free" ? {} : { stripeCheckoutSessionId: null, stripeCheckoutFingerprint: null, stripeCheckoutUrl: null, stripeCheckoutExpiresAt: null }),
   };
+  // A free result (canceled, gone, refused) keeps no period end; a paid one records Stripe's.
+  const periodEnd = next.plan === "free" ? null : (stripe.periodEnd ?? null);
   let from: PlanTier;
   if (subject.kind === "organization") {
-    const org = await tx.organization.findUniqueOrThrow({ where: { id: subject.id }, select: { planTier: true, pastDueSince: true } });
+    const org = await tx.organization.findUniqueOrThrow({ where: { id: subject.id }, select: { planTier: true, pastDueSince: true, premiumVoice: true, seatCountAtRenewal: true, subscriptionStatus: true } });
     from = org.planTier === "team" ? "team" : "free";
     const plan: PlanTier = next.plan === "team" ? "team" : "free";
+    const seats = plan === "team" ? next.seats : 1;
+    const premium = plan === "team" && next.premium;
+    const qty = premium ? Math.max(0, next.premiumQuantity ?? seats) : 0;
     await tx.organization.update({
       where: { id: subject.id },
-      data: { planTier: plan, seatCount: plan === "team" ? next.seats : 1, premiumVoice: plan === "team" && next.premium, pastDueSince: nextPastDueSince(stripe.status, org.pastDueSince, now), ...keepIds },
+      data: {
+        planTier: plan, seatCount: seats, premiumVoice: premium, premiumVoiceQuantity: qty, subscriptionPeriodEnd: periodEnd,
+        // A scheduled removal is done once the add-on has left; a scheduled seat decrease is done once it has landed.
+        ...(premium ? {} : { premiumVoiceRemoveAt: null }),
+        ...(plan !== "team" || org.seatCountAtRenewal === seats ? { seatCountAtRenewal: null } : {}),
+        pastDueSince: nextPastDueSince(stripe.status, org.pastDueSince, now), ...keepIds,
+      },
     });
     await ensureAllowance(tx, { organizationId: subject.id }, now);
-    return { event: build(subject, from, plan, plan === "team" ? next.seats : 1, plan === "team" && next.premium) };
+    return {
+      event: build(subject, from, plan, seats, premium),
+      premiumEvents: premiumFlip(subject, plan === "team" ? plan : from, !!org.premiumVoice && premiumStatus(org.subscriptionStatus), premium && premiumStatus(stripe.status), Math.min(qty, seats), stripe.status),
+    };
   }
-  const user = await tx.user.findUniqueOrThrow({ where: { id: subject.id }, select: { planTier: true, pastDueSince: true } });
+  const user = await tx.user.findUniqueOrThrow({ where: { id: subject.id }, select: { planTier: true, pastDueSince: true, premiumVoice: true, subscriptionStatus: true } });
   from = isPlanTier(user.planTier) && user.planTier !== "team" ? user.planTier : "free";
   const plan: PlanTier = next.plan === "pro" ? "pro" : "free";
-  await tx.user.update({ where: { id: subject.id }, data: { planTier: plan, premiumVoice: plan === "pro" && next.premium, pastDueSince: nextPastDueSince(stripe.status, user.pastDueSince, now), ...keepIds } });
+  const premium = plan === "pro" && next.premium;
+  const qty = premium ? Math.max(0, next.premiumQuantity ?? 1) : 0;
+  await tx.user.update({
+    where: { id: subject.id },
+    data: {
+      planTier: plan, premiumVoice: premium, premiumVoiceQuantity: qty, subscriptionPeriodEnd: periodEnd,
+      ...(premium ? {} : { premiumVoiceRemoveAt: null }),
+      pastDueSince: nextPastDueSince(stripe.status, user.pastDueSince, now), ...keepIds,
+    },
+  });
   await ensureAllowance(tx, { userId: subject.id }, now);
-  return { event: build(subject, from, plan, 1, plan === "pro" && next.premium) };
+  return {
+    event: build(subject, from, plan, 1, premium),
+    premiumEvents: premiumFlip(subject, plan === "pro" ? plan : from, !!user.premiumVoice && premiumStatus(user.subscriptionStatus), premium && premiumStatus(stripe.status), premium ? 1 : 0, stripe.status),
+  };
 }
 
 function build(subject: Subject, from: PlanTier, to: PlanTier, seats: number, premiumVoice: boolean): BillingLifecycleEvent | null {
@@ -546,7 +674,56 @@ async function reconcile(
   // Grace counts from when the account first went past_due; a first sighting starts it now.
   const since = nextPastDueSince(live.status, await pastDueSinceOf(tx, subject), now);
   const next = isEntitled(live.status, since, now) ? found : FREE;
-  return applyEntitlement(tx, subject, next, { customerId: live.customer, subscriptionId: live.id, status: live.status }, now);
+  // The stored status and period end feed the stricter Premium check at every mint (src/lib/premiumVoice.ts).
+  const applied = await applyEntitlement(tx, subject, next, { customerId: live.customer, subscriptionId: live.id, status: live.status, periodEnd: periodEndOf(live) }, now);
+  // Keep the add-on quantity equal to the seats after a seat change made outside the app. Only while Premium is on sale:
+  // with the sale off no paid Premium is used, and nothing is written to Stripe for it.
+  const sync = next.premium && premiumOnSale() ? addonQuantitySync(live) : null;
+  return sync ? { ...applied, addonSync: sync } : applied;
+}
+
+const SubRef = z.union([z.string(), z.object({ id: z.string() })]).nullish();
+const InvoiceObject = z.object({
+  id: z.string().optional(),
+  customer: z.union([z.string(), z.object({ id: z.string() })]).nullish(),
+  /** Older API versions. */
+  subscription: SubRef,
+  /** Newer API versions (2025-03-31 and later) moved it under parent.subscription_details. */
+  parent: z.object({ subscription_details: z.object({ subscription: SubRef }).nullish() }).nullish(),
+});
+const refId = (r: z.infer<typeof SubRef>): string | null => (typeof r === "string" ? r : r?.id ?? null);
+
+/** The subscription an invoice belongs to, in either API shape. Null for a one-off invoice. */
+export function invoiceSubscriptionId(obj: unknown): string | null {
+  const parsed = InvoiceObject.safeParse(obj);
+  if (!parsed.success) return null;
+  return refId(parsed.data.subscription) ?? refId(parsed.data.parent?.subscription_details?.subscription);
+}
+
+/**
+ * invoice.paid and invoice.payment_failed: re-read the subscription and apply it, like any other event. A failed payment
+ * also switches the add-on off right away for the subject whose current subscription this is, so the NEXT call is
+ * Standard even before Stripe reports past_due. The base plan keeps its past_due grace (only premiumVoice changes here).
+ * The next subscription.updated or invoice.paid that shows the subscription in good standing turns Premium back on.
+ */
+async function onInvoice(tx: Tx, obj: unknown, live: Live, now: Date, failed: boolean): Promise<Applied | null> {
+  const subscriptionId = invoiceSubscriptionId(obj);
+  if (!subscriptionId) return null;
+  const inv = InvoiceObject.safeParse(obj);
+  const customerId = inv.success ? refId(inv.data.customer as z.infer<typeof SubRef>) : null;
+  const applied = await reconcile(tx, subscriptionId, live, { customerId }, now);
+  if (!failed) return applied;
+  const holder = await subjectOfSubscription(tx, subscriptionId);
+  if (!holder) return applied;
+  const where = { id: holder.id, premiumVoice: true };
+  const off = holder.kind === "organization"
+    ? await tx.organization.updateMany({ where, data: { premiumVoice: false } })
+    : await tx.user.updateMany({ where, data: { premiumVoice: false } });
+  await ensureAllowance(tx, holder.kind === "organization" ? { organizationId: holder.id } : { userId: holder.id }, now);
+  // A flip already reported by reconcile (status no longer entitled) is not reported twice.
+  const already = applied?.premiumEvents?.some((e) => e.name === "premium_removed") ?? false;
+  const events = off.count > 0 && !already ? [{ name: "premium_removed" as const, subject: holder.kind, subjectId: holder.id, reason: "payment_failed" }] : [];
+  return { event: applied?.event ?? null, cancelSubscriptionId: applied?.cancelSubscriptionId, premiumEvents: [...(applied?.premiumEvents ?? []).filter((e) => e.name !== "premium_added"), ...events] };
 }
 
 async function onCheckoutPaid(tx: Tx, obj: unknown, live: Live, now: Date, requirePaid: boolean): Promise<Applied | null> {
@@ -588,18 +765,31 @@ export type EventResult = "processed" | "duplicate" | "ignored";
 export interface StripeDeps {
   retrieveSubscription(id: string): Promise<unknown>;
   cancelSubscription(id: string): Promise<unknown>;
+  /** Used only for the add-on quantity sync. Optional so a caller that cannot write to Stripe simply skips it. */
+  updateSubscription?(id: string, params: StripeParams, idempotencyKey: string): Promise<unknown>;
 }
 const liveDeps: StripeDeps = {
   retrieveSubscription: (id) => stripeApi.retrieveSubscription(id),
   cancelSubscription: (id) => stripeApi.cancelSubscription(id),
+  updateSubscription: (id, params, key) => stripeApi.updateSubscription(id, params, key),
 };
 
+/** The Stripe write that puts the add-on back in step with the seats. The key makes a retried delivery one change. */
+export function addonSyncRequest(s: AddonSync): { id: string; params: StripeParams; idempotencyKey: string } {
+  return {
+    id: s.subscriptionId,
+    params: { items: [{ id: s.itemId, quantity: s.quantity }], proration_behavior: s.direction === "up" ? "create_prorations" : "none" },
+    idempotencyKey: `addon-sync:${s.subscriptionId}:${s.itemId}:${s.quantity}`,
+  };
+}
+
 /** Events whose subscription is re-read from Stripe before anything is granted or revoked. */
-const RECONCILED = new Set(["checkout.session.completed", "checkout.session.async_payment_succeeded", "customer.subscription.updated"]);
+const RECONCILED = new Set(["checkout.session.completed", "checkout.session.async_payment_succeeded", "customer.subscription.updated", "invoice.paid", "invoice.payment_failed"]);
 
 function subscriptionIdOf(event: StripeEventLike): string | null {
   const o = event.data.object as { id?: unknown; subscription?: unknown } | undefined;
   if (event.type.startsWith("checkout.session.")) return typeof o?.subscription === "string" ? o.subscription : null;
+  if (event.type.startsWith("invoice.")) return invoiceSubscriptionId(o);
   return typeof o?.id === "string" ? o.id : null;
 }
 
@@ -633,6 +823,9 @@ export async function handleStripeEvent(event: StripeEventLike, now = new Date()
         case "checkout.session.async_payment_succeeded": return onCheckoutPaid(tx, event.data.object, live, now, false);
         case "customer.subscription.updated": return onSubscriptionChanged(tx, event.data.object, live, now);
         case "customer.subscription.deleted": return onSubscriptionDeleted(tx, event.data.object, now);
+        // Payment results re-read the subscription; a failure also turns Premium off for the next call at once.
+        case "invoice.paid": return onInvoice(tx, event.data.object, live, now, false);
+        case "invoice.payment_failed": return onInvoice(tx, event.data.object, live, now, true);
         // A failed delayed payment grants nothing; the session is cleared so the account can start a new checkout.
         case "checkout.session.async_payment_failed":
         case "checkout.session.expired": return onCheckoutExpired(tx, event.data.object);
@@ -647,8 +840,8 @@ export async function handleStripeEvent(event: StripeEventLike, now = new Date()
   try {
     await afterApplied(applied, deps);
   } catch (e) {
-    // Cancel runs after commit. Drop the event id so Stripe's 500 retry can cancel again.
-    if (applied?.cancelSubscriptionId) {
+    // Cancel and add-on sync run after commit. Drop the event id so Stripe's 500 retry can do them again.
+    if (applied?.cancelSubscriptionId || applied?.addonSync) {
       await prisma.stripeEvent.deleteMany({ where: { id: event.id } }).catch(() => undefined);
     }
     throw e;
@@ -666,7 +859,27 @@ async function afterApplied(applied: Applied | null, deps: StripeDeps): Promise<
       throw e;
     }
   }
+  if (applied?.addonSync && deps.updateSubscription) {
+    const req = addonSyncRequest(applied.addonSync);
+    try {
+      await deps.updateSubscription(req.id, req.params, req.idempotencyKey);
+    } catch (e) {
+      console.error("[stripe] add-on quantity sync failed", e instanceof StripeApiError ? `status ${e.status}` : "error");
+      throw e;
+    }
+  }
   if (applied?.event) await emitBillingLifecycle(applied.event);
+  for (const e of applied?.premiumEvents ?? []) await emitPremiumEvent(e);
+}
+
+/**
+ * Re-reads one subscription from Stripe and applies it now, as a webhook would. Used right after the app itself changed
+ * the subscription (Premium added, seats changed) so the page does not wait for the webhook. Idempotent with it.
+ */
+export async function syncSubscriptionNow(subscriptionId: string, now = new Date(), deps: StripeDeps = liveDeps): Promise<void> {
+  const live = await fetchLive(subscriptionId, deps);
+  const applied = await prisma.$transaction((tx) => reconcile(tx, subscriptionId, live, {}, now));
+  await afterApplied(applied, deps);
 }
 
 /**

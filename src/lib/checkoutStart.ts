@@ -78,6 +78,8 @@ export interface CheckoutStartInput {
   interval: Billing;
   /** Team only; clamped to the Team range. */
   seats?: number;
+  /** The new-buyer Premium voice box was ticked. Only offered while Premium is on sale; the server checks again. */
+  premium?: boolean;
 }
 
 export type CheckoutStartOutcome =
@@ -86,11 +88,15 @@ export type CheckoutStartOutcome =
   | { kind: "unavailable" }
   | { kind: "error"; message: string; help: boolean };
 
-/** The POST body. Premium is never sold from these buttons, so it is always false. Team starts at the 3-seat minimum. */
-export function checkoutBody(input: CheckoutStartInput): { plan: PlanIntent; interval: Billing; premium: false; seats?: number } {
-  if (input.plan !== "team") return { plan: input.plan, interval: input.interval, premium: false };
+/**
+ * The POST body. premium is true only when the new-buyer box was ticked (it is shown only while Premium is on sale);
+ * otherwise false. Team starts at the 3-seat minimum.
+ */
+export function checkoutBody(input: CheckoutStartInput): { plan: PlanIntent; interval: Billing; premium: boolean; seats?: number } {
+  const premium = input.premium === true;
+  if (input.plan !== "team") return { plan: input.plan, interval: input.interval, premium };
   const seats = Math.min(TEAM_MAX_SEATS, Math.max(TEAM_MIN_SEATS, Math.floor(input.seats ?? TEAM_MIN_SEATS) || TEAM_MIN_SEATS));
-  return { plan: "team", interval: input.interval, premium: false, seats };
+  return { plan: "team", interval: input.interval, premium, seats };
 }
 
 const isHttps = (u: unknown): u is string => {

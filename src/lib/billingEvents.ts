@@ -1,5 +1,6 @@
 import "server-only";
 import type { PlanTier } from "./usagePlan";
+import type { PremiumEvent } from "./premiumEventTypes";
 
 /**
  * Billing lifecycle hook for the CRM (GoHighLevel). The GHL emitter from STR-714 is not on this branch,
@@ -49,5 +50,31 @@ export async function emitBillingLifecycle(event: BillingLifecycleEvent): Promis
     await sink(event);
   } catch {
     console.error("[billing-events] sink failed for", event.kind);
+  }
+}
+
+// ---- Premium Voice events --------------------------------------------------------------------------------
+// Same seam, its own sink. Nothing is registered by default and no external telemetry is set up here: a deployment
+// that wants these registers a sink (for example the GHL emitter) with setPremiumEventSink(). Payloads carry ids,
+// plan, units and reasons only, never email, card data, Stripe ids or model ids. The names match the spec:
+// premium_upsell_viewed {surface} comes from the browser (src/lib/premiumEventTypes.ts); the rest are server-side.
+
+export type { PremiumEventName, PremiumEvent } from "./premiumEventTypes";
+
+export type PremiumEventSink = (event: PremiumEvent) => void | Promise<void>;
+
+let premiumSink: PremiumEventSink | null = null;
+
+export function setPremiumEventSink(next: PremiumEventSink | null): void {
+  premiumSink = next;
+}
+
+/** Fire and forget: a sink failure never fails a mint, a webhook or a billing change. */
+export async function emitPremiumEvent(event: PremiumEvent): Promise<void> {
+  if (!premiumSink) return;
+  try {
+    await premiumSink(event);
+  } catch {
+    console.error("[billing-events] premium sink failed for", event.name);
   }
 }

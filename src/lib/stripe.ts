@@ -131,6 +131,17 @@ export const stripeApi = {
   retrieveSubscription: (id: string) => request<unknown>("GET", `subscriptions/${seg(id)}`, { expand: ["items.data.price.product"] }),
   /** Cancels immediately. Used only to drop a duplicate subscription for a subject that already has one. */
   cancelSubscription: (id: string) => request<{ id: string }>("DELETE", `subscriptions/${seg(id)}`),
+  /**
+   * Updates a subscription's items (Premium add, seat increase). Callers always pass an idempotency key, a
+   * proration_date fixed at preview time and payment_behavior=error_if_incomplete, so a failed charge changes nothing.
+   */
+  updateSubscription: (id: string, params: StripeParams, idempotencyKey: string) => request<unknown>("POST", `subscriptions/${seg(id)}`, params, idempotencyKey),
+  /** The prorated invoice an item change would produce, without changing anything (POST /v1/invoices/create_preview). */
+  previewInvoice: (params: StripeParams) => request<unknown>("POST", "invoices/create_preview", params),
+  /** Puts an existing subscription under a schedule, so a change can wait for the period end. */
+  createSubscriptionSchedule: (params: StripeParams, idempotencyKey: string) => request<unknown>("POST", "subscription_schedules", params, idempotencyKey),
+  retrieveSubscriptionSchedule: (id: string) => request<unknown>("GET", `subscription_schedules/${seg(id)}`),
+  updateSubscriptionSchedule: (id: string, params: StripeParams, idempotencyKey: string) => request<unknown>("POST", `subscription_schedules/${seg(id)}`, params, idempotencyKey),
 };
 
 // ---- Webhook signatures -----------------------------------------------------------------------

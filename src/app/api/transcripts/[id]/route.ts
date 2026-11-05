@@ -36,7 +36,15 @@ export async function GET(req: NextRequest, { params }: Params) {
   const session = await prisma.trainerSession.findUnique({ where: { id } });
   if (!session) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (!(await canAccess(auth.id, session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  return NextResponse.json({ session });
+  // The model id is a server-side cost log and never goes to the browser. The debrief shows only the voice tier.
+  const { realtimeModel, ...visible } = session;
+  return NextResponse.json({ session: { ...visible, voiceUsed: voiceUsedOf({ ...session, realtimeModel }) } });
+}
+
+/** "premium" or "standard" for a voice call (metered, or with a logged model); null for text calls. */
+function voiceUsedOf(s: { allowanceId: string | null; realtimeModel: string | null; engineTier: string }): "premium" | "standard" | null {
+  if (!s.allowanceId && !s.realtimeModel) return null;
+  return s.engineTier === "premium" ? "premium" : "standard";
 }
 
 /**

@@ -42,7 +42,7 @@ export function canEditVoiceTier(role: string | null | undefined, isPlatformAdmi
 /**
  * The tier /api/realtime/session mints a call on. The organization's effective tier (comped gate) decides,
  * with one exception that keeps today's billing intact: a metered call that the usage meter started on the
- * paid Premium Voice engine (Organization.premiumVoice / User.premiumVoice, within its 60% share) keeps the
+ * paid Premium Voice engine (entitled add-on with Premium minutes left, decided by beginCall from the database) keeps the
  * Premium model it is paying for. Without metering the engine is always "premium" by default, so it is ignored.
  * The engine and its minute caps are untouched here; this only picks the model.
  */

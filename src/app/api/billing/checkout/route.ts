@@ -8,7 +8,7 @@ import { appBaseUrl, buildCheckoutParams, checkoutFingerprint, createOrReuseChec
 import { blocksCheckout } from "@/lib/subscriptionStatus";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "@/lib/usagePlan";
 import { CHECKOUT_UNAVAILABLE_MESSAGE } from "@/lib/billingUi";
-import { PREMIUM_COMING_SOON, PREMIUM_VOICE_ON_SALE } from "@/lib/pricing";
+import { PREMIUM_COMING_SOON, isPremiumOnSale } from "@/lib/pricing";
 
 const Body = z.object({
   plan: z.enum(["pro", "team"]),
@@ -39,8 +39,9 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  // Premium is off sale. This answers before the billing check so a hand-crafted POST gets the same 400 in both states.
-  if (body.premium && !PREMIUM_VOICE_ON_SALE) {
+  // Premium is off sale unless PREMIUM_VOICE_ON_SALE is exactly "true". This answers before the billing check so a
+  // hand-crafted POST gets the same 400 in both billing states.
+  if (body.premium && !isPremiumOnSale(process.env)) {
     return NextResponse.json({ error: "premium_not_available", message: PREMIUM_COMING_SOON }, { status: 400 });
   }
   const gate = billingGate();

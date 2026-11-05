@@ -4,7 +4,8 @@ import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { meteringEnabled } from "@/lib/serverConfig";
-import { beginCall, endCall, type VoiceEngine } from "@/lib/usage";
+import { beginCall, endCall, recordMintedModel, type PremiumMintInfo, type VoiceEngine } from "@/lib/usage";
+import { emitPremiumEvent } from "@/lib/billingEvents";
 import { capReached, dailySessionLimit, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
 import { realtimeKey, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
 import { mintVoiceTier } from "@/lib/voiceTier";
@@ -52,16 +53,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_scenario", message: "That persona could not be loaded for a voice call. Reload the page and try again." }, { status: 400 });
   }
 
+  // Voice quality for a comped organization, read from the database on every call; the client never chooses it.
+  // Comped overrides billing: it runs Premium without touching the paid Premium minutes.
+  const orgTier = await orgVoiceTierForUser(auth.id);
+
   // Cap check before minting (rule 11). The returned callId keys every later metering write for this call.
-  // The engine is chosen here, per session: Premium until its 60% share of the minutes is used, then standard
-  // for the next session. A running call is never switched to another engine, but a Premium call may use only the
-  // Premium minutes it reserved, so it ends when those run out (maxSeconds) and the next call starts on standard.
+  // The engine is chosen here, per session, from the database: paid Premium while the add-on is entitled (active or
+  // trialing, period not over) and at least one whole Premium minute is left, else Standard for this session. A running
+  // call is never switched to another engine; a paid Premium call's maxSeconds is min(call allowance, Premium left).
   let callId: string | undefined;
-  let engine: VoiceEngine = "premium";
+  let engine: VoiceEngine = "standard";
   let maxSeconds = SECRET_TTL_SEC;
+  let premium: PremiumMintInfo | undefined;
   if (meteringEnabled()) {
     // A failed lookup refuses voice (fail closed); text practice never reaches this route.
-    const begun = await beginCall(auth.id, scenario).catch((e) => {
+    const begun = await beginCall(auth.id, scenario, new Date(), { compedPremium: orgTier === "premium" }).catch((e) => {
       console.error("[realtime/session] usage lookup failed", e instanceof Error ? e.name : "unknown");
       return null;
     });
@@ -74,13 +80,16 @@ export async function POST(req: NextRequest) {
     callId = begun.callId;
     engine = begun.engine;
     maxSeconds = begun.maxSeconds;
+    premium = begun.premium;
   }
 
-  // Voice quality, read from the database on every call; the client never chooses it. A comped org on Premium gets
-  // the Premium model. A metered call on the paid Premium Voice engine keeps the Premium model it pays for; the
-  // engine, its minute caps and engineTier are unchanged by the voice tier.
-  const tier = mintVoiceTier(await orgVoiceTierForUser(auth.id), { metered: Boolean(callId), engine });
+  // A comped org on Premium gets the Premium model. A metered call on the paid Premium engine gets the Premium model it
+  // pays for. Everything else is Standard.
+  const tier = mintVoiceTier(orgTier, { metered: Boolean(callId), engine });
   const model = voiceModelFor(tier);
+  if (premium?.fallback) {
+    await emitPremiumEvent({ name: "premium_fallback_to_standard", subject: "user", subjectId: auth.id, reason: premium.fallback });
+  }
   const voice = realtimeVoice(scenario.aiPersona.realtimeVoice);
   const session = {
     type: "realtime",
@@ -122,10 +131,18 @@ export async function POST(req: NextRequest) {
     const data = (await res.json().catch(() => null)) as { value?: unknown; expires_at?: unknown } | null;
     if (!data || typeof data.value !== "string" || !data.value) throw new Error("no client secret in response");
     const expiresAt = typeof data.expires_at === "number" ? data.expires_at : Math.floor(Date.now() / 1000) + SECRET_TTL_SEC;
-    // No model id in the response: the browser does not need it. The receipt carries it, signed and opaque to the client.
-    const receipt = signMintReceipt(auth.id, model);
+    // A metered call's row gets the model straight from the server (cost log); the effective tier is already its engineTier.
+    if (callId) await recordMintedModel(auth.id, callId, model).catch(() => console.error("[realtime/session] model log failed"));
+    // No model id in the response: the browser does not need it. The receipt carries it, signed and opaque to the client,
+    // with the tier and call id. A metered call's browser also gets the tier label and whether the next call drops to
+    // Standard (the hosted Premium Voice UI); an unmetered self-hosted call's answer is unchanged.
+    const receipt = signMintReceipt(auth.id, model, Date.now(), undefined, { tier, callId });
     return NextResponse.json(
-      { clientSecret: data.value, expiresAt, voice, ...(callId ? { callId, maxSeconds } : {}), ...(receipt ? { receipt } : {}) },
+      {
+        clientSecret: data.value, expiresAt, voice,
+        ...(callId ? { callId, maxSeconds, voiceTier: tier, nextCallStandard: premium?.nextCallStandard ?? false } : {}),
+        ...(receipt ? { receipt } : {}),
+      },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (e) {
