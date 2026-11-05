@@ -79,7 +79,7 @@ describe("Premium voice limit", () => {
     vi.stubEnv("REALTIME_MODEL", "model-premium-test");
     vi.stubEnv("REALTIME_MODEL_STANDARD", "");
     expect(realtimeModelFor("premium")).toBe("model-premium-test");
-    expect(realtimeModelFor("standard")).toBe("gpt-realtime-mini");
+    expect(realtimeModelFor("standard")).toBe("gpt-realtime-2.1-mini");
     vi.stubEnv("REALTIME_MODEL_STANDARD", "model-standard-test");
     expect(realtimeModelFor("standard")).toBe("model-standard-test");
     expect(elevenLabsAgentFor("standard", { ELEVENLABS_AGENT_ID: "main" })).toEqual({ agentId: "main", standardAvailable: false });

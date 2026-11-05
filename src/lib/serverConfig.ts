@@ -26,11 +26,12 @@ export const billingOn = (env: Record<string, string | undefined> = process.env)
 
 type Env = Record<string, string | undefined>;
 
-export const DEFAULT_STANDARD_REALTIME_MODEL = "gpt-realtime-mini";
+/** About a third of the full gpt-realtime-2.1 audio token price. */
+export const DEFAULT_STANDARD_REALTIME_MODEL = "gpt-realtime-2.1-mini";
 
 /**
  * The Realtime model for a session. Premium is the configured REALTIME_MODEL; standard is
- * REALTIME_MODEL_STANDARD (default gpt-realtime-mini). Without metering there is no entitlement to
+ * REALTIME_MODEL_STANDARD (default gpt-realtime-2.1-mini). Without metering there is no entitlement to
  * check, so the configured model runs as before.
  */
 export function realtimeModelFor(engine: "premium" | "standard", env: Env = process.env): string {
