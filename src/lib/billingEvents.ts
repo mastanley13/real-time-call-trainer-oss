@@ -23,7 +23,10 @@ export interface PlanChange {
 }
 
 export interface BillingLifecycleEvent extends PlanChange {
-  /** The Stripe event id (evt_...), or checkout_session:{id} when a paid checkout was applied without its webhook. Used for dedupe. */
+  /**
+   * Dedupe reference, the same on the success-page and webhook paths: subscription:{sha256 digest of the subscription id}.
+   * Only when no subscription id is known: checkout_session:{id} or the Stripe event id. See lifecycleRef in billing.ts.
+   */
   stripeRef: string;
   /** The user who started the checkout, from Calltrainer's own subscription metadata. Null when absent. */
   purchaserUserId: string | null;

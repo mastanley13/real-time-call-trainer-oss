@@ -134,14 +134,24 @@ describe("plan change email", () => {
   it("a Pro plan uses the user's email", async () => {
     mocks.prisma.user.findUnique.mockResolvedValue({ email: "Mia@Example.test" });
     expect(await sinkBody(planEvent)).toEqual([expect.objectContaining({ event: "upgrade", userId: "u-1", email: "mia@example.test" })]);
-    expect(mocks.prisma.user.findUnique).toHaveBeenCalledWith({ where: { id: "u-1" }, select: { email: true } });
+    expect(mocks.prisma.user.findUnique).toHaveBeenCalledWith({ where: { id: "u-1" }, select: { email: true, organizationId: true } });
     expect(mocks.prisma.user.findMany).not.toHaveBeenCalled();
   });
 
-  it("a Team plan uses the buyer's email when the buyer is known", async () => {
-    mocks.prisma.user.findUnique.mockResolvedValue({ email: "buyer@example.test" });
+  it("a Team plan uses the buyer's email while the buyer is still in the org", async () => {
+    mocks.prisma.user.findUnique.mockResolvedValue({ email: "buyer@example.test", organizationId: "org-1" });
     expect(await sinkBody({ ...orgEvent, purchaserUserId: "u-9" })).toEqual([expect.objectContaining({ userId: "u-9", organizationId: "org-1", email: "buyer@example.test" })]);
     expect(mocks.prisma.user.findMany).not.toHaveBeenCalled();
+  });
+
+  it("a buyer who left the org (no org, or another org) falls back to the org owner", async () => {
+    mocks.prisma.user.findMany.mockResolvedValue([{ email: "owner@example.test" }]);
+    for (const organizationId of [null, "org-other"]) {
+      fetchMock.mockClear();
+      mocks.prisma.user.findUnique.mockResolvedValue({ email: "buyer@example.test", organizationId });
+      expect(await sinkBody({ ...orgEvent, purchaserUserId: "u-9" })).toEqual([expect.objectContaining({ userId: "u-9", email: "owner@example.test" })]);
+    }
+    expect(mocks.prisma.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { organizationId: "org-1", role: "owner" } }));
   });
 
   it("a Team plan with no buyer resolves the org owner's email", async () => {

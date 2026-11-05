@@ -80,7 +80,8 @@ export interface GhlFirstGradedCallPayload extends GhlBase {
 
 /**
  * A Stripe plan change on a Calltrainer subscription (metadata app=calltrainer), after the plan is applied.
- * eventId: stripe:{stripeRef}:{event}. Never a raw Stripe object, customer or subscription id, price or card data.
+ * eventId: stripe:{stripeRef}:{event}, identical whether the success page or the Stripe webhook applied the change
+ * first. Never a raw Stripe object, customer or subscription id, price or card data.
  */
 export interface GhlPlanChangePayload extends GhlBase {
   event: BillingLifecycleKind;
@@ -93,16 +94,19 @@ export interface GhlPlanChangePayload extends GhlBase {
   organizationId: string | null;
   /**
    * Lowercased contact email, looked up at send time in the background. The user's email on a Pro plan; on a Team
-   * plan the buyer's (userId) when that user still exists, else the org owner's (earliest owner row). Null when no
-   * such user exists at send time (user deleted, org with no owner row) or the lookup failed or took longer than
-   * GHL_TIMEOUT_MS; the event is still sent.
+   * plan the buyer's (userId) when that user still exists and is still in the org, else the org owner's (earliest
+   * owner row in that org). Null when no such user exists at send time (user deleted, org with no owner row) or the
+   * lookup failed or took longer than GHL_TIMEOUT_MS; the event is still sent.
    */
   email: string | null;
   fromPlan: PlanTier;
   toPlan: PlanTier;
   seats: number;
   premiumVoice: boolean;
-  /** The Stripe event id (evt_...) that caused the change, or checkout_session:{id} when a paid checkout was applied directly. */
+  /**
+   * subscription:{first 32 hex of sha256(Stripe subscription id)}, so both apply paths share one eventId and the raw id
+   * is never sent. Rare fallback when no subscription id is known: checkout_session:{id} or the Stripe event id (evt_...).
+   */
   stripeRef: string;
 }
 
@@ -257,17 +261,18 @@ const within = <T>(work: Promise<T>, ms: number): Promise<T | null> =>
   });
 
 /**
- * The contact email for a plan change: the user on a Pro plan; on a Team plan the buyer if that user still exists,
- * else the org's earliest owner. One or two small selects. Null when nobody matches, the read fails, or it takes longer
- * than GHL_TIMEOUT_MS. Never throws.
+ * The contact email for a plan change: the user on a Pro plan; on a Team plan the buyer if that user still exists and
+ * still belongs to the Team org (a buyer who left the team is skipped), else the org's earliest owner. One or two small
+ * selects. Null when nobody matches, the read fails, or it takes longer than GHL_TIMEOUT_MS. Never throws.
  */
 export async function planChangeEmail(e: BillingLifecycleEvent): Promise<string | null> {
   try {
     return await within((async () => {
       const userId = e.subject === "user" ? e.subjectId : e.purchaserUserId;
       if (userId) {
-        const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
-        if (user?.email) return user.email;
+        const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, organizationId: true } });
+        const inScope = e.subject === "user" || user?.organizationId === e.subjectId;
+        if (user?.email && inScope) return user.email;
       }
       if (e.subject !== "organization") return null;
       const [owner] = await prisma.user.findMany({

@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "./db";
@@ -649,7 +650,10 @@ export async function handleStripeEvent(event: StripeEventLike, now = new Date()
     throw e;
   }
   try {
-    await afterApplied(applied, deps, { stripeRef: event.id, metadata: [metadataOf(event.data.object), live && live !== "gone" ? live.metadata : null] });
+    await afterApplied(applied, deps, {
+      stripeRef: lifecycleRef((live && live !== "gone" ? live.id : null) ?? subscriptionIdOf(event), event.id),
+      metadata: [metadataOf(event.data.object), live && live !== "gone" ? live.metadata : null],
+    });
   } catch (e) {
     // Cancel runs after commit. Drop the event id so Stripe's 500 retry can cancel again.
     if (applied?.cancelSubscriptionId) {
@@ -672,6 +676,21 @@ const metadataOf = (obj: unknown): Record<string, string> | null => {
 };
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * The CRM dedupe reference for a plan change, identical whichever path applies it first (the success page via
+ * applyCompletedCheckout, or the Stripe webhook): `subscription:{first 32 hex of sha256(subscription id)}`. A digest,
+ * so the raw Stripe subscription id never reaches GHL. Every handled event names its subscription (session.subscription,
+ * the live subscription, or the updated or deleted subscription's id), so the fallback is rare: a checkout session or
+ * event that carries no subscription id keeps `checkout_session:{id}` or the Stripe event id (evt_...).
+ *
+ * A Pro subscription only moves between free and pro, and a Team one between free and team, so the same subscription
+ * can repeat a kind only after an opposite change (for example a past-due churn, then an upgrade when payment recovers).
+ * Those repeats are never back to back, so dedupe on the contact's last eventId, not on a global seen set.
+ */
+export function lifecycleRef(subscriptionId: string | null | undefined, fallback: string | null): string | null {
+  return subscriptionId ? `subscription:${createHash("sha256").update(subscriptionId).digest("hex").slice(0, 32)}` : fallback;
+}
 
 /**
  * The lifecycle event for the CRM, or null. Only a change on a Calltrainer subscription (metadata app=calltrainer on
@@ -706,7 +725,7 @@ async function applyCompletedCheckout(session: z.infer<typeof SessionObject>, no
   const live = await fetchLive(session.subscription ?? null, deps);
   const applied = await prisma.$transaction((tx) => onCheckoutPaid(tx, session, live, now, true));
   await afterApplied(applied, deps, {
-    stripeRef: session.id ? `checkout_session:${session.id}` : null,
+    stripeRef: lifecycleRef(session.subscription ?? (live && live !== "gone" ? live.id : null), session.id ? `checkout_session:${session.id}` : null),
     metadata: [session.metadata, live && live !== "gone" ? live.metadata : null],
   });
 }
