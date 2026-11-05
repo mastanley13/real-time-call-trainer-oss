@@ -17,7 +17,10 @@ export const GRADER_VERSIONS = { llm: "llm-v2", heuristic: "heuristic-v2" } as c
 export interface Evaluation {
   method: "llm" | "heuristic";
   graderVersion?: string;
-  /** Model that produced an LLM grade, recorded at grading time. Unset for rules-based grades and older AI grades. */
+  /**
+   * Legacy only: AI grades saved before model ids were removed from user-visible output may still carry one.
+   * New grades never set it, the UI never shows it, and API responses strip it (withoutModelId in gradable.ts).
+   */
   model?: string;
   /** ISO time the grade was produced (set by the API routes). */
   evaluatedAt?: string;
@@ -45,13 +48,11 @@ export function goalStatusOf(ev: Pick<Evaluation, "goalAchievement">): GoalStatu
 export const isLegacyGrader = (ev: Pick<Evaluation, "graderVersion" | "method"> | null | undefined) => !!ev && !ev.graderVersion && ev.method !== "llm";
 
 /**
- * Who produced this grade, for provenance lines: the stored model for AI grades
- * (never today's configured model, which may have changed since), "rules-based"
- * for the heuristic, and a plain fallback for AI grades saved before the model was recorded.
+ * Who produced this grade, for provenance lines: "AI" for model grades and "rules-based" for the heuristic.
+ * Never a model id, even when a legacy grade still carries one.
  */
-export function graderLabel(ev: Pick<Evaluation, "method" | "model">): string {
-  if (ev.method !== "llm") return "rules-based";
-  return ev.model?.trim() || "AI (model not recorded)";
+export function graderLabel(ev: Pick<Evaluation, "method">): string {
+  return ev.method === "llm" ? "AI" : "rules-based";
 }
 
 /** Removes the internal post-check note that older gradings appended to rationales. */

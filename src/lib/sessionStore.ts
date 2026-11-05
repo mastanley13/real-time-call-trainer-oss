@@ -18,6 +18,7 @@ export interface StoredTurn {
 export interface CoachLog {
   mode: CoachMode;
   source?: "llm" | "heuristic";
+  /** Legacy only: older browser-stored sessions may carry a model id. New sessions never write it and the debrief never shows it. */
   model?: string;
   p50Ms?: number | null;
   cues: { triggerTurn: number; type: CueType; title: string; used: boolean }[];

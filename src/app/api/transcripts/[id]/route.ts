@@ -8,8 +8,8 @@ import { ScenarioSchema } from "@/lib/scenarios";
 import { LIBRARY } from "@/lib/personas";
 import { evaluateCall } from "@/lib/grader";
 import type { Evaluation } from "@/lib/grader-types";
-import { canRegrade, gradable, gradedNote, isAiGrade } from "@/lib/gradable";
-import { getCapabilities, llmKey } from "@/lib/serverConfig";
+import { canRegrade, gradable, gradedNote, isAiGrade, withoutModelId } from "@/lib/gradable";
+import { getCapabilities, llmKey, llmModel } from "@/lib/serverConfig";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -36,7 +36,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   const session = await prisma.trainerSession.findUnique({ where: { id } });
   if (!session) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (!(await canAccess(auth.id, session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  return NextResponse.json({ session });
+  return NextResponse.json({ session: { ...session, evaluation: withoutModelId(session.evaluation) } });
 }
 
 /**
@@ -132,7 +132,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 
   const note = gradedNote(evaluation.note, graded.length, turns.length);
-  const stored: Evaluation = { ...evaluation, ...(note ? { note } : {}), evaluatedAt: new Date().toISOString() };
+  const stored: Evaluation = { ...withoutModelId(evaluation), ...(note ? { note } : {}), evaluatedAt: new Date().toISOString() };
   const previous = session.evaluation as { method?: string; model?: string } | null;
   try {
     await prisma.$transaction([
@@ -162,7 +162,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
             previousMethod: previous?.method ?? null,
             previousModel: previous?.model ?? null,
             overallScore: stored.overallScore,
-            model: stored.model ?? null,
+            // Server-side audit only: the operator can still see which model graded, the browser never does.
+            model: llmModel(),
             graderVersion: stored.graderVersion ?? null,
           } satisfies Prisma.InputJsonValue,
         },

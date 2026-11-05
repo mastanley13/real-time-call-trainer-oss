@@ -61,7 +61,7 @@ describe("generatePersona template path", () => {
       const s = out.scenario;
 
       expect(out.method).toBe("template");
-      expect(out.model).toBeUndefined();
+      expect(out).not.toHaveProperty("model");
       expect(ScenarioSchema.safeParse(s).success).toBe(true);
       expect(s).toMatchObject({ role, callType, difficulty: "hard", builtIn: false, status: "draft" });
       expect(s.id).toMatch(/^custom-[a-z0-9]+-[a-z0-9]{1,4}$/);

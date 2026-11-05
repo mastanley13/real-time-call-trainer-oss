@@ -104,14 +104,15 @@ export async function POST(req: NextRequest) {
       console.error("[realtime/session] upstream status", res.status);
       if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
       return NextResponse.json(
-        { error: "realtime_upstream_error", message: realtimeUpstreamMessage(res.status, model) },
+        { error: "realtime_upstream_error", message: realtimeUpstreamMessage(res.status) },
         { status: res.status === 429 ? 429 : 502 },
       );
     }
     const data = (await res.json().catch(() => null)) as { value?: unknown; expires_at?: unknown } | null;
     if (!data || typeof data.value !== "string" || !data.value) throw new Error("no client secret in response");
     const expiresAt = typeof data.expires_at === "number" ? data.expires_at : Math.floor(Date.now() / 1000) + SECRET_TTL_SEC;
-    return NextResponse.json({ clientSecret: data.value, expiresAt, model, voice, ...(callId ? { callId, maxSeconds } : {}) }, { headers: { "Cache-Control": "no-store" } });
+    // The model id stays server-side: the browser needs only the secret, and the SDP relay never names a model.
+    return NextResponse.json({ clientSecret: data.value, expiresAt, voice, ...(callId ? { callId, maxSeconds } : {}) }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     console.error("[realtime/session]", e instanceof Error ? e.message : "unknown error");
     if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);

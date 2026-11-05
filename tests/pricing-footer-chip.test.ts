@@ -8,7 +8,7 @@ import SiteFooter from "@/components/SiteFooter";
 import ComparePlans, { cellText } from "@/components/landing/ComparePlans";
 import PublicFooter from "@/components/landing/PublicFooter";
 import { CONTACT_LINK } from "@/lib/legalLinks";
-import { showModelChip } from "@/lib/modelChip";
+import { AI_CHIP_LABEL, showModelChip } from "@/lib/modelChip";
 import { PRICE } from "@/lib/pricing";
 import { getCapabilities } from "@/lib/serverConfig";
 
@@ -52,8 +52,8 @@ describe("footer Contact link", () => {
   });
 });
 
-describe("header model chip", () => {
-  const caps = { llm: true, model: "gpt-4.1-mini" };
+describe("header AI status chip", () => {
+  const caps = { llm: true };
 
   it("shows on self-host for anyone", () => {
     expect(showModelChip({ ...caps, hosted: false }, null)).toBe(true);
@@ -66,10 +66,11 @@ describe("header model chip", () => {
     expect(showModelChip({ ...caps, hosted: true }, { isPlatformAdmin: true })).toBe(true);
   });
 
-  it("still needs a model and an LLM key", () => {
+  it("still needs an LLM key, and its label never names a model", () => {
     expect(showModelChip(null, null)).toBe(false);
-    expect(showModelChip({ llm: false, model: "m" }, null)).toBe(false);
-    expect(showModelChip({ llm: true }, null)).toBe(false);
+    expect(showModelChip({ llm: false }, null)).toBe(false);
+    expect(showModelChip({ llm: true }, null)).toBe(true);
+    expect(AI_CHIP_LABEL).toBe("AI on");
   });
 
   it("capabilities report hosted from the Stripe config", () => {
