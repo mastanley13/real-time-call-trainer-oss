@@ -8,7 +8,7 @@ Codex loads this file from the repository root before it starts work and concate
 
 Real-Time Call Trainer is an open-source sales-call practice app. A rep picks a persona from a library of 18 sales job families, reads a pre-flight briefing, runs a voice or text call against an AI persona while a separate live coach scores each turn and cues them, then gets a quote-backed debrief. Everything degrades gracefully: with `DEMO_MODE=true` and no keys or database the app still runs end to end on a scripted caller, a rules-based coach, a template persona wizard and a heuristic grader.
 
-Stack: Next.js 15 App Router, React 19, TypeScript (strict), Tailwind 3 with CSS-variable design tokens ("Flight Deck"), zod, Prisma + Postgres (optional), Vitest. Node 22+. npm only (there is a `package-lock.json`; do not switch package managers).
+Stack: Next.js 16 App Router, React 19, TypeScript (strict), Tailwind 3 with CSS-variable design tokens ("Flight Deck"), zod, Prisma + Postgres (optional), Vitest. Node 22+. npm only (there is a `package-lock.json`; do not switch package managers).
 
 ## Commands
 
@@ -89,7 +89,7 @@ src/lib/
   serverConfig.ts                 Capability flags; the only place that reads provider env vars for the UI
   apiAuth.ts, auth.ts, mfa.ts     requireAuth, JWT sessions, bcrypt, TOTP
   rateLimit.ts                    clientIp (TRUSTED_PROXY_HOPS), IP_LIMITS, USER_LIMITS, body and transcript caps
-  access.ts + src/middleware.ts   Optional TRAINER_ACCESS_CODE gate
+  access.ts + src/proxy.ts        Optional TRAINER_ACCESS_CODE gate
   realtime.ts                     OpenAI Realtime helpers shared by server and client (see Secrets below)
   team.ts                         Team view logic (pure): KPIs, matrix, queue, assignment progress
   teamSample.ts, assignmentStore.ts    Sample team, and browser-only assignments and notes, for demo mode
@@ -124,7 +124,7 @@ Every route in `src/app/api` follows the same order. Copy `src/app/api/coach/tur
 6. Any route that calls a provider has a no-key fallback or returns 503 with a clear `*_not_configured` error. Demo mode must keep working.
 
 ### Secrets and server-only code
-- Modules that read secrets or call providers start with `import "server-only"` (`coach.ts`, `personaWizard.ts`, `safeFetch.ts`, `serverConfig.ts`, `llm.ts`, `mfa.ts`, `gradeSeal.ts`). Client components never import them; shared contracts live in `*-types.ts` files that are safe on both sides. Route handlers and middleware also read secrets directly; that is fine.
+- Modules that read secrets or call providers start with `import "server-only"` (`coach.ts`, `personaWizard.ts`, `safeFetch.ts`, `serverConfig.ts`, `llm.ts`, `mfa.ts`, `gradeSeal.ts`). Client components never import them; shared contracts live in `*-types.ts` files that are safe on both sides. Route handlers and the proxy (`src/proxy.ts`) also read secrets directly; that is fine.
 - Exception: `src/lib/realtime.ts` is isomorphic on purpose. The call UI imports its pure helpers, and its env readers (`realtimeKey()` and friends) evaluate to `undefined` in the browser because Next.js inlines only `NEXT_PUBLIC_*` variables. Only server code may call those readers. Do not flag this file for a missing `server-only` marker, and do not add new secret readers to it. `auth.ts` and `access.ts` are imported only by server code.
 - `OPENAI_API_KEY` stands in for `LLM_API_KEY` only while `LLM_BASE_URL` points at api.openai.com (`resolveLlmKey` in `serverConfig.ts`). Never send an OpenAI key to a custom base URL.
 - Never log, return or embed API keys, JWTs, the access code, `CRON_SECRET`, voice tokens or provider response bodies. `/api/config` exposes booleans and `provider: "openai" | "custom"`, never a model id or the base URL. No page, response or error shows a model id; `tests/no-model-labels.test.ts` enforces it.
