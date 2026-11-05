@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "example",
+  "brand": {
+    "name": "Larkspur Practice Desk",
+    "shortName": "Larkspur",
+    "tagline": "Larkspur Service · technician call practice",
+    "operatorName": "Larkspur Service Co. (fictional)",
+    "supportEmail": "support@example.com",
+    "siteUrl": "https://practice.example.com",
+    "poweredBy": true,
+    "showOssSections": false,
+    "logo": { "mark": "/tenant/mark.png", "alt": "Larkspur" },
+    "disclaimer": "Fictional example tenant for tests and docs. Not a real company."
+  },
+  "theme": { "primary": "#9a3412" },
+  "copy": {
+    "landing": {
+      "eyebrow": "Larkspur Service · technician call practice",
+      "subhead": "Rehearse service calls before you take them live. A coach only you can see scores every turn."
+    },
+    "library": {
+      "intro": "Service and sales calls our technicians take every week.",
+      "draftBanner": "Draft persona: it has not been reviewed yet. Tell the training lead if something reads wrong."
+    },
+    "wizard": { "shareLine": "Copy the pack file and send it to the training lead to add it to the shared library." },
+    "team": { "noOrg": "Your account is not on a Larkspur team yet. Ask the training lead to add you." },
+    "meta": { "description": "Larkspur technicians practise service calls with a live coach and a graded debrief." },
+    "terminology": { "trainee": "technician", "customer": "customer", "team": "crew", "manager": "lead" }
+  },
+  "personas": {
+    "families": ["sdr", "cs", "home-services", "field-service"],
+    "packs": ["field-service"],
+    "customFamilies": [{ "id": "field-service", "label": "Field service" }],
+    "defaultScenarioId": "field-service-boiler-callback"
+  },
+  "features": {
+    "pricing": false,
+    "billing": false,
+    "googleSignIn": false,
+    "invites": false
+  },
+  "access": {
+    "publicPaths": ["/privacy", "/terms", "/register", "/login", "/auth/complete", "/robots.txt", "/opengraph-image", "/api/auth/*"]
+  }
+}

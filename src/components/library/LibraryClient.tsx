@@ -13,6 +13,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
 import Sheet from "@/components/ui/Sheet";
 import { PageSkeleton } from "@/components/ui/Skeleton";
+import { brand, featureAllowed, tenantCopy } from "@/lib/tenant";
+
+const WIZARD = featureAllowed("wizard");
 
 type Source = "built-in" | "draft" | "mine";
 interface Filters { role: Set<string>; industry: Set<string>; difficulty: Set<string>; objection: Set<string>; callType: Set<string>; source: Set<string> }
@@ -123,7 +126,7 @@ export default function LibraryClient() {
     <div className={shelf
       ? "-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 scroll-thin sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 sm:pb-0 xl:grid-cols-3 [&>*]:w-[84%] [&>*]:shrink-0 [&>*]:snap-start sm:[&>*]:w-auto"
       : "grid gap-3 sm:grid-cols-2 xl:grid-cols-3"}>
-      {withCreate && <CreateTile />}
+      {withCreate && WIZARD && <CreateTile />}
       {items.map((s) => <PersonaCard key={s.id} s={s} onOpen={() => setOpen(s)} onDuplicate={() => duplicateAndEdit(s)} />)}
     </div>
   );
@@ -134,9 +137,13 @@ export default function LibraryClient() {
         <div>
           <p className="eyebrow">Persona library</p>
           <h1 className="mt-1 text-3xl font-bold sm:text-4xl">Library</h1>
-          <p className="mt-1 text-sm text-ink-muted"><span className="mono">{all.length}</span> personas across <span className="mono">{familyCount}</span> sales jobs · open source, add your own as a pack file</p>
+          <p className="mt-1 text-sm text-ink-muted">
+            <span className="mono">{all.length}</span> personas
+            {brand.showOssSections && <> across <span className="mono">{familyCount}</span> sales jobs · open source, add your own as a pack file</>}
+          </p>
+          {tenantCopy.library.intro && <p className="mt-1 max-w-2xl text-sm text-ink-soft">{tenantCopy.library.intro}</p>}
         </div>
-        <Link href="/library/new" className="btn-primary"><Sparkles size={16} aria-hidden /> New persona with AI</Link>
+        {WIZARD && <Link href="/library/new" className="btn-primary"><Sparkles size={16} aria-hidden /> New persona with AI</Link>}
       </div>
 
       <div className="mt-6 flex gap-2">
@@ -178,7 +185,7 @@ export default function LibraryClient() {
                 <div className="card text-center">
                   <h2 className="text-base font-semibold">No persona matches yet</h2>
                   <p className="mx-auto mt-1 max-w-sm text-sm text-ink-muted">Clear a filter, or have the wizard build this persona from a job description, product page or CRM notes.</p>
-                  <Link href="/library/new" className="btn-primary mt-4"><Sparkles size={16} aria-hidden /> Build it with AI</Link>
+                  {WIZARD && <Link href="/library/new" className="btn-primary mt-4"><Sparkles size={16} aria-hidden /> Build it with AI</Link>}
                 </div>
               )}
             </section>
@@ -347,7 +354,13 @@ function PersonaSheet({ s, onClose, onDuplicate }: { s: Scenario; onClose: () =>
             </div>
           </div>
         </div>
-        {s.status === "draft" && s.builtIn && <p className="banner-warn">Draft persona: it hasn&rsquo;t been reviewed by a maintainer yet. Spot something off? Duplicate it, fix it and send the pack file as a pull request.</p>}
+        {s.status === "draft" && s.builtIn && (
+          <p className="banner-warn">
+            {tenantCopy.library.draftBanner ?? (brand.showOssSections
+              ? <>Draft persona: it hasn&rsquo;t been reviewed by a maintainer yet. Spot something off? Duplicate it, fix it and send the pack file as a pull request.</>
+              : <>Draft persona: it hasn&rsquo;t been reviewed yet. Spot something off? Duplicate it to fix your own copy, and tell whoever runs this trainer.</>)}
+          </p>
+        )}
         {json ? (
           <div>
             <div className="mb-2 flex items-center justify-between">

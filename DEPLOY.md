@@ -14,6 +14,15 @@ Any Node 22+ host works (Vercel, Fly, Render, a VPS). You need a Postgres databa
 9. **Health**: `GET /api/health` reports DB, secrets and provider configuration (`elevenlabs`, `realtime`, `llm`).
 10. **Proxies**: run the app behind at least one proxy that sets or appends `X-Forwarded-For`. If more than one sits in front of the app, set `TRUSTED_PROXY_HOPS` (see below).
 
+## New company deployment
+
+A new company gets its own deployment built from a tenant directory, not a fork of the code:
+
+1. **Private deploy repo**: a private repo that pins an OSS commit and adds `tenants/<id>/` (`tenant.json`, `assets/`, optional `personas/*.json`). Never put client config or personas in this public repo; it holds only `tenants/calltrainer` and `tenants/example`.
+2. **Brand hook**: set `TENANT_CONFIG_DIR=tenants/<id>` for the build. It is the only brand variable; the prebuild validates the tenant and fails the build on any problem. See [docs/TENANTS.md](docs/TENANTS.md).
+3. **Infra stays env**: the tenant gets its own Vercel project, Neon database, `JWT_SECRET`, `CRON_SECRET`, `APP_URL`, `TRAINER_ACCESS_CODE` (if `access.mode` is `accounts_and_code`) and provider keys, set as environment variables exactly as in the checklist above. The infra runbook (`TENANT-RUNBOOK.md`, `tenant.env.example`) covers provisioning; it adds no branding variables.
+4. **Verify**: `/api/health` is 200 (it is 503 with `checks.accessCode: "missing"` if the tenant requires an access code and none is set), the gate and a text call work, and `/api/config` shows no model id.
+
 ## Neon Postgres
 1. In the Neon console, copy two connection strings for your project: the pooled one (host contains `-pooler`) and the direct one.
 2. Set `DATABASE_URL` on the host to the **pooled** string, with `sslmode=require`:

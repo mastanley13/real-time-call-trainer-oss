@@ -15,6 +15,7 @@ import AssignSheet from "@/components/team/AssignSheet";
 import VoicePanel from "@/components/team/VoicePanel";
 import { localTeamViews } from "@/components/team/localAssignments";
 import { useAuth } from "@/contexts/AuthContext";
+import { featureOn, tenantCopy } from "@/lib/tenant";
 import { archiveLocalAssignment, ASSIGNMENTS_CHANGED, localNoteIds } from "@/lib/assignmentStore";
 import { DEFAULT_WINDOW, memberName, parseWindow, rosterCsv, summarizeAssignments, TEAM_WINDOWS, type AssignmentView, type TeamOverview, type TeamWindow } from "@/lib/team";
 
@@ -154,7 +155,7 @@ export default function TeamPage() {
       <div className="page enter">
         <div className="panel mx-auto max-w-lg">
           <EmptyState icon={Building2} title="You're not on a team yet">
-            <p>Your account is not part of an organization. Register with your team&rsquo;s org code, or ask the org owner to add you.</p>
+            <p>{tenantCopy.team.noOrg ?? <>Your account is not part of an organization. Register with your team&rsquo;s org code, or ask the org owner to add you.</>}</p>
             <Link href="/dashboard" className="btn-ghost btn-pill mt-4">Go to Progress</Link>
           </EmptyState>
         </div>
@@ -210,7 +211,7 @@ export default function TeamPage() {
       </div>
 
       {/* Renders nothing unless the viewer can change it: the owner of a comped team, or a platform admin. */}
-      {!data.sample && !local && capabilities?.realtime && <VoicePanel />}
+      {!data.sample && !local && featureOn("voiceQualityPanel", capabilities?.realtime === true) && <VoicePanel />}
 
       <TeamKpis kpis={data.kpis} days={data.days} />
 

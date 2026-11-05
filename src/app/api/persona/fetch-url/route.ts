@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
+import { featureAllowed } from "@/lib/tenant";
 import { ipLimitResponse, readJsonLimited, userLimitResponse } from "@/lib/rateLimit";
 import { FetchPageError, fetchPublicPage } from "@/lib/safeFetch";
 
@@ -13,6 +14,7 @@ const Body = z.object({ url: z.string().trim().min(1).max(2048) });
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
+  if (!featureAllowed("wizard") || !featureAllowed("urlImport")) return NextResponse.json({ error: "feature_disabled", message: "This deployment has turned this feature off." }, { status: 404 });
   const ipLimited = ipLimitResponse(req, "wizard");
   if (ipLimited) return ipLimited;
   const userLimited = userLimitResponse(auth.id, "wizard");

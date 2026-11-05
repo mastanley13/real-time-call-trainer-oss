@@ -1,8 +1,9 @@
 import { Suspense } from "react";
 import BillingClient from "@/components/settings/BillingClient";
 import { PageSkeleton } from "@/components/ui/Skeleton";
+import { pageTitle } from "@/lib/tenant";
 
-export const metadata = { title: "Billing · Real-Time Call Trainer" };
+export const metadata = { title: pageTitle("Billing") };
 
 export default function BillingSettingsPage() {
   // useSearchParams needs a Suspense boundary in the App Router.

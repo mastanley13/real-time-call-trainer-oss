@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
+import { storedOrDefaultTier, tierToStore } from "@/lib/tenant";
 import { VOICE_TIERS, canEditVoiceTier, canSetVoiceTier, effectiveVoiceTier, normalizeVoiceTier } from "@/lib/voiceTier";
 import { limitFor, loadActor, noOrganization, serverError, teamIsLocal, type Actor } from "../_lib/server";
 
@@ -87,7 +88,7 @@ export async function GET(req: NextRequest) {
     if (org === "no_org") return noOrganization();
     const comped = org.voiceModelComped === true;
     return NextResponse.json(
-      voiceView(org.voiceModelTier, comped, canEditVoiceTier(actor.role, actor.isPlatformAdmin, comped)),
+      voiceView(storedOrDefaultTier(org.voiceModelTier), comped, canEditVoiceTier(actor.role, actor.isPlatformAdmin, comped)),
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
@@ -127,9 +128,9 @@ export async function PATCH(req: NextRequest) {
     // An owner can only switch a comped org. A platform admin can set any org's tier; mint still uses Standard until it is comped.
     if (!canEditVoiceTier(actor.role, actor.isPlatformAdmin, comped)) return notComped();
 
-    const from = normalizeVoiceTier(org.voiceModelTier);
-    // Standard is stored as null, the same as an org that never chose.
-    await prisma.organization.update({ where: { id: org.id }, data: { voiceModelTier: body.tier === "premium" ? "premium" : null } });
+    const from = normalizeVoiceTier(storedOrDefaultTier(org.voiceModelTier));
+    // Standard is stored as null, the same as an org that never chose, unless the tenant default is Premium (tierToStore).
+    await prisma.organization.update({ where: { id: org.id }, data: { voiceModelTier: tierToStore(body.tier) } });
     await prisma.auditEvent.create({
       data: {
         userId: actor.id,

@@ -1,17 +1,20 @@
 import Link from "next/link";
 import { ArrowRight, FileJson, GitPullRequest, KeyRound, LibraryBig, MessageSquareQuote, Radar } from "lucide-react";
+import FooterCredit from "@/components/FooterCredit";
 import HeroDeck from "@/components/landing/HeroDeck";
+import PersonaPreview from "@/components/landing/PersonaPreview";
 import PublicFooter from "@/components/landing/PublicFooter";
 import { LIBRARY } from "@/lib/personas";
 import { registerHref } from "@/lib/pricing";
-import { pageMetadata } from "@/lib/seo";
+import { GITHUB_URL, pageMetadata } from "@/lib/seo";
+import { HOME_TITLE, META_DESCRIPTION, brand, featureAllowed, tenantCopy } from "@/lib/tenant";
 
-export const metadata = pageMetadata({
-  title: "Real-Time Call Trainer · Hosted AI sales call practice, no setup",
-  description:
-    "Hosted AI sales call practice. Talk to AI buyers who push back, get a live coach on every turn, and finish with a graded debrief that quotes your transcript. Start free, no setup. Also open source.",
-  path: "/",
-});
+export const metadata = pageMetadata({ title: HOME_TITLE, description: META_DESCRIPTION, path: "/" });
+
+/** OSS builds show the GitHub, contribute and model sections; a branded tenant turns them off (brand.showOssSections). */
+const oss = brand.showOssSections;
+const pricing = featureAllowed("pricing");
+const copy = tenantCopy.landing;
 
 const families = new Set(LIBRARY.map((s) => s.role)).size;
 
@@ -35,19 +38,30 @@ export default function Home() {
       <section className="deck border-b border-line">
         <div className="page grid gap-12 py-14 sm:py-20 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-center">
           <div className="enter">
-            <p className="eyebrow">Free tier · no card · text or voice</p>
+            <p className="eyebrow">{copy.eyebrow ?? (oss ? "Free tier · no card · text or voice" : brand.tagline ?? brand.name)}</p>
             <h1 className="mt-4 text-4xl font-bold leading-[1.05] sm:text-[56px]">
-              Sales call practice, <span className="text-primary">no setup required</span>
+              {copy.headline ?? <>Sales call practice, <span className="text-primary">no setup required</span></>}
             </h1>
             <p className="mt-5 max-w-xl text-lg leading-relaxed text-ink-soft">
-              Practice real sales calls against {LIBRARY.length} AI buyer personas. No API keys, no database, just sign up and start talking.
+              {copy.subhead ?? (oss
+                ? `Practice real sales calls against ${LIBRARY.length} AI buyer personas. No API keys, no database, just sign up and start talking.`
+                : `Rehearse calls against ${LIBRARY.length} AI personas. A live coach scores every turn, and the debrief backs every score with your own words.`)}
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link href={registerHref({ src: "home_hero" })} className="btn-primary btn-xl">Start free <ArrowRight size={18} aria-hidden /></Link>
-              <Link href="/pricing" className="btn-ghost btn-xl">See pricing</Link>
+              {pricing ? (
+                <>
+                  <Link href={registerHref({ src: "home_hero" })} className="btn-primary btn-xl">Start free <ArrowRight size={18} aria-hidden /></Link>
+                  <Link href="/pricing" className="btn-ghost btn-xl">See pricing</Link>
+                </>
+              ) : (
+                <>
+                  <Link href="/library" className="btn-primary btn-xl">Browse {LIBRARY.length} personas <ArrowRight size={18} aria-hidden /></Link>
+                  <Link href="/trainer" className="btn-ghost btn-xl">Start a practice call</Link>
+                </>
+              )}
             </div>
           </div>
-          <div className="enter [animation-delay:120ms]"><HeroDeck /></div>
+          <div className="enter [animation-delay:120ms]">{oss ? <HeroDeck /> : <PersonaPreview />}</div>
         </div>
       </section>
 
@@ -65,7 +79,7 @@ export default function Home() {
         </ol>
       </section>
 
-      <section className="border-y border-line bg-surface" aria-labelledby="models-h">
+      {oss && <section className="border-y border-line bg-surface" aria-labelledby="models-h">
         <div className="page py-12">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
@@ -84,13 +98,15 @@ export default function Home() {
             ))}
           </div>
         </div>
-      </section>
+      </section>}
 
       <section className="page py-14 sm:py-16" aria-labelledby="feat-h">
         <h2 id="feat-h" className="sr-only">Features</h2>
         <div className="grid gap-4 md:grid-cols-3">
           {[
-            { icon: LibraryBig, title: `${LIBRARY.length} personas, ${families} sales jobs`, body: "SDR cold calls to collections, filtered by role, industry, difficulty and the objections they throw. Each persona is a plain JSON pack." },
+            oss
+              ? { icon: LibraryBig, title: `${LIBRARY.length} personas, ${families} sales jobs`, body: copy.featureBlurb ?? "SDR cold calls to collections, filtered by role, industry, difficulty and the objections they throw. Each persona is a plain JSON pack." }
+              : { icon: LibraryBig, title: `${LIBRARY.length} personas`, body: copy.featureBlurb ?? "Filter by difficulty, call type and the objections each persona raises. Every one has its own goal, talk track and rubric." },
             { icon: Radar, title: "A live coach, not a script", body: "Live rubric estimate, talk-track progress and talk ratio, plus cues with a line you can use. Blind, Guided or Coached, your call." },
             { icon: MessageSquareQuote, title: "Evidence-backed debrief", body: "Scores cite verbatim quotes that are checked against the transcript. Click any quote to see the moment, then retry from that turn." },
           ].map(({ icon: Icon, title, body }) => (
@@ -103,7 +119,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="deck" aria-labelledby="oss-h">
+      {oss && <section className="deck" aria-labelledby="oss-h">
         <div className="page grid gap-8 py-14 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-center">
           <div>
             <p className="eyebrow">Open source · MIT · bring your own key</p>
@@ -111,21 +127,21 @@ export default function Home() {
             <p className="mt-3 max-w-lg text-ink-soft">Build one with the wizard, export the pack file, and open a pull request. Packs are checked against the same schema the app uses.</p>
             <div className="mt-6 flex flex-wrap gap-3">
               <Link href="/library/new" className="btn-primary"><FileJson size={16} aria-hidden /> Build a persona pack</Link>
-              <a href="https://github.com/mastanley13/real-time-call-trainer-oss" className="btn-ghost" target="_blank" rel="noreferrer"><GitPullRequest size={16} aria-hidden /> View on GitHub</a>
+              <a href={GITHUB_URL} className="btn-ghost" target="_blank" rel="noreferrer"><GitPullRequest size={16} aria-hidden /> View on GitHub</a>
             </div>
           </div>
           <div className="panel overflow-x-auto p-4">
             <p className="label flex items-center gap-1.5"><KeyRound size={12} aria-hidden /> Run it locally</p>
-            <pre className="font-mono text-[12.5px] leading-relaxed text-ink-soft">{`git clone https://github.com/mastanley13/real-time-call-trainer-oss
-cd real-time-call-trainer-oss && npm install
+            <pre className="font-mono text-[12.5px] leading-relaxed text-ink-soft">{`git clone ${GITHUB_URL}
+cd ${GITHUB_URL.split("/").pop()} && npm install
 cp .env.example .env   # add OPENAI_API_KEY for the AI coach and voice
 npm run dev`}</pre>
           </div>
         </div>
-      </section>
+      </section>}
 
       <PublicFooter>
-        <p>MIT licensed · by Mykel Stanley · originally based on OpenAI&rsquo;s openai-realtime-agents demo</p>
+        <FooterCredit />
       </PublicFooter>
     </div>
   );

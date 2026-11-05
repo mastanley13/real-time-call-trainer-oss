@@ -6,15 +6,22 @@
     "node": ">=22.0.0"
   },
   "scripts": {
+    "tenant": "tsx scripts/prepare-tenant.ts",
+    "predev": "npm run tenant",
     "dev": "next dev",
+    "prebuild": "npm run tenant",
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint src",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
+    "pretypecheck": "npm run tenant",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "pretest": "npm run tenant",
+    "test": "vitest run && npm run test:example-tenant",
+    "test:example-tenant": "tsx scripts/test-example-tenant.ts",
+    "prevalidate:personas": "npm run tenant",
     "validate:personas": "tsx scripts/validate-personas.ts"
   },
   "prisma": {

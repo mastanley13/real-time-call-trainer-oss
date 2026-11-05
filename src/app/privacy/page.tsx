@@ -1,10 +1,11 @@
 // Legal copy pending owner review.
 import type { Metadata } from "next";
 import SiteFooter from "@/components/SiteFooter";
+import { brand, siteHost } from "@/lib/tenant";
 
 export const metadata: Metadata = {
   title: "Privacy policy",
-  description: "What Call Trainer collects, who processes it, and how to ask for export or deletion.",
+  description: `What ${brand.shortName} collects, who processes it, and how to ask for export or deletion.`,
 };
 
 export default function PrivacyPage() {
@@ -18,7 +19,7 @@ export default function PrivacyPage() {
       <div className="mt-8 space-y-8 text-ink-soft">
         <section aria-labelledby="who-h">
           <h2 id="who-h" className="text-xl font-bold text-ink">Who we are</h2>
-          <p className="mt-2">StrategixAI LLC operates calltrainer.tech. This policy explains what personal data the service collects and how it is used.</p>
+          <p className="mt-2">{brand.operatorName} operates {siteHost}. This policy explains what personal data the service collects and how it is used.</p>
         </section>
 
         <section aria-labelledby="collect-h">
@@ -64,12 +65,12 @@ export default function PrivacyPage() {
 
         <section aria-labelledby="rights-h">
           <h2 id="rights-h" className="text-xl font-bold text-ink">Export and deletion</h2>
-          <p className="mt-2">Email support@calltrainer.tech and we will send a copy of your data or delete your account within 30 days. If you signed in with Google, we can also remove the link to your Google account. You can stop Call Trainer from using your Google sign-in at any time from your Google Account settings (myaccount.google.com, Security, Third-party apps); that does not delete your Call Trainer account, so email us if you want it deleted.</p>
+          <p className="mt-2">Email {brand.supportEmail} and we will send a copy of your data or delete your account within 30 days. If you signed in with Google, we can also remove the link to your Google account. You can stop {brand.shortName} from using your Google sign-in at any time from your Google Account settings (myaccount.google.com, Security, Third-party apps); that does not delete your {brand.shortName} account, so email us if you want it deleted.</p>
         </section>
 
         <section aria-labelledby="contact-h">
           <h2 id="contact-h" className="text-xl font-bold text-ink">Contact</h2>
-          <p className="mt-2">Questions about this policy: support@calltrainer.tech.</p>
+          <p className="mt-2">Questions about this policy: {brand.supportEmail}.</p>
         </section>
       </div>
     </div>

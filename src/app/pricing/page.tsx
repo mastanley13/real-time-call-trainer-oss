@@ -8,12 +8,14 @@ import {
 } from "@/lib/pricing";
 import { GITHUB_URL, pageMetadata } from "@/lib/seo";
 import { billingOn } from "@/lib/serverConfig";
+import { notFound } from "next/navigation";
+import { brand, featureAllowed } from "@/lib/tenant";
 
 // The plan buttons depend on whether billing is on, which is read from the server environment on each request.
 export const dynamic = "force-dynamic";
 
 export const metadata = pageMetadata({
-  title: "Pricing: Free, Pro and Team Plans | Call Trainer",
+  title: `Pricing: Free, Pro and Team Plans | ${brand.shortName}`,
   description: "Sales roleplay with an AI buyer and a coach in your ear. Free, no card. Pro $29/mo. Team $59/seat for managers. No overages.",
   path: "/pricing",
 });
@@ -55,11 +57,12 @@ const FAQ: { q: string; a: string }[] = [
   { q: "What are reviewed persona packs?", a: "Industry buyer sets, like final expense, Medicare, P&C insurance and residential solar, with realistic objections and grading tuned to that sale. Each pack is reviewed before release. They are coming soon to Pro and Team." },
   { q: "What does Premium AI voice add?", a: `${PREMIUM_COMING_SOON}. It will be a Team add-on first. The full realtime voice model for your buyers, more natural and expressive. It can use up to ${PREMIUM_VOICE_CAP_PCT}% of your plan minutes. After that, calls fall back to standard voice and never stop. It costs +$${PRICE.premium.month} per seat per month ($${PRICE.premium.year} per seat per year).` },
   { q: "How does annual billing work?", a: `Pay for 10 months, get 12. Pro is $${PRICE.pro.year} a year. Team is $${PRICE.team.year} per seat per year.` },
-  { q: "Can I cancel anytime?", a: "Yes. Cancel anytime from Settings > Billing and your access continues until the end of the period you paid for. There are no refunds. Payments to StrategixAI LLC are non-refundable except where the law requires." },
+  { q: "Can I cancel anytime?", a: `Yes. Cancel anytime from Settings > Billing and your access continues until the end of the period you paid for. There are no refunds. Payments to ${brand.operatorName} are non-refundable except where the law requires.` },
   { q: "What happens to my data?", a: "Transcripts are kept until an admin sets a retention window. No call audio is stored on our servers." },
 ];
 
 export default function PricingPage() {
+  if (!featureAllowed("pricing")) notFound();
   return (
     <div>
       <section className="border-b border-line">

@@ -1,10 +1,11 @@
 // Legal copy pending owner review.
 import type { Metadata } from "next";
 import SiteFooter from "@/components/SiteFooter";
+import { brand, siteHost } from "@/lib/tenant";
 
 export const metadata: Metadata = {
   title: "Terms of service",
-  description: "The terms for using the Call Trainer hosted service: plans, billing, cancellation and refunds, acceptable use and liability.",
+  description: `The terms for using the ${brand.shortName} hosted service: plans, billing, cancellation and refunds, acceptable use and liability.`,
 };
 
 export default function TermsPage() {
@@ -18,7 +19,7 @@ export default function TermsPage() {
       <div className="mt-8 space-y-8 text-ink-soft">
         <section aria-labelledby="service-h">
           <h2 id="service-h" className="text-xl font-bold text-ink">The service</h2>
-          <p className="mt-2">Call Trainer at calltrainer.tech is a hosted service run by StrategixAI LLC. By using it you agree to these terms.</p>
+          <p className="mt-2">{brand.shortName} at {siteHost} is a hosted service run by {brand.operatorName}. By using it you agree to these terms.</p>
         </section>
 
         <section aria-labelledby="account-h">
@@ -37,9 +38,9 @@ export default function TermsPage() {
             <li>Subscriptions renew automatically, monthly or annually depending on the plan you choose.</li>
             <li>You can cancel anytime from Settings &gt; Billing.</li>
             <li>After you cancel, you keep access until the end of the period you have paid for.</li>
-            <li>Payments to StrategixAI LLC are non-refundable except where the law requires.</li>
+            <li>Payments to {brand.operatorName} are non-refundable except where the law requires.</li>
           </ul>
-          <p className="mt-2">Questions about a charge: support@calltrainer.tech.</p>
+          <p className="mt-2">Questions about a charge: {brand.supportEmail}.</p>
         </section>
 
         <section aria-labelledby="use-h">
@@ -63,7 +64,7 @@ export default function TermsPage() {
 
         <section aria-labelledby="liability-h">
           <h2 id="liability-h" className="text-xl font-bold text-ink">Limitation of liability</h2>
-          <p className="mt-2">To the extent the law allows, StrategixAI LLC is not liable for indirect, incidental or consequential damages arising from your use of the service.</p>
+          <p className="mt-2">To the extent the law allows, {brand.operatorName} is not liable for indirect, incidental or consequential damages arising from your use of the service.</p>
         </section>
 
         <section aria-labelledby="law-h">
@@ -83,7 +84,7 @@ export default function TermsPage() {
 
         <section aria-labelledby="contact-h">
           <h2 id="contact-h" className="text-xl font-bold text-ink">Contact</h2>
-          <p className="mt-2">Questions about these terms: support@calltrainer.tech.</p>
+          <p className="mt-2">Questions about these terms: {brand.supportEmail}.</p>
         </section>
       </div>
     </div>

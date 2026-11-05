@@ -21,6 +21,10 @@ npm run validate:personas         # 0 errors expected; warnings flag weak script
 npx tsx scripts/coach-smoke.ts    # no-key coach, template wizard and URL guard
 ```
 
+## Tenants
+
+`npm test` runs the whole suite against the default tenant (calltrainer.tech), then `npm run test:example-tenant` (`scripts/test-example-tenant.ts`): with `TENANT_CONFIG_DIR=tenants/example` it prepares the example tenant, runs no-model-labels and the tenant runtime, access-mode, config and hardening tests, and the persona validator, then always prepares the default tenant again. CI gets this through its existing `npm test` step. `tests/tenant-config.test.ts` covers the schema, merge, legacy env shim, contrast, secret scan and the parity snapshot. To check a branded build by hand, run `npm run test:example-tenant`, then `TENANT_CONFIG_DIR=tenants/example DEMO_MODE=true npm run dev` and walk sections 1, 4, 5 and 10 at 375 px and desktop, light and dark: the Larkspur mark and name in the header and on sign-in, a rust primary, no Pricing link, no OSS pill or GitHub link, the footer "powered by" line and disclaimer, and the Field service persona in the library. Run `npm run tenant` afterwards to return to the default.
+
 ## Environment per mode
 
 | Mode | Needs | What works |

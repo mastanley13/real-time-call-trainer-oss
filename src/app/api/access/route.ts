@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_COOKIE, ACCESS_MAX_AGE, accessCode, accessToken, codeMatches } from "@/lib/access";
 import { ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
+import { tenant } from "@/lib/tenant";
 
 export async function POST(req: NextRequest) {
   const limited = ipLimitResponse(req, "access");
   if (limited) return limited;
 
   const code = accessCode();
+  if (!code && tenant.access.mode === "accounts_and_code") {
+    return NextResponse.json({ error: "access_code_not_configured", message: "Sign-in is not set up on this deployment yet. Ask whoever runs it to set the access code." }, { status: 503 });
+  }
   if (!code) return NextResponse.json({ ok: true });
 
   let input = "";

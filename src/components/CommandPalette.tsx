@@ -10,6 +10,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { jobFamilyLabel, type Scenario } from "@/lib/scenarios";
 import { canManageTeam } from "@/lib/team";
+import { featureAllowed } from "@/lib/tenant";
 import { commandFields, createIndex, isPaletteShortcut, personaFields, search, toggledTheme, type ThemeChoice } from "@/lib/palette";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
 
@@ -153,10 +154,10 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
     }
     return [
       to("library", "Library", "/library", LibraryBig, "personas browse catalog packs search"),
-      to("new", "New persona with AI", "/library/new", Sparkles, "create build wizard generate add custom"),
+      ...(featureAllowed("wizard") ? [to("new", "New persona with AI", "/library/new", Sparkles, "create build wizard generate add custom")] : []),
       to("practice", "Practice", "/trainer", PhoneCall, "call train pre flight briefing start roleplay"),
       to("progress", "Progress", "/dashboard", BarChart3, "dashboard history scores sessions logbook stats"),
-      ...(canSeeTeam ? [to("team", "Team", "/team", Users, "manager reps members invite coaching")] : []),
+      ...(canSeeTeam && featureAllowed("teamView") ? [to("team", "Team", "/team", Users, "manager reps members invite coaching")] : []),
       to("models", "Models", "/settings/models", Cpu, "settings llm openai provider api key ai voice"),
       to("security", "Security", "/settings/security", ShieldCheck, "settings mfa two factor 2fa password account"),
     ];

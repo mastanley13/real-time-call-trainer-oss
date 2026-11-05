@@ -1,8 +1,10 @@
 import "server-only";
 import * as OTPAuth from "otpauth";
 import crypto from "crypto";
+import { brand } from "./tenant";
 
-const ISSUER = "Real-Time Call Trainer";
+/** The authenticator app label: the tenant brand name. */
+export const ISSUER = brand.name;
 
 export function generateMfaSecret(): string {
   // 20 random bytes, base32-encoded, is the standard TOTP secret size.

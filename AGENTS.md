@@ -87,6 +87,9 @@ src/lib/
   llm.ts                          OpenAI-compatible chat client (LLM_API_KEY, LLM_BASE_URL, LLM_MODEL)
   sessionStore.ts, scenarioStore.ts    Client-side persistence (API when signed in, localStorage in demo)
   serverConfig.ts                 Capability flags; the only place that reads provider env vars for the UI
+  tenant.ts, tenant-schema.ts     Tenant config accessors (client-safe) and the strict schema + pure merge
+  tenantBuild.ts                  Prebuild loader: assets, data packs, legacy env shim, secret scan (Node only)
+  brandCss.ts, themeTokens.ts     Tenant primary tokens and contrast checks, from one token table
   apiAuth.ts, auth.ts, mfa.ts     requireAuth, JWT sessions, bcrypt, TOTP
   rateLimit.ts                    clientIp (TRUSTED_PROXY_HOPS), IP_LIMITS, USER_LIMITS, body and transcript caps
   access.ts + src/middleware.ts   Optional TRAINER_ACCESS_CODE gate
@@ -94,7 +97,8 @@ src/lib/
   team.ts                         Team view logic (pure): KPIs, matrix, queue, assignment progress
   teamSample.ts, assignmentStore.ts    Sample team, and browser-only assignments and notes, for demo mode
   gradeSeal.ts                    HMAC seal on server grades; POST /api/transcripts stores only sealed scores
-scripts/                          validate-personas.ts, coach-smoke.ts, calibration-check.ts
+scripts/                          validate-personas.ts, coach-smoke.ts, calibration-check.ts, prepare-tenant.ts
+tenants/                          calltrainer (default) and example (fictional) tenant directories only
 tests/                            Vitest suites; server-only-stub.ts. Route tests (notes-route, regrade) mock @/lib/db
 .github/                          workflows/ci.yml, workflows/codex-review.yml (SHA-pinned actions), dependabot.yml
 prisma/                           schema.prisma, migrations, seed.ts
@@ -105,7 +109,7 @@ docs/                             PERSONA_PACKS.md, redesign/ (design council re
 
 ### Design tokens only
 - Colors come from the Tailwind token names in `tailwind.config.ts`: `background surface sunken ink ink-soft ink-muted line primary(-hover,-soft,-on) signal ok(-soft) caution(-soft) alert(-soft,-on)`. They map to RGB-triplet variables in `src/app/globals.css`, which defines daylight, dark (`[data-theme="dark"]` and `prefers-color-scheme`) and the `.deck` scope used by the live call and the debrief.
-- Never write hex or `rgb(12 34 56)` literals, and never use Tailwind palette classes (`slate-*`, `red-*`, `gray-*`...). Inline SVG may use `rgb(var(--primary))`-style token references. Do not add `dark:` color overrides; the tokens already switch. One brand exception: `LogoMark.tsx` keeps the fixed colors of `src/app/icon.svg` so the mark matches the favicon.
+- Never write hex or `rgb(12 34 56)` literals, and never use Tailwind palette classes (`slate-*`, `red-*`, `gray-*`...). Inline SVG may use `rgb(var(--primary))`-style token references. Do not add `dark:` color overrides; the tokens already switch. One brand exception: `LogoMark.tsx` keeps the fixed colors of `public/icon.svg` so the mark matches the favicon. One numeric-color path: `src/lib/themeTokens.ts` mirrors the `globals.css` triplets (a test keeps them equal) so `src/lib/brandCss.ts` can generate a tenant's primary tokens from validated `#rrggbb` values; nothing else writes color numbers.
 - Reuse the component classes before writing new utility soup: `.card .panel .btn-primary .btn-ghost .btn-quiet .btn-danger .btn-sm .btn-xl .input .label .eyebrow .chip .chip-model .lamp` (+ `lamp-ok/-signal/-caution/-alert/-off`) `.tape .hatched .mono .kbd .banner-warn .quote`.
 - Fonts: `font-heading`, `font-sans`, `font-mono`. Radii: `rounded-panel`, `rounded-sheet`. Icons: `lucide-react` with `strokeWidth={1.75}`, `aria-hidden` when decorative.
 - Layout must work at 375 px with no horizontal page scroll, by keyboard, and in dark mode.
@@ -131,6 +135,12 @@ Every route in `src/app/api` follows the same order. Copy `src/app/api/coach/tur
 - Voice credentials are minted server-side per call; the browser never sees `ELEVENLABS_API_KEY` or `OPENAI_API_KEY`.
 - Outbound fetches of user-supplied URLs go through `fetchPublicPage` in `safeFetch.ts`. Do not add a second fetch path, new schemes, non-default ports, or skip the DNS check.
 
+### Tenants
+- A deployment is branded by a tenant directory picked with `TENANT_CONFIG_DIR` at build time (default `tenants/calltrainer`, today's calltrainer.tech). `npm run tenant` (`scripts/prepare-tenant.ts`) validates it and writes `src/generated/tenant.json`; it runs before dev, build, test, typecheck and validate:personas. Never commit `src/generated/*` or `public/tenant/`. Full reference: [docs/TENANTS.md](docs/TENANTS.md).
+- Read brand, copy and switches through `src/lib/tenant.ts` (`brand`, `tenantCopy`, `featureAllowed`, `featureOn`, `pageTitle`). Do not hard-code `calltrainer.tech`, the support address, the operator name or the brand name in `src`.
+- Config can hide, rename or select, never grant: features are ANDed with the env capability (`featureOn`), the voice tier still needs `voiceModelComped`, the access code comes only from `TRAINER_ACCESS_CODE`. Never add a schema field that could hold a secret.
+- The public repo holds only `tenants/calltrainer` and `tenants/example`. Client tenants (AirPets, MCRC) live in private deploy repos; never add them here.
+
 ### Persona packs
 Personas are plain data in `src/lib/personas/<family>.ts`, validated by `ScenarioSchema` on load and by `npm run validate:personas` in CI. Rules the validator enforces: `role` is a `JOB_FAMILIES` id, pack ids start with `<role>-`, rubric weights sum to exactly 100 with unique criterion ids, at least one objection, a non-empty numbered talk track. It warns on fewer than 4 `sampleReplies` and on missing price, availability, objection or closing replies. New personas are `status: "draft"`; only maintainers set `reviewed`. Full field reference and review checklist: [docs/PERSONA_PACKS.md](docs/PERSONA_PACKS.md).
 
@@ -151,6 +161,7 @@ Prisma schema changes need a migration (`npx prisma migrate dev --name <change>`
 | API route | Tests for its pure helpers; `DEMO_MODE=true npm run dev` and `curl` the route for 200, 400 (bad body), 401 (with the access gate on) and 429 (low `RATE_LIMIT_*_MAX`) |
 | UI | `DEMO_MODE=true npm run dev`, walk the matching section of [TESTING.md](TESTING.md) at 375 px and desktop, in light and dark, by keyboard |
 | Persona pack | `npm run validate:personas` with 0 errors and 0 warnings, then practise it once in text mode without a key |
+| Tenant config | `npx vitest run tests/tenant-config.test.ts tests/tenant-hardening.test.ts`, then `npm run test:example-tenant` (example-tenant checks, then restores the default; also the tail of `npm test`) |
 | Anything | `npm run lint && npm run typecheck && npm test && npm run validate:personas` |
 
 Report what you ran and what you could not run.

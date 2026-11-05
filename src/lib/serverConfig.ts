@@ -2,6 +2,7 @@ import "server-only";
 import { safeEqual } from "./access";
 import { orderVoiceEngines, realtimeKey } from "./realtime";
 import { stripeReady, stripeStatus } from "./stripe";
+import { tenant } from "./tenant";
 
 /**
  * Voice minutes are metered for stored accounts (not demo mode, with a database) when USAGE_CAPS=on or Stripe is
@@ -59,7 +60,7 @@ export function getCapabilities() {
     /** OpenAI Realtime voice (WebRTC). On whenever an OpenAI key is available. */
     realtime,
     /** Voice engines in preference order: OpenAI first unless VOICE_ENGINE=elevenlabs. Empty means text only. */
-    voiceEngines: orderVoiceEngines({ openai: realtime, elevenlabs }, process.env.VOICE_ENGINE),
+    voiceEngines: orderVoiceEngines({ openai: realtime, elevenlabs }, process.env.VOICE_ENGINE?.trim() || tenant.voice.enginePreference),
     llm: Boolean(llmKey()),
     database: Boolean(process.env.DATABASE_URL),
     /** Stripe test-mode billing: false when unset, in demo mode, or when the key is not an sk_test_ key. */

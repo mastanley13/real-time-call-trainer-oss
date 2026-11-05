@@ -1,4 +1,5 @@
 import { registerHref } from "@/lib/pricing";
+import { brand } from "@/lib/tenant";
 import type { VERTICAL_SLUGS } from "@/lib/publicPaths";
 
 export type VerticalSlug = (typeof VERTICAL_SLUGS)[number];
@@ -206,7 +207,7 @@ export const LANDINGS: Record<VerticalSlug, Landing> = {
     hero: "Scale your coaching without scaling your calendar",
     subhead: "Get a free seat, give your clients AI buyers to practice on between sessions, and earn 20% recurring on every paid plan you refer.",
     primaryLabel: "Apply to partner",
-    primaryHref: "mailto:support@calltrainer.tech?subject=Coach%20partner%20application",
+    primaryHref: `mailto:${brand.supportEmail}?subject=Coach%20partner%20application`,
     secondary: { label: "Try it free first", href: registerHref({ src: "coaches" }) },
     src: "coaches",
     pains: [

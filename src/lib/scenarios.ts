@@ -7,6 +7,7 @@
  * to customise (see src/lib/scenarioStore.ts for persistence).
  */
 import { z } from "zod";
+import { tenant } from "./tenant";
 
 export const RubricCriterionSchema = z.object({
   id: z.string().min(1).max(60),
@@ -87,13 +88,30 @@ export const ScenarioSchema = z.object({
   builtIn: z.boolean().optional(),
 });
 
+/**
+ * Tenant data packs (JSON files) are parsed strictly at every level: an unknown field on the persona, its aiPersona,
+ * a rubric criterion or an objection fails instead of being stripped. Same fields and bounds as ScenarioSchema
+ * (tests/tenant-config.test.ts checks every OSS persona parses the same way with both).
+ */
+export const DataPersonaSchema = ScenarioSchema.extend({
+  aiPersona: ScenarioSchema.shape.aiPersona.strict(),
+  rubric: z.array(RubricCriterionSchema.strict()).min(1).max(12),
+  objections: z.array(ObjectionSchema.strict()).max(8).default([]),
+}).strict();
+
 export type RubricCriterion = z.infer<typeof RubricCriterionSchema>;
 export type Scenario = z.infer<typeof ScenarioSchema>;
 export type Objection = z.infer<typeof ObjectionSchema>;
 export type ObjectionType = (typeof OBJECTION_TYPES)[number];
 export type CallType = (typeof CALL_TYPES)[number];
 
-export const jobFamilyLabel = (id: string) => JOB_FAMILIES.find((f) => f.id === id)?.label ?? id;
+/**
+ * OSS job families plus the ones this tenant declares for its data packs (personas.customFamilies). The prebuild
+ * rejects a custom id that reuses an OSS id, so labels never change for OSS families.
+ */
+export const ALL_JOB_FAMILIES: readonly { id: string; label: string }[] = [...JOB_FAMILIES, ...tenant.personas.customFamilies];
+
+export const jobFamilyLabel = (id: string) => ALL_JOB_FAMILIES.find((f) => f.id === id)?.label ?? id;
 
 /** Talk-track steps parsed from the numbered call script ("1. Greet ..." lines). */
 export function talkTrackSteps(callScript: string): string[] {

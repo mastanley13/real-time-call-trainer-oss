@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
+import { featureAllowed } from "@/lib/tenant";
 import { ipLimitResponse, readJsonLimited, userLimitResponse } from "@/lib/rateLimit";
 import { WizardInputSchema } from "@/lib/wizard-types";
 import { generatePersona } from "@/lib/personaWizard";
@@ -13,6 +14,7 @@ import { generatePersona } from "@/lib/personaWizard";
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
+  if (!featureAllowed("wizard")) return NextResponse.json({ error: "feature_disabled", message: "This deployment has turned this feature off." }, { status: 404 });
   const ipLimited = ipLimitResponse(req, "wizard");
   if (ipLimited) return ipLimited;
   const userLimited = userLimitResponse(auth.id, "wizard");

@@ -1,5 +1,6 @@
 import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { featureAllowed } from "./tenant";
 
 /**
  * Stripe, test mode by default; live keys need STRIPE_LIVE_MODE=true. A thin typed client over Stripe's form-encoded REST API (no SDK dependency)
@@ -17,6 +18,8 @@ type Env = Record<string, string | undefined>;
  */
 export function stripeStatus(env: Env = process.env): StripeStatus {
   if (env.DEMO_MODE === "true") return "disabled";
+  // Tenant config can switch billing off, never on: without the Stripe env this is "disabled" anyway.
+  if (!featureAllowed("billing")) return "disabled";
   const key = env.STRIPE_SECRET_KEY?.trim();
   if (!key) return "disabled";
   const liveFlag = env.STRIPE_LIVE_MODE === "true";

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { accessCode, accessGate } from "@/lib/access";
 import { getCapabilities, productionGuard } from "@/lib/serverConfig";
+import { tenant } from "@/lib/tenant";
 
 export async function GET() {
   const caps = getCapabilities();
@@ -25,6 +27,12 @@ export async function GET() {
   checks.realtime = caps.realtime ? "configured" : "not_configured";
   checks.llm = caps.llm ? "configured" : "not_configured";
   checks.demoMode = caps.demoMode ? "on" : "off";
+
+  // Only tenants that require the access code report it, so the default tenant's health body is unchanged.
+  if (tenant.access.mode === "accounts_and_code") {
+    checks.accessCode = accessGate(tenant.access.mode, accessCode()) === "misconfigured" ? "missing" : "ok";
+    if (checks.accessCode !== "ok") ok = false;
+  }
 
   const guard = productionGuard(process.env);
   if (guard.problems.includes("demo_in_production")) {

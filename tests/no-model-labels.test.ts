@@ -20,6 +20,7 @@ import { POST as checkPOST } from "@/app/api/llm/check/route";
 import { POST as sessionPOST } from "@/app/api/realtime/session/route";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import Home from "@/app/page";
+import { brand } from "@/lib/tenant";
 
 /** Model id families: OpenAI chat, realtime, transcription and speech, reasoning, Gemini, ElevenLabs and Claude. */
 const MODEL_ID_RE =
@@ -110,6 +111,8 @@ describe("landing page", () => {
   it("renders without model ids and keeps the provider names", () => {
     const html = renderToStaticMarkup(createElement(Home));
     expect(html.match(new RegExp(MODEL_ID_RE.source, "g")) ?? []).toEqual([]);
+    // The provider names live in the OSS "What runs each job" section, which a branded tenant hides.
+    if (!brand.showOssSections) return;
     expect(html).toContain("OpenAI Realtime");
     expect(html).toContain("ElevenLabs");
     expect(html).toContain("Your chat model");

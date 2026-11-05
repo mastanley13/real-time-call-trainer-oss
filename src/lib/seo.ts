@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import { brand } from "./tenant";
 
-export const DEFAULT_SITE_URL = "https://calltrainer.tech";
+/** The tenant site URL (brand.siteUrl); https://calltrainer.tech for the default tenant. */
+export const DEFAULT_SITE_URL = brand.siteUrl;
 
 /** Canonical origin for metadata, share images and the sitemap. Reads APP_URL only, never VERCEL_URL or the preview host. */
 export function siteUrl(): string {
@@ -15,8 +17,9 @@ export function siteUrl(): string {
   }
   return DEFAULT_SITE_URL;
 }
-export const GITHUB_URL = "https://github.com/mastanley13/real-time-call-trainer-oss";
-export const OG_ALT = "Real-Time Call Trainer: Practice the call before it costs you the deal";
+/** The OSS repository (brand.upstreamUrl). */
+export const GITHUB_URL = brand.upstreamUrl;
+export const OG_ALT = `${brand.name}: Practice the call before it costs you the deal`;
 
 type ShareImage = { url: string; width: number; height: number; alt: string };
 
@@ -35,7 +38,7 @@ export function pageMetadata({ title, description, path, imagePath }: { title: s
     title: { absolute: title },
     description,
     alternates: { canonical: url },
-    openGraph: { type: "website", url, siteName: "Real-Time Call Trainer", title, description, images: images.openGraph },
+    openGraph: { type: "website", url, siteName: brand.name, title, description, images: images.openGraph },
     twitter: { card: "summary_large_image", title, description, images: images.twitter },
   };
 }
