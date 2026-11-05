@@ -24,7 +24,7 @@ const Body = z.object({
   evaluation: z.record(z.unknown()).optional(),
   seal: z.string().max(128).optional(),
   /**
-   * Signed receipt from /api/realtime/session. The logged model comes from inside a receipt that verifies for
+   * Encrypted receipt from /api/realtime/session. The logged model comes from inside a receipt that opens for
    * this user AND for `sessionId` (the call id the receipt was minted for), once per call. A model id sent by
    * the client is never read (unknown keys such as `realtimeModel` are stripped).
    */

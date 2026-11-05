@@ -53,9 +53,8 @@ export interface CoachResult {
   cueKey?: string;
   /** Share of words spoken by the rep, 0-1. */
   talkRatio: number;
+  /** Which coach produced this update. The model id is never sent to the browser. */
   source: "llm" | "heuristic";
-  /** Model id when source is "llm". */
-  model?: string;
   latencyMs: number;
 }
 

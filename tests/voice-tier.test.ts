@@ -28,7 +28,7 @@ import { POST as mintPOST } from "@/app/api/realtime/session/route";
 import { POST as savePOST } from "@/app/api/transcripts/route";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { transcriptSaveBody } from "@/lib/sessionStore";
-import { MINT_RECEIPT_TTL_MS, receiptRowId, signMintReceipt, verifyMintReceipt } from "@/lib/mintReceipt";
+import { MINT_RECEIPT_TTL_MS, receiptRowId, sealMintReceipt, verifyMintReceipt } from "@/lib/mintReceipt";
 import * as voiceTierModule from "@/lib/voiceTier";
 import { canEditVoiceTier, canSetVoiceTier, effectiveVoiceTier, normalizeVoiceTier } from "@/lib/voiceTier";
 import { PREMIUM_REALTIME_MODEL, STANDARD_REALTIME_MODEL, resolveTierModel } from "@/lib/voiceModels";
@@ -162,40 +162,85 @@ describe("mint receipts", () => {
   const CALL_A = "call-aaaaaaaa-0001";
   const CALL_B = "call-bbbbbbbb-0002";
 
+  /** Receipt bytes after the "mr3." prefix: iv[12] | ciphertext | tag[16]. */
+  const rawOf = (r: string) => Buffer.from(r.slice(4), "base64url");
+  const pack = (raw: Buffer) => `mr3.${raw.toString("base64url")}`;
+
   it("round-trips the minted model for the same user and the same call", () => {
-    const r = signMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW, TEST_KEY)!;
+    const r = sealMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW, TEST_KEY)!;
+    expect(r.startsWith("mr3.")).toBe(true);
     expect(verifyMintReceipt(r, "u-a", CALL_A, NOW, TEST_KEY)).toBe("gpt-realtime-2.1");
     expect(verifyMintReceipt(r, "u-a", CALL_A, NOW + MINT_RECEIPT_TTL_MS, TEST_KEY)).toBe("gpt-realtime-2.1");
   });
 
-  it("rejects another call id, a missing or malformed call id, and an edited call id", () => {
-    const r = signMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW, TEST_KEY)!;
-    for (const other of [CALL_B, "voice-1730000000000", "text-1730000000000", undefined, null, "", "short", `${CALL_A} `, 42]) expect(verifyMintReceipt(r, "u-a", other, NOW, TEST_KEY)).toBeNull();
-    // Rewrite the bound call id inside the payload but keep the signature.
-    const [body, sig] = r.split(".");
-    const moved = Buffer.from(Buffer.from(body, "base64url").toString("utf8").replace(CALL_A, CALL_B)).toString("base64url");
-    expect(verifyMintReceipt(`${moved}.${sig}`, "u-a", CALL_B, NOW, TEST_KEY)).toBeNull();
-    // Nothing is signed for a call id that isn't server-shaped.
-    expect(signMintReceipt("u-a", "bad id!", "gpt-realtime-2.1", NOW, TEST_KEY)).toBeUndefined();
+  it("is opaque: the browser cannot read the model, the user, the call or the tier from it", () => {
+    const std = sealMintReceipt("u-a", CALL_A, "gpt-realtime-2.1-mini", NOW, TEST_KEY)!;
+    const prem = sealMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW, TEST_KEY)!;
+    for (const r of [std, prem]) {
+      const decoded = rawOf(r).toString("latin1");
+      for (const needle of ["gpt-", "realtime", "u-a", CALL_A, '"m"', String(NOW / 1000)]) {
+        expect(r).not.toContain(needle);
+        expect(decoded).not.toContain(needle);
+      }
+      expect(() => JSON.parse(rawOf(r).toString("utf8"))).toThrow();
+    }
+    // Same length for every model, so the length does not give the tier away.
+    expect(std.length).toBe(prem.length);
+    expect(sealMintReceipt("u-a", CALL_A, "x".repeat(80), NOW, TEST_KEY)!.length).toBe(std.length);
+    // A fresh IV every time: sealing the same model twice gives different receipts.
+    expect(sealMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW, TEST_KEY)).not.toBe(prem);
   });
 
-  it("rejects another user, another key, an edited model, a stale or future receipt, and junk", () => {
-    const r = signMintReceipt("u-a", CALL_A, "gpt-realtime-2.1-mini", NOW, TEST_KEY)!;
+  it("rejects another call id, a missing or malformed call id, and refuses to seal a malformed one", () => {
+    const r = sealMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW, TEST_KEY)!;
+    for (const other of [CALL_B, "voice-1730000000000", "text-1730000000000", undefined, null, "", "short", `${CALL_A} `, 42]) expect(verifyMintReceipt(r, "u-a", other, NOW, TEST_KEY)).toBeNull();
+    // Nothing is sealed for a call id that isn't server-shaped, or for a model too long to pad.
+    expect(sealMintReceipt("u-a", "bad id!", "gpt-realtime-2.1", NOW, TEST_KEY)).toBeUndefined();
+    expect(sealMintReceipt("u-a", CALL_A, "x".repeat(81), NOW, TEST_KEY)).toBeUndefined();
+    expect(sealMintReceipt("u-a", CALL_A, "", NOW, TEST_KEY)).toBeUndefined();
+  });
+
+  it("rejects another user, another key, a stale or future receipt, any flipped byte, and junk", () => {
+    const r = sealMintReceipt("u-a", CALL_A, "gpt-realtime-2.1-mini", NOW, TEST_KEY)!;
     expect(verifyMintReceipt(r, "u-b", CALL_A, NOW, TEST_KEY)).toBeNull();
     expect(verifyMintReceipt(r, "u-a", CALL_A, NOW, "some-other-key")).toBeNull();
     expect(verifyMintReceipt(r, "u-a", CALL_A, NOW + MINT_RECEIPT_TTL_MS + 1000, TEST_KEY)).toBeNull();
-    expect(verifyMintReceipt(signMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW + 5 * 60_000, TEST_KEY), "u-a", CALL_A, NOW, TEST_KEY)).toBeNull();
-    // Swap Premium into the payload but keep the Standard signature.
-    const [body, sig] = r.split(".");
-    const forged = Buffer.from(Buffer.from(body, "base64url").toString("utf8").replace("gpt-realtime-2.1-mini", "gpt-realtime-2.1")).toString("base64url");
-    expect(verifyMintReceipt(`${forged}.${sig}`, "u-a", CALL_A, NOW, TEST_KEY)).toBeNull();
-    for (const junk of [undefined, null, "", "abc", "abc.def", `${body}.${"0".repeat(64)}`, "x".repeat(600)]) expect(verifyMintReceipt(junk, "u-a", CALL_A, NOW, TEST_KEY)).toBeNull();
+    expect(verifyMintReceipt(sealMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW + 5 * 60_000, TEST_KEY), "u-a", CALL_A, NOW, TEST_KEY)).toBeNull();
+    // The user and call are bound as one encoded value, so shifting a separator between them does not open it.
+    const colon = sealMintReceipt("u:a", "call-aaaaaaaa", "gpt-realtime-2.1", NOW, TEST_KEY)!;
+    expect(verifyMintReceipt(colon, "u", "a-call-aaaaaaaa", NOW, TEST_KEY)).toBeNull();
+    // Known-plaintext edit: XOR the Standard plaintext out of the keystream and the Premium one in. The ciphertext
+    // then decrypts to Premium, but the tag no longer matches, so it does not open.
+    const pad = (m: string) => {
+      const j = Buffer.from(JSON.stringify({ m, t: NOW / 1000 }));
+      return Buffer.concat([j, Buffer.alloc(160 - j.length, 0x20)]);
+    };
+    const [stdPt, premPt] = [pad("gpt-realtime-2.1-mini"), pad("gpt-realtime-2.1")];
+    const edited = Buffer.from(rawOf(r));
+    for (let i = 0; i < 160; i++) edited[12 + i] ^= stdPt[i] ^ premPt[i];
+    expect(verifyMintReceipt(pack(edited), "u-a", CALL_A, NOW, TEST_KEY)).toBeNull();
+    // Flip one byte anywhere (IV, ciphertext or tag): authentication fails, so a Standard receipt can't be edited into Premium.
+    const raw = rawOf(r);
+    for (const at of [0, 11, 12, 40, raw.length - 17, raw.length - 1]) {
+      const bad = Buffer.from(raw);
+      bad[at] ^= 0x01;
+      expect(verifyMintReceipt(pack(bad), "u-a", CALL_A, NOW, TEST_KEY)).toBeNull();
+    }
+    // Truncated, extended, wrong prefix, non-base64url, oversized and plain junk.
+    const junk = [
+      undefined, null, 42, "", "abc", "mr3.", "mr3.!!!!", pack(raw.subarray(0, raw.length - 1)), pack(Buffer.concat([raw, Buffer.alloc(1)])),
+      `mr2.${r.slice(4)}`, r.slice(4), `${r}=`, `${r} `, "x".repeat(600), `mr3.${"A".repeat(300)}`,
+    ];
+    for (const j of junk) expect(verifyMintReceipt(j, "u-a", CALL_A, NOW, TEST_KEY)).toBeNull();
   });
 
-  it("refuses a v1 receipt that carries no call id", () => {
-    const body = Buffer.from(JSON.stringify({ v: "mint-receipt-v1", u: "u-a", m: "gpt-realtime-2.1", t: NOW / 1000 })).toString("base64url");
-    const sig = createHmac("sha256", TEST_KEY).update(`mint-receipt-v1:${body}`).digest("hex");
-    expect(verifyMintReceipt(`${body}.${sig}`, "u-a", CALL_A, NOW, TEST_KEY)).toBeNull();
+  it("refuses the old readable signed receipts (v1 without a call id, v2 with one)", () => {
+    const v1 = Buffer.from(JSON.stringify({ v: "mint-receipt-v1", u: "u-a", m: "gpt-realtime-2.1", t: NOW / 1000 })).toString("base64url");
+    const v1sig = createHmac("sha256", TEST_KEY).update(`mint-receipt-v1:${v1}`).digest("hex");
+    expect(verifyMintReceipt(`${v1}.${v1sig}`, "u-a", CALL_A, NOW, TEST_KEY)).toBeNull();
+    const v2 = Buffer.from(JSON.stringify({ v: "mint-receipt-v2", u: "u-a", s: CALL_A, m: "gpt-realtime-2.1", t: NOW / 1000 })).toString("base64url");
+    const v2sig = createHmac("sha256", TEST_KEY).update(`mint-receipt-v2:${v2}`).digest("hex");
+    expect(verifyMintReceipt(`${v2}.${v2sig}`, "u-a", CALL_A, NOW, TEST_KEY)).toBeNull();
   });
 
   it("the client saves a minted voice call under its ids, and a text save never carries them", () => {
@@ -214,10 +259,10 @@ describe("mint receipts", () => {
     expect(text).not.toHaveProperty("realtimeReceipt");
   });
 
-  it("signs and verifies nothing without JWT_SECRET", () => {
-    const r = signMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW, TEST_KEY);
+  it("seals and opens nothing without JWT_SECRET", () => {
+    const r = sealMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW, TEST_KEY);
     vi.stubEnv("JWT_SECRET", "");
-    expect(signMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW)).toBeUndefined();
+    expect(sealMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW)).toBeUndefined();
     expect(verifyMintReceipt(r, "u-a", CALL_A, NOW)).toBeNull();
   });
 });
@@ -344,8 +389,11 @@ describe("POST /api/realtime/session picks the model from the organization's eff
     const fetchMock = upstream();
     const res = await mintPOST(json("http://localhost/api/realtime/session", "POST", { scenario, model: PREMIUM_REALTIME_MODEL, tier: "premium" }));
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.model).toBe("gpt-realtime-2.1-mini");
+    const text = await res.text();
+    const body = JSON.parse(text);
+    // No model field and no model id anywhere in the browser response; the model goes upstream only.
+    expect(Object.keys(body).sort()).toEqual(["clientSecret", "expiresAt", "receipt", "sessionId", "voice"]);
+    expect(text).not.toMatch(/gpt-|realtime-2/);
     expect(sentModel(fetchMock)).toBe("gpt-realtime-2.1-mini");
     // The receipt is opaque to the client but carries the minted model, bound to this call's sessionId.
     expect(verifyMintReceipt(body.receipt, mocks.user.id, body.sessionId)).toBe("gpt-realtime-2.1-mini");
@@ -374,8 +422,12 @@ describe("POST /api/realtime/session picks the model from the organization's eff
   it("uses Premium when comped and the owner switches to premium", async () => {
     await voicePATCH(json("http://localhost/api/team/voice", "PATCH", { tier: "premium" }));
     const fetchMock = upstream();
-    const body = await (await mint()).json();
+    const text = await (await mint()).text();
+    const body = JSON.parse(text);
     expect(sentModel(fetchMock)).toBe("gpt-realtime-2.1");
+    // Premium is not visible to the browser either: no model field and no model id.
+    expect(body).not.toHaveProperty("model");
+    expect(text).not.toMatch(/gpt-|realtime-2/);
     expect(verifyMintReceipt(body.receipt, mocks.user.id, body.sessionId)).toBe("gpt-realtime-2.1");
   });
 
@@ -542,10 +594,14 @@ describe("POST /api/transcripts logs the voice model", () => {
     const minted = await mintOnce();
     expect(verifyMintReceipt(minted.receipt, mocks.user.id, minted.sessionId)).toBe(STANDARD_REALTIME_MODEL);
 
-    // The client edits the receipt's payload to say Premium (before the genuine save, which would use up the call).
-    const [body, sig] = String(minted.receipt).split(".");
-    const forged = Buffer.from(Buffer.from(body, "base64url").toString("utf8").replace(STANDARD_REALTIME_MODEL, PREMIUM_REALTIME_MODEL)).toString("base64url");
-    await saveCall({ sessionId: minted.sessionId, receipt: `${forged}.${sig}` });
+    // The client can't read the receipt, and editing its ciphertext breaks the tag (before the genuine save, which
+    // would use up the call). A receipt sealed for Premium on another call doesn't open here either.
+    expect(String(minted.receipt)).not.toContain(STANDARD_REALTIME_MODEL);
+    const raw = Buffer.from(String(minted.receipt).slice(4), "base64url");
+    raw[20] ^= 0x01;
+    await saveCall({ sessionId: minted.sessionId, receipt: `mr3.${raw.toString("base64url")}` });
+    expect(loggedModel()).toBeNull();
+    await saveCall({ sessionId: minted.sessionId, receipt: sealMintReceipt(mocks.user.id, "call-other-0001", PREMIUM_REALTIME_MODEL)! });
     expect(loggedModel()).toBeNull();
 
     // The client claims Premium with no receipt at all.

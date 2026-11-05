@@ -2,7 +2,6 @@ import "server-only";
 import { safeEqual } from "./access";
 import { orderVoiceEngines, realtimeKey } from "./realtime";
 import { stripeReady, stripeStatus } from "./stripe";
-import { resolveTierModel } from "./voiceModels";
 
 /**
  * Voice minutes are metered for stored accounts (not demo mode, with a database) when USAGE_CAPS=on or Stripe is
@@ -44,7 +43,12 @@ export function elevenLabsAgentFor(engine: "premium" | "standard", env: Env = pr
   return { agentId: engine === "standard" && standard ? standard : main, standardAvailable: Boolean(standard) };
 }
 
-/** Runtime capability flags. Everything is optional; the UI degrades gracefully. */
+/**
+ * Runtime capability flags. Everything is optional; the UI degrades gracefully. /api/config returns this object
+ * unauthenticated, so it carries booleans and provider names only. Model ids (LLM_MODEL and the REALTIME_MODEL
+ * variables) stay on the server: read them with llmModel() and voiceModelFor() (src/lib/voiceTierServer.ts) where a
+ * provider request needs them.
+ */
 export function getCapabilities() {
   const elevenlabs = Boolean(process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_AGENT_ID);
   const realtime = Boolean(realtimeKey());
@@ -56,16 +60,12 @@ export function getCapabilities() {
     realtime,
     /** Voice engines in preference order: OpenAI first unless VOICE_ENGINE=elevenlabs. Empty means text only. */
     voiceEngines: orderVoiceEngines({ openai: realtime, elevenlabs }, process.env.VOICE_ENGINE),
-    /** The default (Standard tier) Realtime model; comped Premium orgs run REALTIME_MODEL_PREMIUM instead. */
-    ...(realtime ? { realtimeModel: resolveTierModel("standard", process.env) } : {}),
     llm: Boolean(llmKey()),
     database: Boolean(process.env.DATABASE_URL),
     /** Stripe test-mode billing: false when unset, in demo mode, or when the key is not an sk_test_ key. */
     billing: billingOn(),
-    /** Hosted build: Stripe is configured (billingActive). The header hides the model chip from non-admins. */
+    /** Hosted build: Stripe is configured (billingActive). The header hides the AI status chip from non-admins. */
     hosted: billingActive(),
-    /** Model used for the coach, grading, persona wizard and text caller. Shown in provenance chips. */
-    model: llmModel(),
     /** "openai" when LLM_BASE_URL is unset or points at api.openai.com; the URL itself is never exposed. */
     provider: isOpenAiBaseUrl(llmBaseUrl()) ? ("openai" as const) : ("custom" as const),
   };

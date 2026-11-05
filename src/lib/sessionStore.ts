@@ -18,6 +18,7 @@ export interface StoredTurn {
 export interface CoachLog {
   mode: CoachMode;
   source?: "llm" | "heuristic";
+  /** Legacy only: older browser-stored sessions may carry a model id. New sessions never write it and the debrief never shows it. */
   model?: string;
   p50Ms?: number | null;
   cues: { triggerTurn: number; type: CueType; title: string; used: boolean }[];
@@ -83,7 +84,7 @@ function saveLocal(s: Omit<StoredSession, "id" | "createdAt">): string {
 
 /**
  * What /api/realtime/session hands back to identify one OpenAI Realtime call: the call id the server fixed before
- * minting (`sessionId`), the signed receipt bound to it (absent without JWT_SECRET), and the metering call id when
+ * minting (`sessionId`), the opaque encrypted receipt bound to it (absent without JWT_SECRET), and the metering call id when
  * the call is metered (then equal to sessionId).
  */
 export interface MintedCall { sessionId: string; receipt?: string; callId?: string }

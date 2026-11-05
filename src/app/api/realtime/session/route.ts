@@ -9,7 +9,7 @@ import { beginCall, endCall } from "@/lib/usage";
 import { capReached, dailySessionLimit, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
 import { realtimeKey, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
 import { orgVoiceTierForUser, voiceModelFor } from "@/lib/voiceTierServer";
-import { signMintReceipt } from "@/lib/mintReceipt";
+import { sealMintReceipt } from "@/lib/mintReceipt";
 
 const Body = z.object({ scenario: ScenarioSchema });
 
@@ -22,8 +22,8 @@ const SECRET_TTL_SEC = 600;
  * Docs: https://developers.openai.com/api/reference/resources/realtime/subresources/client_secrets/methods/create
  *
  * The model is picked here, on the server, from the organization's voice tier (Standard or Premium, comped gate,
- * src/lib/voiceTier.ts); the client never chooses it. `receipt` (src/lib/mintReceipt.ts) is signed proof of that
- * model for this call's `sessionId`; the client saves the call under that sessionId with the receipt, so the server
+ * src/lib/voiceTier.ts); the client never chooses it, and the response never names it. `receipt`
+ * (src/lib/mintReceipt.ts) is that model, encrypted and bound to this user and this call's `sessionId`; the client saves the call under that sessionId with the receipt, so the server
  * can log the model it really minted, once, on that call only.
  */
 export async function POST(req: NextRequest) {
@@ -117,18 +117,20 @@ export async function POST(req: NextRequest) {
       console.error("[realtime/session] upstream status", res.status);
       if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
       return NextResponse.json(
-        { error: "realtime_upstream_error", message: realtimeUpstreamMessage(res.status, model) },
+        { error: "realtime_upstream_error", message: realtimeUpstreamMessage(res.status) },
         { status: res.status === 429 ? 429 : 502 },
       );
     }
     const data = (await res.json().catch(() => null)) as { value?: unknown; expires_at?: unknown } | null;
     if (!data || typeof data.value !== "string" || !data.value) throw new Error("no client secret in response");
     const expiresAt = typeof data.expires_at === "number" ? data.expires_at : Math.floor(Date.now() / 1000) + SECRET_TTL_SEC;
-    // The receipt is signed proof of the minted model for this user and this call (sessionId). POST /api/transcripts
-    // logs the model only from a receipt that verifies for the sessionId it is saved under, and only once.
-    const receipt = signMintReceipt(auth.id, sessionId, model);
+    // The model id stays server-side: the browser needs only the secret, and the SDP relay never names a model.
+    // The receipt is the minted model encrypted (AES-GCM) for this user and this call (sessionId), opaque to the
+    // browser. POST /api/transcripts logs the model only from a receipt that opens for the sessionId it is saved
+    // under, and only once.
+    const receipt = sealMintReceipt(auth.id, sessionId, model);
     return NextResponse.json(
-      { clientSecret: data.value, expiresAt, model, voice, sessionId, ...(callId ? { callId, maxSeconds } : {}), ...(receipt ? { receipt } : {}) },
+      { clientSecret: data.value, expiresAt, voice, sessionId, ...(callId ? { callId, maxSeconds } : {}), ...(receipt ? { receipt } : {}) },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (e) {

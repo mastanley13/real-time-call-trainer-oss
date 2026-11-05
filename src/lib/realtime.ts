@@ -224,12 +224,15 @@ export function applyRealtimeEvent(asm: TurnAssembler, ev: RealtimeServerEvent, 
   }
 }
 
-/** Upstream status from client_secrets -> a message an operator can act on. Never includes the upstream body. */
-export function realtimeUpstreamMessage(status: number, model: string): string {
+/**
+ * Upstream status from client_secrets -> a message an operator can act on. The browser sees this, so it never
+ * includes the upstream body or the configured model id; it names the env vars to check instead.
+ */
+export function realtimeUpstreamMessage(status: number): string {
   if (status === 401) return "OpenAI rejected the API key. Check OPENAI_API_KEY.";
   if (status === 403) return "This OpenAI key cannot use the Realtime API. Check the project's model access in the OpenAI dashboard.";
-  // The voice tier picks the model (src/lib/voiceModels.ts), so name every variable that can set it.
-  if (status === 404 || status === 400) return `OpenAI did not accept the voice session settings. Check that the model (${model}, from REALTIME_MODEL_STANDARD, REALTIME_MODEL or REALTIME_MODEL_PREMIUM) and REALTIME_VOICE are valid.`;
+  // The voice tier picks the model (src/lib/voiceModels.ts), so name every variable that can set it, never its value.
+  if (status === 404 || status === 400) return "OpenAI did not accept the voice session settings. Check that REALTIME_MODEL_STANDARD, REALTIME_MODEL, REALTIME_MODEL_PREMIUM and REALTIME_VOICE are valid.";
   if (status === 429) return "OpenAI rate-limited this key or it is out of quota. Check your plan and billing, then try again.";
   return "OpenAI's Realtime API had a problem starting the call. Try again in a minute, or switch to Text.";
 }

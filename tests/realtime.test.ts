@@ -68,10 +68,12 @@ describe("engine selection", () => {
     expect(caps.realtime).toBe(true);
     expect(caps.voiceEngines).toEqual(["openai", "elevenlabs"]);
     expect(JSON.stringify(caps)).not.toContain("sk-test");
-    // The default (Standard) model, never the Premium one.
+    // Capabilities go to the browser, so they name no Realtime model for either tier.
     vi.stubEnv("REALTIME_MODEL", "");
     vi.stubEnv("REALTIME_MODEL_STANDARD", "");
-    expect(getCapabilities().realtimeModel).toBe(STANDARD_REALTIME_MODEL);
+    vi.stubEnv("REALTIME_MODEL_PREMIUM", "");
+    expect(getCapabilities()).not.toHaveProperty("realtimeModel");
+    expect(JSON.stringify(getCapabilities())).not.toMatch(new RegExp(`${STANDARD_REALTIME_MODEL}|${PREMIUM_REALTIME_MODEL}`));
 
     vi.stubEnv("OPENAI_API_KEY", "");
     vi.stubEnv("LLM_API_KEY", "");
@@ -169,10 +171,15 @@ describe("small helpers", () => {
     expect(micErrorMessage(new Error("x"))).toMatch(/Could not open/);
   });
   it("maps upstream failures to friendly messages without echoing a body", () => {
-    expect(realtimeUpstreamMessage(401, "m")).toBe("OpenAI rejected the API key. Check OPENAI_API_KEY.");
-    expect(realtimeUpstreamMessage(400, "gpt-x")).toContain("gpt-x");
-    expect(realtimeUpstreamMessage(400, "gpt-x")).toMatch(/REALTIME_MODEL_STANDARD/);
-    expect(realtimeUpstreamMessage(503, "m")).toMatch(/Try again/);
+    expect(realtimeUpstreamMessage(401)).toBe("OpenAI rejected the API key. Check OPENAI_API_KEY.");
+    // Names every env var that can set the tier's model, never the configured model id.
+    for (const status of [400, 404]) {
+      expect(realtimeUpstreamMessage(status)).toMatch(/REALTIME_MODEL_STANDARD/);
+      expect(realtimeUpstreamMessage(status)).toMatch(/REALTIME_MODEL_PREMIUM/);
+      expect(realtimeUpstreamMessage(status)).toMatch(/REALTIME_MODEL\b/);
+      expect(realtimeUpstreamMessage(status)).not.toMatch(/gpt-/);
+    }
+    expect(realtimeUpstreamMessage(503)).toMatch(/Try again/);
   });
 });
 
@@ -208,11 +215,13 @@ describe("POST /api/realtime/session", () => {
     const text = await res.text();
     expect(res.status).toBe(200);
     expect(text).not.toContain("sk-secret-test");
-    // Demo mode mints Standard. The signed receipt is covered in voice-tier.test.ts.
+    // Demo mode mints Standard. The encrypted receipt is covered in voice-tier.test.ts.
     const { receipt: _receipt, sessionId, ...shown } = JSON.parse(text);
     // The server-fixed id this call is saved under (a UUID when not metered).
     expect(sessionId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(shown).toEqual({ clientSecret: "ek_abc123456789", expiresAt: 1_900_000_000, model: STANDARD_REALTIME_MODEL, voice: "marin" });
+    // No model id in the browser response; the model goes upstream only.
+    expect(shown).toEqual({ clientSecret: "ek_abc123456789", expiresAt: 1_900_000_000, voice: "marin" });
+    expect(text).not.toContain(STANDARD_REALTIME_MODEL);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://api.openai.com/v1/realtime/client_secrets");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer sk-secret-test");
@@ -235,6 +244,20 @@ describe("POST /api/realtime/session", () => {
     expect(res.status).toBe(502);
     expect(JSON.parse(text)).toEqual({ error: "realtime_upstream_error", message: "OpenAI rejected the API key. Check OPENAI_API_KEY." });
     expect(text).not.toContain("sk-bad");
+  });
+
+  it("maps an upstream 400 that names the model to a message without the model id", async () => {
+    setup();
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    vi.stubEnv("REALTIME_MODEL", "gpt-realtime-zz-test");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response('{"error":{"message":"Model gpt-realtime-zz-test does not exist"}}', { status: 400 })));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await sessionPOST(req({ scenario }));
+    const text = await res.text();
+    expect(res.status).toBe(502);
+    expect(JSON.parse(text).error).toBe("realtime_upstream_error");
+    expect(JSON.parse(text).message).toMatch(/REALTIME_MODEL/);
+    expect(text).not.toContain("gpt-realtime-zz-test");
   });
 
   it("rejects a malformed scenario", async () => {

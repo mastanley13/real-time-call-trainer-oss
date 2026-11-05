@@ -66,7 +66,7 @@ describe("coachTurn without a key", () => {
     expect(replay).toHaveLength(CALL.length);
     for (const r of replay) {
       expect(r.source).toBe("heuristic");
-      expect(r.model).toBeUndefined();
+      expect(r).not.toHaveProperty("model");
       expect(r.latencyMs).toBeGreaterThanOrEqual(0);
     }
   });
