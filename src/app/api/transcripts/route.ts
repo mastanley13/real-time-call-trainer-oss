@@ -5,7 +5,7 @@ import { requireAuth, isDemoUser } from "@/lib/apiAuth";
 import { rateLimit, readJsonLimited } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { verifySeal } from "@/lib/gradeSeal";
-import { verifyMintReceipt } from "@/lib/mintReceipt";
+import { isReceiptReplay, receiptRowId, verifyMintReceipt } from "@/lib/mintReceipt";
 import { HAS_TRANSCRIPT } from "@/lib/usage";
 
 const Body = z.object({
@@ -25,7 +25,8 @@ const Body = z.object({
   seal: z.string().max(128).optional(),
   /**
    * Signed receipt from /api/realtime/session. The logged model comes from inside a receipt that verifies for
-   * this user; a model id sent by the client is never read (unknown keys such as `realtimeModel` are stripped).
+   * this user AND for `sessionId` (the call id the receipt was minted for), once per call. A model id sent by
+   * the client is never read (unknown keys such as `realtimeModel` are stripped).
    */
   realtimeReceipt: z.string().max(512).optional(),
 });
@@ -66,6 +67,10 @@ export async function POST(req: NextRequest) {
   const sealed = !!body.evaluation && verifySeal({ userId: dbUser.id, scenarioId: body.scenario.id, transcript: body.transcript, evaluation: body.evaluation }, body.seal);
   const grade = sealed ? GradeFields.safeParse(body.evaluation) : null;
   const ev = grade?.success ? grade.data : undefined;
+  // Cost log only (not billing; engineTier is). A receipt counts only for the call it was minted for: it must name
+  // exactly this sessionId, so a receipt from another call, or on a text save, logs nothing.
+  const receiptModel = verifyMintReceipt(body.realtimeReceipt, dbUser.id, body.sessionId);
+  let receiptReplayed = false;
   try {
     // A metered voice call already has its row (created when the call started, empty transcript). Fill it so the
     // call has one row. durationSeconds is display only: billing never reads it, so a client cannot change what it is charged.
@@ -83,16 +88,34 @@ export async function POST(req: NextRequest) {
       overallScore: ev ? Math.round(ev.overallScore) : null,
       grade: ev?.grade ?? null,
       goalAchieved: ev?.goalAchievement.achieved ?? null,
-      // Cost log only (not billing; engineTier is). Null for text calls and for any receipt that does not verify.
-      realtimeModel: verifyMintReceipt(body.realtimeReceipt, dbUser.id),
+      realtimeModel: null as string | null,
     };
-    const created = fillExisting
-      ? await prisma.trainerSession.update({ where: { id: body.callId }, data: fields })
-      : await prisma.trainerSession.create({ data: { userId: dbUser.id, organizationId: dbUser.organizationId, ...fields } });
+    const owner = { userId: dbUser.id, organizationId: dbUser.organizationId };
+    let created: { id: string };
+    if (fillExisting) {
+      // Filling a metered row never logs a model: a receipt may log on one row only, receiptRowId(sessionId).
+      created = await prisma.trainerSession.update({ where: { id: body.callId }, data: fields });
+    } else if (receiptModel) {
+      // Single use: the row's primary key comes from the receipt's call id, so a second save of the same
+      // receipt is a unique violation. That save is kept, without a model.
+      try {
+        created = await prisma.trainerSession.create({ data: { id: receiptRowId(body.sessionId), ...owner, ...fields, realtimeModel: receiptModel } });
+      } catch (e) {
+        if (!isReceiptReplay(e)) throw e;
+        receiptReplayed = true;
+        created = await prisma.trainerSession.create({ data: { ...owner, ...fields } });
+      }
+    } else {
+      created = await prisma.trainerSession.create({ data: { ...owner, ...fields } });
+    }
     await prisma.auditEvent.create({
       data: {
         userId: dbUser.id, action: "session.saved", resource: created.id,
-        metadata: { scenarioId: body.scenario.id, overallScore: ev?.overallScore ?? null, ...(body.evaluation && !ev ? { gradeRejected: true } : {}) },
+        metadata: {
+          scenarioId: body.scenario.id, overallScore: ev?.overallScore ?? null,
+          ...(body.evaluation && !ev ? { gradeRejected: true } : {}),
+          ...(body.realtimeReceipt && (!receiptModel || receiptReplayed || fillExisting) ? { receiptRejected: true } : {}),
+        },
       },
     });
     return NextResponse.json({ id: created.id, graded: !!ev });

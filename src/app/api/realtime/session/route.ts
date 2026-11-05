@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
@@ -22,7 +23,8 @@ const SECRET_TTL_SEC = 600;
  *
  * The model is picked here, on the server, from the organization's voice tier (Standard or Premium, comped gate,
  * src/lib/voiceTier.ts); the client never chooses it. `receipt` (src/lib/mintReceipt.ts) is signed proof of that
- * model; the client hands it back when it saves the session so the server can log the model it really minted.
+ * model for this call's `sessionId`; the client saves the call under that sessionId with the receipt, so the server
+ * can log the model it really minted, once, on that call only.
  */
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
@@ -78,6 +80,9 @@ export async function POST(req: NextRequest) {
   // comped AND set to premium (effectiveVoiceTier). There is no other way onto the Premium model: the paid Premium
   // Voice engine does not bypass the comped gate. Minute caps, engineTier and metering are unchanged by the tier.
   const model = voiceModelFor(await orgVoiceTierForUser(auth.id));
+  // One id per call, fixed before the secret is minted: the metering call id when metered, else a fresh UUID.
+  // The receipt is bound to it and the client saves the call under it, so a receipt can't move to another call.
+  const sessionId = callId ?? randomUUID();
   const voice = realtimeVoice(scenario.aiPersona.realtimeVoice);
   const session = {
     type: "realtime",
@@ -119,10 +124,11 @@ export async function POST(req: NextRequest) {
     const data = (await res.json().catch(() => null)) as { value?: unknown; expires_at?: unknown } | null;
     if (!data || typeof data.value !== "string" || !data.value) throw new Error("no client secret in response");
     const expiresAt = typeof data.expires_at === "number" ? data.expires_at : Math.floor(Date.now() / 1000) + SECRET_TTL_SEC;
-    // The receipt is signed proof of the minted model; the server logs the model only from a receipt that verifies.
-    const receipt = signMintReceipt(auth.id, model);
+    // The receipt is signed proof of the minted model for this user and this call (sessionId). POST /api/transcripts
+    // logs the model only from a receipt that verifies for the sessionId it is saved under, and only once.
+    const receipt = signMintReceipt(auth.id, sessionId, model);
     return NextResponse.json(
-      { clientSecret: data.value, expiresAt, model, voice, ...(callId ? { callId, maxSeconds } : {}), ...(receipt ? { receipt } : {}) },
+      { clientSecret: data.value, expiresAt, model, voice, ...(callId ? { callId, maxSeconds } : {}), ...(receipt ? { receipt, sessionId } : {}) },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (e) {

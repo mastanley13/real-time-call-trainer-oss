@@ -13,6 +13,7 @@ vi.mock("@/lib/apiAuth", async () => ({
 import { beginCall, chooseEngine, endCall, ensureAllowance, heartbeat, usageSummary } from "@/lib/usage";
 import { elevenLabsAgentFor } from "@/lib/serverConfig";
 import { resolveTierModel } from "@/lib/voiceModels";
+import { verifyMintReceipt } from "@/lib/mintReceipt";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { MAX_CALL_SECONDS } from "@/lib/usagePlan";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
@@ -158,6 +159,20 @@ describe("Premium voice limit", () => {
       const minted = await (await mint()).json();
       expect(bodies[0].session.model).toBe("model-premium-test");
       expect(session(minted.callId).engineTier).toBe("standard");
+    });
+
+    it("a metered call's receipt is bound to its metering call id, and only to that one", async () => {
+      vi.stubEnv("JWT_SECRET", "ci-only-not-a-secret-0123456789abcdef");
+      addUser("u-1", { planTier: "pro", premiumVoice: false, organization: { voiceModelTier: "premium", voiceModelComped: true } });
+      const a = await (await mint()).json();
+      const b = await (await mint()).json();
+      expect(a.sessionId).toBe(a.callId);
+      expect(b.sessionId).toBe(b.callId);
+      expect(verifyMintReceipt(a.receipt, "u-1", a.callId)).toBe("model-premium-test");
+      expect(verifyMintReceipt(a.receipt, "u-1", b.callId)).toBeNull();
+      // Binding adds nothing to metering: same engine and reservation as any comped call on the standard engine.
+      expect(session(a.callId).engineTier).toBe("standard");
+      expect(session(a.callId).reservedMinutes).toBe(session(b.callId).reservedMinutes);
     });
 
     it("a comped Premium org still hits the plan's minute cap: 402 and nothing is minted", async () => {

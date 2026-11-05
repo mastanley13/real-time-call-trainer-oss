@@ -81,12 +81,16 @@ function saveLocal(s: Omit<StoredSession, "id" | "createdAt">): string {
   return id;
 }
 
+/** What /api/realtime/session hands back for one OpenAI Realtime call: a signed receipt and the call id it is bound to. */
+export interface MintReceipt { receipt: string; sessionId: string }
+
 /**
  * Returns the new session id (prefixed `local-` when stored in the browser).
- * `meta.realtimeReceipt` is the signed receipt /api/realtime/session issued for a voice call; the server verifies it
- * and logs the model inside it. It is opaque here and never stored in the browser.
+ * `meta.receipt` is the signed receipt /api/realtime/session issued for this voice call. The call is saved under the
+ * receipt's sessionId, which is what the server checks before it logs the model inside it. Opaque here and never
+ * stored in the browser.
  */
-export async function saveSession(s: Omit<StoredSession, "id" | "createdAt">, useServer: boolean, meta: { realtimeReceipt?: string } = {}): Promise<string> {
+export async function saveSession(s: Omit<StoredSession, "id" | "createdAt">, useServer: boolean, meta: { receipt?: MintReceipt } = {}): Promise<string> {
   const { evaluation, seal } = splitSeal(s.evaluation);
   if (useServer) {
     try {
@@ -94,13 +98,13 @@ export async function saveSession(s: Omit<StoredSession, "id" | "createdAt">, us
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sessionId: `${s.mode}-${Date.now()}`,
+          sessionId: meta.receipt?.sessionId ?? `${s.mode}-${Date.now()}`,
           transcript: s.transcript,
           durationSeconds: s.durationSeconds,
           scenario: { id: s.scenario.id, title: s.scenario.title, industry: s.scenario.industry, difficulty: s.scenario.difficulty },
           evaluation: evaluation ?? undefined,
           seal,
-          realtimeReceipt: meta.realtimeReceipt,
+          realtimeReceipt: meta.receipt?.receipt,
         }),
       });
       if (res.ok) return (await res.json()).id as string;

@@ -1,5 +1,7 @@
+import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { Prisma } from "@prisma/client";
 
 type Org = { id: string; code: string; voiceModelTier: string | null; voiceModelComped: boolean | null };
 
@@ -8,11 +10,14 @@ const mocks = vi.hoisted(() => ({
   user: { id: "u-owner", email: "owner@example.test" },
   actor: {} as Record<string, unknown>,
   orgs: new Map<string, Org>(),
+  /** TrainerSession rows saved by POST /api/transcripts, in order; ids are unique like the real primary key. */
+  saved: [] as Record<string, unknown>[],
+  rowIds: new Set<string>(),
   prisma: {
     user: { findUnique: vi.fn() },
     organization: { findUnique: vi.fn(), update: vi.fn() },
     auditEvent: { create: vi.fn() },
-    trainerSession: { create: vi.fn(), findUnique: vi.fn() },
+    trainerSession: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
   },
 }));
 vi.mock("@/lib/db", () => ({ prisma: mocks.prisma }));
@@ -22,7 +27,7 @@ import { GET as voiceGET, PATCH as voicePATCH } from "@/app/api/team/voice/route
 import { POST as mintPOST } from "@/app/api/realtime/session/route";
 import { POST as savePOST } from "@/app/api/transcripts/route";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
-import { MINT_RECEIPT_TTL_MS, signMintReceipt, verifyMintReceipt } from "@/lib/mintReceipt";
+import { MINT_RECEIPT_TTL_MS, receiptRowId, signMintReceipt, verifyMintReceipt } from "@/lib/mintReceipt";
 import * as voiceTierModule from "@/lib/voiceTier";
 import { canEditVoiceTier, canSetVoiceTier, effectiveVoiceTier, normalizeVoiceTier } from "@/lib/voiceTier";
 import { PREMIUM_REALTIME_MODEL, STANDARD_REALTIME_MODEL, resolveTierModel } from "@/lib/voiceModels";
@@ -78,7 +83,22 @@ beforeEach(() => {
     return Promise.resolve(o);
   });
   mocks.prisma.auditEvent.create.mockResolvedValue({});
-  mocks.prisma.trainerSession.create.mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve({ id: "s-1", ...data }));
+  mocks.saved = [];
+  mocks.rowIds = new Set<string>();
+  // Same uniqueness as the real primary key: a second row with an id already in use is a P2002.
+  mocks.prisma.trainerSession.create.mockImplementation(({ data }: { data: Record<string, unknown> }) => {
+    const id = typeof data.id === "string" ? data.id : `s-${++seq}`;
+    if (mocks.rowIds.has(id)) return Promise.reject(new Prisma.PrismaClientKnownRequestError("Unique constraint failed on the fields: (`id`)", { code: "P2002", clientVersion: "test" }));
+    mocks.rowIds.add(id);
+    const row = { ...data, id };
+    mocks.saved.push(row);
+    return Promise.resolve(row);
+  });
+  mocks.prisma.trainerSession.update.mockImplementation(({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+    const row = { ...data, id: where.id };
+    mocks.saved.push(row);
+    return Promise.resolve(row);
+  });
   mocks.prisma.trainerSession.findUnique.mockResolvedValue(null);
   as({});
 });
@@ -138,30 +158,50 @@ describe("voice tier config", () => {
 describe("mint receipts", () => {
   const NOW = 1_900_000_000_000;
 
-  it("round-trips the minted model for the same user", () => {
-    const r = signMintReceipt("u-a", "gpt-realtime-2.1", NOW, TEST_KEY)!;
-    expect(verifyMintReceipt(r, "u-a", NOW, TEST_KEY)).toBe("gpt-realtime-2.1");
-    expect(verifyMintReceipt(r, "u-a", NOW + MINT_RECEIPT_TTL_MS, TEST_KEY)).toBe("gpt-realtime-2.1");
+  const CALL_A = "call-aaaaaaaa-0001";
+  const CALL_B = "call-bbbbbbbb-0002";
+
+  it("round-trips the minted model for the same user and the same call", () => {
+    const r = signMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW, TEST_KEY)!;
+    expect(verifyMintReceipt(r, "u-a", CALL_A, NOW, TEST_KEY)).toBe("gpt-realtime-2.1");
+    expect(verifyMintReceipt(r, "u-a", CALL_A, NOW + MINT_RECEIPT_TTL_MS, TEST_KEY)).toBe("gpt-realtime-2.1");
+  });
+
+  it("rejects another call id, a missing or malformed call id, and an edited call id", () => {
+    const r = signMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW, TEST_KEY)!;
+    for (const other of [CALL_B, "voice-1730000000000", "text-1730000000000", undefined, null, "", "short", `${CALL_A} `, 42]) expect(verifyMintReceipt(r, "u-a", other, NOW, TEST_KEY)).toBeNull();
+    // Rewrite the bound call id inside the payload but keep the signature.
+    const [body, sig] = r.split(".");
+    const moved = Buffer.from(Buffer.from(body, "base64url").toString("utf8").replace(CALL_A, CALL_B)).toString("base64url");
+    expect(verifyMintReceipt(`${moved}.${sig}`, "u-a", CALL_B, NOW, TEST_KEY)).toBeNull();
+    // Nothing is signed for a call id that isn't server-shaped.
+    expect(signMintReceipt("u-a", "bad id!", "gpt-realtime-2.1", NOW, TEST_KEY)).toBeUndefined();
   });
 
   it("rejects another user, another key, an edited model, a stale or future receipt, and junk", () => {
-    const r = signMintReceipt("u-a", "gpt-realtime-2.1-mini", NOW, TEST_KEY)!;
-    expect(verifyMintReceipt(r, "u-b", NOW, TEST_KEY)).toBeNull();
-    expect(verifyMintReceipt(r, "u-a", NOW, "some-other-key")).toBeNull();
-    expect(verifyMintReceipt(r, "u-a", NOW + MINT_RECEIPT_TTL_MS + 1000, TEST_KEY)).toBeNull();
-    expect(verifyMintReceipt(signMintReceipt("u-a", "gpt-realtime-2.1", NOW + 5 * 60_000, TEST_KEY), "u-a", NOW, TEST_KEY)).toBeNull();
+    const r = signMintReceipt("u-a", CALL_A, "gpt-realtime-2.1-mini", NOW, TEST_KEY)!;
+    expect(verifyMintReceipt(r, "u-b", CALL_A, NOW, TEST_KEY)).toBeNull();
+    expect(verifyMintReceipt(r, "u-a", CALL_A, NOW, "some-other-key")).toBeNull();
+    expect(verifyMintReceipt(r, "u-a", CALL_A, NOW + MINT_RECEIPT_TTL_MS + 1000, TEST_KEY)).toBeNull();
+    expect(verifyMintReceipt(signMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW + 5 * 60_000, TEST_KEY), "u-a", CALL_A, NOW, TEST_KEY)).toBeNull();
     // Swap Premium into the payload but keep the Standard signature.
     const [body, sig] = r.split(".");
     const forged = Buffer.from(Buffer.from(body, "base64url").toString("utf8").replace("gpt-realtime-2.1-mini", "gpt-realtime-2.1")).toString("base64url");
-    expect(verifyMintReceipt(`${forged}.${sig}`, "u-a", NOW, TEST_KEY)).toBeNull();
-    for (const junk of [undefined, null, "", "abc", "abc.def", `${body}.${"0".repeat(64)}`, "x".repeat(600)]) expect(verifyMintReceipt(junk, "u-a", NOW, TEST_KEY)).toBeNull();
+    expect(verifyMintReceipt(`${forged}.${sig}`, "u-a", CALL_A, NOW, TEST_KEY)).toBeNull();
+    for (const junk of [undefined, null, "", "abc", "abc.def", `${body}.${"0".repeat(64)}`, "x".repeat(600)]) expect(verifyMintReceipt(junk, "u-a", CALL_A, NOW, TEST_KEY)).toBeNull();
+  });
+
+  it("refuses a v1 receipt that carries no call id", () => {
+    const body = Buffer.from(JSON.stringify({ v: "mint-receipt-v1", u: "u-a", m: "gpt-realtime-2.1", t: NOW / 1000 })).toString("base64url");
+    const sig = createHmac("sha256", TEST_KEY).update(`mint-receipt-v1:${body}`).digest("hex");
+    expect(verifyMintReceipt(`${body}.${sig}`, "u-a", CALL_A, NOW, TEST_KEY)).toBeNull();
   });
 
   it("signs and verifies nothing without JWT_SECRET", () => {
-    const r = signMintReceipt("u-a", "gpt-realtime-2.1", NOW, TEST_KEY);
+    const r = signMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW, TEST_KEY);
     vi.stubEnv("JWT_SECRET", "");
-    expect(signMintReceipt("u-a", "gpt-realtime-2.1", NOW)).toBeUndefined();
-    expect(verifyMintReceipt(r, "u-a", NOW)).toBeNull();
+    expect(signMintReceipt("u-a", CALL_A, "gpt-realtime-2.1", NOW)).toBeUndefined();
+    expect(verifyMintReceipt(r, "u-a", CALL_A, NOW)).toBeNull();
   });
 });
 
@@ -290,8 +330,28 @@ describe("POST /api/realtime/session picks the model from the organization's eff
     const body = await res.json();
     expect(body.model).toBe("gpt-realtime-2.1-mini");
     expect(sentModel(fetchMock)).toBe("gpt-realtime-2.1-mini");
-    // The receipt is opaque to the client but carries the minted model for the save.
-    expect(verifyMintReceipt(body.receipt, mocks.user.id)).toBe("gpt-realtime-2.1-mini");
+    // The receipt is opaque to the client but carries the minted model, bound to this call's sessionId.
+    expect(verifyMintReceipt(body.receipt, mocks.user.id, body.sessionId)).toBe("gpt-realtime-2.1-mini");
+  });
+
+  it("binds every mint to its own server-generated call id, fixed before the secret is minted", async () => {
+    upstream();
+    const a = await (await mint()).json();
+    const b = await (await mint()).json();
+    expect(a.sessionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(b.sessionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(a.sessionId).not.toBe(b.sessionId);
+    // Unmetered: no metering call id is sent, so the client never starts a meter for it.
+    expect(a.callId).toBeUndefined();
+    expect(verifyMintReceipt(a.receipt, mocks.user.id, b.sessionId)).toBeNull();
+    expect(verifyMintReceipt(b.receipt, mocks.user.id, a.sessionId)).toBeNull();
+  });
+
+  it("ignores a sessionId the client sends to the mint route", async () => {
+    upstream();
+    const body = await (await mintPOST(json("http://localhost/api/realtime/session", "POST", { scenario, sessionId: "client-chosen-0001" }))).json();
+    expect(body.sessionId).not.toBe("client-chosen-0001");
+    expect(verifyMintReceipt(body.receipt, mocks.user.id, "client-chosen-0001")).toBeNull();
   });
 
   it("uses Premium when comped and the owner switches to premium", async () => {
@@ -299,7 +359,7 @@ describe("POST /api/realtime/session picks the model from the organization's eff
     const fetchMock = upstream();
     const body = await (await mint()).json();
     expect(sentModel(fetchMock)).toBe("gpt-realtime-2.1");
-    expect(verifyMintReceipt(body.receipt, mocks.user.id)).toBe("gpt-realtime-2.1");
+    expect(verifyMintReceipt(body.receipt, mocks.user.id, body.sessionId)).toBe("gpt-realtime-2.1");
   });
 
   it.each([["false", NOT_COMPED], ["null", "o-2"]])("forces Standard when comped is %s even if the stored tier is premium", async (_label, orgId) => {
@@ -359,29 +419,106 @@ describe("POST /api/realtime/session picks the model from the organization's eff
 
 describe("POST /api/transcripts logs the voice model", () => {
   const transcript = [{ role: "assistant", text: "Hello, this is Sam." }, { role: "user", text: "Hi Sam, thanks for taking the call." }];
+  /** Saves a call. Without an explicit sessionId it is a text save, named the way the client names one. */
   const save = (extra: Record<string, unknown>) =>
-    savePOST(json("http://localhost/api/transcripts", "POST", { sessionId: "voice-1", transcript, durationSeconds: 60, scenario: { id: BUILT_IN_SCENARIOS[0].id }, ...extra }));
-  const loggedModel = () => (mocks.prisma.trainerSession.create.mock.calls[0][0] as { data: { realtimeModel: unknown } }).data.realtimeModel;
+    savePOST(json("http://localhost/api/transcripts", "POST", { sessionId: `text-${++seq}000000`, transcript, durationSeconds: 60, scenario: { id: BUILT_IN_SCENARIOS[0].id }, ...extra }));
+  /** Saves the minted call the way the client does: under the receipt's sessionId, with the receipt. */
+  const saveCall = (minted: { receipt: string; sessionId: string }, extra: Record<string, unknown> = {}) =>
+    save({ sessionId: minted.sessionId, realtimeReceipt: minted.receipt, ...extra });
+  const last = () => mocks.saved[mocks.saved.length - 1];
+  const loggedModel = () => last().realtimeModel;
+  const withModel = () => mocks.saved.filter((r) => r.realtimeModel !== null);
+  const lastAudit = () => (mocks.prisma.auditEvent.create.mock.calls.at(-1)![0] as { data: { metadata: Record<string, unknown> } }).data.metadata;
   const mintOnce = async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ value: "ek_test_secret_1", expires_at: 1_900_000_000 })));
     return (await mintPOST(json("http://localhost/api/realtime/session", "POST", { scenario: BUILT_IN_SCENARIOS[0] }))).json();
   };
 
-  it("stores the Premium model a comped premium call was minted with, from the receipt", async () => {
+  it("stores the Premium model a comped premium call was minted with, on that call's own row", async () => {
     org(COMPED).voiceModelTier = "premium";
     const minted = await mintOnce();
     expect(typeof minted.receipt).toBe("string");
-    const res = await save({ realtimeReceipt: minted.receipt });
+    const res = await saveCall(minted);
     expect(res.status).toBe(200);
     expect(loggedModel()).toBe("gpt-realtime-2.1");
+    expect(last().id).toBe(receiptRowId(minted.sessionId));
+    expect(last().realtimeSessionId).toBe(minted.sessionId);
+    expect((await res.json()).id).toBe(receiptRowId(minted.sessionId));
   });
 
   it("stores the Standard model for a call on an org that is not comped", async () => {
     org(NOT_COMPED).voiceModelTier = "premium";
     as({ organizationId: NOT_COMPED });
     const minted = await mintOnce();
-    await save({ realtimeReceipt: minted.receipt });
+    await saveCall(minted);
     expect(loggedModel()).toBe("gpt-realtime-2.1-mini");
+  });
+
+  describe("cross-call replay", () => {
+    it("does not log call A's receipt on call B, in either direction", async () => {
+      org(COMPED).voiceModelTier = "premium";
+      const a = await mintOnce();
+      const b = await mintOnce();
+      // Each receipt attached to the other call's id: both saved, neither logs a model.
+      await save({ sessionId: b.sessionId, realtimeReceipt: a.receipt });
+      expect(loggedModel()).toBeNull();
+      expect(lastAudit()).toMatchObject({ receiptRejected: true });
+      await save({ sessionId: a.sessionId, realtimeReceipt: b.receipt });
+      expect(loggedModel()).toBeNull();
+      // Each with its own id still logs, once.
+      await saveCall(a);
+      await saveCall(b);
+      expect(withModel().map((r) => r.id)).toEqual([receiptRowId(a.sessionId), receiptRowId(b.sessionId)]);
+    });
+
+    it("does not log a voice receipt on a text save", async () => {
+      org(COMPED).voiceModelTier = "premium";
+      const minted = await mintOnce();
+      // A text save is named by the client (`text-<ms>`), which is never the call id the receipt is bound to.
+      await save({ realtimeReceipt: minted.receipt });
+      expect(loggedModel()).toBeNull();
+      await save({ sessionId: `text-${Date.now()}`, realtimeReceipt: minted.receipt });
+      expect(loggedModel()).toBeNull();
+      expect(withModel()).toHaveLength(0);
+    });
+
+    it("logs one receipt at most once: a second save of the same call is kept, without a model", async () => {
+      org(COMPED).voiceModelTier = "premium";
+      const minted = await mintOnce();
+      expect((await saveCall(minted)).status).toBe(200);
+      const again = await saveCall(minted);
+      expect(again.status).toBe(200);
+      expect(loggedModel()).toBeNull();
+      expect(lastAudit()).toMatchObject({ receiptRejected: true });
+      // Two rows saved, one with the model.
+      expect(mocks.saved).toHaveLength(2);
+      expect(withModel()).toHaveLength(1);
+      expect((await again.json()).id).not.toBe(receiptRowId(minted.sessionId));
+    });
+
+    it("logs one receipt at most once even when the saves race", async () => {
+      const minted = await mintOnce();
+      const results = await Promise.all([saveCall(minted), saveCall(minted), saveCall(minted)]);
+      expect(results.map((r) => r.status)).toEqual([200, 200, 200]);
+      expect(withModel()).toHaveLength(1);
+    });
+
+    it("never logs a model when the save fills a metered row, even with the call's own receipt", async () => {
+      const minted = await mintOnce();
+      mocks.prisma.trainerSession.findUnique.mockResolvedValue({ userId: mocks.user.id, transcript: [] });
+      await saveCall(minted, { callId: minted.sessionId });
+      expect(mocks.prisma.trainerSession.update).toHaveBeenCalled();
+      expect(loggedModel()).toBeNull();
+      // So it can't be logged twice by filling the metered row and then creating the receipt row.
+      expect(withModel()).toHaveLength(0);
+    });
+
+    it("rethrows other database errors instead of treating them as a replay", async () => {
+      const minted = await mintOnce();
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      mocks.prisma.trainerSession.create.mockRejectedValueOnce(new Error("connection reset"));
+      expect((await saveCall(minted)).status).toBe(500);
+    });
   });
 
   it.each([
@@ -392,32 +529,31 @@ describe("POST /api/transcripts logs the voice model", () => {
     org(NOT_COMPED).voiceModelTier = "premium";
     as(actor);
     const minted = await mintOnce();
-    expect(verifyMintReceipt(minted.receipt, mocks.user.id)).toBe(STANDARD_REALTIME_MODEL);
+    expect(verifyMintReceipt(minted.receipt, mocks.user.id, minted.sessionId)).toBe(STANDARD_REALTIME_MODEL);
 
-    // The client claims Premium next to its genuine Standard receipt.
-    await save({ realtimeModel: PREMIUM_REALTIME_MODEL, realtimeReceipt: minted.receipt });
-    expect(loggedModel()).toBe(STANDARD_REALTIME_MODEL);
-
-    // The client claims Premium with no receipt at all.
-    mocks.prisma.trainerSession.create.mockClear();
-    await save({ realtimeModel: PREMIUM_REALTIME_MODEL });
-    expect(loggedModel()).toBeNull();
-
-    // The client edits the receipt's payload to say Premium.
-    mocks.prisma.trainerSession.create.mockClear();
+    // The client edits the receipt's payload to say Premium (before the genuine save, which would use up the call).
     const [body, sig] = String(minted.receipt).split(".");
     const forged = Buffer.from(Buffer.from(body, "base64url").toString("utf8").replace(STANDARD_REALTIME_MODEL, PREMIUM_REALTIME_MODEL)).toString("base64url");
-    await save({ realtimeReceipt: `${forged}.${sig}` });
+    await saveCall({ sessionId: minted.sessionId, receipt: `${forged}.${sig}` });
     expect(loggedModel()).toBeNull();
+
+    // The client claims Premium with no receipt at all.
+    await save({ sessionId: minted.sessionId, realtimeModel: PREMIUM_REALTIME_MODEL });
+    expect(loggedModel()).toBeNull();
+
+    // The client claims Premium next to its genuine Standard receipt.
+    await saveCall(minted, { realtimeModel: PREMIUM_REALTIME_MODEL });
+    expect(loggedModel()).toBe(STANDARD_REALTIME_MODEL);
   });
 
-  it("does not accept another user's Premium receipt", async () => {
+  it("does not accept another user's Premium receipt, even under that call's own id", async () => {
     org(COMPED).voiceModelTier = "premium";
     const premium = await mintOnce();
-    expect(verifyMintReceipt(premium.receipt, mocks.user.id)).toBe(PREMIUM_REALTIME_MODEL);
+    expect(verifyMintReceipt(premium.receipt, mocks.user.id, premium.sessionId)).toBe(PREMIUM_REALTIME_MODEL);
     as({ role: "trainee", organizationId: NOT_COMPED });
-    await save({ realtimeReceipt: premium.receipt });
+    await saveCall(premium);
     expect(loggedModel()).toBeNull();
+    expect(withModel()).toHaveLength(0);
   });
 
   it("stores null for text calls", async () => {

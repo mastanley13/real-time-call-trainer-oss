@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Scenario } from "@/lib/scenarios";
-import type { StoredTurn } from "@/lib/sessionStore";
+import type { MintReceipt, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
 import { CallMeter, type MeterEndReason } from "@/lib/callMeter";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
@@ -25,8 +25,11 @@ interface Handlers {
   onEnded: () => void;
   onError: (msg: string) => void;
   onView: (v: CallView) => void;
-  /** The server's signed mint receipt, handed back on save so it can log the model it minted. Opaque here. */
-  onReceipt: (receipt: string) => void;
+  /**
+   * The server's signed mint receipt and the call id it is bound to. The call is saved under that sessionId with
+   * the receipt, so the server can log the model it minted for this call. Opaque here.
+   */
+  onReceipt: (r: MintReceipt) => void;
 }
 
 const EXPIRED = "The voice session expired before it connected. Start the call again.";
@@ -82,7 +85,7 @@ class RealtimeCall {
     mic.getAudioTracks().forEach((t) => (t.enabled = !this.view.muted));
     this.set({ phase: "connecting" });
 
-    let secret: { clientSecret?: string; expiresAt?: number; message?: string; callId?: string; receipt?: unknown };
+    let secret: { clientSecret?: string; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown };
     try {
       const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario }) });
       secret = await res.json().catch(() => ({}));
@@ -91,7 +94,7 @@ class RealtimeCall {
       return this.fail("Could not reach the server to start the voice call. Check your connection, then try again.");
     }
     if (this.closed) return;
-    if (typeof secret.receipt === "string") this.h.onReceipt(secret.receipt);
+    if (typeof secret.receipt === "string" && typeof secret.sessionId === "string") this.h.onReceipt({ receipt: secret.receipt, sessionId: secret.sessionId });
     this.meter = new CallMeter(secret.callId, {
       // The server has already stopped and billed the call; this ends the client side.
       onStop: (m) => this.fail(m, "user_hangup"),
@@ -282,7 +285,7 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   onTurn: (t: StoredTurn) => void;
   onEnded: () => void;
   onError: (msg: string) => void;
-  onReceipt?: (receipt: string) => void;
+  onReceipt?: (r: MintReceipt) => void;
   registerEnd: (fn: () => void) => void;
   render: (v: VoiceRender) => React.ReactNode;
 }) {
