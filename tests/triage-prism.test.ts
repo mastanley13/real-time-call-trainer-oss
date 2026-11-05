@@ -133,10 +133,24 @@ describe("Prism u63 Medium 2: a Stripe trial reads as 'starts after the trial', 
     expect(snap).toMatchObject({ enabled: false, configured: true, canManage: true, canBuy: false, trialing: true });
     expect(premiumSetupState(snap).kind).toBe("waiting_trial");
     const html = setupHtml(snap);
-    expect(html).toContain(PREMIUM_STARTS_AFTER_TRIAL);
+    // Same presentation as billing: both sentences and the Starts after trial chip.
+    expect(html).toContain(`${PREMIUM_STARTS_AFTER_TRIAL} ${PREMIUM_TRIAL_STANDARD_NOTE}`);
+    expect(html).toContain(`<span class="chip">${PREMIUM_TRIAL_STATUS}</span>`);
     expect(PREMIUM_STARTS_AFTER_TRIAL).toBe("Premium voice starts when your trial ends.");
     expect(html).not.toContain(ASK_ADMIN_PREMIUM);
     expect(html).not.toContain("not on your plan");
+    expect(html).not.toMatch(UNPAID);
+  });
+
+  it("setup matches billing for a configured trialing owner: both sentences and the Starts after trial chip", () => {
+    const snap: PremiumSnapshot = { enabled: false, remaining: 0, cap: 0, plan: "pro", onSale: true, canBuy: false, offerReady: true, comped: false, removeAt: null, configured: true, canManage: true, trialing: true };
+    expect(premiumSetupState(snap).kind).toBe("waiting_trial");
+    const html = setupHtml(snap);
+    for (const s of [PREMIUM_STARTS_AFTER_TRIAL, PREMIUM_TRIAL_STANDARD_NOTE, PREMIUM_TRIAL_STATUS]) expect(html).toContain(s);
+    expect(html).toContain(`<span class="chip">${PREMIUM_TRIAL_STATUS}</span>`);
+    expect(html).not.toContain(ASK_ADMIN_PREMIUM);
+    expect(html).not.toMatch(UNPAID);
+    expect(html).not.toContain(PREMIUM_AFTER_TRIAL);
   });
 
   it("trialing Pro owner without the add-on: setup says it can be added after the trial, still no admin line", () => {
@@ -144,6 +158,9 @@ describe("Prism u63 Medium 2: a Stripe trial reads as 'starts after the trial', 
     expect(premiumSetupState(snap).kind).toBe("waiting_trial");
     expect(setupHtml(snap)).toContain(PREMIUM_AFTER_TRIAL);
     expect(setupHtml(snap)).not.toContain(ASK_ADMIN_PREMIUM);
+    // Billing shows "Not added" here, so setup has no trial chip or Standard note either.
+    expect(setupHtml(snap)).not.toContain(PREMIUM_TRIAL_STATUS);
+    expect(setupHtml(snap)).not.toContain(PREMIUM_TRIAL_STANDARD_NOTE);
     // Spec 10.2 still holds: nothing about adding Premium before the first graded call.
     expect(premiumSetupState({ ...snap, offerReady: false }).kind).toBe("none");
   });

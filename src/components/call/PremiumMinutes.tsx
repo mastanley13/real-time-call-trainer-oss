@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import { Clock, Lock } from "lucide-react";
-import { ADD_PREMIUM_LABEL, ASK_ADMIN_PREMIUM, BILLING_PATH, premiumLeftLabel, premiumSetupState, premiumTrialLine, type PremiumSnapshot } from "@/lib/billingUi";
+import {
+  ADD_PREMIUM_LABEL, ASK_ADMIN_PREMIUM, BILLING_PATH, PREMIUM_STARTS_AFTER_TRIAL, PREMIUM_TRIAL_STANDARD_NOTE, PREMIUM_TRIAL_STATUS,
+  premiumLeftLabel, premiumSetupState, premiumTrialLine, type PremiumSnapshot,
+} from "@/lib/billingUi";
 import { PREMIUM_CALL_LENGTH_NOTE, premiumDisclosure, premiumNudge } from "@/lib/pricing";
 import { trackPremiumUpsell } from "@/lib/premiumEventTypes";
 
@@ -13,7 +16,8 @@ import { trackPremiumUpsell } from "@/lib/premiumEventTypes";
  * - Entitled: "Premium: N of 40 min left" (Team: the pooled capacity, 40 x units), with the disclosure.
  * - Used up: the nudge (calls continue on Standard, free).
  * - Not on the plan while Premium is on sale: locked, with Add Premium voice (a buyer) or Ask your admin (a Team member).
- * - The owner during a Stripe trial: when Premium starts (or can be added), with no admin line.
+ * - The owner during a Stripe trial: with the add-on, billing's Starts after trial chip and both trial sentences;
+ *   without it, when Premium can be added. Never an admin line.
  * - Free, or off sale and not on the plan: nothing.
  */
 export default function PremiumMinutes({ premium }: { premium: PremiumSnapshot | null }) {
@@ -34,11 +38,26 @@ export default function PremiumMinutes({ premium }: { premium: PremiumSnapshot |
   }
   if (state === "waiting_trial") {
     // Prism u63 Medium 2: the owner during a Stripe trial. Not an upsell, and never "Ask your admin".
+    if (!premium.configured) {
+      // No add-on yet: billing shows "Not added" here, so no trial chip, just when it can be added.
+      return (
+        <p className="flex flex-wrap items-center gap-2 text-sm text-ink-muted" role="status">
+          <Clock size={14} strokeWidth={1.75} aria-hidden />
+          <span>{premiumTrialLine(premium)}</span>
+        </p>
+      );
+    }
+    // Add-on on the plan: the same chip and both sentences as billing (PremiumVoiceControl), so the voice for this call
+    // is explicit next to Start call.
     return (
-      <p className="flex flex-wrap items-center gap-2 text-sm text-ink-muted" role="status">
-        <Clock size={14} strokeWidth={1.75} aria-hidden />
-        <span>{premiumTrialLine(premium)}</span>
-      </p>
+      <div className="text-sm" role="status">
+        <p className="flex flex-wrap items-center gap-2 text-ink-soft">
+          <Clock size={14} strokeWidth={1.75} aria-hidden />
+          <span>Premium voice</span>
+          <span className="chip">{PREMIUM_TRIAL_STATUS}</span>
+        </p>
+        <p className="mt-1 text-ink-muted">{PREMIUM_STARTS_AFTER_TRIAL} {PREMIUM_TRIAL_STANDARD_NOTE}</p>
+      </div>
     );
   }
   if (state === "used_up") {
