@@ -6,7 +6,7 @@ import { ConversationProvider, useConversation } from "@elevenlabs/react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Scenario, ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { listScenarios } from "@/lib/scenarioStore";
-import { getLocalSession, saveSession, type CoachLog, type StoredTurn } from "@/lib/sessionStore";
+import { getLocalSession, saveSession, type CoachLog, type MintedCall, type StoredTurn } from "@/lib/sessionStore";
 import type { Evaluation } from "@/lib/grader-types";
 import type { CoachMode } from "@/lib/coach-types";
 import type { AgentState } from "@/components/CallOrb";
@@ -134,6 +134,8 @@ export default function TrainerClient() {
   const startedAt = useRef(0);
   const endVoice = useRef<() => void>(() => {});
   const finishing = useRef(false);
+  /** The OpenAI Realtime call the server minted (sessionId, receipt, metering callId); saved with the call. Never shown. */
+  const mintedCallRef = useRef<MintedCall | null>(null);
   const turnsRef = useRef<StoredTurn[]>([]);
   const [replyTalking, setReplyTalking] = useState(false);
   const talkTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -299,7 +301,9 @@ export default function TrainerClient() {
       cues: c.cues.map((q) => ({ triggerTurn: q.triggerTurn, type: q.type, title: q.title, used: q.status === "used" })),
     };
     const useServer = !!capabilities?.database && !capabilities?.demoMode;
-    const id = await saveSession({ mode, durationSeconds: duration, scenario, transcript, evaluation, coach: coachLog }, useServer);
+    const call = mode === "voice" ? mintedCallRef.current ?? undefined : undefined;
+    mintedCallRef.current = null;
+    const id = await saveSession({ mode, durationSeconds: duration, scenario, transcript, evaluation, coach: coachLog }, useServer, { call });
     router.push(`/trainer/debrief/${id}`);
   }, [scenario, mode, capabilities, router, coachMode]);
 
@@ -314,6 +318,7 @@ export default function TrainerClient() {
     turnsRef.current = seed;
     setTurns(seed);
     finishing.current = false;
+    mintedCallRef.current = null;
     setReplyTalking(false);
     setHungUp(false);
     setCallerSource(null);
@@ -417,7 +422,7 @@ export default function TrainerClient() {
       ),
     };
     // Coach cues stay on the trainee's screen: neither engine is ever sent coach output.
-    if (engine === "openai") return <RealtimeVoiceSession {...voiceProps} />;
+    if (engine === "openai") return <RealtimeVoiceSession {...voiceProps} onMinted={(c) => { mintedCallRef.current = c; }} />;
     return (
       <ConversationProvider>
         <VoiceSession {...voiceProps} />

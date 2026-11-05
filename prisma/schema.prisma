@@ -50,6 +50,11 @@ model Organization {
   /// Nullable = keep training records indefinitely. When set, the nightly
   /// purge job deletes TrainerSession rows older than this many days.
   sessionRetentionDays Int?
+  /// Voice quality for OpenAI Realtime calls: null means Standard, "premium" means Premium. Not billing
+  /// (premiumVoice is). Calls run Premium only when voiceModelComped is also true (src/lib/voiceTier.ts).
+  voiceModelTier   String?
+  /// Set by hand in the database, never by the API. Null or false means the org is not comped for Premium.
+  voiceModelComped Boolean?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -163,6 +168,9 @@ model TrainerSession {
   reservedMinutes    Int      @default(0)
   /// Voice engine the session was minted for: "premium" or "standard".
   engineTier         String   @default("standard")
+  /// OpenAI Realtime model id the call was minted with, from a verified mint receipt (src/lib/mintReceipt.ts).
+  /// Cost log only; billing reads engineTier. Null for text, ElevenLabs and unverified calls.
+  realtimeModel      String?
   /// Of reservedMinutes, how many were also held against the Premium limit. Minutes beyond this book as standard.
   premiumReservedMinutes Int  @default(0)
   /// What this open call holds in the NEXT period when the period rolled over mid-call (set by the rollover).

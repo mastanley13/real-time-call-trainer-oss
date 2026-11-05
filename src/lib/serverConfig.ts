@@ -1,6 +1,6 @@
 import "server-only";
 import { safeEqual } from "./access";
-import { orderVoiceEngines, realtimeKey, realtimeModel } from "./realtime";
+import { orderVoiceEngines, realtimeKey } from "./realtime";
 import { stripeReady, stripeStatus } from "./stripe";
 
 /**
@@ -26,17 +26,11 @@ export const billingOn = (env: Record<string, string | undefined> = process.env)
 
 type Env = Record<string, string | undefined>;
 
-export const DEFAULT_STANDARD_REALTIME_MODEL = "gpt-realtime-mini";
-
-/**
- * The Realtime model for a session. Premium is the configured REALTIME_MODEL; standard is
- * REALTIME_MODEL_STANDARD (default gpt-realtime-mini). Without metering there is no entitlement to
- * check, so the configured model runs as before.
+/*
+ * The OpenAI Realtime model for a session is picked by the organization's voice tier in /api/realtime/session
+ * (orgVoiceTierForUser in src/lib/voiceTierServer.ts, resolveTierModel in src/lib/voiceModels.ts), not by the
+ * metered engine. The engine still drives minute caps and billing (src/lib/usage.ts) and the ElevenLabs agent below.
  */
-export function realtimeModelFor(engine: "premium" | "standard", env: Env = process.env): string {
-  if (engine === "premium") return realtimeModel();
-  return env.REALTIME_MODEL_STANDARD?.trim() || DEFAULT_STANDARD_REALTIME_MODEL;
-}
 
 /**
  * The ElevenLabs agent for a session. Premium is ELEVENLABS_AGENT_ID. Standard is
@@ -51,8 +45,9 @@ export function elevenLabsAgentFor(engine: "premium" | "standard", env: Env = pr
 
 /**
  * Runtime capability flags. Everything is optional; the UI degrades gracefully. /api/config returns this object
- * unauthenticated, so it carries booleans and provider names only. Model ids (LLM_MODEL, REALTIME_MODEL) stay on the
- * server: read them with llmModel() and realtimeModel() where a provider request needs them.
+ * unauthenticated, so it carries booleans and provider names only. Model ids (LLM_MODEL and the REALTIME_MODEL
+ * variables) stay on the server: read them with llmModel() and voiceModelFor() (src/lib/voiceTierServer.ts) where a
+ * provider request needs them.
  */
 export function getCapabilities() {
   const elevenlabs = Boolean(process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_AGENT_ID);

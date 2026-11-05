@@ -17,14 +17,20 @@ vi.mock("@/lib/apiAuth", () => ({ requireAuth: () => mocks.user }));
 
 import { GET as configGET } from "@/app/api/config/route";
 import { POST as checkPOST } from "@/app/api/llm/check/route";
+import { POST as sessionPOST } from "@/app/api/realtime/session/route";
+import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import Home from "@/app/page";
 
 /** Model id families: OpenAI chat, realtime, transcription and speech, reasoning, Gemini, ElevenLabs and Claude. */
 const MODEL_ID_RE =
   /\b(?:[Gg][Pp][Tt]-(?:5|4\.1|4o|realtime)[\w.-]*|o[34](?:-[\w-]+)?|whisper-1|tts-1(?:-hd)?|gemini-[\w.-]+|eleven_\w+|claude-[\w.-]+)\b/;
 
-/** Backend defaults that must stay: they are sent to providers, never rendered or returned. Exact files, no globs. */
-const BACKEND_ALLOWLIST = new Set(["src/lib/serverConfig.ts", "src/lib/realtime.ts", "src/lib/llm.ts"]);
+/**
+ * Backend defaults that must stay: they are sent to providers, never rendered or returned. Exact files, no globs.
+ * src/lib/voiceModels.ts is the server-only voice tier to Realtime model mapping; it must stay server-only (checked below).
+ */
+const BACKEND_ALLOWLIST = new Set(["src/lib/serverConfig.ts", "src/lib/realtime.ts", "src/lib/llm.ts", "src/lib/voiceModels.ts"]);
+const SERVER_ONLY_MODEL_MODULE = "src/lib/voiceModels.ts";
 
 const ROOT = process.cwd();
 function sourceFiles(dir = join(ROOT, "src")): string[] {
@@ -73,8 +79,25 @@ describe("no model ids in user-facing source", () => {
     expect(hitsOf(MODEL_ID_RE, files.filter((f) => !BACKEND_ALLOWLIST.has(f)))).toEqual([]);
   });
 
+  it("keeps the voice tier model mapping server-only, imported only by server modules", () => {
+    const src = readFileSync(join(ROOT, SERVER_ONLY_MODEL_MODULE), "utf8");
+    expect(src.split("\n")[0]).toBe('import "server-only";');
+    const importers = files.filter((f) => f !== SERVER_ONLY_MODEL_MODULE && /from ["'](?:@\/lib\/|\.\/|\.\.\/lib\/)voiceModels["']/.test(readFileSync(join(ROOT, f), "utf8")));
+    // Each importer is itself server-only, so the ids can't reach a client bundle through it.
+    expect(importers).toEqual(["src/lib/voiceTierServer.ts"]);
+    for (const f of importers) expect(readFileSync(join(ROOT, f), "utf8").split("\n")[0]).toBe('import "server-only";');
+    expect(hitsOf(/["']use client["']/, [SERVER_ONLY_MODEL_MODULE, ...importers])).toEqual([]);
+  });
+
+  it("touches the TrainerSession.realtimeModel column only where a verified receipt writes it", () => {
+    // Code lines only: doc comments may name the column. Reading it anywhere else (a response, a page) needs a review.
+    const code = (f: string) => readFileSync(join(ROOT, f), "utf8").split("\n").filter((l) => !/^\s*(?:\/\/|\/?\*)/.test(l)).join("\n");
+    const users = files.filter((f) => /\brealtimeModel\b/.test(code(f)));
+    expect(users).toEqual(["src/app/api/transcripts/route.ts"]);
+  });
+
   it("no client code reads a model id from capabilities or a coach result", () => {
-    expect(hitsOf(/capabilities\??\.(?:model|realtimeModel)\b|\.result\??\.model\b|\bcaps\??\.(?:model|realtimeModel)\b/, files)).toEqual([]);
+    expect(hitsOf(/capabilities\??\.(?:model|realtimeModel)\b|\.result\??\.model\b|\bcaps\??\.(?:model|realtimeModel)\b|\bsecret\??\.model\b/, files)).toEqual([]);
   });
 
   it("reads the configured model only where a provider request or the server-side audit log needs it", () => {
@@ -96,7 +119,8 @@ describe("landing page", () => {
 const ENV = {
   DEMO_MODE: "", DATABASE_URL: "", STRIPE_SECRET_KEY: "", VOICE_ENGINE: "", OPENAI_REALTIME_API_KEY: "",
   LLM_BASE_URL: "", LLM_API_KEY: "", OPENAI_API_KEY: "", ELEVENLABS_API_KEY: "", ELEVENLABS_AGENT_ID: "",
-  LLM_MODEL: "", REALTIME_MODEL: "", REALTIME_MODEL_STANDARD: "", REALTIME_TRANSCRIBE_MODEL: "",
+  LLM_MODEL: "", REALTIME_MODEL: "", REALTIME_MODEL_STANDARD: "", REALTIME_MODEL_PREMIUM: "", REALTIME_TRANSCRIBE_MODEL: "",
+  REALTIME_VOICE: "", JWT_SECRET: "",
 };
 const stubEnv = (env: Partial<Record<keyof typeof ENV, string>>) => {
   for (const [k, v] of Object.entries({ ...ENV, ...env })) vi.stubEnv(k, v);
@@ -120,7 +144,8 @@ describe("GET /api/config (unauthenticated JSON)", () => {
   it("reports booleans and provider names, never the chat or realtime model ids", async () => {
     stubEnv({
       LLM_API_KEY: "sk-llm-test", OPENAI_API_KEY: "sk-openai-test", LLM_MODEL: "gpt-4.1-mini",
-      REALTIME_MODEL: "gpt-realtime-1.5", REALTIME_MODEL_STANDARD: "gpt-realtime-mini", REALTIME_TRANSCRIBE_MODEL: "gpt-4o-mini-transcribe",
+      REALTIME_MODEL: "gpt-realtime-1.5", REALTIME_MODEL_STANDARD: "gpt-realtime-mini", REALTIME_MODEL_PREMIUM: "gpt-realtime-premium-test",
+      REALTIME_TRANSCRIBE_MODEL: "gpt-4o-mini-transcribe",
       ELEVENLABS_API_KEY: "el-test", ELEVENLABS_AGENT_ID: "agent-test",
     });
     const { text, body } = await read();
@@ -146,6 +171,37 @@ describe("GET /api/config (unauthenticated JSON)", () => {
     expect(Object.keys(body).sort()).toEqual(CONFIG_KEYS);
     expect(body).toMatchObject({ llm: false, realtime: false, elevenlabs: false, voiceEngines: [] });
     expect(text).not.toMatch(MODEL_ID_RE);
+  });
+});
+
+describe("POST /api/realtime/session (response JSON)", () => {
+  const SESSION_KEYS = ["clientSecret", "expiresAt", "receipt", "sessionId", "voice"];
+  const mint = async () => {
+    const fn = vi.fn(async () => Response.json({ value: "ek_nml_secret_1", expires_at: 1_900_000_000 }));
+    vi.stubGlobal("fetch", fn);
+    const res = await sessionPOST(new NextRequest("http://localhost/api/realtime/session", {
+      method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": "198.51.100.251" }, body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }),
+    }));
+    const text = await res.text();
+    return { res, text, body: JSON.parse(text) as Record<string, unknown>, sent: JSON.parse(String((fn.mock.calls[0] as unknown as [string, RequestInit])[1].body)) };
+  };
+
+  it.each([
+    ["built-in defaults", {}],
+    ["every tier variable set", { REALTIME_MODEL: "gpt-realtime-1.5", REALTIME_MODEL_STANDARD: "acme-voice-std", REALTIME_MODEL_PREMIUM: "acme-voice-premium" }],
+  ])("sends the model upstream and returns no model field or id, with %s", async (_label, env) => {
+    stubEnv({ DEMO_MODE: "true", OPENAI_API_KEY: "sk-openai-test", JWT_SECRET: "test-only-not-a-secret-0123456789abcdef", ...env });
+    const { res, text, body, sent } = await mint();
+    expect(res.status).toBe(200);
+    expect(Object.keys(body).sort()).toEqual(SESSION_KEYS);
+    expect(typeof sent.session.model).toBe("string");
+    expect(text).not.toContain(sent.session.model);
+    expect(text).not.toMatch(MODEL_ID_RE);
+    expect(text).not.toMatch(/acme-voice|sk-openai-test/);
+    // The receipt is opaque: decoding it shows no model either.
+    const decoded = Buffer.from(String(body.receipt).replace(/^mr3\./, ""), "base64url").toString("latin1");
+    expect(decoded).not.toContain(sent.session.model);
+    expect(decoded).not.toMatch(MODEL_ID_RE);
   });
 });
 

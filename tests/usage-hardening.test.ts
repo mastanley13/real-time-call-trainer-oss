@@ -11,10 +11,14 @@ vi.mock("@/lib/apiAuth", async () => ({
 }));
 
 import { beginCall, chooseEngine, endCall, ensureAllowance, heartbeat, usageSummary } from "@/lib/usage";
-import { elevenLabsAgentFor, realtimeModelFor } from "@/lib/serverConfig";
+import { elevenLabsAgentFor } from "@/lib/serverConfig";
+import { resolveTierModel } from "@/lib/voiceModels";
+import { verifyMintReceipt } from "@/lib/mintReceipt";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { MAX_CALL_SECONDS } from "@/lib/usagePlan";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
+import { POST as saveTranscript } from "@/app/api/transcripts/route";
+import { transcriptSaveBody } from "@/lib/sessionStore";
 import { GET as elevenLabsToken } from "@/app/api/elevenlabs/token/route";
 
 const MAR10 = new Date("2026-03-10T12:00:00Z");
@@ -75,13 +79,9 @@ describe("Premium voice limit", () => {
     expect(chooseEngine({ premiumVoice: true, allowance: a(60, 60) }, 60).engine).toBe("standard");
   });
 
-  it("the model and agent each engine maps to", () => {
-    vi.stubEnv("REALTIME_MODEL", "model-premium-test");
-    vi.stubEnv("REALTIME_MODEL_STANDARD", "");
-    expect(realtimeModelFor("premium")).toBe("model-premium-test");
-    expect(realtimeModelFor("standard")).toBe("gpt-realtime-mini");
-    vi.stubEnv("REALTIME_MODEL_STANDARD", "model-standard-test");
-    expect(realtimeModelFor("standard")).toBe("model-standard-test");
+  it("the model each voice tier maps to, and the agent each engine maps to", () => {
+    expect(resolveTierModel("premium", { REALTIME_MODEL_PREMIUM: "model-premium-test" })).toBe("model-premium-test");
+    expect(resolveTierModel("standard", { REALTIME_MODEL_STANDARD: "model-standard-test" })).toBe("model-standard-test");
     expect(elevenLabsAgentFor("standard", { ELEVENLABS_AGENT_ID: "main" })).toEqual({ agentId: "main", standardAvailable: false });
     expect(elevenLabsAgentFor("standard", { ELEVENLABS_AGENT_ID: "main", ELEVENLABS_AGENT_ID_STANDARD: "std" })).toEqual({ agentId: "std", standardAvailable: true });
     expect(elevenLabsAgentFor("premium", { ELEVENLABS_AGENT_ID: "main", ELEVENLABS_AGENT_ID_STANDARD: "std" }).agentId).toBe("main");
@@ -92,7 +92,8 @@ describe("Premium voice limit", () => {
     beforeEach(() => {
       bodies = [];
       vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
-      vi.stubEnv("REALTIME_MODEL", "model-premium-test");
+      vi.stubEnv("REALTIME_MODEL", "");
+      vi.stubEnv("REALTIME_MODEL_PREMIUM", "model-premium-test");
       vi.stubEnv("REALTIME_MODEL_STANDARD", "model-standard-test");
       vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
         bodies.push(JSON.parse(init.body as string));
@@ -101,13 +102,15 @@ describe("Premium voice limit", () => {
     });
     const mint = () => realtimeSession(new NextRequest("http://localhost/api/realtime/session", { method: "POST", body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }), headers: { "content-type": "application/json" } }));
 
-    it("a call holding the last Premium minute is stopped when it ends; the NEXT session is minted on the standard model", async () => {
+    it("a call holding the last Premium minute is stopped when it ends; the NEXT session is on the standard engine", async () => {
       addUser("u-1", { planTier: "pro", premiumVoice: true });
       await ensureAllowance(fake.db as never, { userId: "u-1" }, base);
       allowanceOf("u-1").premiumMinutesUsed = 119; // 120 of 200 minutes is the Premium limit
 
       const first = await (await mint()).json();
-      expect(bodies[0].session.model).toBe("model-premium-test");
+      // The paid add-on engine does not pick the model: the org is not comped, so the call mints Standard.
+      // Its metering (Premium minutes, maxSeconds, engineTier) is exactly as before.
+      expect(bodies[0].session.model).toBe("model-standard-test");
       expect(first.maxSeconds).toBe(60); // the whole call is the one Premium minute it holds
       await heartbeat("u-1", first.callId, "connected", at(0));
       expect(await heartbeat("u-1", first.callId, "ok", at(30))).toMatchObject({ found: true, stop: false });
@@ -146,11 +149,168 @@ describe("Premium voice limit", () => {
       expect((await begin("u-2", 3000)).engine).toBe("standard");
     });
 
-    it("without metering (no database) the configured model runs as before", async () => {
+    it("without metering (no database) calls run on the Standard voice tier", async () => {
       vi.stubEnv("DATABASE_URL", "");
       const body = await (await mint()).json();
-      expect(bodies[0].session.model).toBe("model-premium-test");
+      expect(bodies[0].session.model).toBe("model-standard-test");
       expect(body.callId).toBeUndefined();
+    });
+
+    it("a comped Premium org gets the Premium model on the standard engine; billing stays standard", async () => {
+      // fakePrisma ignores `select`, so the org's voice fields ride on the user row for orgVoiceTierForUser.
+      addUser("u-1", { planTier: "pro", premiumVoice: false, organization: { voiceModelTier: "premium", voiceModelComped: true } });
+      const minted = await (await mint()).json();
+      expect(bodies[0].session.model).toBe("model-premium-test");
+      expect(session(minted.callId).engineTier).toBe("standard");
+    });
+
+    it("a metered call's receipt is bound to its metering call id, and only to that one", async () => {
+      vi.stubEnv("JWT_SECRET", "ci-only-not-a-secret-0123456789abcdef");
+      addUser("u-1", { planTier: "pro", premiumVoice: false, organization: { voiceModelTier: "premium", voiceModelComped: true } });
+      const a = await (await mint()).json();
+      const b = await (await mint()).json();
+      expect(a.sessionId).toBe(a.callId);
+      expect(b.sessionId).toBe(b.callId);
+      expect(verifyMintReceipt(a.receipt, "u-1", a.callId)).toBe("model-premium-test");
+      expect(verifyMintReceipt(a.receipt, "u-1", b.callId)).toBeNull();
+      // Binding adds nothing to metering: same engine and reservation as any comped call on the standard engine.
+      expect(session(a.callId).engineTier).toBe("standard");
+      expect(session(a.callId).reservedMinutes).toBe(session(b.callId).reservedMinutes);
+    });
+
+    describe("metered transcript save", () => {
+      const turns = [{ role: "assistant" as const, text: "Hello, this is Sam." }, { role: "user" as const, text: "Hi Sam, thanks for taking the call." }];
+      const voiceCall = { mode: "voice" as const, durationSeconds: 180, scenario: BUILT_IN_SCENARIOS[0], transcript: turns, evaluation: null };
+      /** Exactly the body the client sends for this minted call (src/lib/sessionStore.ts). */
+      const clientBody = (minted: { sessionId: string; receipt?: string; callId?: string }) =>
+        transcriptSaveBody(voiceCall, null, undefined, { sessionId: minted.sessionId, receipt: minted.receipt, callId: minted.callId });
+      const save = (body: unknown) => saveTranscript(new NextRequest("http://localhost/api/transcripts", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } }));
+      const logged = () => fake.rows("trainerSession").filter((s) => s.realtimeModel != null);
+      const billing = (callId: string) => {
+        const s = session(callId);
+        return { engineTier: s.engineTier, reservedMinutes: s.reservedMinutes, premiumReservedMinutes: s.premiumReservedMinutes, billedMinutes: s.billedMinutes, billableSeconds: s.billableSeconds, endedAt: s.endedAt, capEnforced: s.capEnforced };
+      };
+
+      beforeEach(() => {
+        vi.stubEnv("JWT_SECRET", "ci-only-not-a-secret-0123456789abcdef");
+        addUser("u-1", { planTier: "pro", premiumVoice: false, organization: { voiceModelTier: "premium", voiceModelComped: true } });
+      });
+
+      it("the client sends the metering callId, and the minted model is logged on that call's own row", async () => {
+        const minted = await (await mint()).json();
+        await heartbeat("u-1", minted.callId, "connected", at(0));
+        await endCall("u-1", minted.callId, "user_hangup", at(180));
+        const before = billing(minted.callId);
+        const allowanceBefore = { ...allowanceOf("u-1") };
+
+        const body = clientBody(minted);
+        expect(body).toMatchObject({ sessionId: minted.callId, callId: minted.callId, realtimeReceipt: minted.receipt });
+        const res = await save(body);
+        expect(res.status).toBe(200);
+        // One row for the call: the metered one, now with its transcript and the model it was minted with.
+        expect((await res.json()).id).toBe(minted.callId);
+        expect(session(minted.callId)).toMatchObject({ realtimeModel: "model-premium-test", realtimeSessionId: minted.callId });
+        expect(session(minted.callId).transcript).toHaveLength(2);
+        expect(fake.rows("trainerSession")).toHaveLength(1);
+        expect(fake.rows("trainerSession").some((s) => String(s.id).startsWith("rt_"))).toBe(false);
+        // The save is not billing: the call's metering fields and the allowance are exactly as endCall left them.
+        expect(billing(minted.callId)).toEqual(before);
+        expect(allowanceOf("u-1")).toEqual(allowanceBefore);
+      });
+
+      it("a replayed save cannot log the model again, on the call's row or anywhere else", async () => {
+        const minted = await (await mint()).json();
+        expect((await save(clientBody(minted))).status).toBe(200);
+        // Same body again: the call's row is already filled, so this is stored as a second row, without a model.
+        const again = await save(clientBody(minted));
+        expect(again.status).toBe(200);
+        expect((await again.json()).id).not.toBe(minted.callId);
+        // And without the callId, as an older client would send it.
+        const { callId: _omit, ...noCallId } = clientBody(minted);
+        expect((await save(noCallId)).status).toBe(200);
+        expect(logged().map((s) => s.id)).toEqual([minted.callId]);
+        expect(fake.rows("trainerSession").some((s) => String(s.id).startsWith("rt_"))).toBe(false);
+        const audits = fake.rows("auditEvent").filter((e) => e.action === "session.saved").map((e) => (e.metadata as { receiptRejected?: boolean }).receiptRejected ?? false);
+        expect(audits).toEqual([false, true, true]);
+      });
+
+      it("concurrent saves of the same call log the model once", async () => {
+        const minted = await (await mint()).json();
+        const results = await Promise.all([save(clientBody(minted)), save(clientBody(minted)), save(clientBody(minted))]);
+        expect(results.map((r) => r.status)).toEqual([200, 200, 200]);
+        expect(logged().map((s) => s.id)).toEqual([minted.callId]);
+      });
+
+      it("a save that omits callId still logs on the metered row, not on a new receipt row", async () => {
+        const minted = await (await mint()).json();
+        const { callId: _omit, ...noCallId } = clientBody(minted);
+        expect((await save(noCallId)).status).toBe(200);
+        expect(logged().map((s) => s.id)).toEqual([minted.callId]);
+        expect(fake.rows("trainerSession").some((s) => String(s.id).startsWith("rt_"))).toBe(false);
+      });
+
+      it("call A's receipt logs nothing on call B, and a text save logs nothing", async () => {
+        const a = await (await mint()).json();
+        const b = await (await mint()).json();
+        // A's transcript with B's receipt, and B's with A's.
+        await save({ ...clientBody(a), realtimeReceipt: b.receipt });
+        await save({ ...clientBody(b), realtimeReceipt: a.receipt });
+        // A's receipt and callId on a text save.
+        await save({ ...transcriptSaveBody({ ...voiceCall, mode: "text" }, null, undefined, undefined), callId: a.callId, realtimeReceipt: a.receipt });
+        expect(logged()).toHaveLength(0);
+        // Both calls still got their transcripts on their own rows.
+        expect(session(a.callId).transcript).toHaveLength(2);
+        expect(session(b.callId).transcript).toHaveLength(2);
+      });
+
+      it("another user cannot use the call's receipt or fill its row", async () => {
+        const minted = await (await mint()).json();
+        addUser("u-2");
+        mocks.authId = "u-2";
+        expect((await save(clientBody(minted))).status).toBe(200);
+        expect(logged()).toHaveLength(0);
+        expect(session(minted.callId).transcript).toEqual([]);
+      });
+    });
+
+    it("a comped Premium org still hits the plan's minute cap: 402 and nothing is minted", async () => {
+      addUser("u-1", { planTier: "pro", premiumVoice: false, organization: { voiceModelTier: "premium", voiceModelComped: true } });
+      await ensureAllowance(fake.db as never, { userId: "u-1" }, base);
+      allowanceOf("u-1").minutesUsed = allowanceOf("u-1").minutesCap;
+      const res = await mint();
+      expect(res.status).toBe(402);
+      expect((await res.json()).error).toBe("cap_reached");
+      expect(bodies).toHaveLength(0);
+    });
+
+    it("a stored Premium tier without the comped flag stays on the standard model", async () => {
+      addUser("u-1", { planTier: "pro", premiumVoice: false, organization: { voiceModelTier: "premium", voiceModelComped: false } });
+      await (await mint()).json();
+      expect(bodies[0].session.model).toBe("model-standard-test");
+    });
+
+    it("the paid add-on never bypasses the comped gate, with or without a stored Premium tier", async () => {
+      for (const organization of [null, { voiceModelTier: "premium", voiceModelComped: false }, { voiceModelTier: "premium", voiceModelComped: null }, { voiceModelTier: null, voiceModelComped: true }]) {
+        fake = createFakePrisma();
+        mocks.fake = fake;
+        bodies.length = 0;
+        addUser("u-1", { planTier: "pro", premiumVoice: true, ...(organization ? { organization } : {}) });
+        const minted = await (await mint()).json();
+        expect(bodies[0].session.model).toBe("model-standard-test");
+        // Billing is untouched: the add-on still books this call on the Premium engine and its 60% share.
+        expect(session(minted.callId).engineTier).toBe("premium");
+        expect(allowanceOf("u-1").premiumMinutesReserved).toBeGreaterThan(0);
+      }
+    });
+
+    it("the paid add-on on a comped Premium org mints Premium; engine and caps are the add-on's as before", async () => {
+      addUser("u-1", { planTier: "pro", premiumVoice: true, organization: { voiceModelTier: "premium", voiceModelComped: true } });
+      await ensureAllowance(fake.db as never, { userId: "u-1" }, base);
+      allowanceOf("u-1").premiumMinutesUsed = 119;
+      const minted = await (await mint()).json();
+      expect(bodies[0].session.model).toBe("model-premium-test");
+      expect(minted.maxSeconds).toBe(60);
+      expect(session(minted.callId).engineTier).toBe("premium");
     });
   });
 

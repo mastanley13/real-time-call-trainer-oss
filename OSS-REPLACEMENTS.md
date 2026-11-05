@@ -104,3 +104,11 @@ Docs whose contract statements became false were corrected in one line each: `AG
 - **#55** (realtime hangup): `realtime/session/route.ts`, `realtime.ts`, `realtime.test.ts`, `usage-hardening.test.ts`, `AGENTS.md`, `SECURITY.md`, `TESTING.md`.
 - **#59** (first run): `TrainerClient.tsx`, `Deck.tsx`, debrief page, `sessionStore.ts`. **#57**: `page.tsx`. **#58**: `AuthContext.tsx`, `TESTING.md`. **#39**: `llm/check`, session route, `transcripts/[id]`, `grader.test.ts`, `regrade.test.ts`, docs. **#37**: session route, `transcripts/[id]`. **#31**, **#29**, **#28**, **#25**: older PRs touching `page.tsx`, the session route, `SiteHeader.tsx`, `AuthContext.tsx`, the debrief page and `Briefing.tsx`; likely stale.
 - PRs #11 to #24 were not inspected file by file.
+
+## Merged into #61 (voice tier)
+
+- `src/lib/voiceModels.ts` (server-only tier to Realtime model mapping) is the one added entry in the scan's exact-file allowlist. The guard also checks that it starts with `import "server-only"` and that its only importer is the server-only `voiceTierServer.ts`.
+- `POST /api/realtime/session` 200 is `{ clientSecret, expiresAt, voice, sessionId, receipt?, callId?, maxSeconds? }`, with no `model`. `getCapabilities()` has no `realtimeModel`.
+- `receipt` is AES-256-GCM, not a readable signed payload: the minted model is encrypted under a key derived with HKDF from `JWT_SECRET`, with the user id and the call id (`sessionId`) bound as additional data, and padded to one fixed length for every tier. `POST /api/transcripts` still logs the model at most once, on that call's own row.
+- `GET /api/transcripts/[id]` no longer spreads the TrainerSession row: it reads `SESSION_VIEW_SELECT` and returns `sessionView()` (`src/lib/sessionView.ts`), an explicit field list without `realtimeModel`, `engineTier`, `organizationId` or the metering columns, so columns added later stay out too. A guard allows code that touches `realtimeModel` only in `src/app/api/transcripts/route.ts`, where the verified receipt writes it.
+- The upstream 400/404 message names `REALTIME_MODEL_STANDARD`, `REALTIME_MODEL`, `REALTIME_MODEL_PREMIUM` and `REALTIME_VOICE`, never a value.

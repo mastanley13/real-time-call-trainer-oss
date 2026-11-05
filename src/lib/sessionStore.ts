@@ -82,22 +82,51 @@ function saveLocal(s: Omit<StoredSession, "id" | "createdAt">): string {
   return id;
 }
 
-/** Returns the new session id (prefixed `local-` when stored in the browser). */
-export async function saveSession(s: Omit<StoredSession, "id" | "createdAt">, useServer: boolean): Promise<string> {
+/**
+ * What /api/realtime/session hands back to identify one OpenAI Realtime call: the call id the server fixed before
+ * minting (`sessionId`), the opaque encrypted receipt bound to it (absent without JWT_SECRET), and the metering call id when
+ * the call is metered (then equal to sessionId).
+ */
+export interface MintedCall { sessionId: string; receipt?: string; callId?: string }
+
+/**
+ * The POST /api/transcripts body. A minted voice call is saved under its server-fixed sessionId with its receipt;
+ * a metered one also names its callId. Only a voice save carries any of them; text saves name themselves.
+ */
+export function transcriptSaveBody(
+  s: Omit<StoredSession, "id" | "createdAt">,
+  evaluation: StoredSession["evaluation"] | null | undefined,
+  seal: string | undefined,
+  call: MintedCall | undefined,
+  now = Date.now(),
+) {
+  const voice = s.mode === "voice" ? call : undefined;
+  return {
+    sessionId: voice?.sessionId ?? `${s.mode}-${now}`,
+    ...(voice?.callId ? { callId: voice.callId } : {}),
+    transcript: s.transcript,
+    durationSeconds: s.durationSeconds,
+    scenario: { id: s.scenario.id, title: s.scenario.title, industry: s.scenario.industry, difficulty: s.scenario.difficulty },
+    evaluation: evaluation ?? undefined,
+    seal,
+    ...(voice?.receipt ? { realtimeReceipt: voice.receipt } : {}),
+  };
+}
+
+/**
+ * Returns the new session id (prefixed `local-` when stored in the browser).
+ * `meta.call` identifies the voice call /api/realtime/session minted. The call is saved under its sessionId with
+ * its receipt, which the server checks before it logs the model inside it, and a metered call also sends its
+ * callId so the transcript fills that call's own row. Opaque here and never stored in the browser.
+ */
+export async function saveSession(s: Omit<StoredSession, "id" | "createdAt">, useServer: boolean, meta: { call?: MintedCall } = {}): Promise<string> {
   const { evaluation, seal } = splitSeal(s.evaluation);
   if (useServer) {
     try {
       const res = await fetch("/api/transcripts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: `${s.mode}-${Date.now()}`,
-          transcript: s.transcript,
-          durationSeconds: s.durationSeconds,
-          scenario: { id: s.scenario.id, title: s.scenario.title, industry: s.scenario.industry, difficulty: s.scenario.difficulty },
-          evaluation: evaluation ?? undefined,
-          seal,
-        }),
+        body: JSON.stringify(transcriptSaveBody(s, evaluation, seal, meta.call)),
       });
       if (res.ok) return (await res.json()).id as string;
     } catch {
