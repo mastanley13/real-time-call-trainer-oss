@@ -4,7 +4,7 @@ import { NextRequest } from "next/server";
 // The database, auth and seal check are the only fakes; the emitter and the routes run for real against a stubbed fetch.
 const mocks = vi.hoisted(() => ({
   prisma: {
-    user: { findUnique: vi.fn() },
+    user: { findUnique: vi.fn(), findMany: vi.fn() },
     trainerSession: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), findFirst: vi.fn() },
     auditEvent: { create: vi.fn() },
     $transaction: vi.fn(),
@@ -103,21 +103,95 @@ describe("payloads", () => {
     });
   });
 
-  it("first_graded_call: keyed on the user, no email", () => {
-    const p = firstGradedCallPayload({ userId: "u-1", organizationId: "org-1", sessionId: "s-1", scenarioId: "quote-follow-up", overallScore: 71.6, grade: "B" }, NOW);
+  it("first_graded_call: keyed on the user, with the lowercased email", () => {
+    const p = firstGradedCallPayload({ userId: "u-1", organizationId: "org-1", email: "Mia@Example.test", sessionId: "s-1", scenarioId: "quote-follow-up", overallScore: 71.6, grade: "B" }, NOW);
     expect(p).toEqual({
       eventId: "first_graded_call:u-1", event: "first_graded_call", occurredAt: "2026-11-05T12:00:00.000Z", app: "calltrainer", version: 1,
-      userId: "u-1", organizationId: "org-1", sessionId: "s-1", scenarioId: "quote-follow-up", overallScore: 72, grade: "B",
+      userId: "u-1", organizationId: "org-1", email: "mia@example.test", sessionId: "s-1", scenarioId: "quote-follow-up", overallScore: 72, grade: "B",
     });
   });
 
   it("plan change: keyed on the Stripe reference and kind; a Team plan names the org and the buyer", () => {
-    expect(planChangePayload(planEvent, NOW)).toEqual({
+    expect(planChangePayload(planEvent, "Mia@Example.test", NOW)).toEqual({
       eventId: "stripe:evt_test_1:upgrade", event: "upgrade", occurredAt: "2026-11-05T12:00:00.000Z", app: "calltrainer", version: 1,
-      subject: "user", subjectId: "u-1", userId: "u-1", organizationId: null, fromPlan: "free", toPlan: "pro", seats: 1, premiumVoice: false, stripeRef: "evt_test_1",
+      subject: "user", subjectId: "u-1", userId: "u-1", organizationId: null, email: "mia@example.test",
+      fromPlan: "free", toPlan: "pro", seats: 1, premiumVoice: false, stripeRef: "evt_test_1",
     });
-    const team = planChangePayload({ ...planEvent, kind: "churn", subject: "organization", subjectId: "org-1", fromPlan: "team", toPlan: "free", seats: 1, purchaserUserId: "u-9" }, NOW);
-    expect(team).toMatchObject({ eventId: "stripe:evt_test_1:churn", subject: "organization", userId: "u-9", organizationId: "org-1" });
+    const team = planChangePayload({ ...planEvent, kind: "churn", subject: "organization", subjectId: "org-1", fromPlan: "team", toPlan: "free", seats: 1, purchaserUserId: "u-9" }, null, NOW);
+    expect(team).toMatchObject({ eventId: "stripe:evt_test_1:churn", subject: "organization", userId: "u-9", organizationId: "org-1", email: null });
+  });
+});
+
+describe("plan change email", () => {
+  const orgEvent = { ...planEvent, subject: "organization" as const, subjectId: "org-1", toPlan: "team" as const, seats: 5, purchaserUserId: null };
+  const sinkBody = async (event: Parameters<typeof ghlBillingSink>[0]) => {
+    on();
+    ghlBillingSink(event);
+    await settleGhlEvents();
+    return sent().map((c) => c.body);
+  };
+
+  it("a Pro plan uses the user's email", async () => {
+    mocks.prisma.user.findUnique.mockResolvedValue({ email: "Mia@Example.test" });
+    expect(await sinkBody(planEvent)).toEqual([expect.objectContaining({ event: "upgrade", userId: "u-1", email: "mia@example.test" })]);
+    expect(mocks.prisma.user.findUnique).toHaveBeenCalledWith({ where: { id: "u-1" }, select: { email: true } });
+    expect(mocks.prisma.user.findMany).not.toHaveBeenCalled();
+  });
+
+  it("a Team plan uses the buyer's email when the buyer is known", async () => {
+    mocks.prisma.user.findUnique.mockResolvedValue({ email: "buyer@example.test" });
+    expect(await sinkBody({ ...orgEvent, purchaserUserId: "u-9" })).toEqual([expect.objectContaining({ userId: "u-9", organizationId: "org-1", email: "buyer@example.test" })]);
+    expect(mocks.prisma.user.findMany).not.toHaveBeenCalled();
+  });
+
+  it("a Team plan with no buyer resolves the org owner's email", async () => {
+    mocks.prisma.user.findMany.mockResolvedValue([{ email: "Owner@Example.test" }]);
+    expect(await sinkBody(orgEvent)).toEqual([expect.objectContaining({ subject: "organization", userId: null, email: "owner@example.test" })]);
+    expect(mocks.prisma.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { organizationId: "org-1", role: "owner" }, take: 1, select: { email: true } }));
+  });
+
+  it("a deleted buyer falls back to the org owner", async () => {
+    mocks.prisma.user.findUnique.mockResolvedValue(null);
+    mocks.prisma.user.findMany.mockResolvedValue([{ email: "owner@example.test" }]);
+    expect(await sinkBody({ ...orgEvent, purchaserUserId: "u-gone" })).toEqual([expect.objectContaining({ email: "owner@example.test" })]);
+  });
+
+  it("an org with no owner row still sends, with email null", async () => {
+    mocks.prisma.user.findMany.mockResolvedValue([]);
+    expect(await sinkBody(orgEvent)).toEqual([expect.objectContaining({ event: "upgrade", email: null })]);
+  });
+
+  it("a failed lookup still sends, with email null", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.prisma.user.findMany.mockRejectedValue(new Error("db down"));
+    expect(await sinkBody(orgEvent)).toEqual([expect.objectContaining({ event: "upgrade", email: null })]);
+    expect(errors.mock.calls.map((c) => c.join(" "))).toEqual(["[ghl] upgrade contact email lookup failed; sending without email"]);
+  });
+
+  it("a hung lookup is abandoned at the timeout and the event still sends, with email null", async () => {
+    vi.useFakeTimers();
+    try {
+      on();
+      mocks.prisma.user.findMany.mockReturnValue(new Promise(() => {}));
+      ghlBillingSink(orgEvent);
+      await vi.advanceTimersByTimeAsync(GHL_TIMEOUT_MS + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+    await settleGhlEvents();
+    expect(sent().map((c) => c.body)).toEqual([expect.objectContaining({ email: null })]);
+  });
+
+  it("the sink returns before the lookup finishes", async () => {
+    on();
+    let release!: (v: { email: string }) => void;
+    mocks.prisma.user.findUnique.mockReturnValue(new Promise((r) => { release = r; }));
+    expect(ghlBillingSink(planEvent)).toBeUndefined();
+    await vi.waitFor(() => expect(mocks.prisma.user.findUnique).toHaveBeenCalled());
+    expect(fetchMock).not.toHaveBeenCalled();
+    release({ email: "mia@example.test" });
+    await settleGhlEvents();
+    expect(sent().map((c) => c.body.email)).toEqual(["mia@example.test"]);
   });
 });
 
@@ -202,7 +276,7 @@ describe("sending", () => {
 });
 
 describe("first graded call", () => {
-  const input = { userId: "u-1", organizationId: "org-1", sessionId: "s-2", scenarioId: "quote-follow-up", overallScore: 80, grade: "B" as const };
+  const input = { userId: "u-1", organizationId: "org-1", email: "u-1@example.test", sessionId: "s-2", scenarioId: "quote-follow-up", overallScore: 80, grade: "B" as const };
 
   it("sends only when the saved call is the user's earliest graded call", async () => {
     on();
@@ -271,7 +345,7 @@ describe("POST /api/transcripts", () => {
     saveTranscript(json("http://localhost/api/transcripts", { sessionId: "rt-1", transcript: [{ role: "user", text: "Hello" }], scenario: { id: "quote-follow-up" }, evaluation, seal: "x", ...extra }));
 
   beforeEach(() => {
-    mocks.prisma.user.findUnique.mockResolvedValue({ id: "u-1", organizationId: "org-1" });
+    mocks.prisma.user.findUnique.mockResolvedValue({ id: "u-1", organizationId: "org-1", email: "U-1@Example.test" });
     mocks.prisma.trainerSession.create.mockImplementation(async () => ({ id: `s-${mocks.prisma.trainerSession.create.mock.calls.length}` }));
     mocks.prisma.auditEvent.create.mockResolvedValue({});
   });
@@ -282,7 +356,7 @@ describe("POST /api/transcripts", () => {
     expect((await save()).status).toBe(200);
     expect((await save()).status).toBe(200);
     await settleGhlEvents();
-    expect(sent().map((c) => c.body)).toEqual([expect.objectContaining({ eventId: "first_graded_call:u-1", sessionId: "s-1", overallScore: 74, grade: "B" })]);
+    expect(sent().map((c) => c.body)).toEqual([expect.objectContaining({ eventId: "first_graded_call:u-1", email: "u-1@example.test", sessionId: "s-1", overallScore: 74, grade: "B" })]);
     expect(mocks.prisma.trainerSession.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: "u-1", overallScore: { not: null } } }));
   });
 

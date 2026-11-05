@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
     // through PATCH /api/transcripts/[id] and never send. The check and the POST run in the background.
     if (ev) {
       notifyIfFirstGradedCall(
-        { userId: dbUser.id, organizationId: dbUser.organizationId, sessionId: created.id, scenarioId: body.scenario.id, overallScore: ev.overallScore, grade: ev.grade },
+        { userId: dbUser.id, organizationId: dbUser.organizationId, email: dbUser.email, sessionId: created.id, scenarioId: body.scenario.id, overallScore: ev.overallScore, grade: ev.grade },
         earliestGradedSessionId,
       );
     }

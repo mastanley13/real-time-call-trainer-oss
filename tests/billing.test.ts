@@ -1176,8 +1176,8 @@ describe("CRM lifecycle hook (off by default)", () => {
     await settleGhlEvents();
     expect(fetchMock).toHaveBeenCalledOnce();
     const body = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string;
-    expect(JSON.parse(body)).toMatchObject({ eventId: "stripe:evt_ghl:upgrade", event: "upgrade", app: "calltrainer", subject: "user", userId: "owner-1", fromPlan: "free", toPlan: "pro", stripeRef: "evt_ghl" });
-    for (const leak of ["cus_", "sub_", "price_", "@", "items"]) expect(body).not.toContain(leak);
+    expect(JSON.parse(body)).toMatchObject({ eventId: "stripe:evt_ghl:upgrade", event: "upgrade", app: "calltrainer", subject: "user", userId: "owner-1", email: "owner-1@example.test", fromPlan: "free", toPlan: "pro", stripeRef: "evt_ghl" });
+    for (const leak of ["cus_", "sub_", "price_", "items"]) expect(body).not.toContain(leak);
     expect(user().planTier).toBe("pro");
   });
 

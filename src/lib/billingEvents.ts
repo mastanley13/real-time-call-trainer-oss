@@ -4,8 +4,9 @@ import type { PlanTier } from "./usagePlan";
 /**
  * Billing lifecycle hook for the CRM (GoHighLevel). Off unless GHL_BILLING_EVENTS=true and a sink is registered.
  * billing.ts registers ghlBillingSink from ghlWebhook.ts, which posts each event to the GHL Inbound Webhook URL
- * (GHL_WEBHOOK_URL). Only Calltrainer subscriptions (Stripe metadata app=calltrainer) reach this hook. Payloads
- * carry ids and plans only, never email, Stripe customer ids or card data.
+ * (GHL_WEBHOOK_URL). Only Calltrainer subscriptions (Stripe metadata app=calltrainer) reach this hook. The event here
+ * carries ids and plans only; the GHL sink adds the contact email from the database at send time. Never Stripe
+ * customer ids, raw Stripe objects or card data.
  */
 
 export type BillingLifecycleKind = "upgrade" | "downgrade" | "churn";

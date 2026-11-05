@@ -1,6 +1,7 @@
 import "server-only";
 import { createHmac } from "node:crypto";
 import { after } from "next/server";
+import { prisma } from "./db";
 import { billingEventsEnabled, type BillingEventSink, type BillingLifecycleEvent, type BillingLifecycleKind } from "./billingEvents";
 import type { SignupIntent } from "./pricing";
 import type { PlanTier } from "./usagePlan";
@@ -16,8 +17,11 @@ import type { PlanTier } from "./usagePlan";
  *
  * Every send is fire and forget with a hard timeout. Nothing here throws and nothing waits on GHL, so a GHL outage
  * can never fail signup, grading or the Stripe webhook. Each payload has a deterministic eventId (also sent as the
- * Idempotency-Key header) so a workflow can drop repeats. Payloads carry ids, plans and scores; the only personal
- * data is the email on `signup`, which GHL needs to create or match the contact.
+ * Idempotency-Key header) so a workflow can drop repeats.
+ *
+ * Personal data: every event carries the contact's lowercased email (Keel decision) so each GHL workflow can match the
+ * contact directly, next to userId and organizationId. Nothing else personal is sent: no names, phone, password,
+ * card data, Stripe customer or subscription ids, or raw Stripe objects.
  */
 
 type Env = Record<string, string | undefined>;
@@ -45,7 +49,7 @@ export interface GhlSignupPayload extends GhlBase {
   /** Calltrainer user id. Store it on the contact (custom field "Calltrainer User ID") to match later events. */
   userId: string;
   organizationId: string | null;
-  /** The only personal field in any payload: GHL creates or matches the contact by it. Lowercased. */
+  /** Lowercased. GHL creates or matches the contact by it. */
   email: string;
   signupMethod: "email" | "google";
   /** "owner" for a new team, "trainee" when joining one with an org code. */
@@ -63,6 +67,8 @@ export interface GhlFirstGradedCallPayload extends GhlBase {
   event: "first_graded_call";
   userId: string;
   organizationId: string | null;
+  /** The user's email, lowercased, for contact matching. */
+  email: string;
   /** The saved call (TrainerSession id). */
   sessionId: string;
   /** Persona id the call was practised against. */
@@ -74,7 +80,7 @@ export interface GhlFirstGradedCallPayload extends GhlBase {
 
 /**
  * A Stripe plan change on a Calltrainer subscription (metadata app=calltrainer), after the plan is applied.
- * eventId: stripe:{stripeRef}:{event}. Never a raw Stripe object, customer id, card or email.
+ * eventId: stripe:{stripeRef}:{event}. Never a raw Stripe object, customer or subscription id, price or card data.
  */
 export interface GhlPlanChangePayload extends GhlBase {
   event: BillingLifecycleKind;
@@ -85,6 +91,13 @@ export interface GhlPlanChangePayload extends GhlBase {
   userId: string | null;
   /** Set on a Team plan. */
   organizationId: string | null;
+  /**
+   * Lowercased contact email, looked up at send time in the background. The user's email on a Pro plan; on a Team
+   * plan the buyer's (userId) when that user still exists, else the org owner's (earliest owner row). Null when no
+   * such user exists at send time (user deleted, org with no owner row) or the lookup failed or took longer than
+   * GHL_TIMEOUT_MS; the event is still sent.
+   */
+  email: string | null;
   fromPlan: PlanTier;
   toPlan: PlanTier;
   seats: number;
@@ -145,13 +158,14 @@ export function signupPayload(
 }
 
 export function firstGradedCallPayload(
-  input: { userId: string; organizationId: string | null; sessionId: string; scenarioId: string; overallScore: number; grade: GhlFirstGradedCallPayload["grade"] },
+  input: { userId: string; organizationId: string | null; email: string; sessionId: string; scenarioId: string; overallScore: number; grade: GhlFirstGradedCallPayload["grade"] },
   now = new Date(),
 ): GhlFirstGradedCallPayload {
   return {
     ...base(`first_graded_call:${input.userId}`, "first_graded_call", now),
     userId: input.userId,
     organizationId: input.organizationId,
+    email: input.email.toLowerCase(),
     sessionId: input.sessionId,
     scenarioId: input.scenarioId,
     overallScore: Math.round(input.overallScore),
@@ -159,13 +173,14 @@ export function firstGradedCallPayload(
   };
 }
 
-export function planChangePayload(e: BillingLifecycleEvent, now = new Date()): GhlPlanChangePayload {
+export function planChangePayload(e: BillingLifecycleEvent, email: string | null, now = new Date()): GhlPlanChangePayload {
   return {
     ...base(`stripe:${e.stripeRef}:${e.kind}`, e.kind, now),
     subject: e.subject,
     subjectId: e.subjectId,
     userId: e.subject === "user" ? e.subjectId : e.purchaserUserId,
     organizationId: e.subject === "organization" ? e.subjectId : null,
+    email: email ? email.toLowerCase() : null,
     fromPlan: e.fromPlan,
     toPlan: e.toPlan,
     seats: e.seats,
@@ -234,9 +249,47 @@ export async function settleGhlEvents(): Promise<void> {
   while (inflight.size > 0) await Promise.allSettled([...inflight]);
 }
 
-/** The billingEvents sink: plan changes go out through the same POST path. Registered once, in billing.ts. */
+/** Resolves to null if `work` has not settled within `ms`. */
+const within = <T>(work: Promise<T>, ms: number): Promise<T | null> =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    work.then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
+  });
+
+/**
+ * The contact email for a plan change: the user on a Pro plan; on a Team plan the buyer if that user still exists,
+ * else the org's earliest owner. One or two small selects. Null when nobody matches, the read fails, or it takes longer
+ * than GHL_TIMEOUT_MS. Never throws.
+ */
+export async function planChangeEmail(e: BillingLifecycleEvent): Promise<string | null> {
+  try {
+    return await within((async () => {
+      const userId = e.subject === "user" ? e.subjectId : e.purchaserUserId;
+      if (userId) {
+        const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+        if (user?.email) return user.email;
+      }
+      if (e.subject !== "organization") return null;
+      const [owner] = await prisma.user.findMany({
+        where: { organizationId: e.subjectId, role: "owner" },
+        orderBy: { createdAt: "asc" },
+        take: 1,
+        select: { email: true },
+      });
+      return owner?.email ?? null;
+    })(), GHL_TIMEOUT_MS);
+  } catch {
+    console.error(`[ghl] ${e.kind} contact email lookup failed; sending without email`);
+    return null;
+  }
+}
+
+/**
+ * The billingEvents sink: plan changes go out through the same POST path. Registered once, in billing.ts. The email
+ * lookup runs inside the background work, so the Stripe webhook never waits on it.
+ */
 export const ghlBillingSink: BillingEventSink = (event) => {
-  emitGhlEvent(planChangePayload(event));
+  emitGhlEvent(async () => planChangePayload(event, await planChangeEmail(event)));
 };
 
 export function notifySignup(input: Parameters<typeof signupPayload>[0]): void {
