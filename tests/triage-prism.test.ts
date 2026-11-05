@@ -29,6 +29,7 @@ import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { GET as usageRoute } from "@/app/api/usage/route";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
 import { GET as listTranscripts } from "@/app/api/transcripts/route";
+import { GET as elevenLabsToken } from "@/app/api/elevenlabs/token/route";
 
 const ROOT = process.cwd();
 const src = (f: string) => readFileSync(path.join(ROOT, f), "utf8");
@@ -266,6 +267,92 @@ describe("Prism 1: the rep may choose Standard or Premium; the server rechecks",
     const r = await beginCall("f-2", { id: "quote-follow-up" }, new Date(Date.now() + 1000), { offerTrialSample: true, preferStandard: false });
     if (!r.ok) throw new Error(r.error);
     expect(r.premium.source).toBe("trial");
+  });
+});
+
+// ---- Prism 1 follow-up (Codex P2): an explicit Standard request on unmetered installs -----------------------------
+
+describe("an explicit Standard request is honored with or without metering (Codex P2)", () => {
+  let agentUrls: string[];
+  const token = async (query: Record<string, string> = {}) => {
+    mocks.authId = "u-1";
+    const res = await elevenLabsToken(new NextRequest(`http://localhost/api/elevenlabs/token?${new URLSearchParams({ scenarioId: "quote-follow-up", ...query })}`));
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  };
+  beforeEach(() => {
+    agentUrls = [];
+    vi.stubEnv("ELEVENLABS_API_KEY", "el-test-not-real");
+    vi.stubEnv("ELEVENLABS_AGENT_ID", "agent_test_main");
+    vi.stubEnv("ELEVENLABS_AGENT_ID_STANDARD", "agent_test_std");
+    // ElevenLabs is a mocked fetch; nothing leaves the process.
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      agentUrls.push(new URL(url).searchParams.get("agent_id") ?? "");
+      return new Response(JSON.stringify({ token: "tok_test" }), { status: 200 });
+    }));
+    addUser("u-1", "org-1", proPremium());
+  });
+  const unmetered = () => { vi.stubEnv("STRIPE_SECRET_KEY", ""); vi.stubEnv("USAGE_CAPS", ""); };
+
+  it("unmetered ElevenLabs, Standard agent configured: voiceTier=standard mints on the Standard agent", async () => {
+    unmetered();
+    const r = await token({ voiceTier: "standard" });
+    expect(r.status).toBe(200);
+    expect(agentUrls).toEqual(["agent_test_std"]);
+    // Unmetered answers keep their shape: the token only, no call id, no agent id.
+    expect(r.body).toEqual({ token: "tok_test" });
+    expect(fake.rows("trainerSession")).toHaveLength(0);
+  });
+
+  it("unmetered ElevenLabs, no Standard agent: voiceTier=standard is refused, never minted on the Premium agent", async () => {
+    unmetered();
+    vi.stubEnv("ELEVENLABS_AGENT_ID_STANDARD", "");
+    const r = await token({ voiceTier: "standard" });
+    expect(r.status).toBe(503);
+    expect(r.body.error).toBe("standard_voice_not_configured");
+    expect(agentUrls).toEqual([]);
+  });
+
+  it("unmetered ElevenLabs without a choice is unchanged: the main agent", async () => {
+    unmetered();
+    expect((await token()).status).toBe(200);
+    expect((await token({ voiceTier: "premium" })).status).toBe(200);
+    expect(agentUrls).toEqual(["agent_test_main", "agent_test_main"]);
+  });
+
+  it("metered ElevenLabs: Standard picked by an entitled rep runs the Standard agent with no Premium minutes held", async () => {
+    const r = await token({ voiceTier: "standard" });
+    expect(r.status).toBe(200);
+    expect(agentUrls).toEqual(["agent_test_std"]);
+    expect(r.body).toMatchObject({ voiceTier: "standard", nextCallStandard: false });
+    expect(session(r.body.callId as string)).toMatchObject({ engineTier: "standard", premiumReservedMinutes: 0 });
+    // Without a choice the entitled rep still gets Premium (the main agent), as before.
+    expect((await token()).body).toMatchObject({ voiceTier: "premium" });
+    expect(agentUrls).toEqual(["agent_test_std", "agent_test_main"]);
+  });
+
+  it("metered ElevenLabs, no Standard agent: voiceTier=standard is refused before any reservation", async () => {
+    vi.stubEnv("ELEVENLABS_AGENT_ID_STANDARD", "");
+    const r = await token({ voiceTier: "standard" });
+    expect(r.status).toBe(503);
+    expect(r.body.error).toBe("standard_voice_not_configured");
+    expect(fake.rows("trainerSession")).toHaveLength(0);
+    expect(agentUrls).toEqual([]);
+  });
+
+  it("unmetered OpenAI Realtime: voiceTier=standard runs the Standard model even for a comped Premium organization", async () => {
+    unmetered();
+    addOrg("org-c", { voiceModelTier: "premium", voiceModelComped: true });
+    addUser("c-1", "org-c", { organization: { voiceModelTier: "premium", voiceModelComped: true } });
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      models.push(JSON.parse(init.body as string).session.model);
+      return new Response(JSON.stringify({ value: "ek_test", expires_at: 9999999999 }), { status: 200 });
+    }));
+    const std = await mint("c-1", { voiceTier: "standard" });
+    expect(std.status).toBe(200);
+    expect(std.body.callId).toBeUndefined();
+    const def = await mint("c-1");
+    expect(def.status).toBe(200);
+    expect(models).toEqual(["model-standard-test", "model-premium-test"]);
   });
 });
 
