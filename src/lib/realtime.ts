@@ -16,6 +16,7 @@
  * - Client events: https://developers.openai.com/api/reference/resources/realtime/client-events
  * - Reference app: https://github.com/openai/openai-realtime-agents (beta event names, kept as fallbacks)
  */
+import { tenant } from "./tenant";
 
 export type VoiceEngine = "openai" | "elevenlabs";
 
@@ -53,7 +54,8 @@ export function pickRealtimeVoice(personaVoice: string | undefined, envVoice: st
   return DEFAULT_REALTIME_VOICE;
 }
 
-export const realtimeVoice = (personaVoice?: string): RealtimeVoice => pickRealtimeVoice(personaVoice, process.env.REALTIME_VOICE);
+export const realtimeVoice = (personaVoice?: string): RealtimeVoice =>
+  pickRealtimeVoice(personaVoice, isRealtimeVoice(process.env.REALTIME_VOICE?.trim().toLowerCase()) ? process.env.REALTIME_VOICE : tenant.voice.defaultVoice);
 
 /** Available engines, OpenAI first unless VOICE_ENGINE=elevenlabs asks otherwise. */
 export function orderVoiceEngines(available: { openai: boolean; elevenlabs: boolean }, preferred?: string): VoiceEngine[] {

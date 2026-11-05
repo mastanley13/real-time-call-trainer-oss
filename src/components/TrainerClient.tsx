@@ -17,6 +17,7 @@ import { CallMeter } from "@/lib/callMeter";
 import RealtimeVoiceSession, { type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
+import { DEFAULT_SCENARIO_ID } from "@/lib/tenant";
 import { canUpgradeFromUsage, usageSnapshotFromUsage, type UsageSnapshot } from "@/lib/billingUi";
 
 type Mode = "voice" | "text";
@@ -26,7 +27,8 @@ const COACH_MODE = "rtct.coachMode";
 const VOICE_ENGINE = "rtct.voiceEngine";
 
 /** The asked-for persona, else the first reviewed built-in, else whatever the library has first. */
-const choose = (all: Scenario[], id: string | null) => all.find((s) => s.id === id) ?? all.find((s) => s.builtIn && s.status === "reviewed") ?? all[0];
+const choose = (all: Scenario[], id: string | null) =>
+  all.find((s) => s.id === id) ?? (DEFAULT_SCENARIO_ID ? all.find((s) => s.id === DEFAULT_SCENARIO_ID) : undefined) ?? all.find((s) => s.builtIn && s.status === "reviewed") ?? all[0];
 /** Said when a link names a persona this browser doesn't have, so the rep knows the buyer changed. */
 const missingNotice = (asked: string | null, picked: Scenario) =>
   asked && picked.id !== asked ? `That persona isn't in this browser's library, so we opened ${picked.aiPersona.name} instead. Pick another in the Library.` : "";

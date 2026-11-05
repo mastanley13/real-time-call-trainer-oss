@@ -2,6 +2,7 @@ import "server-only";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { ImageResponse } from "next/og";
+import { brand } from "./tenant";
 
 export const SHARE_CARD_SIZE = { width: 1200, height: 630 };
 
@@ -32,7 +33,7 @@ export function renderShareCard(headline = "Practice the call before it costs yo
     (
       <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", justifyContent: "center", padding: "0 96px", background: c.bg, color: c.ink }}>
         <div style={{ display: "flex", width: 120, height: 8, borderRadius: 4, background: c.signal }} />
-        <div style={{ display: "flex", marginTop: 40, fontSize: 40, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: c.inkSoft }}>Real-Time Call Trainer</div>
+        <div style={{ display: "flex", marginTop: 40, fontSize: 40, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: c.inkSoft }}>{brand.name}</div>
         <div style={{ display: "flex", marginTop: 28, fontSize: headline.length > 60 ? 68 : 80, fontWeight: 700, letterSpacing: -2, lineHeight: 1.1 }}>{headline}</div>
       </div>
     ),

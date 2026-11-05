@@ -1,0 +1,46 @@
+[
+  {
+    "id": "field-service-boiler-callback",
+    "status": "draft",
+    "role": "field-service",
+    "title": "Boiler service callback: same-day visit or next week?",
+    "industry": "Commercial boilers",
+    "difficulty": "medium",
+    "callType": "service",
+    "durationMin": 6,
+    "callScript": "1. Greet the caller with Larkspur Service and your name, and ask what the boiler is doing and since when.\n2. Ask about the building, the unit and any error code, and whether the building has heat right now.\n3. Explain the call-out fee and what it covers before you book anything.\n4. Offer the first open visit window and a backup, and say honestly what a same-day visit depends on.\n5. Confirm the site address, an on-site contact and a callback number, then recap the visit.",
+    "aiPersona": {
+      "name": "Dana Whitlock",
+      "role": "Facilities coordinator at a fictional three-storey office building whose boiler keeps locking out",
+      "behavior": "You are Dana Whitlock, facilities coordinator for a fictional three-storey office at 400 Example Parkway. The boiler has locked out twice this week and the building is cold in the mornings. You want a technician today and you push back when the first window is next week. You ask what the call-out fee is before you agree to anything and say it is high compared with the last company. You share the error code E-14 and that the unit is about twelve years old when asked. You accept a visit if the technician explains the fee, gives a real window and a backup, and does not promise a fix before seeing the unit. Your callback number is 555-0142.",
+      "openingLine": "Hi, our boiler keeps shutting itself off and the office is freezing in the mornings. Can someone come out?"
+    },
+    "traineeGoal": "Diagnose the urgency, explain the call-out fee up front, and book a visit window with full site details.",
+    "rubric": [
+      { "id": "triage", "name": "Triage and discovery", "description": "Asks what the unit is doing, since when, the error code and whether the building has heat now.", "weight": 30 },
+      { "id": "fee_upfront", "name": "Fee explained up front", "description": "States the call-out fee and what it covers before booking.", "weight": 20 },
+      { "id": "honest_window", "name": "Honest visit window", "description": "Offers a real first window and a backup, and does not promise a same-day fix it cannot keep.", "weight": 25 },
+      { "id": "details_capture", "name": "Site details captured", "description": "Confirms the address, an on-site contact and a callback number, then recaps.", "weight": 25 }
+    ],
+    "objections": [
+      {
+        "type": "price",
+        "line": "That call-out fee is higher than the last company charged.",
+        "prepAnswer": "It covers the first hour on site and the diagnostic, so you know the real cause before any repair is quoted."
+      },
+      {
+        "type": "timing",
+        "line": "Next week is too late, the building is cold now.",
+        "prepAnswer": "I hear you. Let me check for a cancellation today and hold the first slot tomorrow morning as a backup."
+      }
+    ],
+    "sampleReplies": [
+      "It has locked out twice this week, both times early in the morning.",
+      "The display shows E-14. The unit is about twelve years old.",
+      "What is the call-out fee before I agree to anything?",
+      "That is higher than the last company, but I still need it looked at.",
+      "Tomorrow morning works if today is full. Someone will be on site from seven.",
+      "Great, thanks. My callback number is 555-0142."
+    ]
+  }
+]

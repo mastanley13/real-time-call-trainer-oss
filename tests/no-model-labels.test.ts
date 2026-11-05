@@ -20,10 +20,9 @@ import { POST as checkPOST } from "@/app/api/llm/check/route";
 import { POST as sessionPOST } from "@/app/api/realtime/session/route";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import Home from "@/app/page";
-
-/** Model id families: OpenAI chat, realtime, transcription and speech, reasoning, Gemini, ElevenLabs and Claude. */
-const MODEL_ID_RE =
-  /\b(?:[Gg][Pp][Tt]-(?:5|4\.1|4o|realtime)[\w.-]*|o[34](?:-[\w-]+)?|whisper-1|tts-1(?:-hd)?|gemini-[\w.-]+|eleven_\w+|claude-[\w.-]+)\b/;
+import { brand } from "@/lib/tenant";
+/** Model id families, shared with the tenant schema's copy check (src/lib/modelIds.ts). */
+import { MODEL_ID_RE } from "@/lib/modelIds";
 
 /**
  * Backend defaults that must stay: they are sent to providers, never rendered or returned. Exact files, no globs.
@@ -52,6 +51,7 @@ const hitsOf = (re: RegExp, files: string[]) =>
 
 describe("model id pattern", () => {
   it.each([
+    "gpt-4", "gpt-4-turbo", "gpt-4-0613", "gpt-4.5-preview", "GPT-4", "gpt-3.5-turbo",
     "gpt-5", "gpt-5-mini", "gpt-5.1", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "gpt-4o-mini-transcribe",
     "gpt-realtime", "gpt-realtime-1.5", "gpt-realtime-mini", "GPT-4o", "o3", "o3-mini", "o4-mini", "whisper-1", "tts-1", "tts-1-hd",
     "gemini-2.5-flash", "gemini-pro", "eleven_turbo_v2_5", "eleven_multilingual_v2", "claude-sonnet-4-5", "claude-3-5-haiku",
@@ -60,7 +60,7 @@ describe("model id pattern", () => {
     expect(`"${id}"`).toMatch(MODEL_ID_RE);
   });
 
-  it.each(["OpenAI Realtime", "ElevenLabs voice agent", "AI model", "Your chat model", "LLM_MODEL", "REALTIME_MODEL", "Text · AI", "Coach: AI", "video", "photo3"])(
+  it.each(["OpenAI Realtime", "ElevenLabs voice agent", "AI model", "Your chat model", "LLM_MODEL", "REALTIME_MODEL", "Text · AI", "Coach: AI", "video", "photo3", "OpenAI", "GPT", "GPT style practice", "gpt-", "chatgpt-like"])(
     "leaves %s alone",
     (text) => expect(text).not.toMatch(MODEL_ID_RE),
   );
@@ -110,6 +110,8 @@ describe("landing page", () => {
   it("renders without model ids and keeps the provider names", () => {
     const html = renderToStaticMarkup(createElement(Home));
     expect(html.match(new RegExp(MODEL_ID_RE.source, "g")) ?? []).toEqual([]);
+    // The provider names live in the OSS "What runs each job" section, which a branded tenant hides.
+    if (!brand.showOssSections) return;
     expect(html).toContain("OpenAI Realtime");
     expect(html).toContain("ElevenLabs");
     expect(html).toContain("Your chat model");

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
-import { buildProvisioningUri, generateMfaSecret } from "@/lib/mfa";
+import { ISSUER, buildProvisioningUri, generateMfaSecret } from "@/lib/mfa";
 import { rateLimit } from "@/lib/rateLimit";
 
 /**
@@ -47,6 +47,6 @@ export async function POST(req: NextRequest) {
     secret,
     provisioningUri: uri,
     label,
-    issuer: "Real-Time Call Trainer",
+    issuer: ISSUER,
   });
 }

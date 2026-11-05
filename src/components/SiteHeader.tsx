@@ -4,12 +4,13 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { LogOut, Search, Settings } from "lucide-react";
-import LogoMark from "@/components/LogoMark";
+import BrandMark from "@/components/BrandMark";
 import MobileMenu from "@/components/MobileMenu";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useAuth, type User } from "@/contexts/AuthContext";
 import { AI_CHIP_LABEL, showModelChip } from "@/lib/modelChip";
 import { canManageTeam } from "@/lib/team";
+import { brand, featureAllowed } from "@/lib/tenant";
 
 export const NAV = [
   { href: "/trainer", label: "Practice", match: (p: string) => p === "/trainer" || p.startsWith("/trainer/debrief") },
@@ -19,9 +20,12 @@ export const NAV = [
 export const PRICING_NAV = { href: "/pricing", label: "Pricing", match: (p: string) => p.startsWith("/pricing") };
 export const TEAM_NAV = { href: "/team", label: "Team", match: (p: string) => p.startsWith("/team") };
 
-/** Main links for this user. Team shows for managers, owners and platform admins; the server enforces access either way. */
+/** Links shown signed in or not: Pricing, unless the tenant turned pricing off. */
+export const PUBLIC_NAV = featureAllowed("pricing") ? [PRICING_NAV] : [];
+
+/** Main links for this user. Team shows for managers, owners and platform admins (and only when the tenant keeps the team view); the server enforces access either way. */
 export function navFor(user: User | null) {
-  return canManageTeam(user?.role, !!user?.isPlatformAdmin) ? [...NAV, TEAM_NAV] : NAV;
+  return featureAllowed("teamView") && canManageTeam(user?.role, !!user?.isPlatformAdmin) ? [...NAV, TEAM_NAV] : NAV;
 }
 
 /** Opens the command palette, which listens for this event. */
@@ -60,14 +64,14 @@ export default function SiteHeader() {
       )}
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-4 sm:px-6">
         <Link href="/" className="flex shrink-0 items-center gap-2.5 rounded-lg font-heading text-[15px] font-bold text-ink">
-          <LogoMark size={30} />
+          <BrandMark size={30} />
           {/* Visually hidden on narrow phones, not display:none, so the home link keeps an accessible name. */}
-          <span className="sr-only min-[400px]:not-sr-only">Call Trainer</span>
-          <span className="hidden rounded border border-line px-1.5 py-px font-mono text-[10px] font-medium text-ink-muted sm:inline">OSS</span>
+          <span className="sr-only min-[400px]:not-sr-only">{brand.shortName}</span>
+          {brand.showOssSections && <span className="hidden rounded border border-line px-1.5 py-px font-mono text-[10px] font-medium text-ink-muted sm:inline">OSS</span>}
         </Link>
 
         <nav className="hidden items-center gap-1 md:flex" aria-label="Main">
-            {[...(isAuthenticated ? links : []), PRICING_NAV].map((l) => {
+            {[...(isAuthenticated ? links : []), ...PUBLIC_NAV].map((l) => {
               const on = l.match(pathname);
               return (
                 <Link key={l.href} href={l.href} aria-current={on ? "page" : undefined}
@@ -86,7 +90,7 @@ export default function SiteHeader() {
               <span className="sr-only">, open model settings</span>
             </Link>
           )}
-          {isAuthenticated && (
+          {isAuthenticated && featureAllowed("commandPalette") && (
             <button type="button" onClick={openPalette} aria-keyshortcuts={mac ? "Meta+K" : "Control+K"} aria-label="Open command palette"
               title={`Search and jump to anything (${mac ? "⌘K" : "Ctrl K"})`}
               className="btn-quiet !min-h-[36px] !gap-2 !px-2.5 sm:border sm:border-line">
@@ -118,7 +122,7 @@ export default function SiteHeader() {
             </>
           )}
           <MobileMenu pathname={pathname} guest={!isAuthenticated}
-            items={[...(isAuthenticated ? links : []), PRICING_NAV].map((l) => ({ href: l.href, label: l.label, active: l.match(pathname) }))} />
+            items={[...(isAuthenticated ? links : []), ...PUBLIC_NAV].map((l) => ({ href: l.href, label: l.label, active: l.match(pathname) }))} />
         </div>
       </div>
     </header>

@@ -52,3 +52,8 @@ todo.md
 
 # Git Bash crash dumps on Windows
 *.stackdump
+
+# Tenant config output (scripts/prepare-tenant.ts). Generated per build; never commit it.
+/src/generated/*
+!/src/generated/.gitkeep
+/public/tenant/

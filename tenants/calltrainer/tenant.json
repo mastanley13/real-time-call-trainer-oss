@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "calltrainer",
+  "brand": {
+    "name": "Real-Time Call Trainer",
+    "shortName": "Call Trainer",
+    "operatorName": "StrategixAI LLC",
+    "supportEmail": "support@calltrainer.tech",
+    "siteUrl": "https://calltrainer.tech",
+    "upstreamUrl": "https://github.com/mastanley13/real-time-call-trainer-oss",
+    "poweredBy": false,
+    "showOssSections": true
+  },
+  "theme": {},
+  "copy": {
+    "landing": {},
+    "library": {},
+    "wizard": {},
+    "team": {},
+    "meta": {},
+    "terminology": { "trainee": "rep", "customer": "buyer", "team": "team", "manager": "manager" }
+  },
+  "personas": {
+    "families": [
+      "sdr", "ae", "cs", "home-services", "insurance", "mortgage", "real-estate", "solar", "auto",
+      "medical", "procurement", "recruiting", "retail", "collections", "financial", "logistics", "telecom", "general"
+    ],
+    "packs": [],
+    "includeOssPacks": true,
+    "showDrafts": true,
+    "customFamilies": []
+  },
+  "voice": { "defaultTier": "standard" },
+  "features": {
+    "pricing": true,
+    "billing": true,
+    "googleSignIn": true,
+    "wizard": true,
+    "urlImport": true,
+    "teamView": true,
+    "invites": true,
+    "voiceQualityPanel": true,
+    "commandPalette": true,
+    "publicLanding": true
+  },
+  "access": {
+    "mode": "accounts",
+    "publicPaths": [
+      "/", "/privacy", "/terms", "/pricing", "/register", "/login", "/auth/complete", "/robots.txt", "/sitemap.xml",
+      "/for/*", "/opengraph-image", "/api/auth/*"
+    ]
+  }
+}

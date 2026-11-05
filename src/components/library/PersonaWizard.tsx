@@ -10,6 +10,10 @@ import { saveCustomScenario } from "@/lib/scenarioStore";
 import { useAuth } from "@/contexts/AuthContext";
 import { radioKeys } from "@/components/call/CopilotRail";
 import { packJson } from "./LibraryClient";
+import { brand, featureAllowed, tenantCopy } from "@/lib/tenant";
+
+/** The tenant can turn product-page import off; pasting the page text still works. */
+const URL_IMPORT = featureAllowed("urlImport");
 
 const STEPS = ["What you sell", "Give context", "Review persona", "Rubric", "Save"] as const;
 const PLACEHOLDERS: Record<ContextKind, string> = {
@@ -267,7 +271,7 @@ export default function PersonaWizard() {
                 ))}
               </div>
               <div id="ctx-panel" role="tabpanel" aria-labelledby={`ctx-tab-${tab}`} className="space-y-4">
-                {tab === "url" && (
+                {tab === "url" && URL_IMPORT && (
                   <div className="flex gap-2">
                     <label className="relative flex-1">
                       <span className="sr-only">Product page URL</span>
@@ -363,8 +367,17 @@ export default function PersonaWizard() {
                   </div>
                 </div>
                 <div className="border-t border-line pt-5">
-                  <h2 className="text-lg font-bold">Contribute it as a pack</h2>
-                  <p className="mt-1 text-sm text-ink-soft">Copy the pack file, add it to <span className="mono text-[13px]">src/lib/personas/{draft.role}.ts</span>, and open a pull request. It starts as a draft until a maintainer reviews it; CI checks it against the same schema.</p>
+                  {brand.showOssSections && !tenantCopy.wizard.shareLine ? (
+                    <>
+                      <h2 className="text-lg font-bold">Contribute it as a pack</h2>
+                      <p className="mt-1 text-sm text-ink-soft">Copy the pack file, add it to <span className="mono text-[13px]">src/lib/personas/{draft.role}.ts</span>, and open a pull request. It starts as a draft until a maintainer reviews it; CI checks it against the same schema.</p>
+                    </>
+                  ) : (
+                    <>
+                      <h2 className="text-lg font-bold">Share it with your team</h2>
+                      <p className="mt-1 text-sm text-ink-soft">{tenantCopy.wizard.shareLine ?? "Saved personas stay in this browser. Copy the pack file and send it to whoever runs this trainer to add it to the shared library."}</p>
+                    </>
+                  )}
                   <button className="btn-ghost mt-3" onClick={copyPack}><Copy size={15} aria-hidden /> {copied ? "Copied" : "Copy pack JSON"}</button>
                 </div>
               </section>

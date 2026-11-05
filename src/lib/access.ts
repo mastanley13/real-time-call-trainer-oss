@@ -7,6 +7,16 @@ export function accessCode(): string | null {
   return process.env.TRAINER_ACCESS_CODE?.trim() || null;
 }
 
+/**
+ * The gate state for a tenant access mode. "accounts": on only when a code is set (today's behaviour).
+ * "accounts_and_code": the code is required, so a missing TRAINER_ACCESS_CODE is "misconfigured" and the gate denies
+ * entry instead of opening up. The code value only ever comes from the environment, never from tenant config.
+ */
+export function accessGate(mode: "accounts" | "accounts_and_code", code: string | null): "off" | "misconfigured" | { code: string } {
+  if (code) return { code };
+  return mode === "accounts_and_code" ? "misconfigured" : "off";
+}
+
 const enc = new TextEncoder();
 
 async function hmacHex(key: string, msg: string): Promise<string> {

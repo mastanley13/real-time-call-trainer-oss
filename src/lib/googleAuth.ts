@@ -5,6 +5,7 @@ import { z } from "zod";
 import { getJwtSecret } from "./auth";
 import { safeNextPath } from "./safeNext";
 import { cleanSignupIntent } from "./signupIntent";
+import { featureAllowed } from "./tenant";
 
 /**
  * Google sign-in: OAuth 2.0 authorization code flow with PKCE, state and nonce. No extra packages: the ID token
@@ -44,6 +45,7 @@ export function googleConfig(env: Env = process.env): GoogleConfig | null {
   const clientSecret = env.GOOGLE_CLIENT_SECRET?.trim();
   const origin = appOrigin(env);
   if (!env.DATABASE_URL?.trim()) return null;
+  if (!featureAllowed("googleSignIn")) return null;
   if (!clientId || !clientSecret || !origin || env.DEMO_MODE === "true") return null;
   return { clientId, clientSecret, redirectUri: `${origin}/api/auth/google/callback` };
 }

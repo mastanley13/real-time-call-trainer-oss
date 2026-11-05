@@ -3,6 +3,7 @@ import { prisma } from "./db";
 import { getCapabilities } from "./serverConfig";
 import { effectiveVoiceTier, type VoiceTier } from "./voiceTier";
 import { resolveTierModel } from "./voiceModels";
+import { storedOrDefaultTier } from "./tenant";
 
 export const voiceModelFor = (tier: VoiceTier): string => resolveTierModel(tier, process.env);
 
@@ -17,7 +18,7 @@ export async function orgVoiceTierForUser(userId: string): Promise<VoiceTier> {
   if (caps.demoMode || !caps.database) return "standard";
   try {
     const row = await prisma.user.findUnique({ where: { id: userId }, select: { organization: { select: { voiceModelTier: true, voiceModelComped: true } } } });
-    return effectiveVoiceTier(row?.organization?.voiceModelTier, row?.organization?.voiceModelComped);
+    return effectiveVoiceTier(storedOrDefaultTier(row?.organization?.voiceModelTier), row?.organization?.voiceModelComped);
   } catch (e) {
     console.error("[voiceTier] lookup failed, using standard", e instanceof Error ? e.name : "unknown error");
     return "standard";

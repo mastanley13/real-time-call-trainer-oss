@@ -63,6 +63,10 @@ Defence in depth: if your host can reach sensitive internal services (cloud meta
 
 **CI.** The CI workflow runs with a read-only token and no secrets. The Codex review workflow only runs for pull requests from branches in this repository, never for forks, and the job that holds the API key cannot write to the repository. Every action in `.github/workflows` is pinned to a full commit SHA, so a moved tag can't change what runs, and Dependabot (`.github/dependabot.yml`) proposes updates to those pins and to npm packages weekly.
 
+## Tenant config
+
+A branded deployment is built from a tenant directory (`TENANT_CONFIG_DIR`, see docs/TENANTS.md). Tenant config is public data: it ships to the browser in `src/generated/tenant.json`. The schema is strict and has no field for keys, codes or URLs of private services; the prebuild and a test scan `tenants/**` and the generated file for key-shaped strings and secret-named fields. Config can only switch features off (each is ANDed with its env capability), the access code only comes from `TRAINER_ACCESS_CODE` (`access.mode: "accounts_and_code"` without it denies entry and fails `/api/health`), and the voice tier default never bypasses the database comped flag. Assets are local PNG, ICO or WebP files only, with no SVG. Each tenant is its own deployment with its own database and secrets; client tenants live in private deploy repos, never in this one.
+
 ## Personal data in practice calls
 
 Practice transcripts, CRM notes and pasted calls can contain personal data.

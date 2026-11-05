@@ -6,6 +6,13 @@ import SiteHeader from "@/components/SiteHeader";
 import MobileTabBar from "@/components/MobileTabBar";
 import CommandPalette from "@/components/CommandPalette";
 import { shareImages, siteUrl } from "@/lib/seo";
+import { BRAND_CSS, HOME_TITLE, META_DESCRIPTION, featureAllowed, tenantIcons } from "@/lib/tenant";
+
+/**
+ * The tenant icon and favicon (copied to /tenant/ by the prebuild). Unset for the default tenant, so Next serves
+ * src/app/icon.svg through the App Router icon convention with its content-hashed URL, as before tenants.
+ */
+const ICONS = tenantIcons();
 
 const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-inter" });
 const sora = Sora({ subsets: ["latin"], display: "swap", variable: "--font-sora" });
@@ -13,20 +20,18 @@ const mono = JetBrains_Mono({ subsets: ["latin"], display: "swap", variable: "--
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl()),
-  title: "Real-Time Call Trainer · Hosted AI sales call practice, no setup",
-  description:
-    "Hosted AI sales call practice. Talk to AI buyers who push back, get a live coach on every turn, and finish with a graded debrief that quotes your transcript. Start free, no setup. Also open source.",
+  title: HOME_TITLE,
+  description: META_DESCRIPTION,
+  ...(ICONS ? { icons: ICONS } : {}),
   openGraph: {
-    title: "Real-Time Call Trainer · Hosted AI sales call practice, no setup",
-    description:
-      "Hosted AI sales call practice. Talk to AI buyers who push back, get a live coach on every turn, and finish with a graded debrief that quotes your transcript. Start free, no setup. Also open source.",
+    title: HOME_TITLE,
+    description: META_DESCRIPTION,
     images: shareImages("/").openGraph,
   },
   twitter: {
     card: "summary_large_image",
-    title: "Real-Time Call Trainer · Hosted AI sales call practice, no setup",
-    description:
-      "Hosted AI sales call practice. Talk to AI buyers who push back, get a live coach on every turn, and finish with a graded debrief that quotes your transcript. Start free, no setup. Also open source.",
+    title: HOME_TITLE,
+    description: META_DESCRIPTION,
     images: shareImages("/").twitter,
   },
 };
@@ -49,6 +54,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en" className={`${inter.variable} ${sora.variable} ${mono.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        {/* Tenant primary color tokens, generated from validated #rrggbb values. Empty for the default tenant. */}
+        {BRAND_CSS && <style dangerouslySetInnerHTML={{ __html: BRAND_CSS }} />}
       </head>
       <body className="min-h-screen">
         <AuthProvider>
@@ -56,7 +63,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <SiteHeader />
           <main id="main" tabIndex={-1} className="pb-[calc(4.5rem+env(safe-area-inset-bottom))] outline-none md:pb-0">{children}</main>
           <MobileTabBar />
-          <CommandPalette />
+          {featureAllowed("commandPalette") && <CommandPalette />}
         </AuthProvider>
       </body>
     </html>
