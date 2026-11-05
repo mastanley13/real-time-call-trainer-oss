@@ -409,8 +409,12 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
       if (!live) throw new StripeApiError(404);
       return live;
     });
+    // Each invoice as Stripe has it now; unknown ids are still owed ("open"). Read before a failure is acted on.
+    invoices.clear();
+    vi.spyOn(stripeApi, "retrieveInvoice").mockImplementation(async (id: string) => ({ id, status: invoices.get(id) ?? "open" }));
     addUser("u-1", proPremium());
   });
+  const invoices = new Map<string, string>();
   const deliver = (type: string, object: Record<string, unknown>) => {
     const raw = JSON.stringify({ id: `evt_test_pv_${++seq}`, type, livemode: false, data: { object } });
     const t = Math.floor(Date.now() / 1000);
@@ -495,6 +499,50 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
     // Verified recovery.
     await deliver("invoice.paid", { id: "in_test_bad", status: "paid", customer: "cus_test_pro", subscription: "sub_test_pro" });
     expect(user()).toMatchObject({ premiumSuspendedAt: null, premiumSuspendedInvoiceId: null });
+  });
+
+  it("out of order: invoice.paid, THEN the earlier invoice.payment_failed for it: no suspension, the next mint is Premium", async () => {
+    live = liveSub("active", { premium: 1 });
+    invoices.set("in_test_late", "paid");
+    await deliver("invoice.paid", { id: "in_test_late", status: "paid", customer: "cus_test_pro", subscription: "sub_test_pro" });
+    // Stripe delivers the failure from the first attempt afterwards; the event body still says open.
+    await deliver("invoice.payment_failed", { id: "in_test_late", status: "open", customer: "cus_test_pro", subscription: "sub_test_pro" });
+    expect(stripeApi.retrieveInvoice).toHaveBeenCalledWith("in_test_late");
+    expect(user()).toMatchObject({ premiumSuspendedAt: null, premiumSuspendedInvoiceId: null, premiumVoice: true });
+    expect(events.filter((e) => e.name === "premium_removed")).toEqual([]);
+    expect((await begin("u-1")).engine).toBe("premium");
+  });
+
+  it("a stale failure for a voided invoice, or one Stripe no longer has, suspends nothing", async () => {
+    live = liveSub("active", { premium: 1 });
+    invoices.set("in_test_void", "void");
+    await deliver("invoice.payment_failed", { id: "in_test_void", customer: "cus_test_pro", subscription: "sub_test_pro" });
+    vi.mocked(stripeApi.retrieveInvoice).mockRejectedValueOnce(new StripeApiError(404));
+    await deliver("invoice.payment_failed", { id: "in_test_missing", customer: "cus_test_pro", subscription: "sub_test_pro" });
+    expect(user().premiumSuspendedAt).toBeNull();
+  });
+
+  it("an invoice read that fails answers 500 without writing, so Stripe retries the failure later", async () => {
+    live = liveSub("active", { premium: 1 });
+    vi.mocked(stripeApi.retrieveInvoice).mockRejectedValueOnce(new StripeApiError(503));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await deliver("invoice.payment_failed", { id: "in_test_flaky", customer: "cus_test_pro", subscription: "sub_test_pro" });
+    expect(res.status).toBe(500);
+    expect(user().premiumSuspendedAt).toBeNull();
+    expect(fake.rows("stripeEvent")).toHaveLength(0);
+  });
+
+  it("a genuinely owed failure still suspends, and only paying it (not an unrelated active update) recovers", async () => {
+    live = liveSub("active", { premium: 1 });
+    await deliver("invoice.payment_failed", { id: "in_test_owed", customer: "cus_test_pro", subscription: "sub_test_pro" });
+    await deliver("customer.subscription.updated", { id: "sub_test_pro", customer: "cus_test_pro" });
+    expect((await begin("u-1")).engine).toBe("standard");
+    invoices.set("in_test_owed", "paid");
+    await deliver("invoice.paid", { id: "in_test_owed", status: "paid", customer: "cus_test_pro", subscription: "sub_test_pro" });
+    // A late duplicate of the failure for the now-paid invoice does not re-suspend.
+    await deliver("invoice.payment_failed", { id: "in_test_owed", status: "open", customer: "cus_test_pro", subscription: "sub_test_pro" });
+    expect(user().premiumSuspendedAt).toBeNull();
+    expect((await begin("u-1", 10)).engine).toBe("premium");
   });
 
   it("a suspension ends with its subscription: a new subscription after cancellation is not blocked by it", async () => {
@@ -730,6 +778,52 @@ describe("session log: model provenance from the mr3 receipt, tier label from it
     const res = await realtimeSession(new NextRequest("http://localhost/api/realtime/session", { method: "POST", body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }), headers: { "content-type": "application/json" } }));
     expect(res.status).toBe(502);
     expect(fake.rows("trainerSession").every((s) => s.realtimeModel == null)).toBe(true);
+  });
+
+  describe("the mint log must land before the credential is released", () => {
+    const isMintLog = (a: { data: Record<string, unknown> }) => "realtimeModel" in a.data;
+    const mintRaw = () => realtimeSession(new NextRequest("http://localhost/api/realtime/session", { method: "POST", body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }), headers: { "content-type": "application/json" } }));
+    const expectRefusedAndSettled = async (res: Response) => {
+      expect(res.status).toBe(503);
+      const text = await res.text();
+      expect(JSON.parse(text)).toMatchObject({ error: "usage_unavailable" });
+      // No usable credential and no receipt; nothing names a model.
+      expect(text).not.toMatch(/ek_test|clientSecret|receipt|model-premium-test|model-standard-test/);
+      // OpenAI did issue a secret; it is dropped unused.
+      expect(models).toEqual(["model-premium-test"]);
+      const [row] = fake.rows("trainerSession");
+      expect(row).toMatchObject({ endReason: "failed_connect", billedMinutes: 0 });
+      expect(row.endedAt).toBeInstanceOf(Date);
+      // The reservation and the Premium minutes are released; nothing is charged.
+      expect(allowanceOf("u-1")).toMatchObject({ minutesReserved: 0, premiumMinutesReserved: 0, minutesUsed: 0 });
+      expect(fake.rows("usageEntry").filter((e) => (e.minutes as number) > 0)).toEqual([]);
+      return row;
+    };
+
+    it("a write that throws: 503, no secret or receipt, the call settled unbilled", async () => {
+      addUser("u-1", proPremium());
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      fake.interleave("trainerSession", "updateMany", async () => { throw new Error("connection reset"); }, isMintLog);
+      const row = await expectRefusedAndSettled(await mintRaw());
+      expect(row.realtimeModel ?? null).toBeNull();
+      // A fresh attempt once the database is back mints and logs normally.
+      vi.setSystemTime(at(5));
+      const again = await mint();
+      expect(typeof again.clientSecret).toBe("string");
+      expect(session(again.callId)).toMatchObject({ realtimeModel: "model-premium-test", voiceTier: "premium" });
+    });
+
+    it("a write that updates no row (false): 503, no secret or receipt, the call settled unbilled", async () => {
+      addUser("u-1", proPremium());
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      // Another writer got there first, so the guarded update (realtimeModel still null) matches nothing.
+      fake.interleave("trainerSession", "updateMany", async () => {
+        for (const r of fake.rows("trainerSession")) r.realtimeModel = "model-other-test";
+      }, isMintLog);
+      const row = await expectRefusedAndSettled(await mintRaw());
+      // The guarded writer never overwrote what was there.
+      expect(row.realtimeModel).toBe("model-other-test");
+    });
   });
 
   it("an unmetered save stores the tier from the verified receipt once; the label then reads it", async () => {

@@ -147,11 +147,20 @@ export async function POST(req: NextRequest) {
     // Standard (the hosted Premium Voice UI); an unmetered call's answer keeps upstream's exact keys.
     // Durable server-side provenance for a metered call: the model actually minted and the effective tier, on the
     // call's own row, now, whether or not the browser ever saves the call. Never returned.
+    // The log must land BEFORE the credential is released. If the write throws or updates no row, the secret is dropped
+    // unused (nothing returns it, and it expires on its own within the call's reserved time), the call is settled as a
+    // server mint failure (nothing billed, its reservation and any Premium minutes released) and the browser gets the
+    // same neutral "voice unavailable" answer as a failed usage lookup: no client secret, no receipt.
     if (callId) {
-      await recordMintedVoice(auth.id, callId, { model, tier }).catch((e) => {
+      const logged = await recordMintedVoice(auth.id, callId, { model, tier }).catch((e) => {
         console.error("[realtime/session] mint log failed", e instanceof Error ? e.name : "unknown error");
-        return false;
+        return null;
       });
+      if (logged !== true) {
+        if (logged === false) console.error("[realtime/session] mint log wrote no row");
+        await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
+        return voiceUnavailable();
+      }
     }
     const receipt = sealMintReceipt(auth.id, sessionId, model);
     return NextResponse.json(

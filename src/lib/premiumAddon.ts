@@ -1,8 +1,9 @@
 import "server-only";
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { itemKind, parseLiveSubscription, periodEndOf, resolvePriceIds, syncSubscriptionNow, type Interval, type LiveSubscription, type PriceIds } from "./billing";
-import { stripeApi, type StripeParams } from "./stripe";
+import { prisma } from "./db";
+import { stripeApi, StripeApiError, type StripeParams } from "./stripe";
 import { PREMIUM_STATUSES } from "./premiumVoice";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "./usagePlan";
 
@@ -19,10 +20,13 @@ import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "./usagePlan";
  *   update with that proration_date, always_invoice, payment_behavior=error_if_incomplete and an idempotency key derived
  *   from the token, so a double submit makes one change.
  * - Remove Premium and seat decreases: at the period end through a NEW subscription schedule made from the subscription
- *   (current phase unchanged, next phase with the new items, then released). The app never edits an existing schedule:
- *   any schedule already on the subscription (its own or anyone's) is refused with a clear message, so no later phase,
- *   end behavior or phase setting is ever overwritten. A subscription with discounts, tax rates, automatic tax or a
- *   non-default collection method is refused too, because the app would not carry those into the scheduled phases.
+ *   (current phase unchanged, next phase with the new items, then released). The app never edits a schedule it does not
+ *   own: any schedule already on the subscription is refused with a clear message, so no later phase, end behavior or
+ *   phase setting is ever overwritten. The one exception is the app's OWN schedule whose setup was cut short, named by
+ *   the subject's premiumScheduleRef marker: the next attempt resumes it (or releases it when nothing was applied).
+ *   A finished setup clears the marker, so a completed scheduled change is refused like anyone else's. A subscription
+ *   with discounts, tax rates, automatic tax or a non-default collection method is refused too, because the app would
+ *   not carry those into the scheduled phases.
  * - Seats up: base and add-on quantity change together now, prorated, with the same preview binding as Premium.
  *
  * Every Stripe call goes through `deps`, so tests run on mocks and nothing here calls Stripe in CI.
@@ -40,6 +44,23 @@ export interface AddonDeps {
   prices(): Promise<PriceIds>;
   /** Re-read and apply the subscription now (src/lib/billing.ts syncSubscriptionNow). */
   sync(subscriptionId: string): Promise<void>;
+  /** The subject's unfinished schedule setup marker (premiumScheduleRef), or null. */
+  readScheduleRef(subject: AddonSubject): Promise<string | null>;
+  /** Sets the marker to `to` only if it is still `from` (compare and set). True when it was written. */
+  swapScheduleRef(subject: AddonSubject, from: string | null, to: string | null): Promise<boolean>;
+}
+
+async function readScheduleRefDb(s: AddonSubject): Promise<string | null> {
+  const row = s.kind === "organization"
+    ? await prisma.organization.findUnique({ where: { id: s.id }, select: { premiumScheduleRef: true } })
+    : await prisma.user.findUnique({ where: { id: s.id }, select: { premiumScheduleRef: true } });
+  return row?.premiumScheduleRef ?? null;
+}
+
+async function swapScheduleRefDb(s: AddonSubject, from: string | null, to: string | null): Promise<boolean> {
+  const args = { where: { id: s.id, premiumScheduleRef: from }, data: { premiumScheduleRef: to } };
+  const r = s.kind === "organization" ? await prisma.organization.updateMany(args) : await prisma.user.updateMany(args);
+  return r.count === 1;
 }
 
 export const liveAddonDeps: AddonDeps = {
@@ -53,6 +74,8 @@ export const liveAddonDeps: AddonDeps = {
   releaseSubscriptionSchedule: (id, k) => stripeApi.releaseSubscriptionSchedule(id, k),
   prices: () => resolvePriceIds(),
   sync: (id) => syncSubscriptionNow(id),
+  readScheduleRef: readScheduleRefDb,
+  swapScheduleRef: swapScheduleRefDb,
 };
 
 /** The billing subject the actor may change: a Pro user's own subscription, or a Team organization (owner only). */
@@ -67,7 +90,7 @@ export interface AddonSubject {
 
 export type AddonErrorCode =
   | "already_added" | "not_added" | "price_not_configured" | "not_in_good_standing" | "change_scheduled"
-  | "subscription_changed" | "price_changed" | "unsupported_billing_terms"
+  | "subscription_changed" | "price_changed" | "unsupported_billing_terms" | "schedule_setup_failed" | "change_pending"
   | "invalid_token" | "invalid_seats" | "no_change" | "not_team" | "token_not_configured";
 
 export class AddonError extends Error {
@@ -257,7 +280,7 @@ const SchedulePhase = z.object({
   end_date: z.number().nullish(),
   items: z.array(z.object({ price: z.union([z.string(), z.object({ id: z.string() })]), quantity: z.number().nullish() })),
 });
-const ScheduleObject = z.object({ id: z.string(), phases: z.array(SchedulePhase) });
+const ScheduleObject = z.object({ id: z.string(), status: z.string().nullish(), phases: z.array(SchedulePhase) });
 
 export interface ChangePreview {
   /** Signed; send it back to confirm. Opaque to the browser. */
@@ -357,40 +380,208 @@ export async function confirmAddPremium(subject: AddonSubject, userId: string, t
 
 type PhaseItem = { price: string; quantity: number };
 
-/** Refuses what the app cannot schedule safely: any existing schedule, or terms a scheduled phase would drop. */
-function assertSchedulable(live: LiveSubscription): void {
-  if (scheduleId(live)) throw new AddonError("change_scheduled", SCHEDULE_EXISTS);
-  if (hasTermsScheduleCannotCarry(live)) throw new AddonError("unsupported_billing_terms", UNSUPPORTED_TERMS);
+/**
+ * The app's own schedule setup while it is unfinished, stored on the billing subject (premiumScheduleRef): the
+ * subscription, the attempt key (Stripe idempotency keys derive from it) and the schedule id once Stripe returned it.
+ * Written BEFORE the schedule is created and cleared once the setup is done or the schedule is released, so a setup cut
+ * short (a failed read, a failed or unanswered update, a release that did not go through) is resumed or released by the
+ * next attempt instead of blocking it. A schedule this marker does not name is never touched.
+ */
+const ScheduleRef = z.object({ sub: z.string().max(255), key: z.string().max(200), id: z.string().max(255).nullable() });
+type ScheduleRef = z.infer<typeof ScheduleRef>;
+interface OwnedSetup { raw: string; ref: ScheduleRef }
+
+/** The unfinished setup recorded for THIS subscription, or null. Read-only. */
+async function ownedSetup(subject: AddonSubject, live: LiveSubscription, deps: AddonDeps): Promise<OwnedSetup | null> {
+  const raw = await deps.readScheduleRef(subject);
+  if (!raw) return null;
+  try {
+    const ref = ScheduleRef.parse(JSON.parse(raw));
+    return ref.sub === live.id ? { raw, ref } : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Makes a NEW schedule from the subscription and sets its next phase (from the current period end, one period, then
- * released) to `nextItems(currentItems)`. Never edits an existing schedule (assertSchedulable). If the new schedule does
- * not look exactly like the subscription (one phase ending at the current period end), it is released at once and
- * nothing changes. Proration is off for both phases: nothing is credited or charged now.
+ * True when the schedule on the subscription may be the app's own unfinished one: the marker names it, or the marker's
+ * create never reported an id (scheduleAtRenewal then proves ownership through Stripe's idempotent replay of that
+ * create, and refuses if the replay names another schedule).
  */
-async function scheduleAtRenewal(live: LiveSubscription, nextItems: (items: PhaseItem[]) => PhaseItem[], scope: string, deps: AddonDeps): Promise<Date> {
-  assertSchedulable(live);
+function mayResume(live: LiveSubscription, owned: OwnedSetup | null): boolean {
+  const attached = scheduleId(live);
+  return !!attached && !!owned && (owned.ref.id === attached || owned.ref.id === null);
+}
+
+/** The subscription as a preview binds it: the app's own unfinished schedule is not a term the owner agreed to. */
+const termsView = (live: LiveSubscription, owned: OwnedSetup | null): LiveSubscription => (mayResume(live, owned) ? { ...live, schedule: null } : live);
+
+/** Refuses what the app cannot schedule safely: anyone else's schedule, or terms a scheduled phase would drop. */
+function assertSchedulable(live: LiveSubscription, owned: OwnedSetup | null): void {
+  if (scheduleId(live) && !mayResume(live, owned)) throw new AddonError("change_scheduled", SCHEDULE_EXISTS);
+  if (hasTermsScheduleCannotCarry(live)) throw new AddonError("unsupported_billing_terms", UNSUPPORTED_TERMS);
+}
+
+const SETUP_FAILED = "The change could not be scheduled, so nothing was changed. Try again in a moment.";
+const CHANGE_PENDING = "A scheduled change for this plan is still being set up. Nothing new was changed. Try again in a minute, or contact support if this keeps happening.";
+
+/** A Stripe answer that proves the request was NOT applied: a 4xx other than 409 (a concurrent request with the same key). */
+const rejected = (e: unknown): boolean => e instanceof StripeApiError && e.status >= 400 && e.status < 500 && e.status !== 409;
+
+const phaseItems = (items: z.infer<typeof SchedulePhase>["items"]): PhaseItem[] =>
+  items.map((i) => ({ price: typeof i.price === "string" ? i.price : i.price.id, quantity: i.quantity ?? 1 }));
+const sameItems = (a: PhaseItem[], b: PhaseItem[]) => {
+  const key = (l: PhaseItem[]) => JSON.stringify([...l].sort((x, y) => x.price.localeCompare(y.price)));
+  return key(a) === key(b);
+};
+
+type ScheduleState = { kind: "pristine"; current: z.infer<typeof SchedulePhase>; currentItems: PhaseItem[]; next: PhaseItem[] } | { kind: "applied" } | { kind: "other" };
+
+/**
+ * Where a schedule stands for this change: "pristine" (exactly as created from the subscription: one phase ending at the
+ * period end), "applied" (this change's next phase is already on it) or "other" (anything else, never edited).
+ */
+function scheduleState(raw: unknown, endSec: number, nextItems: (items: PhaseItem[]) => PhaseItem[]): ScheduleState {
+  const s = ScheduleObject.parse(raw);
+  if (s.status && s.status !== "active" && s.status !== "not_started") return { kind: "other" };
+  const [current, second] = s.phases;
+  if (!current || current.end_date !== endSec) return { kind: "other" };
+  const currentItems = phaseItems(current.items);
+  const next = nextItems(currentItems).filter((i) => i.quantity > 0);
+  if (s.phases.length === 1) return { kind: "pristine", current, currentItems, next };
+  if (s.phases.length === 2 && second && second.start_date === endSec && sameItems(phaseItems(second.items), next)) return { kind: "applied" };
+  return { kind: "other" };
+}
+
+/**
+ * Puts a change at the period end through the app's OWN schedule: a new one made from the subscription, whose next
+ * phase (one period, then released) gets `nextItems(currentItems)`. Proration is off for both phases: nothing is
+ * credited or charged now. Never edits a schedule it does not own (assertSchedulable, and the marker above).
+ *
+ * Failure handling, so a setup cut short never blocks the next attempt and never undoes a change that went through:
+ * - The schedule this call just created, if it cannot be read or parsed, or Stripe rejects the update (a 4xx), is
+ *   released: nothing was applied to it yet, so the subscription is exactly as it was. "Nothing was changed. Try again."
+ * - An update with no clear answer (5xx, 409, network) is checked by reading the schedule again: already applied is
+ *   success; still as created is released; unknown keeps the marker ("still being set up"), and the next attempt
+ *   resumes from the schedule's real state. The same applies when a release itself fails.
+ * - A create with no clear answer keeps the marker; the next attempt replays that exact create (same idempotency key),
+ *   which names the schedule it made, and resumes only when that is the schedule on the subscription.
+ */
+async function scheduleAtRenewal(subject: AddonSubject, live: LiveSubscription, nextItems: (items: PhaseItem[]) => PhaseItem[], scope: string, deps: AddonDeps): Promise<Date> {
+  const owned = await ownedSetup(subject, live, deps);
+  assertSchedulable(live, owned);
   const end = periodEndOf(live);
   if (!end) throw new AddonError("subscription_changed", "Your renewal date could not be read. Try again in a moment.");
   const endSec = Math.floor(end.getTime() / 1000);
-  const key = `${scope}:${live.id}:${endSec}`;
-  const id = z.object({ id: z.string() }).parse(await deps.createSubscriptionSchedule({ from_subscription: live.id }, `${key}:create`)).id;
-  const schedule = ScheduleObject.parse(await deps.retrieveSubscriptionSchedule(id));
-  const [current] = schedule.phases;
-  if (schedule.phases.length !== 1 || !current || current.end_date !== endSec) {
-    await deps.releaseSubscriptionSchedule(id, `${key}:release`);
+  const attached = scheduleId(live);
+  const pending = () => new AddonError("change_pending", CHANGE_PENDING);
+
+  // 1. The schedule: the app's own unfinished one (resume), or a new one under a fresh marker.
+  let raw: string;
+  let ref: ScheduleRef;
+  let fresh: boolean;
+  let id: string;
+  if (attached && owned) {
+    ({ raw, ref } = owned);
+    fresh = false;
+    if (ref.id) id = ref.id;
+    else {
+      // The earlier create never reported its id. Its exact replay does; anything else means the schedule is not ours.
+      let replayed: string;
+      try {
+        replayed = z.object({ id: z.string() }).parse(await deps.createSubscriptionSchedule({ from_subscription: live.id }, `${ref.key}:create`)).id;
+      } catch (e) {
+        if (!rejected(e)) throw pending();
+        await deps.swapScheduleRef(subject, raw, null);
+        throw new AddonError("change_scheduled", SCHEDULE_EXISTS);
+      }
+      if (replayed !== attached) {
+        await deps.swapScheduleRef(subject, raw, null);
+        throw new AddonError("change_scheduled", SCHEDULE_EXISTS);
+      }
+      id = replayed;
+      const withId = JSON.stringify({ ...ref, id });
+      if (await deps.swapScheduleRef(subject, raw, withId)) raw = withId;
+    }
+  } else {
+    // Nothing of the app's is on the subscription: a marker left over (released, or a create that never landed) is stale.
+    ref = { sub: live.id, key: `${scope}:${live.id}:${endSec}:${randomBytes(6).toString("hex")}`, id: null };
+    raw = JSON.stringify(ref);
+    if (!(await deps.swapScheduleRef(subject, owned?.raw ?? (await deps.readScheduleRef(subject)) ?? null, raw))) throw pending();
+    fresh = true;
+    try {
+      id = z.object({ id: z.string() }).parse(await deps.createSubscriptionSchedule({ from_subscription: live.id }, `${ref.key}:create`)).id;
+    } catch (e) {
+      if (rejected(e)) {
+        // Stripe refused it: no schedule exists. The original error answers as before.
+        await deps.swapScheduleRef(subject, raw, null);
+        throw e;
+      }
+      throw pending();
+    }
+    const withId = JSON.stringify({ ...ref, id });
+    if (await deps.swapScheduleRef(subject, raw, withId)) raw = withId;
+  }
+
+  const done = async () => { await deps.swapScheduleRef(subject, raw, null); };
+  /** Releases the app's own schedule (nothing applied to it), clears the marker, and reports that nothing changed. */
+  const releaseOwn = async (code: "schedule_setup_failed" | "change_scheduled"): Promise<never> => {
+    try {
+      await deps.releaseSubscriptionSchedule(id, `${ref.key}:release`);
+    } catch {
+      throw pending();
+    }
+    await done();
+    throw new AddonError(code, code === "change_scheduled" ? SCHEDULE_EXISTS : SETUP_FAILED);
+  };
+  const readState = async (): Promise<ScheduleState | null> => {
+    try {
+      return scheduleState(await deps.retrieveSubscriptionSchedule(id), endSec, nextItems);
+    } catch {
+      return null;
+    }
+  };
+
+  // 2. Where it stands now.
+  const state = await readState();
+  if (!state) {
+    // Just created here, so not yet edited: releasing restores the subscription exactly. A resumed one may carry an
+    // update whose answer was lost, so it is left for the next attempt.
+    if (fresh) return releaseOwn("schedule_setup_failed");
+    throw pending();
+  }
+  if (state.kind === "applied") {
+    await done();
+    return end;
+  }
+  if (state.kind === "other") {
+    if (fresh) return releaseOwn("change_scheduled");
+    // Not as created and not this change: someone edited it, or another change finished on it. Left exactly as it is.
+    await done();
     throw new AddonError("change_scheduled", SCHEDULE_EXISTS);
   }
-  const currentItems: PhaseItem[] = current.items.map((i) => ({ price: typeof i.price === "string" ? i.price : i.price.id, quantity: i.quantity ?? 1 }));
-  const next = nextItems(currentItems).filter((i) => i.quantity > 0);
-  await deps.updateSubscriptionSchedule(id, {
-    end_behavior: "release",
-    phases: [
-      { items: currentItems, start_date: current.start_date, end_date: endSec, proration_behavior: "none" },
-      { items: next, iterations: 1, proration_behavior: "none" },
-    ],
-  }, `${key}:update:${createHash("sha256").update(JSON.stringify(next)).digest("hex").slice(0, 16)}`);
+
+  // 3. The update. Its idempotency key is per attempt: a retry after an unclear answer is a new, identical request.
+  const { current, currentItems, next } = state;
+  try {
+    await deps.updateSubscriptionSchedule(id, {
+      end_behavior: "release",
+      phases: [
+        { items: currentItems, start_date: current.start_date, end_date: endSec, proration_behavior: "none" },
+        { items: next, iterations: 1, proration_behavior: "none" },
+      ],
+    }, `${ref.key}:update:${createHash("sha256").update(JSON.stringify(next)).digest("hex").slice(0, 16)}:${randomBytes(4).toString("hex")}`);
+  } catch (e) {
+    if (rejected(e)) return releaseOwn("schedule_setup_failed");
+    const after = await readState();
+    if (after?.kind === "applied") {
+      await done();
+      return end;
+    }
+    if (after?.kind === "pristine") return releaseOwn("schedule_setup_failed");
+    throw pending();
+  }
+  await done();
   return end;
 }
 
@@ -412,7 +603,7 @@ export async function scheduleRemovePremium(subject: AddonSubject, deps: AddonDe
   if (!premium) throw new AddonError("not_added", "Premium voice is not on this plan.");
   if (live.cancel_at_period_end && !scheduleId(live)) return { removeAt: periodEndOf(live) };
   const ids = premiumPriceIds(live, await deps.prices());
-  const at = await scheduleAtRenewal(live, (items) => items.filter((i) => !ids.has(i.price)), "premium-remove", deps);
+  const at = await scheduleAtRenewal(subject, live, (items) => items.filter((i) => !ids.has(i.price)), "premium-remove", deps);
   return { removeAt: at };
 }
 
@@ -449,8 +640,10 @@ export async function previewSeatChange(subject: AddonSubject, userId: string, s
   const exp = Math.floor((now.getTime() + PREVIEW_TTL_MS) / 1000);
   if (seats < current) {
     // A decrease waits for renewal: nothing is charged or credited now. Refused up front if it can't be scheduled safely.
-    assertSchedulable(live);
-    const token = signPreviewToken({ k: "seats", s: subjectKey(subject), u: userId, sub: live.id, items, d: 0, a: 0, c: currency, q: ZERO_PREVIEW, h: billingTermsHash(live), exp });
+    // The app's own unfinished schedule (a setup cut short) does not block it: the confirm resumes or releases it.
+    const owned = await ownedSetup(subject, live, deps);
+    assertSchedulable(live, owned);
+    const token = signPreviewToken({ k: "seats", s: subjectKey(subject), u: userId, sub: live.id, items, d: 0, a: 0, c: currency, q: ZERO_PREVIEW, h: billingTermsHash(termsView(live, owned)), exp });
     return { token, dueNow: 0, renewalTotal: total, currency, interval: iv, renewsAt: end?.toISOString() ?? null, quantity: seats, direction: "down", effectiveAt: end?.toISOString() ?? null };
   }
   if (scheduleId(live)) throw new AddonError("change_scheduled", SCHEDULE_EXISTS);
@@ -477,9 +670,10 @@ export async function confirmSeatChange(subject: AddonSubject, userId: string, s
     throw new AddonError("subscription_changed", TERMS_CHANGED);
   }
   if (seats < current) {
-    if (t.d !== 0 || t.a !== 0 || billingTermsHash(live) !== t.h) throw new AddonError("subscription_changed", TERMS_CHANGED);
+    const owned = await ownedSetup(subject, live, deps);
+    if (t.d !== 0 || t.a !== 0 || billingTermsHash(termsView(live, owned)) !== t.h) throw new AddonError("subscription_changed", TERMS_CHANGED);
     const ids = premiumPriceIds(live, await deps.prices());
-    const at = await scheduleAtRenewal(live, (phase) => phase.map((i) => (i.price === base.price.id || ids.has(i.price) ? { ...i, quantity: seats } : i)), `seats-down-${seats}`, deps);
+    const at = await scheduleAtRenewal(subject, live, (phase) => phase.map((i) => (i.price === base.price.id || ids.has(i.price) ? { ...i, quantity: seats } : i)), `seats-down-${seats}`, deps);
     return { direction: "down", effectiveAt: at };
   }
   if (scheduleId(live)) throw new AddonError("change_scheduled", SCHEDULE_EXISTS);

@@ -17,6 +17,12 @@ ALTER TABLE "Organization" ADD COLUMN "premiumSuspendedInvoiceId" TEXT;
 ALTER TABLE "User" ADD COLUMN "premiumSuspendedAt" TIMESTAMP(3);
 ALTER TABLE "User" ADD COLUMN "premiumSuspendedInvoiceId" TEXT;
 
+-- The app's own subscription schedule while its setup is unfinished (JSON: subscription, attempt key, schedule id once
+-- known). Lets a retried removal or seat decrease resume or release that schedule instead of being blocked by it. Null
+-- whenever no setup is in flight; a schedule not named here is never touched.
+ALTER TABLE "Organization" ADD COLUMN "premiumScheduleRef" TEXT;
+ALTER TABLE "User" ADD COLUMN "premiumScheduleRef" TEXT;
+
 ALTER TABLE "UsageAllowance" ADD COLUMN "premiumMinutesCap" INTEGER NOT NULL DEFAULT 0;
 
 -- Effective voice tier a call was minted on ("premium" or "standard"), written by the server at mint. Separate from

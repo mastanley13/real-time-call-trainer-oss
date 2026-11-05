@@ -64,7 +64,15 @@ type MockDeps = { [K in keyof AddonDeps]: Mock<AddonDeps[K]> };
 
 function deps(sub: ReturnType<typeof subscription>, extra: Partial<MockDeps> = {}): MockDeps {
   const schedule = { id: "sub_sched_test_1", phases: [{ start_date: PERIOD_START_S, end_date: END_S, items: sub.items.data.map((i) => ({ price: i.price.id, quantity: i.quantity })) }] };
+  // The subject's premiumScheduleRef, compare-and-set like the database column.
+  let ref: string | null = null;
   return {
+    readScheduleRef: vi.fn<AddonDeps["readScheduleRef"]>(async () => ref),
+    swapScheduleRef: vi.fn<AddonDeps["swapScheduleRef"]>(async (_s, from, to) => {
+      if (ref !== from) return false;
+      ref = to;
+      return true;
+    }),
     retrieveSubscription: vi.fn<AddonDeps["retrieveSubscription"]>(async () => sub),
     retrievePrice: vi.fn<AddonDeps["retrievePrice"]>(async (id) => ({ id, unit_amount: UNIT[id] })),
     previewInvoice: vi.fn<AddonDeps["previewInvoice"]>(async () => ({ amount_due: 1333, currency: "usd" })),
@@ -307,8 +315,10 @@ describe("removing Premium at period end", () => {
       ] })),
     });
     expect(await codeOf(() => scheduleRemovePremium(TEAM, d))).toBe("change_scheduled");
-    expect(d.releaseSubscriptionSchedule).toHaveBeenCalledWith("sub_sched_test_1", expect.stringMatching(/^premium-remove:sub_test_team:\d+:release$/));
+    // The release key is the attempt's own (scope, subscription, period end, attempt nonce).
+    expect(d.releaseSubscriptionSchedule).toHaveBeenCalledWith("sub_sched_test_1", expect.stringMatching(/^premium-remove:sub_test_team:\d+:[0-9a-f]{12}:release$/));
     expect(d.updateSubscriptionSchedule).not.toHaveBeenCalled();
+    expect(await d.readScheduleRef(TEAM)).toBeNull();
   });
 
   it("a subscription already set to cancel at period end needs no schedule: Premium ends with it", async () => {
@@ -321,6 +331,214 @@ describe("removing Premium at period end", () => {
 
   it("refuses when there is nothing to remove", async () => {
     await expect(scheduleRemovePremium(TEAM, deps(subscription()))).rejects.toMatchObject({ code: "not_added" });
+  });
+});
+
+// ---- Schedule setup cut short: release only the app's own, resume on retry, never touch anyone else's -------------
+
+type Phase = { start_date: number; end_date: number | null; items: { price: string; quantity: number }[] };
+
+/**
+ * A small stand-in for Stripe's schedules on one subscription: create attaches a schedule (at most one per
+ * subscription) and replays by idempotency key, update writes the two phases, release detaches. No network.
+ */
+function scheduleWorld(o: SubOpts, foreign: { id: string; phases: Phase[] } | null = null) {
+  const sub = subscription(o);
+  let attached: { id: string; phases: Phase[] } | null = foreign;
+  let n = 0;
+  const byKey = new Map<string, string>();
+  const d = deps(sub, {
+    retrieveSubscription: vi.fn<AddonDeps["retrieveSubscription"]>(async () => ({ ...sub, schedule: attached?.id ?? null })),
+    createSubscriptionSchedule: vi.fn<AddonDeps["createSubscriptionSchedule"]>(async (_p, key) => {
+      const replay = byKey.get(key);
+      if (replay) return { id: replay };
+      if (attached) throw new StripeApiError(400);
+      const id = `sub_sched_test_new_${++n}`;
+      attached = { id, phases: [{ start_date: PERIOD_START_S, end_date: END_S, items: sub.items.data.map((i) => ({ price: i.price.id, quantity: i.quantity })) }] };
+      byKey.set(key, id);
+      return { id };
+    }),
+    retrieveSubscriptionSchedule: vi.fn<AddonDeps["retrieveSubscriptionSchedule"]>(async (id) => {
+      const cur = attached;
+      if (cur?.id !== id) throw new StripeApiError(404);
+      return { id, status: "active", phases: structuredClone(cur.phases) };
+    }),
+    updateSubscriptionSchedule: vi.fn<AddonDeps["updateSubscriptionSchedule"]>(async (id, params) => {
+      const cur = attached;
+      if (cur?.id !== id) throw new StripeApiError(400);
+      const [first, second] = (params as unknown as { phases: { items: Phase["items"] }[] }).phases;
+      cur.phases = [{ start_date: PERIOD_START_S, end_date: END_S, items: first.items }, { start_date: END_S, end_date: END_S + 30 * 86400, items: second.items }];
+      return {};
+    }),
+    releaseSubscriptionSchedule: vi.fn<AddonDeps["releaseSubscriptionSchedule"]>(async (id) => {
+      if (attached?.id !== id) throw new StripeApiError(400);
+      attached = null;
+      return {};
+    }),
+  });
+  return { d, schedule: () => attached };
+}
+const refOf = async (d: MockDeps) => {
+  const raw = await d.readScheduleRef(TEAM);
+  return raw ? (JSON.parse(raw) as { sub: string; key: string; id: string | null }) : null;
+};
+const WITHOUT_PREMIUM = [{ price: "price_test_team_m", quantity: 4 }];
+
+describe("a schedule setup cut short never blocks the retry", () => {
+  it("retrieval fails right after create (a Stripe error, or a body that does not parse): the new schedule is released and the retry succeeds", async () => {
+    for (const failure of ["stripe error", "unparseable"] as const) {
+      const w = scheduleWorld({ seats: 4, premium: 4 });
+      if (failure === "stripe error") w.d.retrieveSubscriptionSchedule.mockRejectedValueOnce(new StripeApiError(500));
+      else w.d.retrieveSubscriptionSchedule.mockResolvedValueOnce({ unexpected: true });
+      const err = await scheduleRemovePremium(TEAM, w.d).catch((e: AddonError) => e);
+      expect(err, failure).toMatchObject({ code: "schedule_setup_failed" });
+      expect((err as AddonError).message).toMatch(/nothing was changed/);
+      expect(w.d.releaseSubscriptionSchedule).toHaveBeenCalledWith("sub_sched_test_new_1", expect.stringMatching(/^premium-remove:sub_test_team:\d+:[0-9a-f]{12}:release$/));
+      expect(w.d.updateSubscriptionSchedule).not.toHaveBeenCalled();
+      expect(w.schedule()).toBeNull();
+      expect(await refOf(w.d)).toBeNull();
+      // The retry is not blocked by a leftover: it makes a new schedule and finishes.
+      const { removeAt } = await scheduleRemovePremium(TEAM, w.d);
+      expect(removeAt?.getTime()).toBe(END_S * 1000);
+      expect(w.schedule()?.phases[1].items).toEqual(WITHOUT_PREMIUM);
+      expect(await refOf(w.d)).toBeNull();
+      // Each attempt has its own create key, so the retry is never answered with the released schedule.
+      const keys = w.d.createSubscriptionSchedule.mock.calls.map((c) => c[1]);
+      expect(new Set(keys).size).toBe(2);
+    }
+  });
+
+  it("an update Stripe rejects (4xx): the new schedule is released; the same seat decrease confirmed again schedules", async () => {
+    const w = scheduleWorld({ seats: 6, premium: 6 });
+    const p = await previewSeatChange({ ...TEAM, seats: 6 }, "owner-1", 4, w.d, NOW);
+    w.d.updateSubscriptionSchedule.mockRejectedValueOnce(new StripeApiError(400));
+    expect(await codeOf(() => confirmSeatChange({ ...TEAM, seats: 6 }, "owner-1", 4, p.token, w.d, NOW))).toBe("schedule_setup_failed");
+    expect(w.schedule()).toBeNull();
+    expect(await refOf(w.d)).toBeNull();
+    const done = await confirmSeatChange({ ...TEAM, seats: 6 }, "owner-1", 4, p.token, w.d, NOW);
+    expect(done.effectiveAt?.getTime()).toBe(END_S * 1000);
+    expect(w.schedule()?.phases[1].items).toEqual([{ price: "price_test_team_m", quantity: 4 }, { price: "price_test_prem_m", quantity: 4 }]);
+    expect(w.d.createSubscriptionSchedule).toHaveBeenCalledTimes(2);
+  });
+
+  it("an update with no clear answer that DID land is kept as a success: nothing is released", async () => {
+    const w = scheduleWorld({ seats: 4, premium: 4 });
+    const real = w.d.updateSubscriptionSchedule.getMockImplementation()!;
+    w.d.updateSubscriptionSchedule.mockImplementationOnce(async (...a) => { await real(...a); throw new StripeApiError(502); });
+    const { removeAt } = await scheduleRemovePremium(TEAM, w.d);
+    expect(removeAt?.getTime()).toBe(END_S * 1000);
+    expect(w.d.releaseSubscriptionSchedule).not.toHaveBeenCalled();
+    expect(w.schedule()?.phases[1].items).toEqual(WITHOUT_PREMIUM);
+    expect(await refOf(w.d)).toBeNull();
+  });
+
+  it("an update with no clear answer that did NOT land is released after a fresh read; the retry succeeds", async () => {
+    const w = scheduleWorld({ seats: 4, premium: 4 });
+    w.d.updateSubscriptionSchedule.mockRejectedValueOnce(new TypeError("fetch failed"));
+    expect(await codeOf(() => scheduleRemovePremium(TEAM, w.d))).toBe("schedule_setup_failed");
+    expect(w.d.retrieveSubscriptionSchedule).toHaveBeenCalledTimes(2);
+    expect(w.schedule()).toBeNull();
+    await scheduleRemovePremium(TEAM, w.d);
+    expect(w.schedule()?.phases[1].items).toEqual(WITHOUT_PREMIUM);
+  });
+
+  it("a release that fails leaves the app's own schedule marked; the next attempt resumes it instead of being refused", async () => {
+    const w = scheduleWorld({ seats: 4, premium: 4 });
+    w.d.retrieveSubscriptionSchedule.mockRejectedValueOnce(new StripeApiError(500));
+    w.d.releaseSubscriptionSchedule.mockRejectedValueOnce(new StripeApiError(500));
+    expect(await codeOf(() => scheduleRemovePremium(TEAM, w.d))).toBe("change_pending");
+    expect(w.schedule()?.id).toBe("sub_sched_test_new_1");
+    expect(await refOf(w.d)).toMatchObject({ sub: "sub_test_team", id: "sub_sched_test_new_1" });
+    // A seat decrease preview is not refused by the app's own leftover either.
+    expect(await previewSeatChange({ ...TEAM, seats: 4 }, "owner-1", 3, w.d, NOW)).toMatchObject({ direction: "down", dueNow: 0 });
+    // The retry resumes the same schedule: no second create, the update lands, the marker clears.
+    await scheduleRemovePremium(TEAM, w.d);
+    expect(w.d.createSubscriptionSchedule).toHaveBeenCalledTimes(1);
+    expect(w.schedule()).toMatchObject({ id: "sub_sched_test_new_1" });
+    expect(w.schedule()?.phases[1].items).toEqual(WITHOUT_PREMIUM);
+    expect(await refOf(w.d)).toBeNull();
+    // Finished, it is an ordinary scheduled change: a further attempt is refused and does not touch it.
+    expect(await codeOf(() => scheduleRemovePremium(TEAM, w.d))).toBe("change_scheduled");
+    expect(w.d.updateSubscriptionSchedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("an update whose answer is lost and whose re-read fails stays marked; the retry finds it applied and sends no second update", async () => {
+    const w = scheduleWorld({ seats: 4, premium: 4 });
+    const realUpdate = w.d.updateSubscriptionSchedule.getMockImplementation()!;
+    const realRetrieve = w.d.retrieveSubscriptionSchedule.getMockImplementation()!;
+    w.d.updateSubscriptionSchedule.mockImplementationOnce(async (...a) => { await realUpdate(...a); throw new StripeApiError(500); });
+    w.d.retrieveSubscriptionSchedule.mockImplementationOnce(realRetrieve).mockRejectedValueOnce(new StripeApiError(500));
+    expect(await codeOf(() => scheduleRemovePremium(TEAM, w.d))).toBe("change_pending");
+    // Not released: the change may well have gone through, and it did.
+    expect(w.d.releaseSubscriptionSchedule).not.toHaveBeenCalled();
+    expect(w.schedule()?.phases).toHaveLength(2);
+    const { removeAt } = await scheduleRemovePremium(TEAM, w.d);
+    expect(removeAt?.getTime()).toBe(END_S * 1000);
+    expect(w.d.updateSubscriptionSchedule).toHaveBeenCalledTimes(1);
+    expect(w.d.releaseSubscriptionSchedule).not.toHaveBeenCalled();
+    expect(await refOf(w.d)).toBeNull();
+  });
+
+  it("a create whose answer is lost: the retry replays that exact create to learn the id, then finishes on it", async () => {
+    const w = scheduleWorld({ seats: 4, premium: 4 });
+    const realCreate = w.d.createSubscriptionSchedule.getMockImplementation()!;
+    w.d.createSubscriptionSchedule.mockImplementationOnce(async (...a) => { await realCreate(...a); throw new TypeError("fetch failed"); });
+    expect(await codeOf(() => scheduleRemovePremium(TEAM, w.d))).toBe("change_pending");
+    expect(w.schedule()?.id).toBe("sub_sched_test_new_1");
+    expect(await refOf(w.d)).toMatchObject({ id: null });
+    await scheduleRemovePremium(TEAM, w.d);
+    const keys = w.d.createSubscriptionSchedule.mock.calls.map((c) => c[1]);
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+    expect(w.schedule()).toMatchObject({ id: "sub_sched_test_new_1" });
+    expect(w.schedule()?.phases[1].items).toEqual(WITHOUT_PREMIUM);
+    expect(await refOf(w.d)).toBeNull();
+  });
+
+  it("never touches anyone else's schedule, whatever marker is left over", async () => {
+    const other = (): { id: string; phases: Phase[] } => ({ id: "sub_sched_test_other", phases: [
+      { start_date: PERIOD_START_S, end_date: END_S, items: [{ price: "price_test_team_m", quantity: 4 }, { price: "price_test_prem_m", quantity: 4 }] },
+      { start_date: END_S, end_date: END_S + 30 * 86400, items: [{ price: "price_test_team_m", quantity: 3 }] },
+    ] });
+    const markers = [
+      // A marker naming a different schedule of the app's (long gone).
+      { sub: "sub_test_team", key: "premium-remove:sub_test_team:1:aaaaaaaaaaaa", id: "sub_sched_test_mine" },
+      // A marker for another subscription.
+      { sub: "sub_test_old", key: "premium-remove:sub_test_old:1:bbbbbbbbbbbb", id: "sub_sched_test_other" },
+    ];
+    for (const marker of markers) {
+      const w = scheduleWorld({ seats: 4, premium: 4 }, other());
+      await w.d.swapScheduleRef(TEAM, null, JSON.stringify(marker));
+      expect(await codeOf(() => scheduleRemovePremium(TEAM, w.d)), marker.sub).toBe("change_scheduled");
+      expect(await codeOf(() => previewSeatChange({ ...TEAM, seats: 4 }, "owner-1", 3, w.d, NOW)), marker.sub).toBe("change_scheduled");
+      for (const m of [w.d.createSubscriptionSchedule, w.d.retrieveSubscriptionSchedule, w.d.updateSubscriptionSchedule, w.d.releaseSubscriptionSchedule]) expect(m).not.toHaveBeenCalled();
+      expect(w.schedule()).toEqual(other());
+    }
+
+    // A marker whose create never reported an id, with someone else's schedule attached: the exact replay of the app's
+    // create is refused by Stripe (the subscription already has a schedule), so the schedule is not the app's.
+    const w = scheduleWorld({ seats: 4, premium: 4 }, other());
+    await w.d.swapScheduleRef(TEAM, null, JSON.stringify({ sub: "sub_test_team", key: "premium-remove:sub_test_team:1:cccccccccccc", id: null }));
+    expect(await codeOf(() => scheduleRemovePremium(TEAM, w.d))).toBe("change_scheduled");
+    for (const m of [w.d.retrieveSubscriptionSchedule, w.d.updateSubscriptionSchedule, w.d.releaseSubscriptionSchedule]) expect(m).not.toHaveBeenCalled();
+    expect(w.schedule()).toEqual(other());
+    expect(await refOf(w.d)).toBeNull();
+
+    // The app's own marked schedule that someone has since edited (not as created, not this change): left as it is.
+    const edited = scheduleWorld({ seats: 4, premium: 4 }, other());
+    await edited.d.swapScheduleRef(TEAM, null, JSON.stringify({ sub: "sub_test_team", key: "premium-remove:sub_test_team:1:dddddddddddd", id: "sub_sched_test_other" }));
+    expect(await codeOf(() => scheduleRemovePremium(TEAM, edited.d))).toBe("change_scheduled");
+    for (const m of [edited.d.updateSubscriptionSchedule, edited.d.releaseSubscriptionSchedule, edited.d.createSubscriptionSchedule]) expect(m).not.toHaveBeenCalled();
+    expect(edited.schedule()).toEqual(other());
+    expect(await refOf(edited.d)).toBeNull();
+  });
+
+  it("the billing routes map a released setup to 502 schedule_setup_failed and an unfinished one to 409 change_pending", async () => {
+    const { addonFailure } = await import("@/app/api/billing/_lib/addonRoute");
+    const failed = addonFailure(new AddonError("schedule_setup_failed", "x"), "test");
+    const pending = addonFailure(new AddonError("change_pending", "y"), "test");
+    expect([failed.status, pending.status]).toEqual([502, 409]);
+    expect(await failed.json()).toEqual({ error: "schedule_setup_failed", message: "x" });
   });
 });
 

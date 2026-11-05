@@ -47,6 +47,9 @@ model Organization {
   /// Premium suspended by a failed payment, and the invoice that failed. Cleared only by invoice.paid for that invoice.
   premiumSuspendedAt        DateTime?
   premiumSuspendedInvoiceId String?
+  /// The app's own subscription schedule while its setup is unfinished (JSON: subscription, attempt key, schedule id
+  /// once known), so a retried removal or seat decrease resumes or releases it. Null when no setup is in flight.
+  premiumScheduleRef String?
   /// Stripe ids (test mode only for now). Set by the webhook, never by the client.
   stripeCustomerId     String? @unique
   stripeSubscriptionId String? @unique
@@ -115,9 +118,10 @@ model User {
   premiumVoiceQuantity  Int     @default(0)
   subscriptionPeriodEnd DateTime?
   premiumVoiceRemoveAt  DateTime?
-  /// See Organization: failed-payment Premium suspension.
+  /// See Organization: failed-payment Premium suspension, and the unfinished schedule setup marker.
   premiumSuspendedAt        DateTime?
   premiumSuspendedInvoiceId String?
+  premiumScheduleRef        String?
   stripeCustomerId     String? @unique
   stripeSubscriptionId String? @unique
   subscriptionStatus   String?

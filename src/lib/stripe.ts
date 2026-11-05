@@ -129,6 +129,8 @@ export const stripeApi = {
   createPortalSession: (params: StripeParams) => request<{ url: string }>("POST", "billing_portal/sessions", params),
   /** The subscription as Stripe has it now. Webhook payloads are snapshots and can arrive out of order. */
   retrieveSubscription: (id: string) => request<unknown>("GET", `subscriptions/${seg(id)}`, { expand: ["items.data.price.product"] }),
+  /** One invoice as Stripe has it now (status draft | open | paid | uncollectible | void). Webhook bodies can be stale. */
+  retrieveInvoice: (id: string) => request<unknown>("GET", `invoices/${seg(id)}`),
   /** Cancels immediately. Used only to drop a duplicate subscription for a subject that already has one. */
   cancelSubscription: (id: string) => request<{ id: string }>("DELETE", `subscriptions/${seg(id)}`),
   /**

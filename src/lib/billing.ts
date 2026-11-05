@@ -758,14 +758,18 @@ async function writeSuspension(tx: Tx, s: Subject, where: { premiumSuspendedInvo
  * - paid clears that suspension ONLY when the paid invoice is the one that failed, the invoice says `paid` (when it says
  *   anything), and the subscription as Stripe has it now is active or trialing. No other event clears it: an unrelated
  *   customer.subscription.updated reporting `active` leaves Premium suspended (see applyEntitlement).
+ * - stale_failure: a payment_failed whose invoice Stripe now reports paid or void (or no longer has). It was delivered
+ *   after the recovery, so it changes nothing beyond the usual subscription reconcile; it never suspends.
  */
-async function onInvoice(tx: Tx, obj: unknown, live: Live, now: Date, failed: boolean): Promise<Applied | null> {
+async function onInvoice(tx: Tx, obj: unknown, live: Live, now: Date, mode: "failed" | "paid" | "stale_failure"): Promise<Applied | null> {
+  const failed = mode === "failed";
   const subscriptionId = invoiceSubscriptionId(obj);
   if (!subscriptionId) return null;
   const inv = InvoiceObject.safeParse(obj);
   const invoiceId = inv.success ? inv.data.id ?? null : null;
   const customerId = inv.success ? refId(inv.data.customer as z.infer<typeof SubRef>) : null;
   const applied = await reconcile(tx, subscriptionId, live, { customerId }, now);
+  if (mode === "stale_failure") return applied;
   const holder = await subjectOfSubscription(tx, subscriptionId);
   if (!holder) return applied;
   const before = await suspensionOf(tx, holder);
@@ -834,12 +838,38 @@ export interface StripeDeps {
   cancelSubscription(id: string): Promise<unknown>;
   /** Used only for the add-on quantity sync. Optional so a caller that cannot write to Stripe simply skips it. */
   updateSubscription?(id: string, params: StripeParams, idempotencyKey: string): Promise<unknown>;
+  /**
+   * The invoice as Stripe has it now, read before a payment failure is acted on, so a failure event that arrives after
+   * the invoice was already paid suspends nothing. Optional: without it the event body's own status is used.
+   */
+  retrieveInvoice?(id: string): Promise<unknown>;
 }
 const liveDeps: StripeDeps = {
   retrieveSubscription: (id) => stripeApi.retrieveSubscription(id),
   cancelSubscription: (id) => stripeApi.cancelSubscription(id),
   updateSubscription: (id, params, key) => stripeApi.updateSubscription(id, params, key),
+  retrieveInvoice: (id) => stripeApi.retrieveInvoice(id),
 };
+
+/** What a failed invoice is now: "open" (still owed), "settled" (paid or void: nothing owed), or "gone". */
+type InvoiceNow = "owed" | "settled" | "gone";
+
+/**
+ * Reads the invoice's CURRENT status before the database transaction, like fetchLive. paid and void owe nothing, so
+ * a payment_failed for them is stale. A 404 also owes nothing. Any other read failure throws: the webhook answers 500
+ * and Stripe retries, with nothing written.
+ */
+async function fetchInvoiceNow(id: string | null, bodyStatus: string | null | undefined, deps: StripeDeps): Promise<InvoiceNow> {
+  const settledStatus = (s: unknown) => s === "paid" || s === "void";
+  if (!id || !deps.retrieveInvoice) return settledStatus(bodyStatus) ? "settled" : "owed";
+  try {
+    const inv = z.object({ id: z.string(), status: z.string().nullish() }).parse(await deps.retrieveInvoice(id));
+    return settledStatus(inv.status) ? "settled" : "owed";
+  } catch (e) {
+    if (e instanceof StripeApiError && e.status === 404) return "gone";
+    throw e;
+  }
+}
 
 /**
  * The Stripe write that puts the add-on back in step with the seats. The idempotency key names ONE transition: the
@@ -887,6 +917,13 @@ async function fetchLive(id: string | null, deps: StripeDeps): Promise<Live> {
 export async function handleStripeEvent(event: StripeEventLike, now = new Date(), deps: StripeDeps = liveDeps): Promise<EventResult> {
   if ((await prisma.stripeEvent.findUnique({ where: { id: event.id } })) !== null) return "duplicate";
   const live = RECONCILED.has(event.type) ? await fetchLive(subscriptionIdOf(event), deps) : null;
+  // A payment failure is acted on only if the invoice is still owed NOW: Stripe can deliver payment_failed after the
+  // invoice.paid that settled it, and an old failure must not suspend a recovered subscriber.
+  let invoiceNow: InvoiceNow = "owed";
+  if (event.type === "invoice.payment_failed") {
+    const inv = InvoiceObject.safeParse(event.data.object);
+    invoiceNow = await fetchInvoiceNow(inv.success ? inv.data.id ?? null : null, inv.success ? inv.data.status : null, deps);
+  }
   let applied: Applied | null = null;
   try {
     applied = await prisma.$transaction(async (tx) => {
@@ -897,8 +934,8 @@ export async function handleStripeEvent(event: StripeEventLike, now = new Date()
         case "customer.subscription.updated": return onSubscriptionChanged(tx, event.data.object, live, now);
         case "customer.subscription.deleted": return onSubscriptionDeleted(tx, event.data.object, now);
         // Payment results re-read the subscription; a failure also turns Premium off for the next call at once.
-        case "invoice.paid": return onInvoice(tx, event.data.object, live, now, false);
-        case "invoice.payment_failed": return onInvoice(tx, event.data.object, live, now, true);
+        case "invoice.paid": return onInvoice(tx, event.data.object, live, now, "paid");
+        case "invoice.payment_failed": return onInvoice(tx, event.data.object, live, now, invoiceNow === "owed" ? "failed" : "stale_failure");
         // A failed delayed payment grants nothing; the session is cleared so the account can start a new checkout.
         case "checkout.session.async_payment_failed":
         case "checkout.session.expired": return onCheckoutExpired(tx, event.data.object);

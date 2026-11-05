@@ -38,6 +38,10 @@ const STATUS: Record<AddonErrorCode, number> = {
   subscription_changed: 409,
   price_changed: 409,
   unsupported_billing_terms: 409,
+  // An earlier scheduled change for this plan is still being set up; the next attempt resumes it.
+  change_pending: 409,
+  // Stripe did not complete the schedule setup; the app released its own schedule, so nothing changed.
+  schedule_setup_failed: 502,
   not_in_good_standing: 409,
   invalid_token: 400,
   invalid_seats: 400,
