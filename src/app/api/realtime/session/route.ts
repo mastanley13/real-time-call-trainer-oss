@@ -128,7 +128,7 @@ export async function POST(req: NextRequest) {
     // logs the model only from a receipt that verifies for the sessionId it is saved under, and only once.
     const receipt = signMintReceipt(auth.id, sessionId, model);
     return NextResponse.json(
-      { clientSecret: data.value, expiresAt, model, voice, ...(callId ? { callId, maxSeconds } : {}), ...(receipt ? { receipt, sessionId } : {}) },
+      { clientSecret: data.value, expiresAt, model, voice, sessionId, ...(callId ? { callId, maxSeconds } : {}), ...(receipt ? { receipt } : {}) },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (e) {

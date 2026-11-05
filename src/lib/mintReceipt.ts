@@ -12,9 +12,11 @@ import { Prisma } from "@prisma/client";
  *
  * The call id is generated on the server before the secret is minted: the metering call id when the call is
  * metered, otherwise a random UUID. The client gets it back as `sessionId` and saves the call under it, so a
- * receipt from one call can't be attached to another call or to a text save, and it logs at most one row:
- * that row's primary key is receiptRowId(callId), so a second save with the same receipt hits a unique
- * violation and is stored without a model.
+ * receipt from one call can't be attached to another call or to a text save. It logs on exactly one row:
+ * - metered: the call's own TrainerSession row (id = callId), by a conditional update that only writes while
+ *   realtimeModel is still unset, so a replayed or concurrent save changes nothing;
+ * - unmetered: a new row whose primary key is receiptRowId(callId), so a second save with the same receipt
+ *   hits a unique violation and is stored without a model.
  *
  * Format: base64url(JSON { v, u, s, m, t }) + "." + hex HMAC-SHA256 over the base64url part.
  */
@@ -31,7 +33,7 @@ const CALL_ID = /^[A-Za-z0-9_-]{8,64}$/;
 const receiptKey = () => process.env.JWT_SECRET?.trim() || undefined;
 const mac = (key: string, body: string) => createHmac("sha256", key).update(`${VERSION}:${body}`).digest("hex");
 
-/** Primary key of the one TrainerSession row a receipt may log a model on. Deterministic, so a replay collides. */
+/** Primary key of the one row an unmetered call's receipt may log a model on. Deterministic, so a replay collides. */
 export const receiptRowId = (callId: string) => `rt_${callId}`;
 
 /** True for the unique-constraint error Prisma raises when receiptRowId(callId) already exists. */

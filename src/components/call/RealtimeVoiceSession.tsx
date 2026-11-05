@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Scenario } from "@/lib/scenarios";
-import type { MintReceipt, StoredTurn } from "@/lib/sessionStore";
+import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
 import { CallMeter, type MeterEndReason } from "@/lib/callMeter";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
@@ -26,10 +26,10 @@ interface Handlers {
   onError: (msg: string) => void;
   onView: (v: CallView) => void;
   /**
-   * The server's signed mint receipt and the call id it is bound to. The call is saved under that sessionId with
-   * the receipt, so the server can log the model it minted for this call. Opaque here.
+   * Which call the server minted: its sessionId, the receipt bound to it, and the metering callId when metered.
+   * The call is saved with all three, so the server logs the minted model on this call's own row. Opaque here.
    */
-  onReceipt: (r: MintReceipt) => void;
+  onMinted: (c: MintedCall) => void;
 }
 
 const EXPIRED = "The voice session expired before it connected. Start the call again.";
@@ -94,7 +94,13 @@ class RealtimeCall {
       return this.fail("Could not reach the server to start the voice call. Check your connection, then try again.");
     }
     if (this.closed) return;
-    if (typeof secret.receipt === "string" && typeof secret.sessionId === "string") this.h.onReceipt({ receipt: secret.receipt, sessionId: secret.sessionId });
+    if (typeof secret.sessionId === "string" && secret.clientSecret) {
+      this.h.onMinted({
+        sessionId: secret.sessionId,
+        ...(typeof secret.receipt === "string" ? { receipt: secret.receipt } : {}),
+        ...(typeof secret.callId === "string" ? { callId: secret.callId } : {}),
+      });
+    }
     this.meter = new CallMeter(secret.callId, {
       // The server has already stopped and billed the call; this ends the client side.
       onStop: (m) => this.fail(m, "user_hangup"),
@@ -278,22 +284,22 @@ class RealtimeCall {
 }
 
 /** Voice session on the OpenAI Realtime API. Drop-in for the ElevenLabs VoiceSession. */
-export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onReceipt, registerEnd, render }: {
+export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onMinted, registerEnd, render }: {
   scenario: Scenario;
   active: boolean;
   grading: boolean;
   onTurn: (t: StoredTurn) => void;
   onEnded: () => void;
   onError: (msg: string) => void;
-  onReceipt?: (r: MintReceipt) => void;
+  onMinted?: (c: MintedCall) => void;
   registerEnd: (fn: () => void) => void;
   render: (v: VoiceRender) => React.ReactNode;
 }) {
   const [view, setView] = useState<CallView>({ phase: "mic", speaking: false, muted: false });
   const callRef = useRef<RealtimeCall | null>(null);
   // Latest callbacks without restarting the call when the parent re-renders.
-  const cb = useRef({ onTurn, onEnded, onError, onReceipt });
-  useEffect(() => { cb.current = { onTurn, onEnded, onError, onReceipt }; });
+  const cb = useRef({ onTurn, onEnded, onError, onMinted });
+  useEffect(() => { cb.current = { onTurn, onEnded, onError, onMinted }; });
 
   useEffect(() => {
     if (!active) return;
@@ -302,7 +308,7 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
       onEnded: () => cb.current.onEnded(),
       onError: (m) => cb.current.onError(m),
       onView: (v) => { if (callRef.current === call) setView(v); },
-      onReceipt: (r) => cb.current.onReceipt?.(r),
+      onMinted: (c) => cb.current.onMinted?.(c),
     });
     callRef.current = call;
     setView({ phase: "mic", speaking: false, muted: false });

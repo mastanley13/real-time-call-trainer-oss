@@ -27,6 +27,7 @@ import { GET as voiceGET, PATCH as voicePATCH } from "@/app/api/team/voice/route
 import { POST as mintPOST } from "@/app/api/realtime/session/route";
 import { POST as savePOST } from "@/app/api/transcripts/route";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
+import { transcriptSaveBody } from "@/lib/sessionStore";
 import { MINT_RECEIPT_TTL_MS, receiptRowId, signMintReceipt, verifyMintReceipt } from "@/lib/mintReceipt";
 import * as voiceTierModule from "@/lib/voiceTier";
 import { canEditVoiceTier, canSetVoiceTier, effectiveVoiceTier, normalizeVoiceTier } from "@/lib/voiceTier";
@@ -195,6 +196,22 @@ describe("mint receipts", () => {
     const body = Buffer.from(JSON.stringify({ v: "mint-receipt-v1", u: "u-a", m: "gpt-realtime-2.1", t: NOW / 1000 })).toString("base64url");
     const sig = createHmac("sha256", TEST_KEY).update(`mint-receipt-v1:${body}`).digest("hex");
     expect(verifyMintReceipt(`${body}.${sig}`, "u-a", CALL_A, NOW, TEST_KEY)).toBeNull();
+  });
+
+  it("the client saves a minted voice call under its ids, and a text save never carries them", () => {
+    const base = { durationSeconds: 60, scenario: BUILT_IN_SCENARIOS[0], transcript: [{ role: "user" as const, text: "Hi" }], evaluation: null };
+    const metered = { sessionId: "cm-call-0001", receipt: "r.sig", callId: "cm-call-0001" };
+    expect(transcriptSaveBody({ ...base, mode: "voice" }, null, undefined, metered, 5)).toMatchObject({ sessionId: "cm-call-0001", callId: "cm-call-0001", realtimeReceipt: "r.sig" });
+    // Unmetered: no callId, so the save does not try to fill a metering row.
+    const unmetered = transcriptSaveBody({ ...base, mode: "voice" }, null, undefined, { sessionId: "uuid-0000-0001", receipt: "r.sig" }, 5);
+    expect(unmetered).toMatchObject({ sessionId: "uuid-0000-0001", realtimeReceipt: "r.sig" });
+    expect(unmetered).not.toHaveProperty("callId");
+    // Without JWT_SECRET there is no receipt, but a metered call still fills its own row.
+    expect(transcriptSaveBody({ ...base, mode: "voice" }, null, undefined, { sessionId: "cm-call-0002", callId: "cm-call-0002" }, 5)).toMatchObject({ sessionId: "cm-call-0002", callId: "cm-call-0002" });
+    const text = transcriptSaveBody({ ...base, mode: "text" }, null, undefined, metered, 5);
+    expect(text.sessionId).toBe("text-5");
+    expect(text).not.toHaveProperty("callId");
+    expect(text).not.toHaveProperty("realtimeReceipt");
   });
 
   it("signs and verifies nothing without JWT_SECRET", () => {
@@ -426,8 +443,9 @@ describe("POST /api/transcripts logs the voice model", () => {
   const saveCall = (minted: { receipt: string; sessionId: string }, extra: Record<string, unknown> = {}) =>
     save({ sessionId: minted.sessionId, realtimeReceipt: minted.receipt, ...extra });
   const last = () => mocks.saved[mocks.saved.length - 1];
-  const loggedModel = () => last().realtimeModel;
-  const withModel = () => mocks.saved.filter((r) => r.realtimeModel !== null);
+  // The column defaults to null; this mock applies no defaults, so a row saved without a model has none set.
+  const loggedModel = () => last().realtimeModel ?? null;
+  const withModel = () => mocks.saved.filter((r) => r.realtimeModel != null);
   const lastAudit = () => (mocks.prisma.auditEvent.create.mock.calls.at(-1)![0] as { data: { metadata: Record<string, unknown> } }).data.metadata;
   const mintOnce = async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ value: "ek_test_secret_1", expires_at: 1_900_000_000 })));
@@ -503,15 +521,8 @@ describe("POST /api/transcripts logs the voice model", () => {
       expect(withModel()).toHaveLength(1);
     });
 
-    it("never logs a model when the save fills a metered row, even with the call's own receipt", async () => {
-      const minted = await mintOnce();
-      mocks.prisma.trainerSession.findUnique.mockResolvedValue({ userId: mocks.user.id, transcript: [] });
-      await saveCall(minted, { callId: minted.sessionId });
-      expect(mocks.prisma.trainerSession.update).toHaveBeenCalled();
-      expect(loggedModel()).toBeNull();
-      // So it can't be logged twice by filling the metered row and then creating the receipt row.
-      expect(withModel()).toHaveLength(0);
-    });
+    // Metered calls (receipt bound to the metering call id, logged on that row) are covered end to end with the
+    // real beginCall in usage-hardening.test.ts ("metered transcript save").
 
     it("rethrows other database errors instead of treating them as a replay", async () => {
       const minted = await mintOnce();

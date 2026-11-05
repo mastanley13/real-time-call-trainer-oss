@@ -17,6 +17,8 @@ import { verifyMintReceipt } from "@/lib/mintReceipt";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { MAX_CALL_SECONDS } from "@/lib/usagePlan";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
+import { POST as saveTranscript } from "@/app/api/transcripts/route";
+import { transcriptSaveBody } from "@/lib/sessionStore";
 import { GET as elevenLabsToken } from "@/app/api/elevenlabs/token/route";
 
 const MAR10 = new Date("2026-03-10T12:00:00Z");
@@ -173,6 +175,101 @@ describe("Premium voice limit", () => {
       // Binding adds nothing to metering: same engine and reservation as any comped call on the standard engine.
       expect(session(a.callId).engineTier).toBe("standard");
       expect(session(a.callId).reservedMinutes).toBe(session(b.callId).reservedMinutes);
+    });
+
+    describe("metered transcript save", () => {
+      const turns = [{ role: "assistant" as const, text: "Hello, this is Sam." }, { role: "user" as const, text: "Hi Sam, thanks for taking the call." }];
+      const voiceCall = { mode: "voice" as const, durationSeconds: 180, scenario: BUILT_IN_SCENARIOS[0], transcript: turns, evaluation: null };
+      /** Exactly the body the client sends for this minted call (src/lib/sessionStore.ts). */
+      const clientBody = (minted: { sessionId: string; receipt?: string; callId?: string }) =>
+        transcriptSaveBody(voiceCall, null, undefined, { sessionId: minted.sessionId, receipt: minted.receipt, callId: minted.callId });
+      const save = (body: unknown) => saveTranscript(new NextRequest("http://localhost/api/transcripts", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } }));
+      const logged = () => fake.rows("trainerSession").filter((s) => s.realtimeModel != null);
+      const billing = (callId: string) => {
+        const s = session(callId);
+        return { engineTier: s.engineTier, reservedMinutes: s.reservedMinutes, premiumReservedMinutes: s.premiumReservedMinutes, billedMinutes: s.billedMinutes, billableSeconds: s.billableSeconds, endedAt: s.endedAt, capEnforced: s.capEnforced };
+      };
+
+      beforeEach(() => {
+        vi.stubEnv("JWT_SECRET", "ci-only-not-a-secret-0123456789abcdef");
+        addUser("u-1", { planTier: "pro", premiumVoice: false, organization: { voiceModelTier: "premium", voiceModelComped: true } });
+      });
+
+      it("the client sends the metering callId, and the minted model is logged on that call's own row", async () => {
+        const minted = await (await mint()).json();
+        await heartbeat("u-1", minted.callId, "connected", at(0));
+        await endCall("u-1", minted.callId, "user_hangup", at(180));
+        const before = billing(minted.callId);
+        const allowanceBefore = { ...allowanceOf("u-1") };
+
+        const body = clientBody(minted);
+        expect(body).toMatchObject({ sessionId: minted.callId, callId: minted.callId, realtimeReceipt: minted.receipt });
+        const res = await save(body);
+        expect(res.status).toBe(200);
+        // One row for the call: the metered one, now with its transcript and the model it was minted with.
+        expect((await res.json()).id).toBe(minted.callId);
+        expect(session(minted.callId)).toMatchObject({ realtimeModel: "model-premium-test", realtimeSessionId: minted.callId });
+        expect(session(minted.callId).transcript).toHaveLength(2);
+        expect(fake.rows("trainerSession")).toHaveLength(1);
+        expect(fake.rows("trainerSession").some((s) => String(s.id).startsWith("rt_"))).toBe(false);
+        // The save is not billing: the call's metering fields and the allowance are exactly as endCall left them.
+        expect(billing(minted.callId)).toEqual(before);
+        expect(allowanceOf("u-1")).toEqual(allowanceBefore);
+      });
+
+      it("a replayed save cannot log the model again, on the call's row or anywhere else", async () => {
+        const minted = await (await mint()).json();
+        expect((await save(clientBody(minted))).status).toBe(200);
+        // Same body again: the call's row is already filled, so this is stored as a second row, without a model.
+        const again = await save(clientBody(minted));
+        expect(again.status).toBe(200);
+        expect((await again.json()).id).not.toBe(minted.callId);
+        // And without the callId, as an older client would send it.
+        const { callId: _omit, ...noCallId } = clientBody(minted);
+        expect((await save(noCallId)).status).toBe(200);
+        expect(logged().map((s) => s.id)).toEqual([minted.callId]);
+        expect(fake.rows("trainerSession").some((s) => String(s.id).startsWith("rt_"))).toBe(false);
+        const audits = fake.rows("auditEvent").filter((e) => e.action === "session.saved").map((e) => (e.metadata as { receiptRejected?: boolean }).receiptRejected ?? false);
+        expect(audits).toEqual([false, true, true]);
+      });
+
+      it("concurrent saves of the same call log the model once", async () => {
+        const minted = await (await mint()).json();
+        const results = await Promise.all([save(clientBody(minted)), save(clientBody(minted)), save(clientBody(minted))]);
+        expect(results.map((r) => r.status)).toEqual([200, 200, 200]);
+        expect(logged().map((s) => s.id)).toEqual([minted.callId]);
+      });
+
+      it("a save that omits callId still logs on the metered row, not on a new receipt row", async () => {
+        const minted = await (await mint()).json();
+        const { callId: _omit, ...noCallId } = clientBody(minted);
+        expect((await save(noCallId)).status).toBe(200);
+        expect(logged().map((s) => s.id)).toEqual([minted.callId]);
+        expect(fake.rows("trainerSession").some((s) => String(s.id).startsWith("rt_"))).toBe(false);
+      });
+
+      it("call A's receipt logs nothing on call B, and a text save logs nothing", async () => {
+        const a = await (await mint()).json();
+        const b = await (await mint()).json();
+        // A's transcript with B's receipt, and B's with A's.
+        await save({ ...clientBody(a), realtimeReceipt: b.receipt });
+        await save({ ...clientBody(b), realtimeReceipt: a.receipt });
+        // A's receipt and callId on a text save.
+        await save({ ...transcriptSaveBody({ ...voiceCall, mode: "text" }, null, undefined, undefined), callId: a.callId, realtimeReceipt: a.receipt });
+        expect(logged()).toHaveLength(0);
+        // Both calls still got their transcripts on their own rows.
+        expect(session(a.callId).transcript).toHaveLength(2);
+        expect(session(b.callId).transcript).toHaveLength(2);
+      });
+
+      it("another user cannot use the call's receipt or fill its row", async () => {
+        const minted = await (await mint()).json();
+        addUser("u-2");
+        mocks.authId = "u-2";
+        expect((await save(clientBody(minted))).status).toBe(200);
+        expect(logged()).toHaveLength(0);
+        expect(session(minted.callId).transcript).toEqual([]);
+      });
     });
 
     it("a comped Premium org still hits the plan's minute cap: 402 and nothing is minted", async () => {

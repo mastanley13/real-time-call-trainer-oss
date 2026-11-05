@@ -209,7 +209,9 @@ describe("POST /api/realtime/session", () => {
     expect(res.status).toBe(200);
     expect(text).not.toContain("sk-secret-test");
     // Demo mode mints Standard. The signed receipt is covered in voice-tier.test.ts.
-    const { receipt: _receipt, ...shown } = JSON.parse(text);
+    const { receipt: _receipt, sessionId, ...shown } = JSON.parse(text);
+    // The server-fixed id this call is saved under (a UUID when not metered).
+    expect(sessionId).toMatch(/^[0-9a-f-]{36}$/);
     expect(shown).toEqual({ clientSecret: "ek_abc123456789", expiresAt: 1_900_000_000, model: STANDARD_REALTIME_MODEL, voice: "marin" });
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://api.openai.com/v1/realtime/client_secrets");
