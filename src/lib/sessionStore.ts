@@ -81,8 +81,12 @@ function saveLocal(s: Omit<StoredSession, "id" | "createdAt">): string {
   return id;
 }
 
-/** Returns the new session id (prefixed `local-` when stored in the browser). */
-export async function saveSession(s: Omit<StoredSession, "id" | "createdAt">, useServer: boolean): Promise<string> {
+/**
+ * Returns the new session id (prefixed `local-` when stored in the browser).
+ * `meta.realtimeReceipt` is the signed receipt /api/realtime/session issued for a voice call; the server verifies it
+ * and logs the model inside it. It is opaque here and never stored in the browser.
+ */
+export async function saveSession(s: Omit<StoredSession, "id" | "createdAt">, useServer: boolean, meta: { realtimeReceipt?: string } = {}): Promise<string> {
   const { evaluation, seal } = splitSeal(s.evaluation);
   if (useServer) {
     try {
@@ -96,6 +100,7 @@ export async function saveSession(s: Omit<StoredSession, "id" | "createdAt">, us
           scenario: { id: s.scenario.id, title: s.scenario.title, industry: s.scenario.industry, difficulty: s.scenario.difficulty },
           evaluation: evaluation ?? undefined,
           seal,
+          realtimeReceipt: meta.realtimeReceipt,
         }),
       });
       if (res.ok) return (await res.json()).id as string;

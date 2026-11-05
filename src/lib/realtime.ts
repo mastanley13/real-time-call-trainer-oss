@@ -25,8 +25,7 @@ export const VOICE_ENGINE_LABELS: Record<VoiceEngine, string> = { openai: "OpenA
 export const REALTIME_VOICES = ["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"] as const;
 export type RealtimeVoice = (typeof REALTIME_VOICES)[number];
 
-/** gpt-realtime is marked deprecated on the models page; gpt-realtime-1.5 is the flagship audio-in, audio-out model. */
-export const DEFAULT_REALTIME_MODEL = "gpt-realtime-1.5";
+/* The Realtime model id per voice tier lives in src/lib/voiceModels.ts (server-only), not here. */
 export const DEFAULT_REALTIME_VOICE: RealtimeVoice = "marin";
 export const DEFAULT_TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe";
 
@@ -41,7 +40,6 @@ export function resolveRealtimeKey(env: Env): string | undefined {
 }
 
 export const realtimeKey = (): string | undefined => resolveRealtimeKey(process.env);
-export const realtimeModel = (): string => process.env.REALTIME_MODEL?.trim() || DEFAULT_REALTIME_MODEL;
 export const realtimeTranscribeModel = (): string => process.env.REALTIME_TRANSCRIBE_MODEL?.trim() || DEFAULT_TRANSCRIBE_MODEL;
 
 export const isRealtimeVoice = (v: unknown): v is RealtimeVoice => typeof v === "string" && (REALTIME_VOICES as readonly string[]).includes(v);
@@ -226,11 +224,14 @@ export function applyRealtimeEvent(asm: TurnAssembler, ev: RealtimeServerEvent, 
   }
 }
 
-/** Upstream status from client_secrets -> a message an operator can act on. Never includes the upstream body. */
-export function realtimeUpstreamMessage(status: number, model: string): string {
+/**
+ * Upstream status from client_secrets -> a message an operator can act on. Never includes the upstream body
+ * or the model id, because the trainee sees it. Env var names are fine; the provider name stays.
+ */
+export function realtimeUpstreamMessage(status: number): string {
   if (status === 401) return "OpenAI rejected the API key. Check OPENAI_API_KEY.";
   if (status === 403) return "This OpenAI key cannot use the Realtime API. Check the project's model access in the OpenAI dashboard.";
-  if (status === 404 || status === 400) return `OpenAI did not accept the voice session settings. Check that REALTIME_MODEL (${model}) and REALTIME_VOICE are valid.`;
+  if (status === 404 || status === 400) return "OpenAI did not accept the voice session settings. Check that REALTIME_MODEL_STANDARD, REALTIME_MODEL_PREMIUM and REALTIME_VOICE are valid.";
   if (status === 429) return "OpenAI rate-limited this key or it is out of quota. Check your plan and billing, then try again.";
   return "OpenAI's Realtime API had a problem starting the call. Try again in a minute, or switch to Text.";
 }

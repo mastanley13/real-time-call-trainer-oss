@@ -44,7 +44,8 @@ export async function POST(req: NextRequest) {
   const win = trailingWindow(body.transcript, MAX_TURNS, MAX_TRANSCRIPT_CHARS);
   try {
     const result = await coachTurn(body.scenario, win.turns, { allowCue: body.allowCue, recentCueKeys: body.recentCueKeys, lineOffset: body.lineOffset + win.dropped });
-    return NextResponse.json(result);
+    // The model id stays on the server; the rail says "AI coach".
+    return NextResponse.json({ ...result, model: undefined });
   } catch (error) {
     console.error("[/api/coach/turn] error:", error);
     return NextResponse.json({ error: "Failed to coach this turn" }, { status: 500 });

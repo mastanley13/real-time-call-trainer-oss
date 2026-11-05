@@ -29,7 +29,8 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    return NextResponse.json(await generatePersona(input));
+    // The model id stays on the server; the wizard says "Generated with AI".
+    return NextResponse.json({ ...(await generatePersona(input)), model: undefined });
   } catch (error) {
     console.error("[/api/persona/generate] error:", error);
     return NextResponse.json({ error: "Failed to generate persona" }, { status: 500 });

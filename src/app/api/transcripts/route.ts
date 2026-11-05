@@ -5,6 +5,7 @@ import { requireAuth, isDemoUser } from "@/lib/apiAuth";
 import { rateLimit, readJsonLimited } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { verifySeal } from "@/lib/gradeSeal";
+import { verifyMintReceipt } from "@/lib/mintReceipt";
 import { HAS_TRANSCRIPT } from "@/lib/usage";
 
 const Body = z.object({
@@ -22,6 +23,11 @@ const Body = z.object({
   /** The grade from /api/evaluate-call, kept only when `seal` proves the server produced it for this call. */
   evaluation: z.record(z.unknown()).optional(),
   seal: z.string().max(128).optional(),
+  /**
+   * Signed receipt from /api/realtime/session. The logged model comes from inside a receipt that verifies for
+   * this user; a model id sent by the client is never read (unknown keys such as `realtimeModel` are stripped).
+   */
+  realtimeReceipt: z.string().max(512).optional(),
 });
 
 const GradeFields = z.object({
@@ -77,6 +83,8 @@ export async function POST(req: NextRequest) {
       overallScore: ev ? Math.round(ev.overallScore) : null,
       grade: ev?.grade ?? null,
       goalAchieved: ev?.goalAchievement.achieved ?? null,
+      // Cost log only (not billing; engineTier is). Null for text calls and for any receipt that does not verify.
+      realtimeModel: verifyMintReceipt(body.realtimeReceipt, dbUser.id),
     };
     const created = fillExisting
       ? await prisma.trainerSession.update({ where: { id: body.callId }, data: fields })

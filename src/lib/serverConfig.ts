@@ -1,6 +1,6 @@
 import "server-only";
 import { safeEqual } from "./access";
-import { orderVoiceEngines, realtimeKey, realtimeModel } from "./realtime";
+import { orderVoiceEngines, realtimeKey } from "./realtime";
 import { stripeReady, stripeStatus } from "./stripe";
 
 /**
@@ -26,17 +26,10 @@ export const billingOn = (env: Record<string, string | undefined> = process.env)
 
 type Env = Record<string, string | undefined>;
 
-export const DEFAULT_STANDARD_REALTIME_MODEL = "gpt-realtime-mini";
-
-/**
- * The Realtime model for a session. Premium is the configured REALTIME_MODEL; standard is
- * REALTIME_MODEL_STANDARD (default gpt-realtime-mini). Without metering there is no entitlement to
- * check, so the configured model runs as before.
+/*
+ * The OpenAI Realtime model for a session is picked by voice tier (src/lib/voiceTier.ts mintVoiceTier,
+ * src/lib/voiceModels.ts resolveTierModel), in /api/realtime/session. It is never sent to the browser.
  */
-export function realtimeModelFor(engine: "premium" | "standard", env: Env = process.env): string {
-  if (engine === "premium") return realtimeModel();
-  return env.REALTIME_MODEL_STANDARD?.trim() || DEFAULT_STANDARD_REALTIME_MODEL;
-}
 
 /**
  * The ElevenLabs agent for a session. Premium is ELEVENLABS_AGENT_ID. Standard is
@@ -61,15 +54,16 @@ export function getCapabilities() {
     realtime,
     /** Voice engines in preference order: OpenAI first unless VOICE_ENGINE=elevenlabs. Empty means text only. */
     voiceEngines: orderVoiceEngines({ openai: realtime, elevenlabs }, process.env.VOICE_ENGINE),
-    ...(realtime ? { realtimeModel: realtimeModel() } : {}),
     llm: Boolean(llmKey()),
     database: Boolean(process.env.DATABASE_URL),
     /** Stripe test-mode billing: false when unset, in demo mode, or when the key is not an sk_test_ key. */
     billing: billingOn(),
-    /** Hosted build: Stripe is configured (billingActive). The header hides the model chip from non-admins. */
+    /** Hosted build: Stripe is configured (billingActive). The header hides the AI status chip from non-admins. */
     hosted: billingActive(),
-    /** Model used for the coach, grading, persona wizard and text caller. Shown in provenance chips. */
-    model: llmModel(),
+    /*
+     * No model ids here: this object is the public /api/config payload. LLM_MODEL and the Realtime models stay
+     * on the server (llmModel(), src/lib/voiceModels.ts). The UI says "AI" and names only the provider.
+     */
     /** "openai" when LLM_BASE_URL is unset or points at api.openai.com; the URL itself is never exposed. */
     provider: isOpenAiBaseUrl(llmBaseUrl()) ? ("openai" as const) : ("custom" as const),
   };

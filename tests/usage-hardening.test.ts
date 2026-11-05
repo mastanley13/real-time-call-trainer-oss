@@ -11,7 +11,9 @@ vi.mock("@/lib/apiAuth", async () => ({
 }));
 
 import { beginCall, chooseEngine, endCall, ensureAllowance, heartbeat, usageSummary } from "@/lib/usage";
-import { elevenLabsAgentFor, realtimeModelFor } from "@/lib/serverConfig";
+import { elevenLabsAgentFor } from "@/lib/serverConfig";
+import { mintVoiceTier } from "@/lib/voiceTier";
+import { resolveTierModel } from "@/lib/voiceModels";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { MAX_CALL_SECONDS } from "@/lib/usagePlan";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
@@ -75,13 +77,15 @@ describe("Premium voice limit", () => {
     expect(chooseEngine({ premiumVoice: true, allowance: a(60, 60) }, 60).engine).toBe("standard");
   });
 
-  it("the model and agent each engine maps to", () => {
-    vi.stubEnv("REALTIME_MODEL", "model-premium-test");
-    vi.stubEnv("REALTIME_MODEL_STANDARD", "");
-    expect(realtimeModelFor("premium")).toBe("model-premium-test");
-    expect(realtimeModelFor("standard")).toBe("gpt-realtime-mini");
-    vi.stubEnv("REALTIME_MODEL_STANDARD", "model-standard-test");
-    expect(realtimeModelFor("standard")).toBe("model-standard-test");
+  it("the model tier and agent each engine maps to", () => {
+    // Metered: the paid Premium engine keeps the Premium model; otherwise the org's voice tier decides.
+    expect(mintVoiceTier("standard", { metered: true, engine: "premium" })).toBe("premium");
+    expect(mintVoiceTier("standard", { metered: true, engine: "standard" })).toBe("standard");
+    expect(mintVoiceTier("premium", { metered: true, engine: "standard" })).toBe("premium");
+    // Unmetered calls always report the premium engine; that alone never means Premium.
+    expect(mintVoiceTier("standard", { metered: false, engine: "premium" })).toBe("standard");
+    expect(resolveTierModel("premium", { REALTIME_MODEL_PREMIUM: "model-premium-test" })).toBe("model-premium-test");
+    expect(resolveTierModel("standard", { REALTIME_MODEL_STANDARD: "model-standard-test" })).toBe("model-standard-test");
     expect(elevenLabsAgentFor("standard", { ELEVENLABS_AGENT_ID: "main" })).toEqual({ agentId: "main", standardAvailable: false });
     expect(elevenLabsAgentFor("standard", { ELEVENLABS_AGENT_ID: "main", ELEVENLABS_AGENT_ID_STANDARD: "std" })).toEqual({ agentId: "std", standardAvailable: true });
     expect(elevenLabsAgentFor("premium", { ELEVENLABS_AGENT_ID: "main", ELEVENLABS_AGENT_ID_STANDARD: "std" }).agentId).toBe("main");
@@ -92,7 +96,8 @@ describe("Premium voice limit", () => {
     beforeEach(() => {
       bodies = [];
       vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
-      vi.stubEnv("REALTIME_MODEL", "model-premium-test");
+      vi.stubEnv("REALTIME_MODEL", "");
+      vi.stubEnv("REALTIME_MODEL_PREMIUM", "model-premium-test");
       vi.stubEnv("REALTIME_MODEL_STANDARD", "model-standard-test");
       vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
         bodies.push(JSON.parse(init.body as string));
@@ -117,7 +122,8 @@ describe("Premium voice limit", () => {
       vi.setSystemTime(at(310));
       const second = await (await mint()).json();
       expect(bodies[1].session.model).toBe("model-standard-test");
-      expect(second.model).toBe("model-standard-test");
+      // The model id never goes to the browser.
+      expect(second).not.toHaveProperty("model");
       await heartbeat("u-1", second.callId, "connected", at(310));
       await endCall("u-1", second.callId, "user_hangup", at(310 + 180));
       // Standard minutes count against the plan but not against the Premium share.
@@ -145,11 +151,25 @@ describe("Premium voice limit", () => {
       expect((await begin("u-2", 3000)).engine).toBe("standard");
     });
 
-    it("without metering (no database) the configured model runs as before", async () => {
+    it("without metering (no database) calls run on the Standard voice tier", async () => {
       vi.stubEnv("DATABASE_URL", "");
       const body = await (await mint()).json();
-      expect(bodies[0].session.model).toBe("model-premium-test");
+      expect(bodies[0].session.model).toBe("model-standard-test");
       expect(body.callId).toBeUndefined();
+    });
+
+    it("a comped Premium org gets the Premium model on the standard engine; billing stays standard", async () => {
+      // fakePrisma ignores `select`, so the org's voice fields ride on the user row for orgVoiceTierForUser.
+      addUser("u-1", { planTier: "pro", premiumVoice: false, organization: { voiceModelTier: "premium", voiceModelComped: true } });
+      const minted = await (await mint()).json();
+      expect(bodies[0].session.model).toBe("model-premium-test");
+      expect(session(minted.callId).engineTier).toBe("standard");
+    });
+
+    it("a stored Premium tier without the comped flag stays on the standard model", async () => {
+      addUser("u-1", { planTier: "pro", premiumVoice: false, organization: { voiceModelTier: "premium", voiceModelComped: false } });
+      await (await mint()).json();
+      expect(bodies[0].session.model).toBe("model-standard-test");
     });
   });
 

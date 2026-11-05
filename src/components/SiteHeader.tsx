@@ -81,8 +81,8 @@ export default function SiteHeader() {
         <div className="ml-auto flex items-center gap-1.5">
           {capabilities && showModelChip(capabilities, user) && (
             <Link href="/settings/models" className="chip-model hidden transition-colors hover:border-ink-muted/50 hover:text-ink lg:inline-flex"
-              title="Model used for the coach, grading and persona wizard. Open model settings.">
-              <span className="lamp lamp-ok !h-1.5 !w-1.5" aria-hidden /> {capabilities.model}
+              title="AI runs the coach, grading and persona wizard. Open model settings.">
+              <span className="lamp lamp-ok !h-1.5 !w-1.5" aria-hidden /> AI coach
               <span className="sr-only">, open model settings</span>
             </Link>
           )}

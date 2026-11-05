@@ -25,6 +25,8 @@ interface Handlers {
   onEnded: () => void;
   onError: (msg: string) => void;
   onView: (v: CallView) => void;
+  /** The server's signed mint receipt, handed back on save so it can log the model it minted. Opaque here. */
+  onReceipt: (receipt: string) => void;
 }
 
 const EXPIRED = "The voice session expired before it connected. Start the call again.";
@@ -80,7 +82,7 @@ class RealtimeCall {
     mic.getAudioTracks().forEach((t) => (t.enabled = !this.view.muted));
     this.set({ phase: "connecting" });
 
-    let secret: { clientSecret?: string; expiresAt?: number; message?: string; callId?: string };
+    let secret: { clientSecret?: string; expiresAt?: number; message?: string; callId?: string; receipt?: unknown };
     try {
       const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario }) });
       secret = await res.json().catch(() => ({}));
@@ -89,6 +91,7 @@ class RealtimeCall {
       return this.fail("Could not reach the server to start the voice call. Check your connection, then try again.");
     }
     if (this.closed) return;
+    if (typeof secret.receipt === "string") this.h.onReceipt(secret.receipt);
     this.meter = new CallMeter(secret.callId, {
       // The server has already stopped and billed the call; this ends the client side.
       onStop: (m) => this.fail(m, "user_hangup"),
@@ -272,21 +275,22 @@ class RealtimeCall {
 }
 
 /** Voice session on the OpenAI Realtime API. Drop-in for the ElevenLabs VoiceSession. */
-export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, registerEnd, render }: {
+export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onReceipt, registerEnd, render }: {
   scenario: Scenario;
   active: boolean;
   grading: boolean;
   onTurn: (t: StoredTurn) => void;
   onEnded: () => void;
   onError: (msg: string) => void;
+  onReceipt?: (receipt: string) => void;
   registerEnd: (fn: () => void) => void;
   render: (v: VoiceRender) => React.ReactNode;
 }) {
   const [view, setView] = useState<CallView>({ phase: "mic", speaking: false, muted: false });
   const callRef = useRef<RealtimeCall | null>(null);
   // Latest callbacks without restarting the call when the parent re-renders.
-  const cb = useRef({ onTurn, onEnded, onError });
-  useEffect(() => { cb.current = { onTurn, onEnded, onError }; });
+  const cb = useRef({ onTurn, onEnded, onError, onReceipt });
+  useEffect(() => { cb.current = { onTurn, onEnded, onError, onReceipt }; });
 
   useEffect(() => {
     if (!active) return;
@@ -295,6 +299,7 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
       onEnded: () => cb.current.onEnded(),
       onError: (m) => cb.current.onError(m),
       onView: (v) => { if (callRef.current === call) setView(v); },
+      onReceipt: (r) => cb.current.onReceipt?.(r),
     });
     callRef.current = call;
     setView({ phase: "mic", speaking: false, muted: false });

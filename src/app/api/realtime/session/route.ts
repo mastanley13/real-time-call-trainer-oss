@@ -3,10 +3,13 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
-import { meteringEnabled, realtimeModelFor } from "@/lib/serverConfig";
+import { meteringEnabled } from "@/lib/serverConfig";
 import { beginCall, endCall, type VoiceEngine } from "@/lib/usage";
 import { capReached, dailySessionLimit, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
 import { realtimeKey, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
+import { mintVoiceTier } from "@/lib/voiceTier";
+import { orgVoiceTierForUser, voiceModelFor } from "@/lib/voiceTierServer";
+import { signMintReceipt } from "@/lib/mintReceipt";
 
 const Body = z.object({ scenario: ScenarioSchema });
 
@@ -17,6 +20,10 @@ const SECRET_TTL_SEC = 600;
  * Mints a short-lived OpenAI Realtime client secret (ek_...) for one practice call.
  * The browser uses it to open a WebRTC session directly with OpenAI; the API key never leaves the server.
  * Docs: https://developers.openai.com/api/reference/resources/realtime/subresources/client_secrets/methods/create
+ *
+ * The model is picked here, on the server, from the organization's voice tier (Standard or Premium, comped gate,
+ * src/lib/voiceTier.ts) and is never sent to the browser. `receipt` (src/lib/mintReceipt.ts) is signed proof of
+ * that model; the client hands it back when it saves the session so the server can log the model it really minted.
  */
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
@@ -69,7 +76,11 @@ export async function POST(req: NextRequest) {
     maxSeconds = begun.maxSeconds;
   }
 
-  const model = realtimeModelFor(engine);
+  // Voice quality, read from the database on every call; the client never chooses it. A comped org on Premium gets
+  // the Premium model. A metered call on the paid Premium Voice engine keeps the Premium model it pays for; the
+  // engine, its minute caps and engineTier are unchanged by the voice tier.
+  const tier = mintVoiceTier(await orgVoiceTierForUser(auth.id), { metered: Boolean(callId), engine });
+  const model = voiceModelFor(tier);
   const voice = realtimeVoice(scenario.aiPersona.realtimeVoice);
   const session = {
     type: "realtime",
@@ -104,14 +115,19 @@ export async function POST(req: NextRequest) {
       console.error("[realtime/session] upstream status", res.status);
       if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
       return NextResponse.json(
-        { error: "realtime_upstream_error", message: realtimeUpstreamMessage(res.status, model) },
+        { error: "realtime_upstream_error", message: realtimeUpstreamMessage(res.status) },
         { status: res.status === 429 ? 429 : 502 },
       );
     }
     const data = (await res.json().catch(() => null)) as { value?: unknown; expires_at?: unknown } | null;
     if (!data || typeof data.value !== "string" || !data.value) throw new Error("no client secret in response");
     const expiresAt = typeof data.expires_at === "number" ? data.expires_at : Math.floor(Date.now() / 1000) + SECRET_TTL_SEC;
-    return NextResponse.json({ clientSecret: data.value, expiresAt, model, voice, ...(callId ? { callId, maxSeconds } : {}) }, { headers: { "Cache-Control": "no-store" } });
+    // No model id in the response: the browser does not need it. The receipt carries it, signed and opaque to the client.
+    const receipt = signMintReceipt(auth.id, model);
+    return NextResponse.json(
+      { clientSecret: data.value, expiresAt, voice, ...(callId ? { callId, maxSeconds } : {}), ...(receipt ? { receipt } : {}) },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (e) {
     console.error("[realtime/session]", e instanceof Error ? e.message : "unknown error");
     if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);

@@ -215,8 +215,7 @@ export default function DebriefPage() {
                     <p className="flex items-center gap-2 text-xs">
                       <span className={`lamp ${heuristic ? "lamp-caution" : "lamp-ok"}`} aria-hidden />
                       {heuristic ? <span><strong>Estimate.</strong> Rules-based grade, not AI-graded.</span>
-                        : ev.model ? <span>Graded by <span className="mono">{ev.model}</span>{gradedOn}</span>
-                        : <span>Graded by AI{gradedOn} <span className="text-ink-muted">(model not recorded)</span></span>}
+                        : <span>Graded by AI{gradedOn}</span>}
                     </p>
                     {regradeButton}
                     {aiGradeLocked && capabilities?.llm && (
@@ -249,7 +248,7 @@ export default function DebriefPage() {
                 <div className="panel p-4">
                   <p className="label">Live coach</p>
                   <p className="text-sm"><span className="mono">{cues.length}</span> cues · <span className="mono">{cues.filter((c) => c.used).length}</span> used · {view.coach.mode} mode</p>
-                  <p className="mt-1 font-mono text-[11px] text-ink-muted">{view.coach.source === "llm" ? `${view.coach.model ?? "AI"}` : "rules-based"}{view.coach.p50Ms != null ? ` · p50 ${(view.coach.p50Ms / 1000).toFixed(1)}s` : ""}</p>
+                  <p className="mt-1 font-mono text-[11px] text-ink-muted">{view.coach.source === "llm" ? "AI coach" : "rules-based"}{view.coach.p50Ms != null ? ` · p50 ${(view.coach.p50Ms / 1000).toFixed(1)}s` : ""}</p>
                 </div>
               )}
 

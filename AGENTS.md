@@ -58,7 +58,7 @@ src/app/                          App Router pages and API routes
     realtime/session              Mints a short-lived OpenAI Realtime client secret per call (key stays server-side)
     realtime/sdp                  Relays the browser's WebRTC offer to OpenAI, so the CSP stays same-origin
     llm/check                     One-token connection check for the Models page
-    team/                         Team overview, roster and assignments (org-scoped; sample team in demo mode)
+    team/                         Team overview, roster and assignments (org-scoped; sample team in demo mode); team/voice sets Standard or Premium voice quality (comped orgs only)
     transcripts                   Saved sessions; POST stores a score only with a valid grade seal
     transcripts/[id]              GET one session; PATCH re-grades the stored transcript (canRegrade, capped by gradable)
     sessions/[sessionId]/notes    Supervisor notes (Postgres, org-scoped); PUT with expectedNotesAt gets 409 conflict on a stale save

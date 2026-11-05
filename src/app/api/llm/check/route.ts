@@ -19,14 +19,15 @@ function limited(retryAfterMs: number, what: string) {
   );
 }
 
+/** Built field by field so the model id (or anything else) can never ride along into the response. */
 function result(r: Omit<LlmCheckResult, "hint">, failure?: CheckFailure) {
-  return NextResponse.json({ ...r, hint: checkHint({ ok: r.ok, status: r.status, model: r.model, failure }) } satisfies LlmCheckResult);
+  return NextResponse.json({ ok: r.ok, latencyMs: r.latencyMs, status: r.status, hint: checkHint({ ok: r.ok, status: r.status, failure }) } satisfies LlmCheckResult);
 }
 
 /**
  * Makes one minimal chat completion (max_tokens 1) with the configured key and
  * model and reports what happened in plain language. The provider's error body
- * is never read or echoed, and neither the key nor the endpoint URL is returned.
+ * is never read or echoed, and neither the key, the endpoint URL nor the model id is returned.
  */
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
@@ -39,7 +40,7 @@ export async function POST(req: NextRequest) {
 
   const model = llmModel();
   const key = llmKey();
-  if (!key) return result({ ok: false, latencyMs: null, model, status: null }, "no_key");
+  if (!key) return result({ ok: false, latencyMs: null, status: null }, "no_key");
 
   const started = Date.now();
   try {
@@ -54,16 +55,16 @@ export async function POST(req: NextRequest) {
     if (!res.ok) {
       await res.body?.cancel().catch(() => {});
       console.warn("[llm/check] provider status", res.status);
-      return result({ ok: false, latencyMs, model, status: res.status }, "http");
+      return result({ ok: false, latencyMs, status: res.status }, "http");
     }
     const data = await res.json().catch(() => null);
     const shaped = Array.isArray((data as { choices?: unknown } | null)?.choices);
-    return result({ ok: shaped, latencyMs, model, status: res.status }, shaped ? undefined : "bad_response");
+    return result({ ok: shaped, latencyMs, status: res.status }, shaped ? undefined : "bad_response");
   } catch (e) {
     // AbortSignal.timeout rejects with a DOMException named TimeoutError; read the name without relying on instanceof.
     const name = (e as { name?: unknown } | null)?.name;
     const timedOut = name === "TimeoutError" || name === "AbortError";
     console.warn("[llm/check]", timedOut ? "timeout" : "network error");
-    return result({ ok: false, latencyMs: null, model, status: null }, timedOut ? "timeout" : "network");
+    return result({ ok: false, latencyMs: null, status: null }, timedOut ? "timeout" : "network");
   }
 }
