@@ -34,13 +34,17 @@ interface Handlers {
   onVoiceInfo: (info: VoiceInfo) => void;
 }
 
-/** `trial`: this is the organization's one Premium trial call (up to 5 minutes). Labels only, no model id. */
-export interface VoiceInfo { tier: "premium" | "standard"; nextCallStandard: boolean; trial: boolean }
+/**
+ * `trial`: this is the organization's one Premium trial call (up to 5 minutes). `maxSeconds`: the server's deadline
+ * for THIS call, when it said. Labels and numbers only, no model id.
+ */
+export interface VoiceInfo { tier: "premium" | "standard"; nextCallStandard: boolean; trial: boolean; maxSeconds?: number }
 
 /** Reads the tier label from a mint answer (realtime session or ElevenLabs token). Null when the server did not say. */
-export function voiceInfoFrom(data: { voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown } | null | undefined): VoiceInfo | null {
+export function voiceInfoFrom(data: { voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown; maxSeconds?: unknown } | null | undefined): VoiceInfo | null {
   if (data?.voiceTier !== "premium" && data?.voiceTier !== "standard") return null;
-  return { tier: data.voiceTier, nextCallStandard: data.nextCallStandard === true, trial: data.voiceTier === "premium" && data.voiceTrial === true };
+  const max = typeof data.maxSeconds === "number" && Number.isFinite(data.maxSeconds) && data.maxSeconds > 0 ? Math.floor(data.maxSeconds) : undefined;
+  return { tier: data.voiceTier, nextCallStandard: data.nextCallStandard === true, trial: data.voiceTier === "premium" && data.voiceTrial === true, ...(max ? { maxSeconds: max } : {}) };
 }
 
 const EXPIRED = "The voice session expired before it connected. Start the call again.";
@@ -74,7 +78,7 @@ class RealtimeCall {
   /** Reports connect, heartbeats and the end to the server, which meters the call. A no-op without a callId. */
   private meter?: CallMeter;
 
-  constructor(private scenario: Scenario, private h: Handlers) {}
+  constructor(private scenario: Scenario, private h: Handlers, private voiceTier?: "premium" | "standard") {}
 
   private set(p: Partial<CallView>) {
     this.view = { ...this.view, ...p };
@@ -96,9 +100,10 @@ class RealtimeCall {
     mic.getAudioTracks().forEach((t) => (t.enabled = !this.view.muted));
     this.set({ phase: "connecting" });
 
-    let secret: { clientSecret?: string; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown };
+    let secret: { clientSecret?: string; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown; maxSeconds?: unknown };
     try {
-      const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario }) });
+      // The rep's Standard or Premium pick is a request; the server rechecks entitlement and decides.
+      const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario, ...(this.voiceTier ? { voiceTier: this.voiceTier } : {}) }) });
       secret = await res.json().catch(() => ({}));
       if (!res.ok || !secret.clientSecret) return this.fail(secret.message || "Could not start the voice call. Try again, or switch to Text.");
     } catch {
@@ -297,8 +302,10 @@ class RealtimeCall {
 }
 
 /** Voice session on the OpenAI Realtime API. Drop-in for the ElevenLabs VoiceSession. */
-export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onMinted, onVoiceInfo, registerEnd, render }: {
+export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onMinted, onVoiceInfo, registerEnd, render, voiceTier }: {
   scenario: Scenario;
+  /** The setup's Standard or Premium pick for this call, sent as a request. Read when the call starts. */
+  voiceTier?: "premium" | "standard";
   active: boolean;
   grading: boolean;
   onTurn: (t: StoredTurn) => void;
@@ -314,6 +321,9 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   // Latest callbacks without restarting the call when the parent re-renders.
   const cb = useRef({ onTurn, onEnded, onError, onMinted, onVoiceInfo });
   useEffect(() => { cb.current = { onTurn, onEnded, onError, onMinted, onVoiceInfo }; });
+  // The pick at the moment the call starts; changing it later never restarts or switches a running call.
+  const tierRef = useRef(voiceTier);
+  useEffect(() => { tierRef.current = voiceTier; });
 
   useEffect(() => {
     if (!active) return;
@@ -324,7 +334,7 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
       onView: (v) => { if (callRef.current === call) setView(v); },
       onMinted: (c) => cb.current.onMinted?.(c),
       onVoiceInfo: (i) => cb.current.onVoiceInfo?.(i),
-    });
+    }, tierRef.current);
     callRef.current = call;
     setView({ phase: "mic", speaking: false, muted: false });
     void call.start();

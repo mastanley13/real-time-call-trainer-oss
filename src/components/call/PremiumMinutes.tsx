@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect } from "react";
 import { Lock } from "lucide-react";
 import { ADD_PREMIUM_LABEL, ASK_ADMIN_PREMIUM, BILLING_PATH, premiumLeftLabel, premiumSetupState, type PremiumSnapshot } from "@/lib/billingUi";
-import { premiumDisclosure, premiumNudge } from "@/lib/pricing";
+import { PREMIUM_CALL_LENGTH_NOTE, premiumDisclosure, premiumNudge } from "@/lib/pricing";
 import { trackPremiumUpsell } from "@/lib/premiumEventTypes";
 
 /**
@@ -26,6 +26,8 @@ export default function PremiumMinutes({ premium }: { premium: PremiumSnapshot |
       <div className="text-sm" role="status">
         <p className="mono text-ink-soft">{premiumLeftLabel(premium)}</p>
         <p className="mt-1 text-xs text-ink-muted">{premiumDisclosure(plan)}</p>
+        {/* Below the generic copy: a Premium call is set to end when the Premium minutes run out. */}
+        <p className="mt-1 text-xs text-ink-muted">{PREMIUM_CALL_LENGTH_NOTE}</p>
       </div>
     );
   }

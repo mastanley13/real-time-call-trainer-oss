@@ -3,7 +3,7 @@ import type { Prisma, TrainerSession, UsageAllowance } from "@prisma/client";
 import { prisma } from "./db";
 import { billingActive, premiumOnSale, premiumTrialSampleOn } from "./serverConfig";
 import { storedPlanEntitled } from "./subscriptionStatus";
-import { premiumMinutesCapFor, premiumMinutesLeft } from "./premiumVoice";
+import { premiumMinutesCapFor, premiumMinutesLeft, premiumSeatsForUnits } from "./premiumVoice";
 import { trialDeadlineBinds, trialMaxSeconds, trialSampleEligible } from "./premiumTrial";
 import {
   CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, MAX_CONNECT_LAG_SECONDS, MAX_RESERVE_MINUTES,
@@ -125,11 +125,12 @@ export async function ensureAllowance(db: Tx, subject: Subject, now: Date, depth
     anchor = user.usageAnchorAt;
     existing = await db.usageAllowance.findUnique({ where: { userId: subject.userId } });
   } else {
-    const loadedOrg = await db.organization.findUniqueOrThrow({ where: { id: subject.organizationId }, select: { planTier: true, subscriptionStatus: true, stripeSubscriptionId: true, pastDueSince: true, seatCount: true, createdAt: true, ...PREMIUM_FIELDS } });
+    const loadedOrg = await db.organization.findUniqueOrThrow({ where: { id: subject.organizationId }, select: { planTier: true, subscriptionStatus: true, stripeSubscriptionId: true, pastDueSince: true, seatCount: true, seatCountAtRenewal: true, createdAt: true, ...PREMIUM_FIELDS } });
     const org = await stampPastDue(db, "organization", subject.organizationId, loadedOrg, now);
     plan = org.planTier === "team" && storedPlanEntitled(org, now) && billingActive() ? "team" : "free";
     cap = capFor(plan, org.seatCount);
-    premiumCap = premiumOnSale() ? premiumMinutesCapFor(plan, org, now, org.seatCount, cap) : 0;
+    // A seat decrease pending for renewal keeps the Premium units paid for this period (premiumSeatsForUnits).
+    premiumCap = premiumOnSale() ? premiumMinutesCapFor(plan, org, now, premiumSeatsForUnits(org.seatCount, org.seatCountAtRenewal, org.premiumVoiceQuantity), cap) : 0;
     anchor = org.createdAt;
     existing = await db.usageAllowance.findUnique({ where: { organizationId: subject.organizationId } });
   }
@@ -220,7 +221,7 @@ export async function resolveAllowance(db: Tx, userId: string, now: Date): Promi
     allowance,
     pooled,
     plan,
-    // Premium follows the stricter add-on rule ensureAllowance just applied from the database (active or trialing, add-on
+    // Premium follows the stricter add-on rule ensureAllowance just applied from the database (active only, add-on
     // quantity above 0, period end in the future): no Premium minutes this period means no Premium for the next call,
     // even while the base plan is still inside its past_due grace or the stored flag is still true.
     premiumVoice: allowance.premiumMinutesCap > 0,
@@ -398,7 +399,7 @@ const RESERVE_ATTEMPTS = 5;
  * minutes), its maxSeconds is min(the existing deadline, 300) and it is marked premiumTrial so the heartbeat enforces
  * that deadline through the normal max_duration end.
  */
-export async function beginCall(userId: string, scenario: ScenarioInfo, now = new Date(), opts: { standardAvailable?: boolean; compedPremium?: boolean; offerTrialSample?: boolean } = {}): Promise<BeginResult> {
+export async function beginCall(userId: string, scenario: ScenarioInfo, now = new Date(), opts: { standardAvailable?: boolean; compedPremium?: boolean; offerTrialSample?: boolean; preferStandard?: boolean } = {}): Promise<BeginResult> {
   return runMetered(async (tx) => {
     await settleStale(tx, userId, now);
     const user = await tx.user.findUnique({ where: { id: userId }, select: { organizationId: true, voiceBlockedUntil: true } });
@@ -427,10 +428,12 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
       // Reservations are whole minutes and round up: a call holds at least one so a second start cannot take the same
       // last minutes, even if that holds up to half a minute more than is left.
       const wanted = Math.min(Math.max(1, Math.ceil(r.available)), MAX_RESERVE_MINUTES);
-      const comped = opts.compedPremium === true;
+      // The rep chose Standard for this call (Prism finding 1): no paid Premium minutes, no comped override, no trial.
+      const chosenStandard = opts.preferStandard === true;
+      const comped = opts.compedPremium === true && !chosenStandard;
       // Comped overrides billing: the call runs the Premium model (the route decides that) on the standard billing
       // engine, holds no paid Premium minutes and keeps the normal reservation. engineTier stays the billing engine.
-      const { engine, premiumMinutes } = comped ? { engine: "standard" as const, premiumMinutes: 0 } : chooseEngine(r, wanted);
+      const { engine, premiumMinutes } = comped || chosenStandard ? { engine: "standard" as const, premiumMinutes: 0 } : chooseEngine(r, wanted);
       // A paid Premium call may use only the Premium minutes it holds, so that share is its reservation (and maxSeconds):
       // min(the normal call allowance, the Premium minutes left).
       const reserve = engine === "premium" ? premiumMinutes : wanted;
@@ -443,9 +446,12 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
 
       // The organization's one Premium trial call, claimed atomically once the reservation is held. Only a standard
       // engine call that is neither paid nor comped Premium can be the trial; it holds no paid Premium minutes.
-      const trial = opts.offerTrialSample === true && engine === "standard" && premiumMinutes === 0 && !comped
+      const trial = opts.offerTrialSample === true && !chosenStandard && engine === "standard" && premiumMinutes === 0 && !comped
         ? await claimTrialSample(tx, userId, user.organizationId, r, comped, now) : false;
-      const premium = trial ? trialMintInfo(r) : premiumMintInfo(r, engine, premiumMinutes, comped);
+      // A chosen Standard call is not a fallback: no fallback reason and no "next call Standard" notice.
+      const premium: PremiumMintInfo = chosenStandard
+        ? { source: null, cap: r.allowance.premiumMinutesCap, leftAfter: premiumMinutesLeft(r.allowance), fallback: null, nextCallStandard: false }
+        : trial ? trialMintInfo(r) : premiumMintInfo(r, engine, premiumMinutes, comped);
 
       const session = await tx.trainerSession.create({
         data: {

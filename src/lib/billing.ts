@@ -513,18 +513,25 @@ interface Applied {
   premiumEvents?: PremiumEvent[];
   /** The add-on quantity drifted from the seats (a portal seat change): bring it back in step after commit. */
   addonSync?: AddonSync;
+  /** Whose subscription addonSync is for. A Team decrease is moved to renewal through the app's own schedule. */
+  addonSyncSubject?: Subject;
 }
 
 export interface AddonSync { subscriptionId: string; itemId: string; from: number; quantity: number; direction: "up" | "down" }
 
 /**
  * Seats changed outside the app (the Billing Portal changes only the base item), so the Premium add-on quantity no longer
- * equals the seats. Returns the one item update that restores quantity = seats (Pro: 1), or null when nothing should be
- * written: no add-on, already in step, not active or trialing, a schedule owns the next quantities (a removal or seat
- * decrease made in the app), or the subscription is ending at period end.
- * - up: more seats. Prorated on the next invoice (create_prorations), nothing charged at once; the pool grows when it lands.
- * - down: fewer seats. No proration and no credit (the period is paid), so in effect it bills from renewal. Entitlement
- *   already uses min(add-on quantity, seats), so the pool shrinks with the seats, never later.
+ * equals the seats. Returns the one change that restores quantity = seats (Pro: 1), or null when nothing should be
+ * written: no add-on, already in step, not `active` (the Premium rule: no paid Premium in a trial or past_due), a
+ * schedule owns the next quantities (a removal or seat decrease made in the app, or a portal decrease already moved to
+ * renewal), or the subscription is ending at period end.
+ * - up: more seats. Prorated on the next invoice (create_prorations); the pool grows when it lands.
+ * - down: fewer seats. Spec section 7 line 65: "Removed seats lower qty at renewal". The Team keeps the Premium units it
+ *   paid for this period until current_period_end (seatCountAtRenewal marks the pending drop, see premiumSeatsForUnits),
+ *   and the add-on quantity is lowered for the NEXT period through the app's own subscription schedule (afterApplied,
+ *   premiumAddon.scheduleAddonSeatsAtRenewal), with the same leases, exact-original checks and refusal to touch any
+ *   other schedule as an in-app decrease. Only when that cannot be done safely (terms a schedule would drop, or a schedule
+ *   already there) does it fall back to the earlier behavior: the add-on drops now, without proration or credit.
  */
 export function addonQuantitySync(live: LiveSubscription): AddonSync | null {
   if (!(PREMIUM_STATUSES as readonly string[]).includes(live.status) || live.schedule || live.cancel_at_period_end) return null;
@@ -549,7 +556,7 @@ const premiumStatus = (s: string | null | undefined): boolean => (PREMIUM_STATUS
 
 /**
  * premium_added or premium_removed when Premium flips: the add-on flag together with a status that allows Premium
- * (active or trialing). Nothing when it stays the same.
+ * (`active` only, PREMIUM_STATUSES). Nothing when it stays the same.
  */
 function premiumFlip(subject: Subject, plan: PlanTier, before: boolean, after: boolean, units: number, status: string): PremiumEvent[] {
   if (before === after) return [];
@@ -588,7 +595,7 @@ async function applyEntitlement(
   const clearSuspension = { premiumSuspendedAt: null, premiumSuspendedInvoiceId: null };
   let from: PlanTier;
   if (subject.kind === "organization") {
-    const org = await tx.organization.findUniqueOrThrow({ where: { id: subject.id }, select: { planTier: true, pastDueSince: true, premiumVoice: true, seatCountAtRenewal: true, subscriptionStatus: true, stripeSubscriptionId: true, premiumSuspendedAt: true } });
+    const org = await tx.organization.findUniqueOrThrow({ where: { id: subject.id }, select: { planTier: true, pastDueSince: true, premiumVoice: true, seatCountAtRenewal: true, subscriptionStatus: true, stripeSubscriptionId: true, premiumSuspendedAt: true, subscriptionPeriodEnd: true } });
     const ends = suspensionEnds(org.stripeSubscriptionId);
     const suspendedAfter = !!org.premiumSuspendedAt && !ends;
     from = org.planTier === "team" ? "team" : "free";
@@ -596,13 +603,17 @@ async function applyEntitlement(
     const seats = plan === "team" ? next.seats : 1;
     const premium = plan === "team" && next.premium;
     const qty = premium ? Math.max(0, next.premiumQuantity ?? seats) : 0;
+    // A pending seat decrease is done once it has landed in full (the seats AND the add-on are at the target), and it
+    // never outlives the period it was made in: once Stripe reports a later period end, the renewal has happened.
+    const landed = org.seatCountAtRenewal === seats && qty <= seats;
+    const renewed = !!org.subscriptionPeriodEnd && !!periodEnd && periodEnd.getTime() > org.subscriptionPeriodEnd.getTime();
     await tx.organization.update({
       where: { id: subject.id },
       data: {
         planTier: plan, seatCount: seats, premiumVoice: premium, premiumVoiceQuantity: qty, subscriptionPeriodEnd: periodEnd,
         // A scheduled removal is done once the add-on has left; a scheduled seat decrease is done once it has landed.
         ...(premium ? {} : { premiumVoiceRemoveAt: null }),
-        ...(plan !== "team" || org.seatCountAtRenewal === seats ? { seatCountAtRenewal: null } : {}),
+        ...(plan !== "team" || landed || renewed ? { seatCountAtRenewal: null } : {}),
         ...(ends ? clearSuspension : {}),
         pastDueSince: nextPastDueSince(stripe.status, org.pastDueSince, now), ...keepIds,
       },
@@ -712,7 +723,15 @@ async function reconcile(
   // Keep the add-on quantity equal to the seats after a seat change made outside the app. Only while Premium is on sale:
   // with the sale off no paid Premium is used, and nothing is written to Stripe for it.
   const sync = next.premium && premiumOnSale() ? addonQuantitySync(live) : null;
-  return sync ? { ...applied, addonSync: sync } : applied;
+  if (!sync) return applied;
+  if (sync.direction === "down" && subject.kind === "organization") {
+    // A portal seat decrease: the add-on drops at renewal, not now. Until then the Team keeps the Premium units it paid
+    // for this period (seatCountAtRenewal marks it; premiumSeatsForUnits reads it), then the next period gets the target.
+    // Repeated deliveries write the same value, and the mark is cleared at the renewal, so it never extends a period.
+    await tx.organization.update({ where: { id: subject.id }, data: { seatCountAtRenewal: sync.quantity } });
+    await ensureAllowance(tx, { organizationId: subject.id }, now);
+  }
+  return { ...applied, addonSync: sync, addonSyncSubject: subject };
 }
 
 const SubRef = z.union([z.string(), z.object({ id: z.string() })]).nullish();
@@ -756,7 +775,7 @@ async function writeSuspension(tx: Tx, s: Subject, where: { premiumSuspendedInvo
  *   current subscription this is, so the NEXT call is Standard even while Stripe still reports `active`. The base plan
  *   keeps its past_due grace; the add-on flag and quantity stay as the items say.
  * - paid clears that suspension ONLY when the paid invoice is the one that failed, the invoice says `paid` (when it says
- *   anything), and the subscription as Stripe has it now is active or trialing. No other event clears it: an unrelated
+ *   anything), and the subscription as Stripe has it now is active (the Premium rule). No other event clears it: an unrelated
  *   customer.subscription.updated reporting `active` leaves Premium suspended (see applyEntitlement).
  * - stale_failure: a payment_failed whose invoice Stripe now reports paid or void (or no longer has). It was delivered
  *   after the recovery, so it changes nothing beyond the usual subscription reconcile; it never suspends.
@@ -843,12 +862,20 @@ export interface StripeDeps {
    * the invoice was already paid suspends nothing. Optional: without it the event body's own status is used.
    */
   retrieveInvoice?(id: string): Promise<unknown>;
+  /**
+   * Moves a Team's add-on quantity drop to renewal through the app's own subscription schedule. "refused" when that
+   * cannot be done safely (a schedule already there, terms a schedule would drop); then the drop happens now instead.
+   * Optional: without it every decrease is applied at once.
+   */
+  scheduleAddonDecrease?(subject: { kind: "organization"; id: string }, subscriptionId: string, seats: number): Promise<"scheduled" | "refused">;
 }
 const liveDeps: StripeDeps = {
   retrieveSubscription: (id) => stripeApi.retrieveSubscription(id),
   cancelSubscription: (id) => stripeApi.cancelSubscription(id),
   updateSubscription: (id, params, key) => stripeApi.updateSubscription(id, params, key),
   retrieveInvoice: (id) => stripeApi.retrieveInvoice(id),
+  // Loaded when used: premiumAddon imports this module, so a static import would be circular.
+  scheduleAddonDecrease: async (subject, subscriptionId, seats) => (await import("./premiumAddon")).scheduleAddonSeatsAtRenewal(subject, subscriptionId, seats),
 };
 
 /** What a failed invoice is now: "open" (still owed), "settled" (paid or void: nothing owed), or "gone". */
@@ -970,8 +997,24 @@ async function afterApplied(applied: Applied | null, deps: StripeDeps, trigger: 
       throw e;
     }
   }
-  if (applied?.addonSync && deps.updateSubscription) {
-    const req = addonSyncRequest(applied.addonSync, trigger);
+  let syncNow = !!applied?.addonSync;
+  const sync = applied?.addonSync;
+  const owner = applied?.addonSyncSubject;
+  if (sync && sync.direction === "down" && owner?.kind === "organization" && deps.scheduleAddonDecrease) {
+    // A portal seat decrease waits for renewal. A failure that may have left the app's own schedule half set up throws,
+    // so Stripe's retry resumes it (the schedule lease and marker make that safe); a refusal falls back to now.
+    let outcome: "scheduled" | "refused";
+    try {
+      outcome = await deps.scheduleAddonDecrease({ kind: "organization", id: owner.id }, sync.subscriptionId, sync.quantity);
+    } catch (e) {
+      console.error("[stripe] add-on decrease at renewal failed", e instanceof StripeApiError ? `status ${e.status}` : e instanceof Error ? e.name : "error");
+      throw e;
+    }
+    if (outcome === "scheduled") syncNow = false;
+    else console.warn("[stripe] add-on decrease could not wait for renewal (no schedule possible); lowering it now without a credit");
+  }
+  if (sync && syncNow && deps.updateSubscription) {
+    const req = addonSyncRequest(sync, trigger);
     try {
       await deps.updateSubscription(req.id, req.params, req.idempotencyKey);
     } catch (e) {

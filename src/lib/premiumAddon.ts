@@ -124,7 +124,13 @@ export function splitItems(live: LiveSubscription): { base: Item | null; premium
   return { base, premium, interval: iv === "month" || iv === "year" ? iv : null };
 }
 
-const inGoodStanding = (live: LiveSubscription) => (PREMIUM_STATUSES as readonly string[]).includes(live.status);
+/** Premium may be added only to an `active` subscription: never during a Stripe trial (Triage B2). */
+const premiumPurchasable = (live: LiveSubscription) => (PREMIUM_STATUSES as readonly string[]).includes(live.status);
+/** Seats follow the base plan's own good standing, which still includes a Stripe trial. Unchanged by the Premium rule. */
+const SEAT_CHANGE_STATUSES: readonly string[] = ["active", "trialing"];
+const seatsChangeable = (live: LiveSubscription) => SEAT_CHANGE_STATUSES.includes(live.status);
+/** Shown when an existing subscriber tries to add Premium during a Stripe trial. */
+export const PREMIUM_NOT_IN_TRIAL = "Premium voice can be added once your trial ends and your plan is active. Nothing was changed.";
 const scheduleId = (live: LiveSubscription): string | null => (typeof live.schedule === "string" ? live.schedule : live.schedule?.id ?? null);
 
 /** Add-on quantity for a plan: Pro is always 1; Team equals the seats on the base item. */
@@ -138,7 +144,8 @@ export const addonQuantity = (plan: "pro" | "team", baseQuantity: number): numbe
 export function planAddPremium(live: LiveSubscription, prices: PriceIds, plan: "pro" | "team"): { priceId: string; quantity: number; interval: Interval } {
   const { base, premium, interval } = splitItems(live);
   if (premium) throw new AddonError("already_added", "Premium voice is already on this plan.");
-  if (!inGoodStanding(live)) throw new AddonError("not_in_good_standing", "Premium voice can be added once your plan is paid up. Update your card in Manage billing, then try again.");
+  if (live.status === "trialing") throw new AddonError("not_in_good_standing", PREMIUM_NOT_IN_TRIAL);
+  if (!premiumPurchasable(live)) throw new AddonError("not_in_good_standing", "Premium voice can be added once your plan is paid up. Update your card in Manage billing, then try again.");
   if (scheduleId(live)) throw new AddonError("change_scheduled", SCHEDULE_EXISTS);
   if (live.cancel_at_period_end) {
     throw new AddonError("change_scheduled", "This plan is set to end at the end of the billing period. Nothing was changed. Resume it in Manage billing, then add Premium voice.");
@@ -758,6 +765,32 @@ export async function scheduleRemovePremium(subject: AddonSubject, deps: AddonDe
   return { removeAt: at };
 }
 
+/**
+ * A Billing Portal seat decrease (the base item already dropped) moves the Team's Premium add-on to the new seat count
+ * at RENEWAL (spec section 7 line 65), through the app's own schedule: the same leases, exact-original comparison and
+ * refusal of any other schedule as every scheduled change (scheduleAtRenewal). The current period keeps the add-on
+ * quantity it paid for. Called by the webhook after commit (billing.ts afterApplied).
+ *
+ * "refused" when it cannot be done without overwriting or dropping something: a schedule already on the subscription,
+ * discounts or tax settings a scheduled phase would drop, the plan ending, or nothing left to lower. The caller then
+ * lowers the add-on now, without a credit (the earlier behavior). Any other failure throws so the webhook retries,
+ * and the retry resumes the app's own unfinished schedule.
+ */
+export async function scheduleAddonSeatsAtRenewal(owner: { kind: "organization"; id: string }, subscriptionId: string, seats: number, deps: AddonDeps = liveAddonDeps): Promise<"scheduled" | "refused"> {
+  const subject: AddonSubject = { kind: "organization", id: owner.id, plan: "team", subscriptionId, seats };
+  const live = await loadLive(subject, deps);
+  const { premium } = splitItems(live);
+  if (!premium || (premium.quantity ?? 1) <= seats || live.cancel_at_period_end) return "refused";
+  const ids = premiumPriceIds(live, await deps.prices());
+  try {
+    await scheduleAtRenewal(subject, live, (items) => items.map((i) => (ids.has(i.price) ? { ...i, quantity: seats } : i)), `addon-seats-${seats}`, deps);
+    return "scheduled";
+  } catch (e) {
+    if (e instanceof AddonError && (e.code === "change_scheduled" || e.code === "unsupported_billing_terms")) return "refused";
+    throw e;
+  }
+}
+
 // ---- Seats ----------------------------------------------------------------------------------------------------
 
 export type SeatPreview = ChangePreview & { direction: "up" | "down"; effectiveAt: string | null; token: string };
@@ -767,7 +800,7 @@ function checkSeats(subject: AddonSubject, seats: number, live: LiveSubscription
   if (!Number.isInteger(seats) || seats < TEAM_MIN_SEATS || seats > TEAM_MAX_SEATS) {
     throw new AddonError("invalid_seats", `Team needs between ${TEAM_MIN_SEATS} and ${TEAM_MAX_SEATS} seats.`);
   }
-  if (!inGoodStanding(live)) throw new AddonError("not_in_good_standing", "Seats can be changed once your plan is paid up. Update your card in Manage billing, then try again.");
+  if (!seatsChangeable(live)) throw new AddonError("not_in_good_standing", "Seats can be changed once your plan is paid up. Update your card in Manage billing, then try again.");
   const { base, premium } = splitItems(live);
   if (!base?.id) throw new AddonError("subscription_changed", "Your plan changed. Reload the page and try again.");
   const current = base.quantity ?? 1;

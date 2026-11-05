@@ -10,7 +10,7 @@ vi.mock("@/lib/apiAuth", () => ({ requireAuth: () => ({ id: mocks.authId, email:
 
 import {
   AddonError, addonQuantity, confirmAddPremium, confirmSeatChange, planAddPremium, previewAddPremium, previewSeatChange, readPreviewToken,
-  renewalTotal, scheduleRemovePremium, seatItems, signPreviewToken, splitItems, canonicalJson, SCHEDULE_LEASE_MS, type AddonDeps, type AddonSubject,
+  renewalTotal, scheduleRemovePremium, seatItems, signPreviewToken, splitItems, canonicalJson, SCHEDULE_LEASE_MS, PREMIUM_NOT_IN_TRIAL, type AddonDeps, type AddonSubject,
 } from "@/lib/premiumAddon";
 import { PRICE_ENV, parseLiveSubscription, resetPriceCache, type PriceIds } from "@/lib/billing";
 import { setPremiumEventSink, type PremiumEvent } from "@/lib/billingEvents";
@@ -118,9 +118,11 @@ describe("planning a Premium add", () => {
   it("refuses when already added, not in good standing, already scheduled or ending, or unpriced", () => {
     const code = (fn: () => unknown) => { try { fn(); return null; } catch (e) { return (e as AddonError).code; } };
     expect(code(() => planAddPremium(parseLiveSubscription(subscription({ premium: 3 })), PRICES, "team"))).toBe("already_added");
-    for (const status of ["past_due", "unpaid", "incomplete", "canceled"]) {
+    // A Stripe trial included (Triage B2): paid Premium is active-only.
+    for (const status of ["trialing", "past_due", "unpaid", "incomplete", "canceled"]) {
       expect(code(() => planAddPremium(parseLiveSubscription(subscription({ status })), PRICES, "team")), status).toBe("not_in_good_standing");
     }
+    try { planAddPremium(parseLiveSubscription(subscription({ status: "trialing" })), PRICES, "pro"); } catch (e) { expect((e as AddonError).message).toBe(PREMIUM_NOT_IN_TRIAL); }
     expect(code(() => planAddPremium(parseLiveSubscription(subscription({ schedule: "sub_sched_test_x" })), PRICES, "team"))).toBe("change_scheduled");
     expect(code(() => planAddPremium(parseLiveSubscription(subscription({ cancelAtPeriodEnd: true })), PRICES, "team"))).toBe("change_scheduled");
     expect(code(() => planAddPremium(parseLiveSubscription(subscription()), { ...PRICES, premium: { month: undefined, year: undefined } }, "team"))).toBe("price_not_configured");
@@ -870,6 +872,8 @@ describe("/api/billing/premium and /api/billing/seats", () => {
     fake.seed("user", { id: "owner-1", email: "owner-1@example.test", organizationId: "org-1", role: "owner" });
     fake.seed("user", { id: "manager-1", email: "manager-1@example.test", organizationId: "org-1", role: "manager" });
     fake.seed("user", { id: "rep-1", email: "rep-1@example.test", organizationId: "org-1", role: "trainee" });
+    // The organization's first graded call (spec 10.2): made by a member, which counts for the owner too.
+    fake.seed("trainerSession", { userId: "rep-1", organizationId: "org-1", scenarioId: "quote-follow-up", transcript: [{ role: "user", text: "Hi" }], overallScore: 74, grade: "C" });
     live = subscription({ seats: 4 });
     vi.spyOn(stripeApi, "retrieveSubscription").mockImplementation(async () => live);
     vi.spyOn(stripeApi, "retrievePrice").mockImplementation(async (id: string) => ({ ...price(id), active: true, livemode: false }));
@@ -946,6 +950,47 @@ describe("/api/billing/premium and /api/billing/seats", () => {
     expect(fake.rows("auditEvent").some((a) => a.action === "billing.premium_added")).toBe(true);
     const pool = fake.rows("usageAllowance").find((a) => a.organizationId === "org-1")!;
     expect(pool).toMatchObject({ minutesCap: 1200, premiumMinutesCap: 160 });
+  });
+
+  it("B3: with no graded call in the organization, preview and a forged confirm are a neutral 409 before any Stripe call", async () => {
+    // A valid preview first, while the graded call exists.
+    const p = await (await premium({ action: "preview" })).json();
+    expect(typeof p.token).toBe("string");
+    // The only graded call goes away (a retention purge): the confirm of that token is refused at operation time.
+    await fake.db.trainerSession.deleteMany({});
+    vi.mocked(stripeApi.previewInvoice).mockClear();
+    vi.mocked(stripeApi.retrieveSubscription).mockClear();
+    for (const body of [{ action: "preview" }, { action: "confirm", token: p.token }]) {
+      const res = await premium(body);
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toBe("premium_needs_graded_call");
+    }
+    expect(stripeApi.retrieveSubscription).not.toHaveBeenCalled();
+    expect(stripeApi.previewInvoice).not.toHaveBeenCalled();
+    expect(stripeApi.updateSubscription).not.toHaveBeenCalled();
+    expect(fake.rows("organization")[0].premiumVoice).toBe(false);
+  });
+
+  it("B3: an ungraded session is not enough; removal and seat changes are never gated by it", async () => {
+    await fake.db.trainerSession.deleteMany({});
+    fake.seed("trainerSession", { userId: "owner-1", organizationId: "org-1", scenarioId: "x", transcript: [{ role: "user", text: "Hi" }], overallScore: null });
+    expect((await premium({ action: "preview" })).status).toBe(409);
+    // An existing add-on can still be removed, and seats can still change.
+    live = subscription({ seats: 4, premium: 4 });
+    Object.assign(fake.rows("organization")[0], { premiumVoice: true, premiumVoiceQuantity: 4 });
+    expect((await premium({ action: "remove" })).status).toBe(200);
+    live = subscription({ seats: 4 });
+    expect((await seats({ action: "preview", seats: 5 })).status).toBe(200);
+  });
+
+  it("B2: a subscription in a Stripe trial cannot add Premium (preview refuses before pricing); seats still change", async () => {
+    live = subscription({ seats: 4, status: "trialing" });
+    const res = await premium({ action: "preview" });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body).toMatchObject({ error: "not_in_good_standing", message: "Premium voice can be added once your trial ends and your plan is active. Nothing was changed." });
+    expect(stripeApi.previewInvoice).not.toHaveBeenCalled();
+    expect((await seats({ action: "preview", seats: 5 })).status).toBe(200);
   });
 
   it("a declined card answers 402 and nothing changes", async () => {
@@ -1048,8 +1093,52 @@ describe("checkout with the new-buyer Premium box", () => {
   });
   const post = (body: unknown) => checkoutRoute(new NextRequest("http://localhost/api/billing/checkout", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
 
+  /** A stored graded call: overallScore is only written for a server-sealed grade. */
+  const graded = (userId = "owner-1", organizationId: string | null = "org-1") =>
+    fake.seed("trainerSession", { userId, organizationId, scenarioId: "quote-follow-up", transcript: [{ role: "user", text: "Hi" }], overallScore: 71, grade: "C", createdAt: new Date("2026-11-01T10:00:00Z") });
+
+  it("B3: before the organization's first graded call, premium:true is a neutral 409 and Stripe is never called", async () => {
+    vi.stubEnv("PREMIUM_VOICE_ON_SALE", "true");
+    const create = vi.spyOn(stripeApi, "createCheckoutSession");
+    // First registered, no calls at all.
+    let res = await post({ plan: "pro", interval: "month", premium: true });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "premium_needs_graded_call", message: "Premium voice can be added after your first graded practice call. Finish a call and get its score, then try again." });
+    // An ungraded voice call and a text save (no score) are not enough.
+    fake.seed("trainerSession", { userId: "owner-1", organizationId: "org-1", scenarioId: "x", transcript: [{ role: "user", text: "Hi" }], overallScore: null });
+    res = await post({ plan: "team", interval: "month", seats: 3, premium: true });
+    expect(res.status).toBe(409);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("B3: the base checkout is never gated by the graded call", async () => {
+    vi.stubEnv("PREMIUM_VOICE_ON_SALE", "true");
+    const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_1", url: "https://checkout.example/test" });
+    expect((await post({ plan: "pro", interval: "month", premium: false })).status).toBe(200);
+    expect(create.mock.calls[0][0].line_items).toEqual([{ price: "price_test_pro_m", quantity: 1 }]);
+  });
+
+  it("B3: a graded call by ANOTHER member of the organization is enough", async () => {
+    vi.stubEnv("PREMIUM_VOICE_ON_SALE", "true");
+    fake.seed("user", { id: "rep-9", email: "rep-9@example.test", organizationId: "org-1", role: "trainee" });
+    graded("rep-9");
+    vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_1", url: "https://checkout.example/test" });
+    expect((await post({ plan: "pro", interval: "month", premium: true })).status).toBe(200);
+  });
+
+  it("B3: a graded call in a DIFFERENT organization does not count", async () => {
+    vi.stubEnv("PREMIUM_VOICE_ON_SALE", "true");
+    fake.seed("organization", { id: "org-2", code: "456", createdAt: new Date("2026-02-20T00:00:00Z") });
+    fake.seed("user", { id: "other-1", email: "other-1@example.test", organizationId: "org-2", role: "owner" });
+    graded("other-1", "org-2");
+    const create = vi.spyOn(stripeApi, "createCheckoutSession");
+    expect((await post({ plan: "pro", interval: "month", premium: true })).status).toBe(409);
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("on sale: premium:true adds the add-on on the same interval with quantity = seats", async () => {
     vi.stubEnv("PREMIUM_VOICE_ON_SALE", "true");
+    graded();
     const create = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_1", url: "https://checkout.example/test" });
     expect((await post({ plan: "team", interval: "year", seats: 5, premium: true })).status).toBe(200);
     expect(create.mock.calls[0][0].line_items).toEqual([{ price: "price_test_team_y", quantity: 5 }, { price: "price_test_prem_y", quantity: 5 }]);

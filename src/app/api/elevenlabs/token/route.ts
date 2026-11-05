@@ -46,7 +46,9 @@ export async function GET(req: NextRequest) {
       auth.id,
       { id: (q.get("scenarioId") || "unknown").slice(0, 80), title: q.get("title")?.slice(0, 120) || undefined },
       new Date(),
-      { standardAvailable: elevenLabsAgentFor("standard").standardAvailable },
+      // `voiceTier=standard` is the rep's request from the setup: no paid Premium minutes for this call. Any other
+      // value lets the server decide as before (an unentitled Premium request is still Standard).
+      { standardAvailable: elevenLabsAgentFor("standard").standardAvailable, preferStandard: q.get("voiceTier") === "standard" },
     ).catch((e) => {
       console.error("[elevenlabs/token] usage lookup failed", e instanceof Error ? e.name : "unknown");
       return null;

@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Loader2, Lock, Sparkles } from "lucide-react";
-import { PREMIUM_COMING_SOON, PREMIUM_MINUTES, premiumAnnualNote, premiumDisclosure, premiumPriceLine } from "@/lib/pricing";
-import { ADD_PREMIUM_LABEL, formatCents, formatResetDate, premiumFallbackLine, premiumLeftLabel } from "@/lib/billingUi";
+import { PREMIUM_CALL_LENGTH_NOTE, PREMIUM_COMING_SOON, PREMIUM_MINUTES, premiumAnnualNote, premiumDisclosure, premiumPriceLine } from "@/lib/pricing";
+import { ADD_PREMIUM_LABEL, PREMIUM_NEEDS_GRADED_CALL, formatCents, formatResetDate, premiumFallbackLine, premiumLeftLabel } from "@/lib/billingUi";
 import { trackPremiumUpsell } from "@/lib/premiumEventTypes";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "@/lib/usagePlan";
 
@@ -11,8 +11,20 @@ import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "@/lib/usagePlan";
 export interface PremiumControlUsage {
   metered?: boolean;
   plan?: "free" | "pro" | "team";
-  premiumVoice?: { enabled?: boolean; configured?: boolean; minutesCap?: number; remaining?: number; canBuy?: boolean; removeAt?: string | null };
-  billing?: { enabled?: boolean; seats?: number; seatsAtRenewal?: number | null; hasSubscription?: boolean; renewsAt?: string | null };
+  premiumVoice?: { enabled?: boolean; configured?: boolean; minutesCap?: number; remaining?: number; canBuy?: boolean; canManage?: boolean; offerReady?: boolean; removeAt?: string | null };
+  billing?: { enabled?: boolean; seats?: number; seatsAtRenewal?: number | null; hasSubscription?: boolean; renewsAt?: string | null; status?: string | null };
+}
+
+/** Shown on the add-on row while the plan is in a Stripe trial: paid Premium is not part of a trial (Triage B2). */
+export const PREMIUM_AFTER_TRIAL = "Premium voice can be added once your trial ends and your plan is active.";
+
+/**
+ * The seat stepper's text. It starts at the current seat count (a real value, not a placeholder, so ArrowUp on 3 gives
+ * 4), follows a new server count while the owner has not typed anything, and never overwrites what they typed when the
+ * usage data is fetched again (Prism finding 6).
+ */
+export function nextSeatsText(state: { text: string; edited: boolean }, serverSeats: number): { text: string; edited: boolean } {
+  return state.edited ? state : { text: String(serverSeats), edited: false };
 }
 
 interface Preview { token: string; dueNow: number; renewalTotal: number | null; currency: string; interval: "month" | "year"; renewsAt: string | null; quantity: number; direction?: "up" | "down"; effectiveAt?: string | null }
@@ -96,20 +108,40 @@ export default function PremiumVoiceControl({ usage = null, onSale = false, onCh
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const [seatsText, setSeatsText] = useState("");
+  const serverSeats = usage?.billing?.seats ?? 1;
+  const [seatsState, setSeatsState] = useState(() => nextSeatsText({ text: "", edited: false }, serverSeats));
+  // A refetch with a new seat count updates the stepper only while the owner has not typed (nextSeatsText).
+  useEffect(() => { setSeatsState((s) => nextSeatsText(s, serverSeats)); }, [serverSeats]);
+  const seatsText = seatsState.text;
   const [seatPreview, setSeatPreview] = useState<Preview | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const busyRef = useRef(false);
   const doneRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => { if (done) doneRef.current?.focus(); }, [done]);
+  // Back from a review puts focus back on the control that opened it (Prism finding 5), not on the page body.
+  const addRef = useRef<HTMLButtonElement>(null);
+  const removeRef = useRef<HTMLButtonElement>(null);
+  const seatsRef = useRef<HTMLButtonElement>(null);
+  const [returnFocus, setReturnFocus] = useState<"add" | "remove" | "seats" | null>(null);
+  useEffect(() => {
+    if (!returnFocus) return;
+    ({ add: addRef, remove: removeRef, seats: seatsRef })[returnFocus].current?.focus();
+    setReturnFocus(null);
+  }, [returnFocus]);
 
   const p = usage?.premiumVoice;
   const plan = usage?.plan;
   const paid = plan === "pro" || plan === "team";
-  const canBuy = !!p?.canBuy && !!usage?.billing?.hasSubscription && paid;
+  // Buying needs the server's canBuy (right person, first graded call done, not in a Stripe trial); removal and seat
+  // changes need only canManage (older answers without it fall back to canBuy).
+  const hasSub = !!usage?.billing?.hasSubscription && paid;
+  const canBuy = !!p?.canBuy && hasSub;
+  const canManage = !!(p?.canManage ?? p?.canBuy) && hasSub;
   const enabled = !!p?.enabled;
   const configured = !!p?.configured;
   const offer = onSale && paid && !configured;
+  const trialing = usage?.billing?.status === "trialing";
+  const needsGrade = p?.offerReady === false;
   const unit = plan === "team" ? "team" : "pro";
   useEffect(() => { if (offer && canBuy) trackPremiumUpsell("billing"); }, [offer, canBuy]);
 
@@ -155,6 +187,8 @@ export default function PremiumVoiceControl({ usage = null, onSale = false, onCh
     const r = await post("/api/billing/seats", { action: "confirm", seats: seatPreview.quantity, token: seatPreview.token });
     if (!r.ok) { setError(String(r.data.message ?? "Seats did not change. Nothing was charged.")); setSeatPreview(null); return; }
     setSeatPreview(null);
+    // Done: the stepper follows the server's seat count again.
+    setSeatsState({ text: String(seatPreview.quantity), edited: false });
     setDone(r.data.direction === "down"
       ? `Seats drop to ${seatPreview.quantity} on ${formatResetDate(seatPreview.effectiveAt ?? undefined) || "your renewal date"}.`
       : `You now have ${seatPreview.quantity} seats.`);
@@ -166,9 +200,9 @@ export default function PremiumVoiceControl({ usage = null, onSale = false, onCh
     return <p className="panel p-4 text-sm text-ink-muted">Premium AI voice: {PREMIUM_COMING_SOON}</p>;
   }
 
-  const seats = usage?.billing?.seats ?? 1;
+  const seats = serverSeats;
   const renews = formatResetDate(usage?.billing?.renewsAt ?? undefined);
-  const teamOwner = plan === "team" && canBuy;
+  const teamOwner = plan === "team" && canManage;
   const status = enabled ? "On" : configured ? (onSale ? "Paused" : "Not available yet") : "Not added";
   return (
     <section className="panel space-y-4 p-4 sm:p-5" aria-labelledby="premium-h">
@@ -201,7 +235,12 @@ export default function PremiumVoiceControl({ usage = null, onSale = false, onCh
         )}
       </dl>
 
-      {enabled && <p className="text-sm text-ink-muted">{premiumDisclosure(unit)}</p>}
+      {enabled && (
+        <div className="space-y-1 text-sm text-ink-muted">
+          <p>{premiumDisclosure(unit)}</p>
+          <p>{PREMIUM_CALL_LENGTH_NOTE}</p>
+        </div>
+      )}
       {configured && !enabled && onSale && (
         <p className="banner-warn text-sm" role="status">Premium is paused because the plan is not paid up. Calls use Standard voice until the payment goes through.</p>
       )}
@@ -211,13 +250,21 @@ export default function PremiumVoiceControl({ usage = null, onSale = false, onCh
       {configured && p?.removeAt && <p className="text-sm font-medium text-ink" role="status">{premiumFallbackLine(p.removeAt)}</p>}
 
       {/* Add to an existing subscription: review first, then an explicit confirm. */}
-      {offer && (
+      {offer && needsGrade && canManage && (
+        // Spec 10.2: not offered before the organization's first graded call. Neutral and actionable, no price or button.
+        <p className="text-sm text-ink-muted" role="status">{PREMIUM_NEEDS_GRADED_CALL}</p>
+      )}
+      {offer && !needsGrade && trialing && canManage && (
+        <p className="text-sm text-ink-muted" role="status">{PREMIUM_AFTER_TRIAL}</p>
+      )}
+      {offer && !needsGrade && !(trialing && canManage) && (
         canBuy ? (
           <div className="space-y-2 text-sm">
             <p className="text-ink-soft">{premiumPriceLine(unit, "month")} {premiumAnnualNote(unit)}</p>
             <p className="text-ink-muted">{premiumDisclosure(unit)}</p>
+            <p className="text-ink-muted">{PREMIUM_CALL_LENGTH_NOTE}</p>
             {!preview ? (
-              <button type="button" className="btn-primary btn-sm" onClick={previewAdd} disabled={!!busy}>
+              <button ref={addRef} type="button" className="btn-primary btn-sm" onClick={previewAdd} disabled={!!busy}>
                 {busy === "preview" && <Loader2 size={14} strokeWidth={1.75} className="animate-spin" aria-hidden />}
                 {ADD_PREMIUM_LABEL}
               </button>
@@ -235,12 +282,13 @@ export default function PremiumVoiceControl({ usage = null, onSale = false, onCh
                   plan === "team"
                     ? `${PREMIUM_MINUTES} Premium minutes per seat each month, shared across your team, from your plan minutes.`
                     : `${PREMIUM_MINUTES} Premium minutes each month, from your plan minutes.`,
-                  "When they run out, your next call uses Standard voice. You are never charged extra.",
+                  "When they run out, the next call uses Standard voice, and nothing extra is charged.",
+                  PREMIUM_CALL_LENGTH_NOTE,
                   "Amounts are before tax and discounts. Nothing is charged until you confirm.",
                 ]}
                 confirmLabel="Confirm and pay"
                 busy={busy === "confirm"}
-                onBack={() => setPreview(null)}
+                onBack={() => { setPreview(null); setReturnFocus("add"); }}
                 onConfirm={confirmAdd}
               />
             )}
@@ -252,9 +300,9 @@ export default function PremiumVoiceControl({ usage = null, onSale = false, onCh
       {onSale && plan === "free" && !configured && <p className="text-sm text-ink-muted">Add Premium voice when you choose Pro or Team below.</p>}
 
       {/* Removal waits for the period end; Premium stays until then. Allowed whether or not Premium is on sale. */}
-      {configured && canBuy && !p?.removeAt && (
+      {configured && canManage && !p?.removeAt && (
         !confirmRemove ? (
-          <button type="button" className="btn-ghost btn-sm" onClick={() => setConfirmRemove(true)} disabled={!!busy}>Remove at period end</button>
+          <button ref={removeRef} type="button" className="btn-ghost btn-sm" onClick={() => setConfirmRemove(true)} disabled={!!busy}>Remove at period end</button>
         ) : (
           <Review
             id="premium-remove-h"
@@ -268,7 +316,7 @@ export default function PremiumVoiceControl({ usage = null, onSale = false, onCh
             confirmLabel="Remove at period end"
             danger
             busy={busy === "remove"}
-            onBack={() => setConfirmRemove(false)}
+            onBack={() => { setConfirmRemove(false); setReturnFocus("remove"); }}
             onConfirm={remove}
           />
         )
@@ -280,9 +328,9 @@ export default function PremiumVoiceControl({ usage = null, onSale = false, onCh
           <label className="label" htmlFor="premium-seats">Change seats</label>
           <div className="flex flex-wrap items-center gap-2">
             <input id="premium-seats" className="input w-24 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" type="number" inputMode="numeric"
-              min={TEAM_MIN_SEATS} max={TEAM_MAX_SEATS} placeholder={String(seats)} value={seatsText} disabled={!!busy}
-              aria-describedby="premium-seats-help" onChange={(e) => { setSeatsText(e.target.value); setSeatPreview(null); }} />
-            <button type="button" className="btn-ghost btn-sm" onClick={previewSeats} disabled={!!busy || !seatsText.trim()}>
+              min={TEAM_MIN_SEATS} max={TEAM_MAX_SEATS} value={seatsText} disabled={!!busy}
+              aria-describedby="premium-seats-help" onChange={(e) => { setSeatsState({ text: e.target.value, edited: true }); setSeatPreview(null); }} />
+            <button ref={seatsRef} type="button" className="btn-ghost btn-sm" onClick={previewSeats} disabled={!!busy || !seatsText.trim() || Number(seatsText) === seats}>
               {busy === "seats" && <Loader2 size={14} strokeWidth={1.75} className="animate-spin" aria-hidden />}
               Review change
             </button>
@@ -303,7 +351,7 @@ export default function PremiumVoiceControl({ usage = null, onSale = false, onCh
               ]}
               confirmLabel={seatPreview.direction === "down" ? "Confirm change" : "Confirm and pay"}
               busy={busy === "seats-confirm"}
-              onBack={() => setSeatPreview(null)}
+              onBack={() => { setSeatPreview(null); setReturnFocus("seats"); }}
               onConfirm={confirmSeats}
             />
           )}

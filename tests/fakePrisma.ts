@@ -37,7 +37,9 @@ function matches(row: Row, where: Where): boolean {
     const have = row[k] ?? null;
     if (isDate(v)) return isDate(have) && have.getTime() === v.getTime();
     if (v && typeof v === "object") {
-      const o = v as { lt?: Date; gte?: Date; gt?: number; in?: unknown[] };
+      const o = v as { lt?: Date; gte?: Date; gt?: number; in?: unknown[]; not?: unknown };
+      // { not: null } is "set", { not: x } is "anything but x" (scalar values only).
+      if ("not" in o && (o.not === null || typeof o.not !== "object")) return have !== (o.not ?? null);
       if (o.in) return o.in.includes(have);
       if (o.gt !== undefined) return typeof have === "number" && have > o.gt;
       if (o.lt) return isDate(have) && have.getTime() < o.lt.getTime();

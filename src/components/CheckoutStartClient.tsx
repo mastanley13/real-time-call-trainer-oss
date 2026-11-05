@@ -9,7 +9,7 @@ import { PageSkeleton } from "@/components/ui/Skeleton";
 import SeatsField from "@/components/settings/SeatsField";
 import { SUPPORT_URL, seatsOnBlur } from "@/lib/billingUi";
 import { billingNoticeHref, intentFromQuery, rememberNotice, startCheckout } from "@/lib/checkoutStart";
-import { premiumDisclosure, premiumPriceLine, registerHref } from "@/lib/pricing";
+import { PREMIUM_CALL_LENGTH_NOTE, premiumDisclosure, premiumPriceLine, registerHref } from "@/lib/pricing";
 import { trackPremiumUpsell } from "@/lib/premiumEventTypes";
 import { TEAM_MIN_SEATS } from "@/lib/usagePlan";
 
@@ -58,10 +58,28 @@ export default function CheckoutStartClient() {
   const [error, setError] = useState<{ message: string; help: boolean } | null>(null);
   // State updates are not instant, so two fast clicks could both pass a check on `busy`. The ref closes that gap.
   const started = useRef(false);
-  /** New-buyer Premium voice box. Shown only while Premium is on sale; off sale, Pro starts checkout at once as before. */
+  /** Premium voice is on sale on this server (PREMIUM_VOICE_ON_SALE). */
   const premiumOnSale = !!capabilities?.premiumOnSale;
+  /**
+   * Spec 10.2: the box is never offered before the organization's first graded call. The server decides from stored
+   * graded sessions and sends one allowlisted boolean (/api/usage premiumVoice.offerReady); the checkout route checks
+   * it again for premium:true. null while asking; false on any failure (fail closed: the plan alone is still sold).
+   */
+  const [offerReady, setOfferReady] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!premiumOnSale || !isAuthenticated) return;
+    let live = true;
+    fetch("/api/usage", { credentials: "include", cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { premiumVoice?: { offerReady?: unknown } } | null) => { if (live) setOfferReady(d?.premiumVoice?.offerReady === true); })
+      .catch(() => { if (live) setOfferReady(false); });
+    return () => { live = false; };
+  }, [premiumOnSale, isAuthenticated]);
+  /** New-buyer Premium voice box: on sale AND offer ready. Otherwise Pro starts checkout at once, as off sale. */
+  const premiumOffer = premiumOnSale && offerReady === true;
+  const waitingForOffer = premiumOnSale && offerReady === null;
   const [addPremium, setAddPremium] = useState(false);
-  useEffect(() => { if (premiumOnSale && isAuthenticated && plan) trackPremiumUpsell("checkout"); }, [premiumOnSale, isAuthenticated, plan]);
+  useEffect(() => { if (premiumOffer && isAuthenticated && plan) trackPremiumUpsell("checkout"); }, [premiumOffer, isAuthenticated, plan]);
 
   const go = useCallback(async (seats?: number) => {
     if (!plan || started.current) return;
@@ -69,7 +87,7 @@ export default function CheckoutStartClient() {
     setBusy(true);
     setError(null);
     setRestored(false);
-    const out = await startCheckout({ plan, interval, seats, premium: premiumOnSale && addPremium });
+    const out = await startCheckout({ plan, interval, seats, premium: premiumOffer && addPremium });
     if (out.kind === "redirect") {
       window.location.assign(out.url);
       return;
@@ -82,7 +100,7 @@ export default function CheckoutStartClient() {
     started.current = false;
     setBusy(false);
     setError({ message: out.message, help: out.help });
-  }, [plan, interval, router, premiumOnSale, addPremium]);
+  }, [plan, interval, router, premiumOffer, addPremium]);
 
   /** Set when the browser Back button restored this page from the back-forward cache after the Stripe redirect. */
   const [restored, setRestored] = useState(false);
@@ -110,16 +128,17 @@ export default function CheckoutStartClient() {
       rememberNotice("paid_soon");
       return router.replace("/trainer");
     }
-    // Pro starts at once, unless Premium is on sale: then the page first offers the Premium box and a Continue button.
-    if (plan === "pro" && !capabilities.premiumOnSale) void go();
-  }, [capabilities, capabilitiesFailed, isLoading, isAuthenticated, plan, interval, router, go]);
+    // Pro starts at once, unless the Premium box is offered: then the page first shows it and a Continue button.
+    if (waitingForOffer) return;
+    if (plan === "pro" && !premiumOffer) void go();
+  }, [capabilities, capabilitiesFailed, isLoading, isAuthenticated, plan, interval, router, go, premiumOffer, waitingForOffer]);
 
   if (isLoading || !isAuthenticated || !plan || (!capabilities && !capabilitiesFailed)) return <PageSkeleton rows={2} />;
 
   if (!capabilities) return <ConfigFailed />;
 
   const name = plan === "pro" ? "Pro" : "Team";
-  const premiumBox = premiumOnSale && (
+  const premiumBox = premiumOffer && (
     <div className="w-full rounded-panel border border-line p-3 text-sm">
       <label className="flex items-start gap-2">
         <input type="checkbox" className="mt-1" checked={addPremium} onChange={(e) => setAddPremium(e.target.checked)} disabled={busy} aria-describedby="premium-checkout-help" />
@@ -128,13 +147,14 @@ export default function CheckoutStartClient() {
       <div id="premium-checkout-help" className="mt-1 space-y-1 pl-6 text-ink-muted">
         <p>{premiumPriceLine(plan, interval)}</p>
         <p>{premiumDisclosure(plan)}</p>
+        <p>{PREMIUM_CALL_LENGTH_NOTE}</p>
       </div>
     </div>
   );
   return (
     <div className="page enter max-w-xl space-y-4 py-10">
       <p className="eyebrow">Checkout</p>
-      <h1 className="text-3xl font-bold">{plan === "team" ? "Choose your seats" : premiumOnSale ? `Check out ${name}` : `Opening checkout for ${name}`}</h1>
+      <h1 className="text-3xl font-bold">{plan === "team" ? "Choose your seats" : premiumOffer ? `Check out ${name}` : `Opening checkout for ${name}`}</h1>
       <p className="text-ink-soft">
         {plan === "team"
           ? `Team is billed ${interval === "year" ? "yearly" : "monthly"} per seat, with a ${TEAM_MIN_SEATS}-seat minimum. You will pay on Stripe.`
@@ -166,7 +186,7 @@ export default function CheckoutStartClient() {
           </button>
           {premiumBox}
         </form>
-      ) : premiumOnSale ? (
+      ) : premiumOffer ? (
         <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); void go(); }}>
           {premiumBox}
           <button type="submit" className="btn-primary" disabled={busy}>
@@ -177,7 +197,7 @@ export default function CheckoutStartClient() {
       ) : (
         busy && <p className="flex items-center gap-2 text-sm text-ink-muted"><Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden />One moment.</p>
       )}
-      {(error || restored) && plan === "pro" && !premiumOnSale && !busy && <button type="button" className="btn-primary" onClick={() => void go()}>Try again</button>}
+      {(error || restored) && plan === "pro" && !premiumOffer && !busy && <button type="button" className="btn-primary" onClick={() => void go()}>Try again</button>}
       <p className="text-sm text-ink-muted"><Link href="/pricing" className="underline underline-offset-2 hover:text-ink">Back to pricing</Link></p>
     </div>
   );

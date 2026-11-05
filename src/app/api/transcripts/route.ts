@@ -8,6 +8,7 @@ import { verifySeal } from "@/lib/gradeSeal";
 import { isReceiptReplay, receiptRowId, verifyMintReceipt } from "@/lib/mintReceipt";
 import { HAS_TRANSCRIPT } from "@/lib/usage";
 import { tierOfModel } from "@/lib/voiceTierServer";
+import { sessionListItem } from "@/lib/sessionView";
 
 const Body = z.object({
   sessionId: z.string().min(1).max(128),
@@ -151,9 +152,9 @@ export async function GET(req: NextRequest) {
     where: { userId: auth.id, ...HAS_TRANSCRIPT },
     orderBy: { createdAt: "desc" },
     take: 100,
-    select: { id: true, scenarioId: true, scenarioTitle: true, scenarioCategory: true, durationSeconds: true, overallScore: true, grade: true, goalAchieved: true, createdAt: true, evaluation: true },
+    select: { id: true, scenarioId: true, scenarioTitle: true, scenarioCategory: true, durationSeconds: true, overallScore: true, grade: true, goalAchieved: true, createdAt: true, evaluation: true, voiceTier: true },
   });
-  // Only expose the grader version, not the whole evaluation blob.
-  const sessions = rows.map(({ evaluation, ...r }) => ({ ...r, graderVersion: (evaluation as { graderVersion?: string } | null)?.graderVersion ?? null, graderMethod: (evaluation as { method?: string } | null)?.method ?? null }));
+  // An explicit allowlist per entry (sessionListItem): grader version and method, and the neutral voice label only.
+  const sessions = rows.map(sessionListItem);
   return NextResponse.json({ sessions });
 }

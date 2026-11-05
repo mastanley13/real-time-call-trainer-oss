@@ -5,7 +5,7 @@ import PricingCards, { tierAction } from "@/components/landing/PricingCards";
 import PricingSummary from "@/components/landing/PricingSummary";
 import PricingPage from "@/app/pricing/page";
 import Home from "@/app/page";
-import { OPEN_SOON_LINE, PREMIUM_COMING_SOON, isPremiumOnSale, premiumPriceLine } from "@/lib/pricing";
+import { OPEN_SOON_LINE, PREMIUM_CALL_LENGTH_NOTE, PREMIUM_COMING_SOON, PREMIUM_DISCLOSURE_PRO, PREMIUM_DISCLOSURE_TEAM, PREMIUM_NUDGE_PRO, isPremiumOnSale, premiumPriceLine } from "@/lib/pricing";
 import { billingOn } from "@/lib/serverConfig";
 
 const cards = (billingEnabled: boolean) => renderToStaticMarkup(createElement(PricingCards, { billingEnabled }));
@@ -66,7 +66,8 @@ describe("Premium add-on row", () => {
     expect(addon).toContain(PREMIUM_COMING_SOON);
     expect(addon).toContain("+$20");
     expect(addon).toContain("Premium voice: +$20 a month. 40 Premium minutes, then Standard.");
-    expect(addon).toContain("Premium voice: +$20 per seat a month. 40 Premium minutes per seat, shared, then Standard.");
+    // Final Margin Team line (premium-voice-docs-input.md section 6), verbatim; rendered HTML escapes nothing in it.
+    expect(addon).toContain("Premium voice for Team: +$20 per seat a month, 40 pooled minutes per seat.");
     expect(addon).not.toMatch(/<a |<button|href=/);
     expect(addon).not.toMatch(/\$30|\$300|60%/);
   });
@@ -80,8 +81,21 @@ describe("Premium add-on row", () => {
 
   it("annual: $200, and Pro never says per seat", () => {
     expect(premiumPriceLine("pro", "year")).toBe("Premium voice: +$200 a year. 40 Premium minutes a month, then Standard.");
-    expect(premiumPriceLine("team", "year")).toBe("Premium voice: +$200 per seat a year. 40 Premium minutes per seat each month, shared, then Standard.");
+    expect(premiumPriceLine("team", "year")).toBe("Premium voice for Team: +$200 per seat a year, 40 pooled minutes per seat each month.");
     expect(premiumPriceLine("pro", "month")).not.toMatch(/seat/);
+  });
+
+  it("final Margin copy, verbatim (premium-voice-docs-input.md sections 5 and 6; final-spec-draft.md lines 118 to 122)", () => {
+    expect(premiumPriceLine("team", "month")).toBe("Premium voice for Team: +$20 per seat a month, 40 pooled minutes per seat.");
+    expect(PREMIUM_DISCLOSURE_TEAM).toBe("Premium minutes are pooled, 40 per seat. After the pool is used, the next call starts on Standard voice, and a call in progress is never cut. No overages.");
+    expect(PREMIUM_DISCLOSURE_PRO).toBe("After 40 Premium minutes, the next call switches to Standard voice. A call in progress is never cut, and nothing extra is charged.");
+    expect(PREMIUM_NUDGE_PRO).toBe("Premium minutes used. Your next call uses Standard voice, and nothing extra is charged. Premium resets on your billing date.");
+    // Pro keeps no per-seat wording anywhere; Team says pooled.
+    for (const s of [premiumPriceLine("pro", "month"), premiumPriceLine("pro", "year"), PREMIUM_DISCLOSURE_PRO, PREMIUM_NUDGE_PRO]) expect(s).not.toMatch(/seat/);
+    expect(PREMIUM_DISCLOSURE_TEAM).toMatch(/pooled/);
+    // The cap-specific note sits below the generic copy so "never cut" is not read as "no length limit".
+    expect(PREMIUM_CALL_LENGTH_NOTE).toMatch(/set to end when they run out/);
+    for (const s of [PREMIUM_DISCLOSURE_TEAM, PREMIUM_DISCLOSURE_PRO, PREMIUM_NUDGE_PRO, PREMIUM_CALL_LENGTH_NOTE]) expect(s.includes(String.fromCharCode(0x2014))).toBe(false);
   });
 
   it("base cards keep Standard voice included", () => {

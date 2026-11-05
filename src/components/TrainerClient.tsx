@@ -17,7 +17,7 @@ import { CallMeter } from "@/lib/callMeter";
 import RealtimeVoiceSession, { voiceInfoFrom, type VoiceInfo, type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
-import { canUpgradeFromUsage, premiumSnapshotFromUsage, usageSnapshotFromUsage, type PremiumSnapshot, type UsageSnapshot } from "@/lib/billingUi";
+import { VOICE_CHOICE_KEY, canUpgradeFromUsage, premiumChoiceAvailable, premiumSnapshotFromUsage, readVoiceChoice, usageSnapshotFromUsage, type PremiumSnapshot, type UsageSnapshot, type VoiceChoice } from "@/lib/billingUi";
 
 type Mode = "voice" | "text";
 type Phase = "idle" | "live" | "grading";
@@ -32,8 +32,10 @@ const missingNotice = (asked: string | null, picked: Scenario) =>
   asked && picked.id !== asked ? `That persona isn't in this browser's library, so we opened ${picked.aiPersona.name} instead. Pick another in the Library.` : "";
 
 /** Rendered inside ConversationProvider; owns the ElevenLabs session and feeds the shared deck. */
-function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onVoiceInfo, registerEnd, render }: {
+function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onVoiceInfo, registerEnd, render, voiceTier }: {
   scenario: Scenario;
+  /** The setup's Standard or Premium pick, sent as a request with the token. */
+  voiceTier?: "premium" | "standard";
   active: boolean;
   grading: boolean;
   onTurn: (t: StoredTurn) => void;
@@ -69,7 +71,7 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
     (async () => {
       try {
         userEndedRef.current = false;
-        const res = await fetch(`/api/elevenlabs/token?${new URLSearchParams({ scenarioId: scenario.id, title: scenario.title })}`);
+        const res = await fetch(`/api/elevenlabs/token?${new URLSearchParams({ scenarioId: scenario.id, title: scenario.title, ...(voiceTier ? { voiceTier } : {}) })}`);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.message || "Could not get a voice token.");
         const info = voiceInfoFrom(data);
@@ -92,7 +94,7 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
         onError(e instanceof Error ? e.message : "Failed to start the call.");
       }
     })();
-  }, [active, scenario, startSession, onError, onVoiceInfo]);
+  }, [active, scenario, startSession, onError, onVoiceInfo, voiceTier]);
 
   useEffect(() => {
     if (!active) startedRef.current = false;
@@ -132,6 +134,9 @@ export default function TrainerClient() {
   /** The voice tier this call was minted on (a static label for the whole call) and the next-call notice. */
   const [voiceInfo, setVoiceInfo] = useState<VoiceInfo | null>(null);
   const onVoiceInfo = useCallback((info: VoiceInfo) => setVoiceInfo(info), []);
+  /** The setup's Standard or Premium pick, and what was actually requested for the running call (fixed at Start). */
+  const [voiceChoice, setVoiceChoiceState] = useState<VoiceChoice>("premium");
+  const [callTier, setCallTier] = useState<VoiceChoice | undefined>(undefined);
   /** Who wrote the latest text-call reply: the configured model, or the scripted fallback. */
   const [callerSource, setCallerSource] = useState<"llm" | "scripted" | null>(null);
   const [busy, setBusy] = useState(false);
@@ -266,6 +271,16 @@ export default function TrainerClient() {
     try { localStorage.setItem(COACH_MODE, m); } catch { /* ignore */ }
   };
 
+  // Standard or Premium for the next call (Prism finding 1). Premium by default for anyone who can run it; the last
+  // pick is remembered in this browser. It is only a request: the server rechecks the entitlement at mint.
+  useEffect(() => {
+    try { setVoiceChoiceState(readVoiceChoice(localStorage.getItem(VOICE_CHOICE_KEY))); } catch { /* storage unavailable */ }
+  }, []);
+  const setVoiceChoice = (c: VoiceChoice) => {
+    setVoiceChoiceState(c);
+    try { localStorage.setItem(VOICE_CHOICE_KEY, c); } catch { /* ignore */ }
+  };
+
   const addTurn = useCallback((t: StoredTurn) => {
     const stamped = { ...t, timestamp: new Date().toISOString() };
     turnsRef.current = [...turnsRef.current, stamped];
@@ -328,6 +343,8 @@ export default function TrainerClient() {
     finishing.current = false;
     mintedCallRef.current = null;
     setVoiceInfo(null);
+    // Sent only when the setup offered the choice; otherwise the server decides alone, as before.
+    setCallTier(premiumChoiceAvailable(premium) ? voiceChoice : undefined);
     setReplyTalking(false);
     setHungUp(false);
     setCallerSource(null);
@@ -412,7 +429,8 @@ export default function TrainerClient() {
     return (
       // Keyed by persona: revealed prep answers, "Got it" and the mic test belong to one buyer.
       <Briefing key={scenario.id} scenario={scenario} capabilities={capabilities} mode={mode} onModeChange={setMode} engine={engine} onEngineChange={setEngine} coachMode={coachMode} onCoachModeChange={setCoachMode}
-        onStart={begin} retryFrom={retry ? { turn: retry.turn, line: retry.line } : null} error={error} notice={notice} usage={usage} canUpgrade={canUpgrade} usageUnavailable={usageUnavailable} premium={premium} />
+        onStart={begin} retryFrom={retry ? { turn: retry.turn, line: retry.line } : null} error={error} notice={notice} usage={usage} canUpgrade={canUpgrade} usageUnavailable={usageUnavailable} premium={premium}
+        voiceChoice={voiceChoice} onVoiceChoiceChange={setVoiceChoice} />
     );
   }
 
@@ -421,13 +439,13 @@ export default function TrainerClient() {
 
   if (mode === "voice" && engine) {
     const voiceProps = {
-      scenario, active: live, grading, onTurn: addTurn, onEnded: onVoiceEnded, onVoiceInfo,
+      scenario, active: live, grading, onTurn: addTurn, onEnded: onVoiceEnded, onVoiceInfo, voiceTier: callTier,
       // With nothing from the rep there is nothing to grade: go back to the briefing, where the error explains what happened.
       onError: (m: string) => { setError(m); if (!turnsRef.current.some((t) => t.role === "user" && t.text.trim())) setPhase("idle"); },
       registerEnd: (fn: () => void) => { endVoice.current = fn; },
       render: (v: VoiceRender) => (
         <Deck {...shared} orbState={v.orbState} status={grading ? { label: "Grading…", tone: "signal" } : v.status} onEnd={v.end}
-          voice={{ engine, muted: v.muted, onToggleMute: v.toggleMute, getInputVolume: v.getInputVolume, getOutputVolume: v.getOutputVolume, tier: voiceInfo?.tier, nextCallStandard: voiceInfo?.nextCallStandard, trial: voiceInfo?.trial }} />
+          voice={{ engine, muted: v.muted, onToggleMute: v.toggleMute, getInputVolume: v.getInputVolume, getOutputVolume: v.getOutputVolume, tier: voiceInfo?.tier, nextCallStandard: voiceInfo?.nextCallStandard, trial: voiceInfo?.trial, maxSeconds: voiceInfo?.maxSeconds }} />
       ),
     };
     // Coach cues stay on the trainee's screen: neither engine is ever sent coach output.

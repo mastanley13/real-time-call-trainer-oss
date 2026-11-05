@@ -14,7 +14,12 @@ import { orgVoiceTierForUser, voiceModelFor } from "@/lib/voiceTierServer";
 import { sealMintReceipt } from "@/lib/mintReceipt";
 import { recordMintedVoice } from "@/lib/voiceMintLog";
 
-const Body = z.object({ scenario: ScenarioSchema });
+/**
+ * `voiceTier` is the rep's REQUEST from the call setup (Prism finding 1), never an entitlement: "standard" always runs
+ * Standard (no paid Premium minutes, no comped Premium, no trial claim); "premium" or nothing lets the server decide as
+ * before, so an unentitled Premium request is still Standard.
+ */
+const Body = z.object({ scenario: ScenarioSchema, voiceTier: z.enum(["standard", "premium"]).optional() });
 
 /** The secret only has to outlive the SDP exchange; 600s is the documented default. */
 const SECRET_TTL_SEC = 600;
@@ -52,8 +57,11 @@ export async function POST(req: NextRequest) {
   }
 
   let scenario: z.infer<typeof Body>["scenario"];
+  let chosenStandard = false;
   try {
-    scenario = Body.parse(await readJsonLimited(req)).scenario;
+    const parsed = Body.parse(await readJsonLimited(req));
+    scenario = parsed.scenario;
+    chosenStandard = parsed.voiceTier === "standard";
   } catch {
     return NextResponse.json({ error: "invalid_scenario", message: "That persona could not be loaded for a voice call. Reload the page and try again." }, { status: 400 });
   }
@@ -64,7 +72,7 @@ export async function POST(req: NextRequest) {
 
   // Cap check before minting (rule 11). The returned callId keys every later metering write for this call.
   // The engine is chosen here, per session, from the database: paid Premium only while PREMIUM_VOICE_ON_SALE is exactly
-  // "true", the add-on is entitled (active or trialing, quantity above 0, period not over) and at least one whole Premium
+  // "true", the add-on is entitled (active, never trialing, quantity above 0, period not over) and at least one whole Premium
   // minute is left, else Standard for this session. A running call is never switched to another engine; a paid Premium
   // call's maxSeconds is min(call allowance, Premium left). The engine drives caps and billing (TrainerSession.engineTier);
   // a comped call and a Free trial call stay on the standard billing engine and use no paid Premium minutes.
@@ -75,7 +83,8 @@ export async function POST(req: NextRequest) {
     // A failed lookup refuses voice (fail closed); text practice never reaches this route.
     // offerTrialSample: a Free organization's one Premium trial call may be claimed here, atomically, when
     // PREMIUM_TRIAL_SAMPLE_ON is exactly "true" (beginCall decides from the database; the client cannot ask for it).
-    const begun = await beginCall(auth.id, scenario, new Date(), { compedPremium: orgTier === "premium", offerTrialSample: true }).catch((e) => {
+    // A chosen Standard call asks for no Premium at all: no comped override, no paid minutes, no trial claim.
+    const begun = await beginCall(auth.id, scenario, new Date(), { compedPremium: orgTier === "premium" && !chosenStandard, offerTrialSample: !chosenStandard, preferStandard: chosenStandard }).catch((e) => {
       console.error("[realtime/session] usage lookup failed", e instanceof Error ? e.name : "unknown");
       return null;
     });
@@ -95,7 +104,8 @@ export async function POST(req: NextRequest) {
   // (premium.source === "paid", which needs the exact sale flag and an entitled add-on), or when the meter atomically
   // claimed the organization's one Free trial call for it (premium.source === "trial", PREMIUM_TRIAL_SAMPLE_ON exactly
   // "true"). A stored add-on flag alone, the billing engine, or anything the client sends never reaches Premium.
-  const tier = mintVoiceTier(orgTier, { paidPremium: premium?.source === "paid", trialSample: premium?.source === "trial" });
+  // A chosen Standard call is Standard whatever the organization or the entitlement says (comped included).
+  const tier = chosenStandard ? "standard" : mintVoiceTier(orgTier, { paidPremium: premium?.source === "paid", trialSample: premium?.source === "trial" });
   const model = voiceModelFor(tier);
   if (premium?.fallback) {
     await emitPremiumEvent({ name: "premium_fallback_to_standard", subject: "user", subjectId: auth.id, reason: premium.fallback });

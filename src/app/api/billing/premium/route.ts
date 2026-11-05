@@ -9,6 +9,7 @@ import { PREMIUM_COMING_SOON } from "@/lib/pricing";
 import { emitPremiumEvent } from "@/lib/billingEvents";
 import { confirmAddPremium, liveAddonDeps, previewAddPremium, scheduleRemovePremium, type AddonDeps } from "@/lib/premiumAddon";
 import { addonFailure, addonSubjectFor, auditBilling } from "../_lib/addonRoute";
+import { gradedCallRequired, hasGradedCall } from "@/lib/premiumOffer";
 
 const Body = z.discriminatedUnion("action", [
   /** Shows the prorated charge now and the new renewal total. Changes nothing. */
@@ -58,6 +59,9 @@ export async function POST(req: NextRequest) {
   const found = await addonSubjectFor(auth.id);
   if ("response" in found) return found.response;
   const { subject } = found;
+  // Spec 10.2: never before the organization's first graded call. Re-checked at confirm too, so a token minted earlier
+  // or a forged request cannot buy before it. Removal is never gated.
+  if (body.action !== "remove" && !(await hasGradedCall(auth.id))) return gradedCallRequired();
 
   try {
     if (body.action === "preview") {

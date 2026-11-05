@@ -164,11 +164,71 @@ export interface PremiumSnapshot {
   plan: "pro" | "team" | "free";
   /** Premium can be bought on this server now (PREMIUM_VOICE_ON_SALE). */
   onSale: boolean;
-  /** This person may buy or change it (Pro subscriber, Team owner). */
+  /** This person may buy or change it (Pro subscriber, Team owner) AND the organization has a graded call. */
   canBuy: boolean;
+  /**
+   * The organization has at least one graded call, so Premium may be offered at all (spec 10.2, Triage B3). Decided by
+   * the server from stored graded sessions (src/lib/premiumOffer.ts), never from a local count.
+   */
+  offerReady: boolean;
+  /** The organization is comped for Premium and set to it (calls run Premium without paid minutes). */
+  comped: boolean;
   /** ISO date a scheduled removal takes effect, or null. */
   removeAt: string | null;
 }
+
+// ---- Standard or Premium for this call (Prism finding 1) -------------------------------------------------------
+
+export type VoiceChoice = "premium" | "standard";
+/** Where the setup remembers the rep's last pick. A preference only: the server decides what the call may run on. */
+export const VOICE_CHOICE_KEY = "rtct.voiceTier";
+/** The stored pick, or Premium (the default for anyone entitled) when nothing valid is stored. */
+export const readVoiceChoice = (raw: string | null | undefined): VoiceChoice => (raw === "standard" ? "standard" : "premium");
+
+/**
+ * Whether the setup offers the Standard or Premium choice: only when this call could actually run Premium (paid
+ * Premium with at least one whole minute left, or a comped organization on Premium). Otherwise every call is Standard
+ * and there is nothing to choose.
+ */
+export const premiumChoiceAvailable = (p: PremiumSnapshot | null): boolean => !!p && ((p.enabled && p.remaining >= 1) || p.comped);
+
+/** The longest call the server reserves at once (usagePlan MAX_RESERVE_MINUTES). */
+const MAX_CALL_RESERVE_MINUTES = 60;
+
+/**
+ * Prism finding 2. When paid Premium is chosen and fewer whole Premium minutes are left than this call would otherwise
+ * get (the plan's own minutes left, at most one reservation), the server ends THIS call when the Premium minutes run
+ * out (its normal deadline, usage.ts beginCall). Returns those minutes, or null when the Premium minutes are not what
+ * limits the call. Never promises more than the server will reserve: the plan's own, lower limit is shown elsewhere.
+ */
+export function premiumCallLimitMinutes(premiumRemaining: number, planRemaining: number): number | null {
+  const left = Math.floor(premiumRemaining);
+  const planned = Math.min(Math.max(1, Math.ceil(planRemaining)), MAX_CALL_RESERVE_MINUTES);
+  return left >= 1 && left < planned ? left : null;
+}
+
+const minutesText = (n: number) => `${n} ${n === 1 ? "minute" : "minutes"}`;
+
+/** Setup: "This Premium call ends after 2 minutes, when your Premium minutes run out. Your next call uses Standard voice." */
+export const premiumCallLimitNotice = (minutes: number): string =>
+  `This Premium call ends after ${minutesText(minutes)}, when your Premium minutes run out. Your next call uses Standard voice.`;
+
+/** "2 minutes", or "1 minute 30 seconds" when the deadline is not whole minutes, from the server's maxSeconds. */
+export function callLengthLabel(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const m = Math.floor(s / 60);
+  const rest = s % 60;
+  if (!rest) return minutesText(m);
+  const sec = `${rest} ${rest === 1 ? "second" : "seconds"}`;
+  return m ? `${minutesText(m)} ${sec}` : sec;
+}
+
+/** Live call, aria-live polite, from the server's deadline for THIS call: when it ends, and that the next is Standard. */
+export const liveCallLimitNotice = (maxSeconds: number): string =>
+  `This call ends after ${callLengthLabel(maxSeconds)}, when your Premium minutes run out. Your next call uses Standard voice.`;
+
+/** The neutral answer when Premium is asked for before the organization's first graded call. */
+export const PREMIUM_NEEDS_GRADED_CALL = "Premium voice can be added after your first graded practice call. Finish a call and get its score, then try again.";
 
 /** "Premium: 12 of 40 min left". */
 export const premiumLeftLabel = (p: Pick<PremiumSnapshot, "remaining" | "cap">): string => `Premium: ${formatMinutes(p.remaining)} of ${formatMinutes(p.cap)} min left`;
@@ -179,6 +239,8 @@ export const ASK_ADMIN_PREMIUM = "Ask your admin";
 export const NEXT_CALL_STANDARD_NOTICE = "Your Premium minutes are used up after this call. Your next call uses Standard voice.";
 /** The call screen notice on a Free organization's one Premium trial call (PREMIUM_TRIAL_SAMPLE_ON). */
 export const TRIAL_CALL_NOTICE = "Your team's Premium voice trial call, up to 5 minutes. Later calls use Standard voice.";
+/** A Logbook or history entry's voice: the server's neutral label, or null for anything else. Never guessed. */
+export const voiceOfListEntry = (v: unknown): "premium" | "standard" | null => (v === "premium" || v === "standard" ? v : null);
 /** Live call voice label. Static for the whole call: the voice never changes mid-call. */
 export const voiceLabel = (tier: "premium" | "standard"): string => (tier === "premium" ? "Premium voice" : "Standard voice");
 /** Billing page line for a scheduled removal. */
@@ -189,7 +251,7 @@ export const premiumFallbackLine = (dateIso: string | null | undefined): string 
 
 /** Premium state from a /api/usage response, or null when minutes are not metered or the answer is unusable. */
 export function premiumSnapshotFromUsage(data: unknown): PremiumSnapshot | null {
-  const d = data as { metered?: unknown; plan?: unknown; premiumVoice?: { enabled?: unknown; remaining?: unknown; minutesCap?: unknown; onSale?: unknown; canBuy?: unknown; removeAt?: unknown } } | null;
+  const d = data as { metered?: unknown; plan?: unknown; premiumVoice?: { enabled?: unknown; remaining?: unknown; minutesCap?: unknown; onSale?: unknown; canBuy?: unknown; offerReady?: unknown; comped?: unknown; removeAt?: unknown } } | null;
   const p = d?.premiumVoice;
   if (d?.metered !== true || !p || typeof p.remaining !== "number" || typeof p.minutesCap !== "number") return null;
   if (!Number.isFinite(p.remaining) || !Number.isFinite(p.minutesCap)) return null;
@@ -201,19 +263,22 @@ export function premiumSnapshotFromUsage(data: unknown): PremiumSnapshot | null 
     plan,
     onSale: p.onSale === true,
     canBuy: p.canBuy === true,
+    offerReady: p.offerReady === true,
+    comped: p.comped === true,
     removeAt: typeof p.removeAt === "string" ? p.removeAt : null,
   };
 }
 
 /**
  * What the call setup shows for Premium. `left` with the count; `used_up` with the nudge (calls continue on Standard);
- * `locked` with Add Premium voice (a buyer) or Ask your admin (a Team member); nothing on Free, or when Premium is
- * off sale and not on the account (no new paid controls while the sale is off).
+ * `locked` with Add Premium voice (a buyer) or Ask your admin (a Team member); nothing on Free, when Premium is
+ * off sale and not on the account (no new paid controls while the sale is off), or before the organization's first
+ * graded call (spec 10.2: never offered before it).
  */
 export function premiumSetupState(p: PremiumSnapshot | null): { kind: "left" | "used_up" | "locked_buy" | "locked_ask" | "none" } {
   if (!p || p.plan === "free") return { kind: "none" };
   if (p.enabled) return { kind: p.remaining >= 1 ? "left" : "used_up" };
-  if (!p.onSale) return { kind: "none" };
+  if (!p.onSale || !p.offerReady) return { kind: "none" };
   return { kind: p.canBuy ? "locked_buy" : "locked_ask" };
 }
 

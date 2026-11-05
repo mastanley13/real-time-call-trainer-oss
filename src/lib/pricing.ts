@@ -32,34 +32,56 @@ export const PREMIUM_VOICE_ON_SALE_ENV = "PREMIUM_VOICE_ON_SALE";
  */
 export const isPremiumOnSale = (env: Record<string, string | undefined>): boolean => env[PREMIUM_VOICE_ON_SALE_ENV] === "true";
 
-// ---- Premium voice copy (spec Nov 5 2026 with the Margin amendment; Pro never says "per seat") --------------
+// ---- Premium voice copy --------------------------------------------------------------------------------------------
+// Final strings: Margin Jev, Nov 5 2026. Source of truth: /workspace/ct-launch/margin/premium-voice-docs-input.md
+// sections 5 (b, c, d) and 6, and /workspace/ct-launch/tier/premium-voice/final-spec-draft.md lines 118 to 122 ("Final
+// copy (Margin Jev, Nov 5 2026, supersedes amendment wording)"). Kept verbatim; Pro never says "per seat", Team says
+// pooled. Strings marked "adapted" have no final winner of their own and are documented in TRIAGE-PRISM-FIXES.md.
+
+/** Final Team pricing line (Margin section 6, round 2 winner, gate 0.61), verbatim. */
+export const PREMIUM_PRICE_LINE_TEAM = `Premium voice for Team: +$${PRICE.premium.month} per seat a month, ${PREMIUM_MINUTES} pooled minutes per seat.`;
 
 /** The add-on line under the plan cards and on billing. Interval always matches the base plan. */
 export function premiumPriceLine(plan: PlanIntent, interval: Billing = "month"): string {
   const p = PRICE.premium[interval];
   if (plan === "pro") {
+    // Pro lines are unchanged (spec section 8 "Adapted (no per seat)"); no final Margin string replaces them.
     return interval === "year"
       ? `Premium voice: +$${p} a year. ${PREMIUM_MINUTES} Premium minutes a month, then Standard.`
       : `Premium voice: +$${p} a month. ${PREMIUM_MINUTES} Premium minutes, then Standard.`;
   }
+  // Annual Team: the final monthly line with the annual price (adapted: the minutes are still monthly).
   return interval === "year"
-    ? `Premium voice: +$${p} per seat a year. ${PREMIUM_MINUTES} Premium minutes per seat each month, shared, then Standard.`
-    : `Premium voice: +$${p} per seat a month. ${PREMIUM_MINUTES} Premium minutes per seat, shared, then Standard.`;
+    ? `Premium voice for Team: +$${p} per seat a year, ${PREMIUM_MINUTES} pooled minutes per seat each month.`
+    : PREMIUM_PRICE_LINE_TEAM;
 }
 
 /** Where the plan's interval is not known yet (billing page before the preview): the annual price, same unit. */
 export const premiumAnnualNote = (plan: PlanIntent): string => `Annual plans: $${PRICE.premium.year}${plan === "team" ? " per seat" : ""} a year.`;
 
-/** What happens when the Premium minutes run out. Pro and Team differ: Team minutes are pooled. */
-export const PREMIUM_DISCLOSURE_PRO = `After your ${PREMIUM_MINUTES} Premium minutes, your next call switches to Standard voice automatically. You are never charged extra.`;
-export const PREMIUM_DISCLOSURE_TEAM = `${PREMIUM_MINUTES} Premium minutes per seat, shared across your team. When they run out, your next call switches to Standard voice automatically. You are never charged extra.`;
+/** Final Pro disclosure (Margin 5(c), gate 0.77), verbatim. */
+export const PREMIUM_DISCLOSURE_PRO = "After 40 Premium minutes, the next call switches to Standard voice. A call in progress is never cut, and nothing extra is charged.";
+/** Final Team disclosure (Margin 5(b), gate 0.74), verbatim. Team minutes are pooled. */
+export const PREMIUM_DISCLOSURE_TEAM = "Premium minutes are pooled, 40 per seat. After the pool is used, the next call starts on Standard voice, and a call in progress is never cut. No overages.";
 export const premiumDisclosure = (plan: PlanIntent): string => (plan === "team" ? PREMIUM_DISCLOSURE_TEAM : PREMIUM_DISCLOSURE_PRO);
 /** Where Pro and Team are offered side by side (checkout choice): true for both, implies no per-rep cap. */
 export const PREMIUM_DISCLOSURE_BOTH = "When your Premium minutes run out, your next call switches to Standard voice automatically. You are never charged extra.";
 
-/** Shown once the month's Premium minutes are used. */
-export const PREMIUM_NUDGE_PRO = "You've used this month's Premium minutes. Calls continue on Standard voice, free. Premium minutes reset next month.";
-export const PREMIUM_NUDGE_TEAM = `You've used this month's Premium minutes. Calls continue on Standard voice, free. Add a seat for ${PREMIUM_MINUTES} more.`;
+/**
+ * Shown directly below the generic disclosure wherever Premium is offered or set up, so "a call in progress is never
+ * cut" is not read as "a Premium call has no length limit". It never switches voices mid-call, but a Premium call is
+ * given a deadline (its normal end) of the Premium minutes left when it starts. The call setup and the live call then
+ * say exactly how long THIS call can run (premiumCallLimitNotice in billingUi.ts).
+ */
+export const PREMIUM_CALL_LENGTH_NOTE = "A Premium call never switches voices. If fewer Premium minutes are left than a call can run, that call is set to end when they run out, and you see how long before it starts.";
+
+/** Final Pro out-of-minutes nudge (Margin 5(d), round 2 winner, gate 0.63), verbatim. */
+export const PREMIUM_NUDGE_PRO = "Premium minutes used. Your next call uses Standard voice, and nothing extra is charged. Premium resets on your billing date.";
+/**
+ * Team uses the same final string (adapted): Margin 5 retired the "Add a seat for 40 more" winner and found no Team
+ * upgrade mention that passed, and the sentence is accurate for a shared pool.
+ */
+export const PREMIUM_NUDGE_TEAM = PREMIUM_NUDGE_PRO;
 export const premiumNudge = (plan: PlanIntent): string => (plan === "team" ? PREMIUM_NUDGE_TEAM : PREMIUM_NUDGE_PRO);
 
 /** FAQ answer once Premium is on sale. */

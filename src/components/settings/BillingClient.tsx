@@ -8,7 +8,7 @@ import { PageSkeleton } from "@/components/ui/Skeleton";
 import { ALREADY_SUBSCRIBED_NOTICE, noticeStatus } from "@/lib/checkoutStart";
 import { ACTIVE_NOTICE, PORTAL_FAILED_MESSAGE, type CheckoutNotice, checkoutFailure, checkoutNotice, formatMinutes, freeOverCapNotice, planPriceLine, proButtonLabel, seatsOnBlur, teamButtonLabel, usageHeaderCopy } from "@/lib/billingUi";
 import { TEAM_MIN_SEATS } from "@/lib/usagePlan";
-import { PREMIUM_DISCLOSURE_BOTH, premiumPriceLine } from "@/lib/pricing";
+import { PREMIUM_CALL_LENGTH_NOTE, PREMIUM_DISCLOSURE_BOTH, premiumPriceLine } from "@/lib/pricing";
 import { trackPremiumUpsell } from "@/lib/premiumEventTypes";
 import BillingAlert from "./BillingAlert";
 import BillingNotice from "./BillingNotice";
@@ -24,7 +24,7 @@ interface Usage {
   minutesUsed?: number;
   remaining?: number;
   periodEnd?: string;
-  premiumVoice?: { enabled: boolean; configured?: boolean; minutesCap: number; remaining?: number; canBuy?: boolean; onSale?: boolean; removeAt?: string | null };
+  premiumVoice?: { enabled: boolean; configured?: boolean; minutesCap: number; remaining?: number; canBuy?: boolean; canManage?: boolean; offerReady?: boolean; onSale?: boolean; removeAt?: string | null };
   entries?: { id: string; kind: string; minutes: number; createdAt: string }[];
   billing: {
     enabled: boolean; testMode?: boolean; canBuyTeam?: boolean; hasPortal?: boolean; seats?: number; status?: string | null;
@@ -58,7 +58,8 @@ export default function BillingClient() {
   const [addPremium, setAddPremium] = useState(false);
   const headlineRef = useRef<HTMLParagraphElement>(null);
   const premiumOnSale = !!capabilities?.premiumOnSale;
-  const newBuyerPremium = premiumOnSale && usage?.plan === "free" && !!usage?.billing.enabled;
+  // Spec 10.2: never before the organization's first graded call (server-derived offerReady; checkout re-checks).
+  const newBuyerPremium = premiumOnSale && usage?.plan === "free" && !!usage?.billing.enabled && usage?.premiumVoice?.offerReady === true;
   useEffect(() => { if (newBuyerPremium) trackPremiumUpsell("billing"); }, [newBuyerPremium]);
 
   // On show: scroll the banner into view (a jump when motion is reduced) and move focus to its headline.
@@ -232,6 +233,7 @@ export default function BillingClient() {
                 <p>{premiumPriceLine("pro", interval)}</p>
                 <p>{premiumPriceLine("team", interval)}</p>
                 <p>{PREMIUM_DISCLOSURE_BOTH}</p>
+                <p>{PREMIUM_CALL_LENGTH_NOTE}</p>
               </div>
             </div>
           )}

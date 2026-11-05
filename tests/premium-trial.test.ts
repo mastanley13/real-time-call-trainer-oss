@@ -411,7 +411,7 @@ describe("8: neutral labels on the call screen and the session detail, no model 
     expect(JSON.stringify({ ...minted.body, receipt: null })).not.toMatch(MODEL_ID);
     expect(typeof minted.body.receipt).toBe("string");
     expect(Object.keys(minted.body).sort()).toEqual(["callId", "clientSecret", "expiresAt", "maxSeconds", "nextCallStandard", "receipt", "sessionId", "voice", "voiceTier", "voiceTrial"].sort());
-    expect(voiceInfoFrom(minted.body)).toEqual({ tier: "premium", nextCallStandard: true, trial: true });
+    expect(voiceInfoFrom(minted.body)).toEqual({ tier: "premium", nextCallStandard: true, trial: true, maxSeconds: 300 });
     // Durable provenance on the server: the actual model and the effective tier.
     expect(session(minted.body.callId as string)).toMatchObject({ realtimeModel: "model-premium-test", voiceTier: "premium", premiumTrial: true });
   });
@@ -436,7 +436,8 @@ describe("8: neutral labels on the call screen and the session detail, no model 
     expect(TRIAL_CALL_NOTICE).not.toMatch(/gpt-|model/i);
     const deck = readFileSync(path.join(process.cwd(), "src/components/call/Deck.tsx"), "utf8");
     expect(deck).toMatch(/<span className="chip">\{voiceLabel\(voice\.tier\)\}<\/span>/);
-    expect(deck).toMatch(/voice\.trial \? TRIAL_CALL_NOTICE/);
+    expect(deck).toContain("if (v.trial) return TRIAL_CALL_NOTICE;");
+    expect(deck).toContain("{liveVoiceNotice(voice)}");
     const client = readFileSync(path.join(process.cwd(), "src/components/TrainerClient.tsx"), "utf8");
     expect(client).toMatch(/trial: voiceInfo\?\.trial/);
   });

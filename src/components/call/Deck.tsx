@@ -6,7 +6,7 @@ import { CUE_LABELS, type CoachMode } from "@/lib/coach-types";
 import { talkTrackSteps, type Scenario } from "@/lib/scenarios";
 import type { StoredTurn } from "@/lib/sessionStore";
 import { formatDuration } from "@/lib/format";
-import { NEXT_CALL_STANDARD_NOTICE, TRIAL_CALL_NOTICE, voiceLabel } from "@/lib/billingUi";
+import { NEXT_CALL_STANDARD_NOTICE, TRIAL_CALL_NOTICE, liveCallLimitNotice, voiceLabel } from "@/lib/billingUi";
 import CallOrb, { type AgentState } from "@/components/CallOrb";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import CallError from "./CallError";
@@ -26,6 +26,20 @@ export interface DeckVoice {
   nextCallStandard?: boolean;
   /** The organization's one Premium trial call. Changes only the notice wording. */
   trial?: boolean;
+  /** The server's deadline for THIS call (its normal end), in seconds. */
+  maxSeconds?: number;
+}
+
+/**
+ * The polite live notice under the static voice label (Prism finding 2). The trial call keeps its own 5 minute notice.
+ * A paid Premium call that holds the last Premium minutes says when THIS call ends (the server's deadline) and that
+ * the next one is Standard. A Standard call (chosen or not) has no Premium cutoff, so it says nothing.
+ */
+export function liveVoiceNotice(v: Pick<DeckVoice, "tier" | "trial" | "nextCallStandard" | "maxSeconds"> | undefined): string {
+  if (!v || v.tier !== "premium") return "";
+  if (v.trial) return TRIAL_CALL_NOTICE;
+  if (!v.nextCallStandard) return "";
+  return v.maxSeconds ? liveCallLimitNotice(v.maxSeconds) : NEXT_CALL_STANDARD_NOTICE;
 }
 
 const FOCUSABLE = "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
@@ -249,7 +263,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
             {voice?.tier && (
               <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-xs text-ink-muted">
                 <span className="chip">{voiceLabel(voice.tier)}</span>
-                <p aria-live="polite" className="min-w-0 text-center">{voice.trial ? TRIAL_CALL_NOTICE : voice.nextCallStandard ? NEXT_CALL_STANDARD_NOTICE : ""}</p>
+                <p aria-live="polite" className="min-w-0 text-center">{liveVoiceNotice(voice)}</p>
               </div>
             )}
           </div>

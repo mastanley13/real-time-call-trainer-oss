@@ -84,6 +84,8 @@ describe("Premium control on /settings/billing", () => {
     const src = readFileSync("src/components/settings/BillingClient.tsx", "utf8");
     expect(src).toContain("premium: newBuyerPremium && addPremium");
     expect(src).toMatch(/const newBuyerPremium = premiumOnSale && usage\?\.plan === "free"/);
+    // And only once the server says the organization has a graded call (spec 10.2).
+    expect(src).toContain('usage?.premiumVoice?.offerReady === true;');
   });
 
   it("never shows a model id", () => {
@@ -93,7 +95,7 @@ describe("Premium control on /settings/billing", () => {
 });
 
 describe("Premium line on the call setup", () => {
-  const snap = (p: Partial<PremiumSnapshot>): PremiumSnapshot => ({ enabled: false, remaining: 0, cap: 0, plan: "pro", onSale: false, canBuy: true, removeAt: null, ...p });
+  const snap = (p: Partial<PremiumSnapshot>): PremiumSnapshot => ({ enabled: false, remaining: 0, cap: 0, plan: "pro", onSale: false, canBuy: true, offerReady: true, comped: false, removeAt: null, ...p });
   const line = (p: PremiumSnapshot | null) => renderToStaticMarkup(createElement(PremiumMinutes, { premium: p }));
 
   it("entitled: Premium: N of 40 min left, Team scaled by the pool", () => {
@@ -130,10 +132,16 @@ describe("checkout step after browser Back", () => {
     expect(src).toMatch(/started\.current = false;\s+setBusy\(false\);/);
   });
 
-  it("the new-buyer Premium box is offered only while Premium is on sale, and Pro still starts at once when off", () => {
+  it("the new-buyer Premium box is offered only while on sale AND after the first graded call; Pro otherwise starts at once", () => {
     const src = readFileSync("src/components/CheckoutStartClient.tsx", "utf8");
-    expect(src).toContain("const premiumBox = premiumOnSale && (");
-    expect(src).toContain('if (plan === "pro" && !capabilities.premiumOnSale) void go();');
+    expect(src).toContain("const premiumOffer = premiumOnSale && offerReady === true;");
+    expect(src).toContain("const premiumBox = premiumOffer && (");
+    // The flag comes from the server (/api/usage offerReady), never a local count; a failed read fails closed.
+    expect(src).toContain('fetch("/api/usage"');
+    expect(src).toContain("setOfferReady(d?.premiumVoice?.offerReady === true)");
+    expect(src).toContain("setOfferReady(false)");
+    expect(src).toContain('if (plan === "pro" && !premiumOffer) void go();');
+    expect(src).toContain("premium: premiumOffer && addPremium");
   });
 
   it("the register page never offers Premium", () => {

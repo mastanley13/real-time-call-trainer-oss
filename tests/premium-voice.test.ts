@@ -12,7 +12,7 @@ vi.mock("@/lib/apiAuth", async () => ({
 }));
 
 import { beginCall, endCall, ensureAllowance, heartbeat, premiumMintInfo, resolveAllowance, usageSummary } from "@/lib/usage";
-import { PREMIUM_STATUSES, premiumBlock, premiumEntitled, premiumMinutesCapFor, premiumMinutesLeft } from "@/lib/premiumVoice";
+import { PREMIUM_STATUSES, premiumBlock, premiumEntitled, premiumMinutesCapFor, premiumMinutesLeft, premiumSeatsForUnits } from "@/lib/premiumVoice";
 import { addonQuantitySync, addonSyncRequest, invoiceSubscriptionId, parseLiveSubscription, periodEndOf, PRICE_ENV, resetPriceCache } from "@/lib/billing";
 import { setPremiumEventSink, type PremiumEvent } from "@/lib/billingEvents";
 import { PREMIUM_DOM_EVENT, resetPremiumUpsellSeen, trackPremiumUpsell } from "@/lib/premiumEventTypes";
@@ -96,10 +96,11 @@ describe("Premium entitlement (pure)", () => {
     subscriptionPeriodEnd: new Date(now.getTime() + DAY), ...o,
   });
 
-  it("only active and trialing qualify", () => {
-    expect(PREMIUM_STATUSES).toEqual(["active", "trialing"]);
-    for (const s of ["active", "trialing"]) expect(premiumEntitled(row({ subscriptionStatus: s }), now), s).toBe(true);
-    for (const s of ["past_due", "unpaid", "canceled", "incomplete", "incomplete_expired", "paused", null, "weird"]) {
+  it("only active qualifies: paid Premium is never part of a Stripe trial (Triage B2)", () => {
+    expect(PREMIUM_STATUSES).toEqual(["active"]);
+    expect(premiumEntitled(row({ subscriptionStatus: "active" }), now)).toBe(true);
+    expect(premiumEntitled(row({ subscriptionStatus: "trialing" }), now)).toBe(false);
+    for (const s of ["trialing", "past_due", "unpaid", "canceled", "incomplete", "incomplete_expired", "paused", null, "weird"]) {
       expect(premiumBlock(row({ subscriptionStatus: s }), now), String(s)).toBe("status");
     }
   });
@@ -167,7 +168,8 @@ describe("mint check: the next call is Standard whenever Premium is not entitled
   it("active: Premium; each other status, an expired period and a zero quantity: Standard with a fallback reason", async () => {
     const cases: [string, Record<string, unknown>, "premium" | "standard"][] = [
       ["active", {}, "premium"],
-      ["trialing", { subscriptionStatus: "trialing" }, "premium"],
+      // A Stripe trial keeps the base plan but never paid Premium: the mint is Standard.
+      ["trialing", { subscriptionStatus: "trialing" }, "standard"],
       ["past_due inside the base plan's grace", { subscriptionStatus: "past_due", pastDueSince: new Date(base.getTime() - DAY) }, "standard"],
       ["unpaid", { subscriptionStatus: "unpaid" }, "standard"],
       ["canceled", { subscriptionStatus: "canceled" }, "standard"],
@@ -212,6 +214,16 @@ describe("mint check: the next call is Standard whenever Premium is not entitled
     const r = await resolveAllowance(fake.db as never, "u-1", base);
     expect(r).toMatchObject({ plan: "pro", premiumVoice: false, premiumConfigured: true });
     expect(r!.allowance).toMatchObject({ minutesCap: 200, premiumMinutesCap: 0 });
+  });
+
+  it("a Stripe trial keeps the base plan (Pro minutes, Pro plan) but no paid Premium, and the mint model is Standard", async () => {
+    addUser("u-1", proPremium({ subscriptionStatus: "trialing" }));
+    const r = await resolveAllowance(fake.db as never, "u-1", base);
+    expect(r).toMatchObject({ plan: "pro", premiumVoice: false, premiumConfigured: true });
+    expect(r!.allowance).toMatchObject({ minutesCap: 200, premiumMinutesCap: 0 });
+    const b = await begin("u-1");
+    expect(b).toMatchObject({ engine: "standard" });
+    expect(b.premium).toMatchObject({ source: null, fallback: "not_entitled" });
   });
 
   it("a status change in the database applies to the next call, never the running one", async () => {
@@ -601,12 +613,49 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
       ...extra,
     });
     let update: MockInstance<typeof stripeApi.updateSubscription>;
+    let create: MockInstance<typeof stripeApi.createSubscriptionSchedule>;
+    let updateSched: MockInstance<typeof stripeApi.updateSubscriptionSchedule>;
+    /** A stand-in for the one Stripe schedule this subscription can have. No network. */
+    let sched: { id: string; status: string; end_behavior: string; phases: { start_date: number; end_date: number; items: { price: string; quantity: number }[] }[] } | null;
+    const periodStart = () => Math.floor(base.getTime() / 1000) - 10 * 86400;
     beforeEach(() => {
       Object.assign(org(), {
         planTier: "team", seatCount: 4, premiumVoice: true, premiumVoiceQuantity: 4, stripeSubscriptionId: "sub_test_team",
         stripeCustomerId: "cus_test_team", subscriptionStatus: "active", subscriptionPeriodEnd: future(),
       });
       update = vi.spyOn(stripeApi, "updateSubscription").mockResolvedValue({});
+      sched = null;
+      // The allowlisted prices (resolvePriceIds reads each one, with its product metadata).
+      vi.spyOn(stripeApi, "retrievePrice").mockImplementation(async (id: string) => {
+        const [, , kind, iv] = id.split("_");
+        const meta = kind === "pro" ? PRO_META : kind === "team" ? TEAM_META : PREMIUM_META;
+        return { ...price(id, meta, iv === "y" ? "year" : "month"), active: true, livemode: false };
+      });
+      create = vi.spyOn(stripeApi, "createSubscriptionSchedule").mockImplementation(async () => {
+        const l = live as ReturnType<typeof teamLive>;
+        sched = { id: "sub_sched_test_portal", status: "active", end_behavior: "release", phases: [{ start_date: periodStart(), end_date: l.current_period_end, items: l.items.data.map((i) => ({ price: i.price.id, quantity: i.quantity })) }] };
+        live = { ...l, schedule: sched.id };
+        return structuredClone(sched);
+      });
+      vi.spyOn(stripeApi, "retrieveSubscriptionSchedule").mockImplementation(async () => {
+        if (!sched) throw new StripeApiError(404);
+        return structuredClone(sched);
+      });
+      updateSched = vi.spyOn(stripeApi, "updateSubscriptionSchedule").mockImplementation(async (_id, params) => {
+        const p = params as unknown as { end_behavior: string; phases: { items: { price: string; quantity: number }[]; start_date?: number; end_date?: number }[] };
+        if (!sched) throw new StripeApiError(400);
+        const end = sched.phases[0].end_date;
+        sched = { ...sched, end_behavior: p.end_behavior, phases: [
+          { start_date: p.phases[0].start_date ?? periodStart(), end_date: end, items: p.phases[0].items },
+          { start_date: end, end_date: end + 30 * 86400, items: p.phases[1].items },
+        ] };
+        return structuredClone(sched);
+      });
+      vi.spyOn(stripeApi, "releaseSubscriptionSchedule").mockImplementation(async () => {
+        sched = null;
+        live = { ...(live as ReturnType<typeof teamLive>), schedule: null };
+        return {};
+      });
     });
     const seatChange = () => deliver("customer.subscription.updated", { id: "sub_test_team", customer: "cus_test_team" });
 
@@ -618,6 +667,8 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
       expect(addonQuantitySync(parse(teamLive(6, 4, { schedule: "sub_sched_test_1" })))).toBeNull();
       expect(addonQuantitySync(parse(teamLive(6, 4, { cancel_at_period_end: true })))).toBeNull();
       expect(addonQuantitySync(parse(teamLive(6, 4, { status: "past_due" })))).toBeNull();
+      // Paid Premium is active-only, so a trialing subscription gets no add-on sync either (Triage B2).
+      expect(addonQuantitySync(parse(teamLive(6, 4, { status: "trialing" })))).toBeNull();
       expect(addonQuantitySync(parse(liveSub("active", { premium: 2 })))).toMatchObject({ quantity: 1, direction: "down" });
       const up = { subscriptionId: "sub_test_team", itemId: "si_test_prem", from: 4, quantity: 6, direction: "up" as const };
       expect(addonSyncRequest(up, "evt_a")).toEqual({
@@ -629,21 +680,24 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
       expect(addonSyncRequest({ ...up, from: 3 }, "evt_a").idempotencyKey).not.toBe(addonSyncRequest(up, "evt_a").idempotencyKey);
     });
 
-    it("3 -> 4 -> 3 -> 4 in the portal: every transition is a distinct Stripe request, never answered from an earlier one", async () => {
+    it("3 -> 4 -> 3 -> 4 in the portal: increases are distinct Stripe requests; the decrease waits for renewal", async () => {
       const keys = () => update.mock.calls.map((c) => c[2]);
       const quantities = () => update.mock.calls.map((c) => (c[1] as { items: { quantity: number }[] }).items[0].quantity);
       Object.assign(org(), { seatCount: 3, premiumVoiceQuantity: 3 });
-      live = teamLive(4, 3); await seatChange(); // up to 4
+      live = teamLive(4, 3); await seatChange(); // up to 4, now
       live = teamLive(4, 4); await seatChange(); // landed, in step: nothing written
-      live = teamLive(3, 4); await seatChange(); // down to 3
-      live = teamLive(3, 3); await seatChange(); // landed
-      live = teamLive(4, 3); await seatChange(); // up to 4 again
-      expect(quantities()).toEqual([4, 3, 4]);
-      expect(new Set(keys()).size).toBe(3);
+      live = teamLive(3, 4); await seatChange(); // down to 3: scheduled for renewal, not written now
+      expect(create).toHaveBeenCalledTimes(1);
+      // Renewal: the schedule's next phase lands (seats and add-on at 3) in a new period.
+      const nextEnd = Math.floor(future().getTime() / 1000) + 30 * 86400;
+      live = teamLive(3, 3, { current_period_end: nextEnd }); await seatChange();
+      live = teamLive(4, 3, { current_period_end: nextEnd }); await seatChange(); // up to 4 again
+      expect(quantities()).toEqual([4, 4]);
+      expect(new Set(keys()).size).toBe(2);
       // The two 3 -> 4 transitions come from different events, so their keys differ.
       expect(keys()[0]).toMatch(/^addon-sync:sub_test_team:si_test_prem:3-4:evt_test_pv_\d+$/);
-      expect(keys()[2]).toMatch(/^addon-sync:sub_test_team:si_test_prem:3-4:evt_test_pv_\d+$/);
-      expect(keys()[0]).not.toBe(keys()[2]);
+      expect(keys()[1]).toMatch(/^addon-sync:sub_test_team:si_test_prem:3-4:evt_test_pv_\d+$/);
+      expect(keys()[0]).not.toBe(keys()[1]);
     });
 
     it("more seats in the portal: the pool stays at what is paid until the add-on follows, then grows", async () => {
@@ -661,11 +715,93 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
       expect(update).toHaveBeenCalledTimes(1);
     });
 
-    it("fewer seats in the portal: the pool shrinks with the seats at once and the add-on follows without a credit", async () => {
+    it("fewer seats in the portal: the paid Premium pool is kept until renewal and the add-on drop is scheduled for it", async () => {
       live = teamLive(3, 4);
       await seatChange();
-      expect(orgAllowance()).toMatchObject({ minutesCap: 900, premiumMinutesCap: 120 });
+      // Nothing is written to the subscription now; the add-on drop is the next phase of the app's own schedule.
+      expect(update).not.toHaveBeenCalled();
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(create.mock.calls[0][0]).toEqual({ from_subscription: "sub_test_team" });
+      expect(updateSched).toHaveBeenCalledTimes(1);
+      const phases = (updateSched.mock.calls[0][1] as unknown as { phases: { items: unknown[] }[] }).phases;
+      expect(phases[0].items).toEqual([{ price: "price_test_team_m", quantity: 3 }, { price: "price_test_prem_m", quantity: 4 }]);
+      expect(phases[1].items).toEqual([{ price: "price_test_team_m", quantity: 3 }, { price: "price_test_prem_m", quantity: 3 }]);
+      // This period: base minutes follow the seats Stripe now bills, Premium keeps the 4 units already paid for.
+      expect(org()).toMatchObject({ seatCount: 3, premiumVoiceQuantity: 4, seatCountAtRenewal: 3 });
+      expect(orgAllowance()).toMatchObject({ minutesCap: 900, premiumMinutesCap: 160 });
+    });
+
+    it("just before renewal the pool is unchanged; after renewal the target applies; repeats never postpone or inflate", async () => {
+      live = teamLive(3, 4);
+      await seatChange();
+      // Repeated deliveries in the same period (the schedule is attached now): nothing new, nothing more.
+      await seatChange();
+      await seatChange();
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(updateSched).toHaveBeenCalledTimes(1);
+      expect(org().seatCountAtRenewal).toBe(3);
+      expect(orgAllowance().premiumMinutesCap).toBe(160);
+      // One minute before the period ends, a member still starts Premium from the full paid pool.
+      const justBefore = new Date(future().getTime() - 60_000);
+      vi.setSystemTime(justBefore);
+      const r = await beginCall("u-1", scn, justBefore);
+      if (!r.ok) throw new Error(r.error);
+      expect(r.engine).toBe("premium");
+      expect(orgAllowance().premiumMinutesCap).toBe(160);
+      await endCall("u-1", r.callId, "failed_connect", new Date(justBefore.getTime() + 1000));
+      // Renewal: Stripe reports the next period with the schedule's phase applied.
+      const nextEnd = Math.floor(future().getTime() / 1000) + 30 * 86400;
+      vi.setSystemTime(new Date(future().getTime() + 60_000));
+      live = teamLive(3, 3, { current_period_end: nextEnd });
+      await seatChange();
+      expect(org()).toMatchObject({ seatCount: 3, premiumVoiceQuantity: 3, seatCountAtRenewal: null });
+      expect(orgAllowance().premiumMinutesCap).toBe(120);
+      // A late or repeated delivery after the renewal reads Stripe's current state: still 3 units, no new mark.
+      await seatChange();
+      expect(org().seatCountAtRenewal).toBeNull();
+      expect(orgAllowance().premiumMinutesCap).toBe(120);
+      expect(update).not.toHaveBeenCalled();
+      expect(create).toHaveBeenCalledTimes(1);
+    });
+
+    it("pure: a pending decrease keeps the add-on quantity paid this period, never more; none pending is min(add-on, seats)", () => {
+      expect(premiumSeatsForUnits(3, 3, 4)).toBe(4);
+      expect(premiumSeatsForUnits(3, null, 4)).toBe(3);
+      // An in-app decrease (base seats still 6 until renewal) is unchanged by the rule.
+      expect(premiumSeatsForUnits(6, 4, 6)).toBe(6);
+    });
+
+    it("terms a schedule would drop: no schedule is written over them; the add-on is lowered now without a credit (fail closed)", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      live = teamLive(3, 4, { discounts: ["di_test_1"] });
+      await seatChange();
+      expect(create).not.toHaveBeenCalled();
       expect(update.mock.calls[0]).toEqual(["sub_test_team", { items: [{ id: "si_test_prem", quantity: 3 }], proration_behavior: "none" }, expect.stringMatching(/^addon-sync:sub_test_team:si_test_prem:4-3:evt_test_pv_\d+$/)]);
+      expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/could not wait for renewal/));
+      // Once Stripe reports the lowered add-on, the pending mark clears and the pool is 3 units.
+      live = teamLive(3, 3, { discounts: ["di_test_1"] });
+      await seatChange();
+      expect(org().seatCountAtRenewal).toBeNull();
+      expect(orgAllowance().premiumMinutesCap).toBe(120);
+    });
+
+    it("a schedule setup that fails answers 500 and drops the event id; Stripe's retry finishes it, still at renewal", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      live = teamLive(3, 4);
+      create.mockRejectedValueOnce(new StripeApiError(500));
+      const raw = JSON.stringify({ id: "evt_test_portal_retry", type: "customer.subscription.updated", livemode: false, data: { object: { id: "sub_test_team", customer: "cus_test_team" } } });
+      const send = () => {
+        const t = Math.floor(Date.now() / 1000);
+        const sig = `t=${t},v1=${createHmac("sha256", WHSEC).update(`${t}.${raw}`).digest("hex")}`;
+        return webhook(new NextRequest("http://localhost/api/stripe/webhook", { method: "POST", body: raw, headers: { "stripe-signature": sig } }));
+      };
+      expect((await send()).status).toBe(500);
+      expect(fake.rows("stripeEvent").some((r) => r.id === "evt_test_portal_retry")).toBe(false);
+      expect((await send()).status).toBe(200);
+      expect(create).toHaveBeenCalledTimes(2);
+      expect(updateSched).toHaveBeenCalledTimes(1);
+      expect(update).not.toHaveBeenCalled();
+      expect(orgAllowance().premiumMinutesCap).toBe(160);
     });
 
     it("writes nothing while Premium is off sale, or while a schedule owns the next quantities", async () => {
