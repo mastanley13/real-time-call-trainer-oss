@@ -59,19 +59,22 @@ export function premiumPriceLine(plan: PlanIntent, interval: Billing = "month"):
 /** Where the plan's interval is not known yet (billing page before the preview): the annual price, same unit. */
 export const premiumAnnualNote = (plan: PlanIntent): string => `Annual plans: $${PRICE.premium.year}${plan === "team" ? " per seat" : ""} a year.`;
 
-/** Final Pro disclosure (Margin 5(c), gate 0.77), verbatim. */
-export const PREMIUM_DISCLOSURE_PRO = "After 40 Premium minutes, the next call switches to Standard voice. A call in progress is never cut, and nothing extra is charged.";
-/** Final Team disclosure (Margin 5(b), gate 0.74), verbatim. Team minutes are pooled. */
-export const PREMIUM_DISCLOSURE_TEAM = "Premium minutes are pooled, 40 per seat. After the pool is used, the next call starts on Standard voice, and a call in progress is never cut. No overages.";
+/**
+ * Pro disclosure. Based on Margin 5(c), with "a call in progress is never cut" replaced (Prism u63 Medium 1): a Premium
+ * call is given a deadline of the Premium minutes left when it starts, so the old line overpromised.
+ */
+export const PREMIUM_DISCLOSURE_PRO = "After 40 Premium minutes, the next call switches to Standard voice. A Premium call is capped at your remaining Premium minutes, and we tell you before it starts. You are never charged extra.";
+/** Team disclosure. Based on Margin 5(b), same change as Pro. Team minutes are pooled, so the cap is the pool's. */
+export const PREMIUM_DISCLOSURE_TEAM = "Premium minutes are pooled, 40 per seat. After the pool is used, the next call starts on Standard voice. A Premium call is capped at the Premium minutes left in your pool, and we tell you before it starts. No overages.";
 export const premiumDisclosure = (plan: PlanIntent): string => (plan === "team" ? PREMIUM_DISCLOSURE_TEAM : PREMIUM_DISCLOSURE_PRO);
 /** Where Pro and Team are offered side by side (checkout choice): true for both, implies no per-rep cap. */
 export const PREMIUM_DISCLOSURE_BOTH = "When your Premium minutes run out, your next call switches to Standard voice automatically. You are never charged extra.";
 
 /**
- * Shown directly below the generic disclosure wherever Premium is offered or set up, so "a call in progress is never
- * cut" is not read as "a Premium call has no length limit". It never switches voices mid-call, but a Premium call is
- * given a deadline (its normal end) of the Premium minutes left when it starts. The call setup and the live call then
- * say exactly how long THIS call can run (premiumCallLimitNotice in billingUi.ts).
+ * Shown directly below the generic disclosure wherever Premium is offered or set up. Same policy as the disclosures:
+ * a Premium call never switches voices mid-call, but it is given a deadline (its normal end) of the Premium minutes
+ * left when it starts, and nothing extra is charged. The call setup and the live call then say exactly how long THIS
+ * call can run (premiumCallLimitNotice in billingUi.ts).
  */
 export const PREMIUM_CALL_LENGTH_NOTE = "A Premium call never switches voices. If fewer Premium minutes are left than a call can run, that call is set to end when they run out, and you see how long before it starts.";
 

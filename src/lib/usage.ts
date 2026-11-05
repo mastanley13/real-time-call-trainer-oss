@@ -345,8 +345,8 @@ async function claimTrialSample(tx: Tx, userId: string, organizationId: string, 
   const user = await tx.user.findUnique({ where: { id: userId } });
   const eligible = trialSampleEligible({
     flagOn: true, plan: r.plan, pooled: r.pooled, comped,
-    org: org ? { planTier: org.planTier, stripeSubscriptionId: org.stripeSubscriptionId, premiumVoice: org.premiumVoice, voiceModelComped: org.voiceModelComped, premiumTrialCallUsedAt: org.premiumTrialCallUsedAt } : null,
-    user: user ? { stripeSubscriptionId: user.stripeSubscriptionId, premiumVoice: user.premiumVoice } : null,
+    org: org ? { planTier: org.planTier, stripeSubscriptionId: org.stripeSubscriptionId, stripeCustomerId: org.stripeCustomerId, subscriptionStatus: org.subscriptionStatus, premiumVoice: org.premiumVoice, voiceModelComped: org.voiceModelComped, premiumTrialCallUsedAt: org.premiumTrialCallUsedAt } : null,
+    user: user ? { stripeSubscriptionId: user.stripeSubscriptionId, stripeCustomerId: user.stripeCustomerId, subscriptionStatus: user.subscriptionStatus, premiumVoice: user.premiumVoice } : null,
   });
   if (!eligible) return false;
   const won = await tx.organization.updateMany({ where: { id: organizationId, premiumTrialCallUsedAt: null }, data: { premiumTrialCallUsedAt: now } });

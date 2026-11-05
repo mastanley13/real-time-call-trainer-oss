@@ -14,6 +14,11 @@
  * - neither the organization nor the caller is linked to a Stripe subscription (stripeSubscriptionId null) or has the
  *   Premium Voice add-on flag set, and the organization's stored plan is Free: a lapsed or past-due paid account is
  *   not a trial account;
+ * - neither the organization nor the caller has any Stripe billing history: no stripeCustomerId and no
+ *   subscriptionStatus. Both survive a cancel (applyEntitlement in billing.ts keeps the customer id and writes status
+ *   "canceled" when it unlinks the subscription and drops the plan to Free), so a formerly paid account now on Free is
+ *   not a trial account. This also excludes an account whose only checkout never finished paying (incomplete,
+ *   incomplete_expired): it fails closed, never open;
  * - the organization is not comped (voiceModelComped is not true): comped orgs have their own Premium arrangement;
  * - the organization has not claimed its trial call yet (premiumTrialCallUsedAt null). The claim is permanent.
  *
@@ -39,6 +44,10 @@ export const trialDeadlineBinds = (existingSeconds: number): boolean => existing
 export interface TrialOrgRow {
   planTier: string | null;
   stripeSubscriptionId: string | null;
+  /** Kept after a cancel: set once the organization ever became a Stripe customer. */
+  stripeCustomerId: string | null;
+  /** Kept after a cancel ("canceled"): set once the organization ever had a Stripe subscription. */
+  subscriptionStatus: string | null;
   premiumVoice: boolean | null;
   voiceModelComped: boolean | null;
   premiumTrialCallUsedAt: Date | null;
@@ -46,6 +55,8 @@ export interface TrialOrgRow {
 
 export interface TrialUserRow {
   stripeSubscriptionId: string | null;
+  stripeCustomerId: string | null;
+  subscriptionStatus: string | null;
   premiumVoice: boolean | null;
 }
 
@@ -66,5 +77,7 @@ export function trialSampleEligible(input: {
   if (org.voiceModelComped === true) return false;
   if ((org.planTier ?? "free") !== "free" || org.stripeSubscriptionId || org.premiumVoice) return false;
   if (user.stripeSubscriptionId || user.premiumVoice) return false;
+  // Ever paid (or ever subscribed): the Stripe customer id and the last subscription status outlive a cancel.
+  if (org.stripeCustomerId || org.subscriptionStatus || user.stripeCustomerId || user.subscriptionStatus) return false;
   return org.premiumTrialCallUsedAt == null;
 }

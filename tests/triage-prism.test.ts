@@ -17,11 +17,13 @@ vi.mock("@/lib/apiAuth", async () => ({
 
 import { beginCall } from "@/lib/usage";
 import {
-  PREMIUM_NEEDS_GRADED_CALL, TRIAL_CALL_NOTICE, VOICE_CHOICE_KEY, callLengthLabel, liveCallLimitNotice, premiumCallLimitMinutes, premiumCallLimitNotice,
-  premiumChoiceAvailable, premiumSetupState, readVoiceChoice, voiceOfListEntry, type PremiumSnapshot,
+  ASK_ADMIN_PREMIUM, PREMIUM_AFTER_TRIAL, PREMIUM_NEEDS_GRADED_CALL, PREMIUM_STARTS_AFTER_TRIAL, PREMIUM_TRIAL_STANDARD_NOTE, PREMIUM_TRIAL_STATUS,
+  TRIAL_CALL_NOTICE, VOICE_CHOICE_KEY, callLengthLabel, liveCallLimitNotice, premiumCallLimitMinutes, premiumCallLimitNotice,
+  premiumChoiceAvailable, premiumSetupState, premiumSnapshotFromUsage, readVoiceChoice, voiceOfListEntry, type PremiumSnapshot,
 } from "@/lib/billingUi";
 import { PREMIUM_CALL_LENGTH_NOTE } from "@/lib/pricing";
-import PremiumVoiceControl, { PREMIUM_AFTER_TRIAL, nextSeatsText, type PremiumControlUsage } from "@/components/settings/PremiumVoiceControl";
+import PremiumVoiceControl, { nextSeatsText, type PremiumControlUsage } from "@/components/settings/PremiumVoiceControl";
+import PremiumMinutes from "@/components/call/PremiumMinutes";
 import { VoiceChoiceField } from "@/components/call/Briefing";
 import { liveVoiceNotice } from "@/components/call/Deck";
 import { voiceInfoFrom } from "@/components/call/RealtimeVoiceSession";
@@ -115,6 +117,80 @@ describe("B2: a Stripe trial gets the base plan but no paid Premium", () => {
     }));
     expect(html).toContain(PREMIUM_AFTER_TRIAL);
     expect(html).not.toContain(">Add Premium voice<");
+  });
+});
+
+// ---- Prism u63 Medium 2: trialing copy -----------------------------------------------------------------------------
+
+describe("Prism u63 Medium 2: a Stripe trial reads as 'starts after the trial', never as unpaid or ask-your-admin", () => {
+  const UNPAID = /Paused|not paid up|payment goes through/;
+  const setupHtml = (p: PremiumSnapshot | null) => renderToStaticMarkup(createElement(PremiumMinutes, { premium: p }));
+
+  it("trialing Pro owner with the add-on, from the real /api/usage answer: setup says when Premium starts, no admin line", async () => {
+    addUser("u-1", "org-1", proPremium({ subscriptionStatus: "trialing" }));
+    gradedCall("u-1", "org-1");
+    const snap = premiumSnapshotFromUsage(await usage());
+    expect(snap).toMatchObject({ enabled: false, configured: true, canManage: true, canBuy: false, trialing: true });
+    expect(premiumSetupState(snap).kind).toBe("waiting_trial");
+    const html = setupHtml(snap);
+    expect(html).toContain(PREMIUM_STARTS_AFTER_TRIAL);
+    expect(PREMIUM_STARTS_AFTER_TRIAL).toBe("Premium voice starts when your trial ends.");
+    expect(html).not.toContain(ASK_ADMIN_PREMIUM);
+    expect(html).not.toContain("not on your plan");
+  });
+
+  it("trialing Pro owner without the add-on: setup says it can be added after the trial, still no admin line", () => {
+    const snap: PremiumSnapshot = { enabled: false, remaining: 0, cap: 0, plan: "pro", onSale: true, canBuy: false, offerReady: true, comped: false, removeAt: null, configured: false, canManage: true, trialing: true };
+    expect(premiumSetupState(snap).kind).toBe("waiting_trial");
+    expect(setupHtml(snap)).toContain(PREMIUM_AFTER_TRIAL);
+    expect(setupHtml(snap)).not.toContain(ASK_ADMIN_PREMIUM);
+    // Spec 10.2 still holds: nothing about adding Premium before the first graded call.
+    expect(premiumSetupState({ ...snap, offerReady: false }).kind).toBe("none");
+  });
+
+  it("billing, add-on on the plan and trialing: trial copy and a neutral chip, no Paused or unpaid wording", () => {
+    const html = renderToStaticMarkup(createElement(PremiumVoiceControl, {
+      usage: { metered: true, plan: "pro", premiumVoice: { enabled: false, configured: true, canBuy: false, canManage: true, offerReady: true, minutesCap: 0, remaining: 0 }, billing: { enabled: true, hasSubscription: true, seats: 1, status: "trialing", renewsAt: "2026-12-05T22:00:00.000Z" } },
+      onSale: true,
+    }));
+    expect(html).toContain(`${PREMIUM_STARTS_AFTER_TRIAL} ${PREMIUM_TRIAL_STANDARD_NOTE}`);
+    expect(html).toContain(PREMIUM_TRIAL_STATUS);
+    expect(html).not.toMatch(UNPAID);
+    expect(html).not.toContain("banner-warn");
+    // Removal at period end is still offered to the owner.
+    expect(html).toContain("Remove at period end");
+  });
+
+  it("trialing Team member (not the owner): setup keeps the ask-your-admin line", async () => {
+    addOrg("org-t", { planTier: "team", premiumVoice: true, premiumVoiceQuantity: 3, seatCount: 3, stripeSubscriptionId: "sub_test_team", stripeCustomerId: "cus_test_team", subscriptionStatus: "trialing", subscriptionPeriodEnd: FAR });
+    addUser("owner-t", "org-t", { role: "owner" });
+    addUser("rep-t", "org-t", { role: "trainee" });
+    gradedCall("rep-t", "org-t");
+    const snap = premiumSnapshotFromUsage(await usage("rep-t"));
+    expect(snap).toMatchObject({ plan: "team", enabled: false, canManage: false, trialing: true });
+    expect(premiumSetupState(snap).kind).toBe("locked_ask");
+    expect(setupHtml(snap)).toContain(ASK_ADMIN_PREMIUM);
+    // The Team owner in the same trial gets the trial line instead.
+    const owner = premiumSnapshotFromUsage(await usage("owner-t"));
+    expect(premiumSetupState(owner).kind).toBe("waiting_trial");
+    expect(setupHtml(owner)).not.toContain(ASK_ADMIN_PREMIUM);
+  });
+
+  it("an active plan that is past due still shows Paused and the unpaid wording", () => {
+    const html = renderToStaticMarkup(createElement(PremiumVoiceControl, {
+      usage: { metered: true, plan: "pro", premiumVoice: { enabled: false, configured: true, canBuy: false, canManage: true, offerReady: true, minutesCap: 0, remaining: 0 }, billing: { enabled: true, hasSubscription: true, seats: 1, status: "past_due" } },
+      onSale: true,
+    }));
+    expect(html).toContain(">Paused<");
+    expect(html).toContain("Premium is paused because the plan is not paid up. Calls use Standard voice until the payment goes through.");
+    expect(html).not.toContain(PREMIUM_STARTS_AFTER_TRIAL);
+    // And setup for a past-due owner is unchanged (not a trial).
+    const snap: PremiumSnapshot = { enabled: false, remaining: 0, cap: 0, plan: "pro", onSale: true, canBuy: true, offerReady: true, comped: false, removeAt: null, configured: true, canManage: true, trialing: false };
+    expect(premiumSetupState(snap).kind).toBe("locked_buy");
+  });
+
+  it("new copy has no em dash", () => {
+    for (const s of [PREMIUM_STARTS_AFTER_TRIAL, PREMIUM_TRIAL_STANDARD_NOTE, PREMIUM_AFTER_TRIAL, PREMIUM_TRIAL_STATUS]) expect(s.includes(String.fromCharCode(0x2014))).toBe(false);
   });
 });
 

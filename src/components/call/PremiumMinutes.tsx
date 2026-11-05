@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
-import { Lock } from "lucide-react";
-import { ADD_PREMIUM_LABEL, ASK_ADMIN_PREMIUM, BILLING_PATH, premiumLeftLabel, premiumSetupState, type PremiumSnapshot } from "@/lib/billingUi";
+import { Clock, Lock } from "lucide-react";
+import { ADD_PREMIUM_LABEL, ASK_ADMIN_PREMIUM, BILLING_PATH, premiumLeftLabel, premiumSetupState, premiumTrialLine, type PremiumSnapshot } from "@/lib/billingUi";
 import { PREMIUM_CALL_LENGTH_NOTE, premiumDisclosure, premiumNudge } from "@/lib/pricing";
 import { trackPremiumUpsell } from "@/lib/premiumEventTypes";
 
@@ -13,6 +13,7 @@ import { trackPremiumUpsell } from "@/lib/premiumEventTypes";
  * - Entitled: "Premium: N of 40 min left" (Team: the pooled capacity, 40 x units), with the disclosure.
  * - Used up: the nudge (calls continue on Standard, free).
  * - Not on the plan while Premium is on sale: locked, with Add Premium voice (a buyer) or Ask your admin (a Team member).
+ * - The owner during a Stripe trial: when Premium starts (or can be added), with no admin line.
  * - Free, or off sale and not on the plan: nothing.
  */
 export default function PremiumMinutes({ premium }: { premium: PremiumSnapshot | null }) {
@@ -29,6 +30,15 @@ export default function PremiumMinutes({ premium }: { premium: PremiumSnapshot |
         {/* Below the generic copy: a Premium call is set to end when the Premium minutes run out. */}
         <p className="mt-1 text-xs text-ink-muted">{PREMIUM_CALL_LENGTH_NOTE}</p>
       </div>
+    );
+  }
+  if (state === "waiting_trial") {
+    // Prism u63 Medium 2: the owner during a Stripe trial. Not an upsell, and never "Ask your admin".
+    return (
+      <p className="flex flex-wrap items-center gap-2 text-sm text-ink-muted" role="status">
+        <Clock size={14} strokeWidth={1.75} aria-hidden />
+        <span>{premiumTrialLine(premium)}</span>
+      </p>
     );
   }
   if (state === "used_up") {

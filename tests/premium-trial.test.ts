@@ -133,8 +133,8 @@ describe("trial rules (pure)", () => {
   });
 
   it("eligibility: a never-paid Free organization only; not comped, not pooled, not paid or lapsed, not org-less, not claimed", () => {
-    const orgRow = { planTier: "free", stripeSubscriptionId: null, premiumVoice: false, voiceModelComped: null, premiumTrialCallUsedAt: null };
-    const userRow = { stripeSubscriptionId: null, premiumVoice: false };
+    const orgRow = { planTier: "free", stripeSubscriptionId: null, stripeCustomerId: null, subscriptionStatus: null, premiumVoice: false, voiceModelComped: null, premiumTrialCallUsedAt: null };
+    const userRow = { stripeSubscriptionId: null, stripeCustomerId: null, subscriptionStatus: null, premiumVoice: false };
     const ok = { flagOn: true, plan: "free", pooled: false, comped: false, org: orgRow, user: userRow };
     expect(trialSampleEligible(ok)).toBe(true);
     expect(trialSampleEligible({ ...ok, flagOn: false })).toBe(false);
@@ -150,6 +150,22 @@ describe("trial rules (pure)", () => {
     expect(trialSampleEligible({ ...ok, user: { ...userRow, stripeSubscriptionId: "sub_test_pro" } })).toBe(false); // past-due or lapsed Pro
     expect(trialSampleEligible({ ...ok, user: { ...userRow, premiumVoice: true } })).toBe(false);
     expect(trialSampleEligible({ ...ok, org: { ...orgRow, premiumTrialCallUsedAt: new Date() } })).toBe(false);
+  });
+
+  it("eligibility: a formerly paid organization or user now on Free is not a trial account (customer id and status survive a cancel)", () => {
+    const orgRow = { planTier: "free", stripeSubscriptionId: null, stripeCustomerId: null, subscriptionStatus: null, premiumVoice: false, voiceModelComped: null, premiumTrialCallUsedAt: null };
+    const userRow = { stripeSubscriptionId: null, stripeCustomerId: null, subscriptionStatus: null, premiumVoice: false };
+    const ok = { flagOn: true, plan: "free", pooled: false, comped: false, org: orgRow, user: userRow };
+    // Never paid: still eligible.
+    expect(trialSampleEligible(ok)).toBe(true);
+    // Free after a cancel: the subscription is unlinked and the plan is free, but the Stripe customer id is kept.
+    expect(trialSampleEligible({ ...ok, org: { ...orgRow, stripeCustomerId: "cus_test_former_team" } })).toBe(false);
+    expect(trialSampleEligible({ ...ok, user: { ...userRow, stripeCustomerId: "cus_test_former_pro" } })).toBe(false);
+    // Free with the last subscription's status still recorded.
+    expect(trialSampleEligible({ ...ok, org: { ...orgRow, subscriptionStatus: "canceled" } })).toBe(false);
+    expect(trialSampleEligible({ ...ok, user: { ...userRow, subscriptionStatus: "canceled" } })).toBe(false);
+    // The row applyEntitlement leaves after a cancel: both signals together.
+    expect(trialSampleEligible({ ...ok, org: { ...orgRow, stripeCustomerId: "cus_test_former_team", subscriptionStatus: "canceled" } })).toBe(false);
   });
 
   it("the trial is one of exactly three ways onto the Premium model", () => {
@@ -262,6 +278,16 @@ describe("one Premium trial call per Free organization", () => {
     addUser("l-1", "org-lapsed", { planTier: "pro", stripeSubscriptionId: "sub_test_lapsed", subscriptionStatus: "canceled" });
     expect((await begin("l-1")).premium.source).toBeNull();
     expect(org("org-lapsed").premiumTrialCallUsedAt).toBeNull();
+    // Formerly paid Team, canceled back to Free: unlinked and planTier free, but the customer id and status remain.
+    addOrg("org-former", { planTier: "free", stripeSubscriptionId: null, stripeCustomerId: "cus_test_former", subscriptionStatus: "canceled" });
+    addUser("f-1", "org-former");
+    expect((await begin("f-1")).premium.source).toBeNull();
+    expect(org("org-former").premiumTrialCallUsedAt).toBeNull();
+    // Formerly paid Pro (its own subscription) in a never-paid organization: no trial either.
+    addOrg("org-fresh");
+    addUser("fp-1", "org-fresh", { planTier: "free", stripeSubscriptionId: null, stripeCustomerId: "cus_test_former_pro", subscriptionStatus: "canceled" });
+    expect((await begin("fp-1")).premium.source).toBeNull();
+    expect(org("org-fresh").premiumTrialCallUsedAt).toBeNull();
     // Org-less: no organization to claim on, so no trial (metered voice also needs an organization).
     addUser("solo-1", null);
     const solo = await beginCall("solo-1", scn, at(0), { offerTrialSample: true });

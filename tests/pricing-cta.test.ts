@@ -5,7 +5,7 @@ import PricingCards, { tierAction } from "@/components/landing/PricingCards";
 import PricingSummary from "@/components/landing/PricingSummary";
 import PricingPage from "@/app/pricing/page";
 import Home from "@/app/page";
-import { OPEN_SOON_LINE, PREMIUM_CALL_LENGTH_NOTE, PREMIUM_COMING_SOON, PREMIUM_DISCLOSURE_PRO, PREMIUM_DISCLOSURE_TEAM, PREMIUM_NUDGE_PRO, isPremiumOnSale, premiumPriceLine } from "@/lib/pricing";
+import { OPEN_SOON_LINE, PREMIUM_CALL_LENGTH_NOTE, PREMIUM_COMING_SOON, PREMIUM_DISCLOSURE_BOTH, PREMIUM_DISCLOSURE_PRO, PREMIUM_DISCLOSURE_TEAM, PREMIUM_NUDGE_PRO, isPremiumOnSale, premiumPriceLine } from "@/lib/pricing";
 import { billingOn } from "@/lib/serverConfig";
 
 const cards = (billingEnabled: boolean) => renderToStaticMarkup(createElement(PricingCards, { billingEnabled }));
@@ -85,15 +85,17 @@ describe("Premium add-on row", () => {
     expect(premiumPriceLine("pro", "month")).not.toMatch(/seat/);
   });
 
-  it("final Margin copy, verbatim (premium-voice-docs-input.md sections 5 and 6; final-spec-draft.md lines 118 to 122)", () => {
+  it("final copy (Margin sections 5 and 6, disclosures adapted for the Premium call cap, Prism u63 Medium 1)", () => {
     expect(premiumPriceLine("team", "month")).toBe("Premium voice for Team: +$20 per seat a month, 40 pooled minutes per seat.");
-    expect(PREMIUM_DISCLOSURE_TEAM).toBe("Premium minutes are pooled, 40 per seat. After the pool is used, the next call starts on Standard voice, and a call in progress is never cut. No overages.");
-    expect(PREMIUM_DISCLOSURE_PRO).toBe("After 40 Premium minutes, the next call switches to Standard voice. A call in progress is never cut, and nothing extra is charged.");
+    expect(PREMIUM_DISCLOSURE_TEAM).toBe("Premium minutes are pooled, 40 per seat. After the pool is used, the next call starts on Standard voice. A Premium call is capped at the Premium minutes left in your pool, and we tell you before it starts. No overages.");
+    expect(PREMIUM_DISCLOSURE_PRO).toBe("After 40 Premium minutes, the next call switches to Standard voice. A Premium call is capped at your remaining Premium minutes, and we tell you before it starts. You are never charged extra.");
+    // Never promise an uninterrupted call of any length: the Premium call has a deadline (Prism u63 Medium 1).
+    for (const s of [PREMIUM_DISCLOSURE_TEAM, PREMIUM_DISCLOSURE_PRO, PREMIUM_DISCLOSURE_BOTH, PREMIUM_CALL_LENGTH_NOTE]) expect(s).not.toMatch(/never cut|in progress/);
     expect(PREMIUM_NUDGE_PRO).toBe("Premium minutes used. Your next call uses Standard voice, and nothing extra is charged. Premium resets on your billing date.");
     // Pro keeps no per-seat wording anywhere; Team says pooled.
     for (const s of [premiumPriceLine("pro", "month"), premiumPriceLine("pro", "year"), PREMIUM_DISCLOSURE_PRO, PREMIUM_NUDGE_PRO]) expect(s).not.toMatch(/seat/);
     expect(PREMIUM_DISCLOSURE_TEAM).toMatch(/pooled/);
-    // The cap-specific note sits below the generic copy so "never cut" is not read as "no length limit".
+    // The cap-specific note sits below the disclosure on setup and billing: no mid-call switch, and the call's deadline.
     expect(PREMIUM_CALL_LENGTH_NOTE).toMatch(/set to end when they run out/);
     for (const s of [PREMIUM_DISCLOSURE_TEAM, PREMIUM_DISCLOSURE_PRO, PREMIUM_NUDGE_PRO, PREMIUM_CALL_LENGTH_NOTE]) expect(s.includes(String.fromCharCode(0x2014))).toBe(false);
   });

@@ -3,7 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Loader2, Lock, Sparkles } from "lucide-react";
 import { PREMIUM_CALL_LENGTH_NOTE, PREMIUM_COMING_SOON, PREMIUM_MINUTES, premiumAnnualNote, premiumDisclosure, premiumPriceLine } from "@/lib/pricing";
-import { ADD_PREMIUM_LABEL, PREMIUM_NEEDS_GRADED_CALL, formatCents, formatResetDate, premiumFallbackLine, premiumLeftLabel } from "@/lib/billingUi";
+import {
+  ADD_PREMIUM_LABEL, PREMIUM_AFTER_TRIAL, PREMIUM_NEEDS_GRADED_CALL, PREMIUM_STARTS_AFTER_TRIAL, PREMIUM_TRIAL_STANDARD_NOTE, PREMIUM_TRIAL_STATUS,
+  formatCents, formatResetDate, premiumFallbackLine, premiumLeftLabel,
+} from "@/lib/billingUi";
 import { trackPremiumUpsell } from "@/lib/premiumEventTypes";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "@/lib/usagePlan";
 
@@ -14,9 +17,6 @@ export interface PremiumControlUsage {
   premiumVoice?: { enabled?: boolean; configured?: boolean; minutesCap?: number; remaining?: number; canBuy?: boolean; canManage?: boolean; offerReady?: boolean; removeAt?: string | null };
   billing?: { enabled?: boolean; seats?: number; seatsAtRenewal?: number | null; hasSubscription?: boolean; renewsAt?: string | null; status?: string | null };
 }
-
-/** Shown on the add-on row while the plan is in a Stripe trial: paid Premium is not part of a trial (Triage B2). */
-export const PREMIUM_AFTER_TRIAL = "Premium voice can be added once your trial ends and your plan is active.";
 
 /**
  * The seat stepper's text. It starts at the current seat count (a real value, not a placeholder, so ArrowUp on 3 gives
@@ -203,7 +203,8 @@ export default function PremiumVoiceControl({ usage = null, onSale = false, onCh
   const seats = serverSeats;
   const renews = formatResetDate(usage?.billing?.renewsAt ?? undefined);
   const teamOwner = plan === "team" && canManage;
-  const status = enabled ? "On" : configured ? (onSale ? "Paused" : "Not available yet") : "Not added";
+  // A Stripe trial is not a payment problem (Prism u63 Medium 2): the add-on waits for the paid plan, never "Paused".
+  const status = enabled ? "On" : configured ? (!onSale ? "Not available yet" : trialing ? PREMIUM_TRIAL_STATUS : "Paused") : "Not added";
   return (
     <section className="panel space-y-4 p-4 sm:p-5" aria-labelledby="premium-h">
       <div className="flex flex-wrap items-center gap-2">
@@ -241,7 +242,10 @@ export default function PremiumVoiceControl({ usage = null, onSale = false, onCh
           <p>{PREMIUM_CALL_LENGTH_NOTE}</p>
         </div>
       )}
-      {configured && !enabled && onSale && (
+      {configured && !enabled && onSale && trialing && (
+        <p className="text-sm text-ink-muted" role="status">{PREMIUM_STARTS_AFTER_TRIAL} {PREMIUM_TRIAL_STANDARD_NOTE}</p>
+      )}
+      {configured && !enabled && onSale && !trialing && (
         <p className="banner-warn text-sm" role="status">Premium is paused because the plan is not paid up. Calls use Standard voice until the payment goes through.</p>
       )}
       {configured && !enabled && !onSale && (

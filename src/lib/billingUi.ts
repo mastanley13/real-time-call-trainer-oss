@@ -175,7 +175,28 @@ export interface PremiumSnapshot {
   comped: boolean;
   /** ISO date a scheduled removal takes effect, or null. */
   removeAt: string | null;
+  /** The add-on is on the account (it may still be off, for example during a Stripe trial). Missing means no. */
+  configured?: boolean;
+  /** This person may change the add-on (the Pro subscriber, the Team owner), whatever the graded-call gate. */
+  canManage?: boolean;
+  /** The billing subject's subscription is in a Stripe trial, so paid Premium waits for the paid plan (Triage B2). */
+  trialing?: boolean;
 }
+
+// ---- Stripe trial (Prism u63 Medium 2) -------------------------------------------------------------------------
+// Paid Premium is not part of a Stripe trial. Nothing is unpaid, so no "paused" or payment wording, and an owner is
+// never sent to an admin.
+
+/** Setup and billing, for the owner of an add-on that is already on the plan during a trial. */
+export const PREMIUM_STARTS_AFTER_TRIAL = "Premium voice starts when your trial ends.";
+/** Billing, after PREMIUM_STARTS_AFTER_TRIAL: what calls use meanwhile. */
+export const PREMIUM_TRIAL_STANDARD_NOTE = "Until then, calls use Standard voice.";
+/** Setup and billing, for an owner during a trial when the add-on is not on the plan yet. */
+export const PREMIUM_AFTER_TRIAL = "Premium voice can be added once your trial ends and your plan is active.";
+/** Billing status chip for an add-on that waits for the trial to end. Not "Paused": nothing failed. */
+export const PREMIUM_TRIAL_STATUS = "Starts after trial";
+/** The setup line for the waiting_trial state. */
+export const premiumTrialLine = (p: Pick<PremiumSnapshot, "configured">): string => (p.configured ? PREMIUM_STARTS_AFTER_TRIAL : PREMIUM_AFTER_TRIAL);
 
 // ---- Standard or Premium for this call (Prism finding 1) -------------------------------------------------------
 
@@ -251,7 +272,11 @@ export const premiumFallbackLine = (dateIso: string | null | undefined): string 
 
 /** Premium state from a /api/usage response, or null when minutes are not metered or the answer is unusable. */
 export function premiumSnapshotFromUsage(data: unknown): PremiumSnapshot | null {
-  const d = data as { metered?: unknown; plan?: unknown; premiumVoice?: { enabled?: unknown; remaining?: unknown; minutesCap?: unknown; onSale?: unknown; canBuy?: unknown; offerReady?: unknown; comped?: unknown; removeAt?: unknown } } | null;
+  const d = data as {
+    metered?: unknown; plan?: unknown;
+    premiumVoice?: { enabled?: unknown; configured?: unknown; remaining?: unknown; minutesCap?: unknown; onSale?: unknown; canBuy?: unknown; canManage?: unknown; offerReady?: unknown; comped?: unknown; removeAt?: unknown };
+    billing?: { status?: unknown };
+  } | null;
   const p = d?.premiumVoice;
   if (d?.metered !== true || !p || typeof p.remaining !== "number" || typeof p.minutesCap !== "number") return null;
   if (!Number.isFinite(p.remaining) || !Number.isFinite(p.minutesCap)) return null;
@@ -266,19 +291,28 @@ export function premiumSnapshotFromUsage(data: unknown): PremiumSnapshot | null 
     offerReady: p.offerReady === true,
     comped: p.comped === true,
     removeAt: typeof p.removeAt === "string" ? p.removeAt : null,
+    configured: p.configured === true,
+    // Older answers without canManage fall back to canBuy, as the billing control does.
+    canManage: (p.canManage ?? p.canBuy) === true,
+    trialing: d.billing?.status === "trialing",
   };
 }
 
+export type PremiumSetupKind = "left" | "used_up" | "locked_buy" | "locked_ask" | "waiting_trial" | "none";
+
 /**
  * What the call setup shows for Premium. `left` with the count; `used_up` with the nudge (calls continue on Standard);
- * `locked` with Add Premium voice (a buyer) or Ask your admin (a Team member); nothing on Free, when Premium is
- * off sale and not on the account (no new paid controls while the sale is off), or before the organization's first
- * graded call (spec 10.2: never offered before it).
+ * `locked` with Add Premium voice (a buyer) or Ask your admin (a Team member); `waiting_trial` for the owner during a
+ * Stripe trial (premiumTrialLine, no admin line); nothing on Free, when Premium is off sale and not on the account (no
+ * new paid controls while the sale is off), or before the organization's first graded call (spec 10.2: never offered
+ * before it, unless the add-on is already on the plan).
  */
-export function premiumSetupState(p: PremiumSnapshot | null): { kind: "left" | "used_up" | "locked_buy" | "locked_ask" | "none" } {
+export function premiumSetupState(p: PremiumSnapshot | null): { kind: PremiumSetupKind } {
   if (!p || p.plan === "free") return { kind: "none" };
   if (p.enabled) return { kind: p.remaining >= 1 ? "left" : "used_up" };
-  if (!p.onSale || !p.offerReady) return { kind: "none" };
+  if (!p.onSale) return { kind: "none" };
+  if (p.trialing && p.canManage && (p.configured || p.offerReady)) return { kind: "waiting_trial" };
+  if (!p.offerReady) return { kind: "none" };
   return { kind: p.canBuy ? "locked_buy" : "locked_ask" };
 }
 
