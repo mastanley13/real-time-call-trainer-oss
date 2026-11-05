@@ -70,6 +70,10 @@ model Organization {
   voiceModelTier   String?
   /// Set by hand in the database, never by the API. Null or false means the org is not comped for Premium.
   voiceModelComped Boolean?
+  /// The organization's one Premium voice trial call (PREMIUM_TRIAL_SAMPLE_ON): when it was claimed and the call id that
+  /// claimed it. Written once, at mint, by a conditional update; never cleared. Null means not claimed.
+  premiumTrialCallUsedAt    DateTime?
+  premiumTrialCallSessionId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -195,8 +199,11 @@ model TrainerSession {
   /// (and from a verified receipt for an unmetered save). Comped Premium is "premium" here. Null for text calls.
   voiceTier          String?
   /// OpenAI Realtime model id the call was minted with. Written server-side after a successful mint for metered calls
-  /// (src/lib/voiceMintLog.ts), or from a verified mint receipt on save (src/lib/mintReceipt.ts). Cost log only, never returned.
+  /// (src/lib/voiceMintLog.ts), or from a verified mint receipt on save (src/lib/mintReceipt.ts). Cost log only; billing
+  /// reads engineTier; never returned. Null for text, ElevenLabs and unverified calls.
   realtimeModel      String?
+  /// True for the one call that ran as its organization's Premium trial: its deadline is min(existing deadline, 300 s).
+  premiumTrial       Boolean  @default(false)
   /// Of reservedMinutes, how many were also held against the Premium limit. Minutes beyond this book as standard.
   premiumReservedMinutes Int  @default(0)
   /// What this open call holds in the NEXT period when the period rolled over mid-call (set by the rollover).

@@ -6,7 +6,7 @@ import { CUE_LABELS, type CoachMode } from "@/lib/coach-types";
 import { talkTrackSteps, type Scenario } from "@/lib/scenarios";
 import type { StoredTurn } from "@/lib/sessionStore";
 import { formatDuration } from "@/lib/format";
-import { NEXT_CALL_STANDARD_NOTICE, voiceLabel } from "@/lib/billingUi";
+import { NEXT_CALL_STANDARD_NOTICE, TRIAL_CALL_NOTICE, voiceLabel } from "@/lib/billingUi";
 import CallOrb, { type AgentState } from "@/components/CallOrb";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import CallError from "./CallError";
@@ -24,6 +24,8 @@ export interface DeckVoice {
   tier?: "premium" | "standard";
   /** This Premium call holds the last Premium minutes: the next call is Standard. */
   nextCallStandard?: boolean;
+  /** The organization's one Premium trial call. Changes only the notice wording. */
+  trial?: boolean;
 }
 
 const FOCUSABLE = "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
@@ -247,7 +249,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
             {voice?.tier && (
               <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-xs text-ink-muted">
                 <span className="chip">{voiceLabel(voice.tier)}</span>
-                <p aria-live="polite" className="min-w-0 text-center">{voice.nextCallStandard ? NEXT_CALL_STANDARD_NOTICE : ""}</p>
+                <p aria-live="polite" className="min-w-0 text-center">{voice.trial ? TRIAL_CALL_NOTICE : voice.nextCallStandard ? NEXT_CALL_STANDARD_NOTICE : ""}</p>
               </div>
             )}
           </div>

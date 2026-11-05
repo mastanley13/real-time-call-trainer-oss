@@ -25,8 +25,9 @@ const SECRET_TTL_SEC = 600;
  * Docs: https://developers.openai.com/api/reference/resources/realtime/subresources/client_secrets/methods/create
  *
  * The model is picked here, on the server, from the organization's voice tier (Standard or Premium, comped gate,
- * src/lib/voiceTier.ts) or the verified paid Premium entitlement (mintVoiceTier); the client never chooses it, and the
- * response never names it (a metered call gets only the tier label). `receipt`
+ * src/lib/voiceTier.ts), the verified paid Premium entitlement, or a Free organization's one claimed Premium trial call
+ * (mintVoiceTier); the client never chooses it, and the response never names it (a metered call gets only the tier
+ * label). `receipt`
  * (src/lib/mintReceipt.ts) is that model, encrypted and bound to this user and this call's `sessionId`; the client saves the call under that sessionId with the receipt, so the server
  * can log the model it really minted, once, on that call only.
  */
@@ -66,13 +67,15 @@ export async function POST(req: NextRequest) {
   // "true", the add-on is entitled (active or trialing, quantity above 0, period not over) and at least one whole Premium
   // minute is left, else Standard for this session. A running call is never switched to another engine; a paid Premium
   // call's maxSeconds is min(call allowance, Premium left). The engine drives caps and billing (TrainerSession.engineTier);
-  // a comped call stays on the standard billing engine and uses no paid Premium minutes.
+  // a comped call and a Free trial call stay on the standard billing engine and use no paid Premium minutes.
   let callId: string | undefined;
   let maxSeconds = SECRET_TTL_SEC;
   let premium: PremiumMintInfo | undefined;
   if (meteringEnabled()) {
     // A failed lookup refuses voice (fail closed); text practice never reaches this route.
-    const begun = await beginCall(auth.id, scenario, new Date(), { compedPremium: orgTier === "premium" }).catch((e) => {
+    // offerTrialSample: a Free organization's one Premium trial call may be claimed here, atomically, when
+    // PREMIUM_TRIAL_SAMPLE_ON is exactly "true" (beginCall decides from the database; the client cannot ask for it).
+    const begun = await beginCall(auth.id, scenario, new Date(), { compedPremium: orgTier === "premium", offerTrialSample: true }).catch((e) => {
       console.error("[realtime/session] usage lookup failed", e instanceof Error ? e.name : "unknown");
       return null;
     });
@@ -89,9 +92,10 @@ export async function POST(req: NextRequest) {
 
   // The model, read from the database on every call; the client never chooses it. Premium only when the org is comped
   // AND set to premium (effectiveVoiceTier), or when the meter started this call on the paid Premium entitlement
-  // (premium.source === "paid", which needs the exact sale flag and an entitled add-on). A stored add-on flag alone, or
-  // any other engine choice, never reaches the Premium model.
-  const tier = mintVoiceTier(orgTier, { paidPremium: premium?.source === "paid" });
+  // (premium.source === "paid", which needs the exact sale flag and an entitled add-on), or when the meter atomically
+  // claimed the organization's one Free trial call for it (premium.source === "trial", PREMIUM_TRIAL_SAMPLE_ON exactly
+  // "true"). A stored add-on flag alone, the billing engine, or anything the client sends never reaches Premium.
+  const tier = mintVoiceTier(orgTier, { paidPremium: premium?.source === "paid", trialSample: premium?.source === "trial" });
   const model = voiceModelFor(tier);
   if (premium?.fallback) {
     await emitPremiumEvent({ name: "premium_fallback_to_standard", subject: "user", subjectId: auth.id, reason: premium.fallback });
@@ -166,7 +170,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         clientSecret: data.value, expiresAt, voice, sessionId,
-        ...(callId ? { callId, maxSeconds, voiceTier: tier, nextCallStandard: premium?.nextCallStandard ?? false } : {}),
+        // Neutral labels only: the tier, whether the next call is Standard, and whether this is the trial call.
+        ...(callId ? { callId, maxSeconds, voiceTier: tier, nextCallStandard: premium?.nextCallStandard ?? false, ...(premium?.source === "trial" ? { voiceTrial: true } : {}) } : {}),
         ...(receipt ? { receipt } : {}),
       },
       { headers: { "Cache-Control": "no-store" } },

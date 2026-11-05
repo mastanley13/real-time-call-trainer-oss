@@ -34,12 +34,13 @@ interface Handlers {
   onVoiceInfo: (info: VoiceInfo) => void;
 }
 
-export interface VoiceInfo { tier: "premium" | "standard"; nextCallStandard: boolean }
+/** `trial`: this is the organization's one Premium trial call (up to 5 minutes). Labels only, no model id. */
+export interface VoiceInfo { tier: "premium" | "standard"; nextCallStandard: boolean; trial: boolean }
 
 /** Reads the tier label from a mint answer (realtime session or ElevenLabs token). Null when the server did not say. */
-export function voiceInfoFrom(data: { voiceTier?: unknown; nextCallStandard?: unknown } | null | undefined): VoiceInfo | null {
+export function voiceInfoFrom(data: { voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown } | null | undefined): VoiceInfo | null {
   if (data?.voiceTier !== "premium" && data?.voiceTier !== "standard") return null;
-  return { tier: data.voiceTier, nextCallStandard: data.nextCallStandard === true };
+  return { tier: data.voiceTier, nextCallStandard: data.nextCallStandard === true, trial: data.voiceTier === "premium" && data.voiceTrial === true };
 }
 
 const EXPIRED = "The voice session expired before it connected. Start the call again.";
@@ -95,7 +96,7 @@ class RealtimeCall {
     mic.getAudioTracks().forEach((t) => (t.enabled = !this.view.muted));
     this.set({ phase: "connecting" });
 
-    let secret: { clientSecret?: string; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown };
+    let secret: { clientSecret?: string; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown };
     try {
       const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario }) });
       secret = await res.json().catch(() => ({}));

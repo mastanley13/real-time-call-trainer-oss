@@ -177,6 +177,8 @@ export const ADD_PREMIUM_LABEL = "Add Premium voice";
 export const ASK_ADMIN_PREMIUM = "Ask your admin";
 /** Live call, shown once (aria-live polite) when this Premium call holds the last Premium minutes. */
 export const NEXT_CALL_STANDARD_NOTICE = "Your Premium minutes are used up after this call. Your next call uses Standard voice.";
+/** The call screen notice on a Free organization's one Premium trial call (PREMIUM_TRIAL_SAMPLE_ON). */
+export const TRIAL_CALL_NOTICE = "Your team's Premium voice trial call, up to 5 minutes. Later calls use Standard voice.";
 /** Live call voice label. Static for the whole call: the voice never changes mid-call. */
 export const voiceLabel = (tier: "premium" | "standard"): string => (tier === "premium" ? "Premium voice" : "Standard voice");
 /** Billing page line for a scheduled removal. */

@@ -3,6 +3,7 @@ import { safeEqual } from "./access";
 import { orderVoiceEngines, realtimeKey } from "./realtime";
 import { stripeReady, stripeStatus } from "./stripe";
 import { isPremiumOnSale } from "./pricing";
+import { isTrialSampleOn } from "./premiumTrial";
 
 /**
  * Voice minutes are metered for stored accounts (not demo mode, with a database) when USAGE_CAPS=on or Stripe is
@@ -31,6 +32,13 @@ export const billingOn = (env: Record<string, string | undefined> = process.env)
  * Premium at mint (usage.ts ensureAllowance). Never comped Premium, and never removal.
  */
 export const premiumOnSale = (env: Record<string, string | undefined> = process.env): boolean => isPremiumOnSale(env) && billingOn(env);
+
+/**
+ * The Free organization Premium trial call is offered: PREMIUM_TRIAL_SAMPLE_ON is exactly "true" and not demo mode.
+ * Default off. Independent of PREMIUM_VOICE_ON_SALE and of billing (a USAGE_CAPS=on install without Stripe is all Free
+ * and may offer it). Read at every mint (usage.ts beginCall); see src/lib/premiumTrial.ts for who is eligible.
+ */
+export const premiumTrialSampleOn = (env: Record<string, string | undefined> = process.env): boolean => isTrialSampleOn(env) && env.DEMO_MODE !== "true";
 
 type Env = Record<string, string | undefined>;
 

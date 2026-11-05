@@ -1,9 +1,10 @@
 import "server-only";
 import type { Prisma, TrainerSession, UsageAllowance } from "@prisma/client";
 import { prisma } from "./db";
-import { billingActive, premiumOnSale } from "./serverConfig";
+import { billingActive, premiumOnSale, premiumTrialSampleOn } from "./serverConfig";
 import { storedPlanEntitled } from "./subscriptionStatus";
 import { premiumMinutesCapFor, premiumMinutesLeft } from "./premiumVoice";
+import { trialDeadlineBinds, trialMaxSeconds, trialSampleEligible } from "./premiumTrial";
 import {
   CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, MAX_CONNECT_LAG_SECONDS, MAX_RESERVE_MINUTES,
   DAILY_SESSION_MINT_CAP, MIN_PREMIUM_SECONDS, OVERRUN_GRACE_SECONDS, PREMIUM_MINUTES_PER_UNIT, VOICE_BLOCK_SECONDS,
@@ -304,8 +305,11 @@ export function chooseEngine(
 
 /** What the mint tells the caller about Premium for this call. No model ids. */
 export interface PremiumMintInfo {
-  /** Why this call runs Premium: the paid add-on, a comped organization, or neither (null = Standard). */
-  source: "paid" | "comped" | null;
+  /**
+   * Why this call runs Premium: the paid add-on, a comped organization, the organization's one Free trial call (claimed
+   * by this mint), or neither (null = Standard).
+   */
+  source: "paid" | "comped" | "trial" | null;
   /** Premium minutes this billing subject has this period (0 without the add-on). */
   cap: number;
   /** Whole paid Premium minutes left for later calls once this call's hold is taken. */
@@ -315,8 +319,37 @@ export interface PremiumMintInfo {
    * standing, or Premium is not on sale (PREMIUM_VOICE_ON_SALE off).
    */
   fallback: "minutes_used" | "not_entitled" | "not_on_sale" | null;
-  /** This call is Premium on the paid add-on and holds the last Premium minutes: the next call will be Standard. */
+  /**
+   * The next call will be Standard: this call is Premium on the paid add-on and holds the last Premium minutes, or it is
+   * the organization's one trial call.
+   */
   nextCallStandard: boolean;
+}
+
+/** The Premium summary for the organization's one trial call. The paid Premium minutes are untouched. */
+function trialMintInfo(r: { allowance: Pick<UsageAllowance, "premiumMinutesCap" | "premiumMinutesUsed" | "premiumMinutesReserved"> }): PremiumMintInfo {
+  return { source: "trial", cap: r.allowance.premiumMinutesCap, leftAfter: premiumMinutesLeft(r.allowance), fallback: null, nextCallStandard: true };
+}
+
+/**
+ * Tries to claim the organization's one Premium trial call for this mint, inside the mint's transaction. Eligibility is
+ * read from the database rows here (src/lib/premiumTrial.ts); the claim itself is a conditional update that only writes
+ * while premiumTrialCallUsedAt is still null, so of any number of concurrent mints (any members, any sessions) exactly
+ * one wins. Postgres re-checks the condition after a competing update commits, so the loser sees count 0. If the mint
+ * transaction rolls back, the claim rolls back with it; once it commits it is permanent.
+ */
+async function claimTrialSample(tx: Tx, userId: string, organizationId: string, r: Resolved, comped: boolean, now: Date): Promise<boolean> {
+  if (!premiumTrialSampleOn()) return false;
+  const org = await tx.organization.findUnique({ where: { id: organizationId } });
+  const user = await tx.user.findUnique({ where: { id: userId } });
+  const eligible = trialSampleEligible({
+    flagOn: true, plan: r.plan, pooled: r.pooled, comped,
+    org: org ? { planTier: org.planTier, stripeSubscriptionId: org.stripeSubscriptionId, premiumVoice: org.premiumVoice, voiceModelComped: org.voiceModelComped, premiumTrialCallUsedAt: org.premiumTrialCallUsedAt } : null,
+    user: user ? { stripeSubscriptionId: user.stripeSubscriptionId, premiumVoice: user.premiumVoice } : null,
+  });
+  if (!eligible) return false;
+  const won = await tx.organization.updateMany({ where: { id: organizationId, premiumTrialCallUsedAt: null }, data: { premiumTrialCallUsedAt: now } });
+  return won.count === 1;
 }
 
 /** Pure: the Premium summary for a call minted with `engine`, given what the allowance had before the hold. */
@@ -357,8 +390,15 @@ const RESERVE_ATTEMPTS = 5;
  * Premium tier, read from the database by the mint route) runs Premium without drawing on the paid Premium minutes:
  * comped overrides billing, so its call stays on the standard billing engine, keeps the normal reservation and is never
  * clamped to Premium minutes; the mint route picks the Premium model for it.
+ *
+ * `offerTrialSample: true` (only the OpenAI Realtime mint route passes it) lets a Free organization's call claim the
+ * organization's one Premium trial call (claimTrialSample). The claim is made here, at the reservation, before any
+ * provider call: a later provider failure, a failed mint log, a client retry or an abandoned call does not give it back
+ * (one-shot, fail closed). The trial call stays on the standard billing engine (ordinary plan minutes, no paid Premium
+ * minutes), its maxSeconds is min(the existing deadline, 300) and it is marked premiumTrial so the heartbeat enforces
+ * that deadline through the normal max_duration end.
  */
-export async function beginCall(userId: string, scenario: ScenarioInfo, now = new Date(), opts: { standardAvailable?: boolean; compedPremium?: boolean } = {}): Promise<BeginResult> {
+export async function beginCall(userId: string, scenario: ScenarioInfo, now = new Date(), opts: { standardAvailable?: boolean; compedPremium?: boolean; offerTrialSample?: boolean } = {}): Promise<BeginResult> {
   return runMetered(async (tx) => {
     await settleStale(tx, userId, now);
     const user = await tx.user.findUnique({ where: { id: userId }, select: { organizationId: true, voiceBlockedUntil: true } });
@@ -395,12 +435,17 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
       // min(the normal call allowance, the Premium minutes left).
       const reserve = engine === "premium" ? premiumMinutes : wanted;
       if (engine === "standard" && opts.standardAvailable === false) return { ok: false, error: "standard_unavailable" } as const;
-      const premium = premiumMintInfo(r, engine, premiumMinutes, comped);
       const claimed = await tx.usageAllowance.updateMany({
         where: { id: r.allowance.id, version: r.allowance.version },
         data: { version: { increment: 1 }, minutesReserved: { increment: reserve }, premiumMinutesReserved: { increment: premiumMinutes } },
       });
       if (claimed.count === 0) continue; // someone else changed the allowance since we read it: read again
+
+      // The organization's one Premium trial call, claimed atomically once the reservation is held. Only a standard
+      // engine call that is neither paid nor comped Premium can be the trial; it holds no paid Premium minutes.
+      const trial = opts.offerTrialSample === true && engine === "standard" && premiumMinutes === 0 && !comped
+        ? await claimTrialSample(tx, userId, user.organizationId, r, comped, now) : false;
+      const premium = trial ? trialMintInfo(r) : premiumMintInfo(r, engine, premiumMinutes, comped);
 
       const session = await tx.trainerSession.create({
         data: {
@@ -417,14 +462,21 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
           reservedMinutes: reserve,
           premiumReservedMinutes: premiumMinutes,
           engineTier: engine,
-          // The tier the call runs on, durable from the start: comped or paid Premium is premium, else standard.
+          // The tier the call runs on, durable from the start: comped, paid or trial Premium is premium, else standard.
           // The realtime mint route confirms it with the model it actually minted (src/lib/voiceMintLog.ts).
-          voiceTier: comped || engine === "premium" ? "premium" : "standard",
+          voiceTier: comped || trial || engine === "premium" ? "premium" : "standard",
+          premiumTrial: trial,
           capEnforced: capApplies,
         },
       });
-      // Free calls are not limited by the plan cap once started, only by the call length limit.
-      const maxSeconds = capApplies ? reserve * 60 : MAX_CALL_SECONDS;
+      if (trial) {
+        // Which call used the trial, on the organization. Only the claim this transaction just made is stamped.
+        await tx.organization.updateMany({ where: { id: user.organizationId, premiumTrialCallSessionId: null }, data: { premiumTrialCallSessionId: session.id } });
+      }
+      // Free calls are not limited by the plan cap once started, only by the call length limit. The trial call is
+      // also limited to TRIAL_SAMPLE_SECONDS, and a lower existing deadline still wins.
+      const existingMax = capApplies ? reserve * 60 : MAX_CALL_SECONDS;
+      const maxSeconds = trial ? trialMaxSeconds(existingMax) : existingMax;
       return { ok: true, callId: session.id, remaining: r.remaining, pooled: r.pooled, engine, maxSeconds, premium } as const;
     }
     return { ok: false, error: "minutes_reserved" } as const;
@@ -449,9 +501,11 @@ function billingStart(s: Pick<OpenSession, "createdAt" | "connectedAt">): Date {
  * `now` is beyond the billing start plus the call's maximum length plus the grace period. For a call the plan
  * cap applies to, that length is its reservation; for a Free call it is the 24 hour length limit.
  */
-function pastReservation(s: Pick<OpenSession, "createdAt" | "connectedAt" | "reservedMinutes" | "allowanceId">, now: Date, capApplies: boolean): boolean {
+function pastReservation(s: Pick<OpenSession, "createdAt" | "connectedAt" | "reservedMinutes" | "allowanceId" | "premiumTrial">, now: Date, capApplies: boolean): boolean {
   if (!s.allowanceId) return false;
-  const end = billingStart(s).getTime() + maxSecondsOf(s.reservedMinutes, capApplies) * 1000;
+  const base = maxSecondsOf(s.reservedMinutes, capApplies);
+  // A trial call's limit is its trial deadline, so a browser that keeps the Premium session past it is flagged too.
+  const end = billingStart(s).getTime() + (s.premiumTrial ? trialMaxSeconds(base) : base) * 1000;
   return now.getTime() - end > OVERRUN_GRACE_SECONDS * 1000;
 }
 
@@ -508,13 +562,14 @@ export async function heartbeat(userId: string, callId: string, state: Heartbeat
     }
     await tx.trainerSession.update({ where: { id: s.id }, data });
 
-    const { limit, capApplies } = await limitSeconds(tx, s, now);
+    const { limit, capApplies, trialBound } = await limitSeconds(tx, s, now);
     const start = billingStart({ createdAt: s.createdAt, connectedAt });
     const elapsed = Math.max(0, Math.floor((now.getTime() - start.getTime()) / 1000));
     const left = Math.min(limit, MAX_CALL_SECONDS) - elapsed;
     if (left > 0) return { found: true, stop: false, secondsLeft: left } as const;
-    // A Free call can only be stopped by the call length limit, never by the plan cap.
-    const reason = capApplies && limit - elapsed <= 0 ? "cap_reached" : "max_duration";
+    // A Free call can only be stopped by the call length limit, never by the plan cap. A trial call that reaches its
+    // trial deadline ends the same normal way (max_duration), never with a quota error.
+    const reason = trialBound ? "max_duration" : capApplies && limit - elapsed <= 0 ? "cap_reached" : "max_duration";
     const settlement = await settle(tx, { ...s, connectedAt, lastHeartbeatAt: now, degradedAt: null }, reason, now);
     return { found: true, stop: true, reason, settlement } as const;
   });
@@ -524,12 +579,15 @@ export async function heartbeat(userId: string, callId: string, state: Heartbeat
  * Seconds a call may run in total, and whether the plan cap is what sets that. A call from before reservations
  * existed uses what the allowance has left. Free calls get only the 24 hour call length limit.
  */
-async function limitSeconds(tx: Tx, s: OpenSession, now: Date): Promise<{ limit: number; capApplies: boolean }> {
+async function limitSeconds(tx: Tx, s: OpenSession, now: Date): Promise<{ limit: number; capApplies: boolean; trialBound: boolean }> {
   const capApplies = callCapApplies(s);
-  if (!capApplies) return { limit: MAX_CALL_SECONDS, capApplies };
-  if (s.allowanceId) return { limit: maxSecondsOf(s.reservedMinutes), capApplies };
-  const r = await resolveAllowance(tx, s.userId, now);
-  return { limit: (r?.remaining ?? 0) * 60, capApplies };
+  let base: number;
+  if (!capApplies) base = MAX_CALL_SECONDS;
+  else if (s.allowanceId) base = maxSecondsOf(s.reservedMinutes);
+  else base = ((await resolveAllowance(tx, s.userId, now))?.remaining ?? 0) * 60;
+  // The organization's trial call: min(existing deadline, 300 s). trialBound says the trial cap is the binding one.
+  if (s.premiumTrial) return { limit: trialMaxSeconds(base), capApplies, trialBound: trialDeadlineBinds(base) };
+  return { limit: base, capApplies, trialBound: false };
 }
 
 // ---- Ending a call ----------------------------------------------------------------------------

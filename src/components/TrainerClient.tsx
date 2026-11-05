@@ -427,7 +427,7 @@ export default function TrainerClient() {
       registerEnd: (fn: () => void) => { endVoice.current = fn; },
       render: (v: VoiceRender) => (
         <Deck {...shared} orbState={v.orbState} status={grading ? { label: "Grading…", tone: "signal" } : v.status} onEnd={v.end}
-          voice={{ engine, muted: v.muted, onToggleMute: v.toggleMute, getInputVolume: v.getInputVolume, getOutputVolume: v.getOutputVolume, tier: voiceInfo?.tier, nextCallStandard: voiceInfo?.nextCallStandard }} />
+          voice={{ engine, muted: v.muted, onToggleMute: v.toggleMute, getInputVolume: v.getInputVolume, getOutputVolume: v.getOutputVolume, tier: voiceInfo?.tier, nextCallStandard: voiceInfo?.nextCallStandard, trial: voiceInfo?.trial }} />
       ),
     };
     // Coach cues stay on the trainee's screen: neither engine is ever sent coach output.

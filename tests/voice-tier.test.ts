@@ -138,15 +138,18 @@ describe("voice tier config", () => {
     expect(effectiveVoiceTier("standard", true)).toBe("standard");
   });
 
-  it("has exactly two paths onto Premium: the comped gate, or the verified paid entitlement", () => {
-    // Merge decision (anvil/premium-voice): the paid Premium Voice add-on picks the Premium model only when beginCall
-    // verified the entitlement from the database (PREMIUM_VOICE_ON_SALE exactly "true", active or trialing, add-on
-    // quantity, period end, Premium minutes left). An engine choice or a stored flag alone never reaches it; see
-    // usage-hardening.test.ts and premium-voice.test.ts.
+  it("has exactly three paths onto Premium: the comped gate, the verified paid entitlement, or a claimed Free trial call", () => {
+    // Merge decision (anvil/premium-voice): main's #61 rule that the paid ENGINE never picks the model still holds. The
+    // Premium model is reached only from what beginCall verified in the database: the paid entitlement
+    // (PREMIUM_VOICE_ON_SALE exactly "true", active or trialing, add-on quantity, period end, Premium minutes left) or
+    // the organization's one atomically claimed trial call (PREMIUM_TRIAL_SAMPLE_ON exactly "true"). An engine choice
+    // or a stored flag alone never reaches it; see usage-hardening.test.ts, premium-voice.test.ts, premium-trial.test.ts.
     const { mintVoiceTier } = voiceTierModule;
     expect(mintVoiceTier("premium", { paidPremium: false })).toBe("premium");
     expect(mintVoiceTier("standard", { paidPremium: true })).toBe("premium");
+    expect(mintVoiceTier("standard", { paidPremium: false, trialSample: true })).toBe("premium");
     expect(mintVoiceTier("standard", { paidPremium: false })).toBe("standard");
+    expect(mintVoiceTier("standard", { paidPremium: false, trialSample: false })).toBe("standard");
     // A stored premium tier without the comped flag is Standard before it ever reaches mintVoiceTier.
     expect(mintVoiceTier(effectiveVoiceTier("premium", false), { paidPremium: false })).toBe("standard");
     expect(mintVoiceTier(effectiveVoiceTier("premium", null), { paidPremium: false })).toBe("standard");
