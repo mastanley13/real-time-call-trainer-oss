@@ -143,7 +143,8 @@ describe("PATCH /api/transcripts/[id] (server re-grade)", () => {
     expect(res.status).toBe(200);
     const { evaluation } = (await res.json()) as { evaluation: Evaluation };
     const note = "This call was longer than the grader reads, so only the first 240 of 300 turns were graded.";
-    expect(evaluation).toMatchObject({ method: "llm", model: "gpt-test-mini", note });
+    expect(evaluation).toMatchObject({ method: "llm", note });
+    expect(evaluation.model).toBeUndefined();
     expect(promptOf()).toContain("Turn 240.");
     expect(promptOf()).not.toContain("Turn 241.");
     expect(row.evaluation).toMatchObject({ note });

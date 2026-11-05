@@ -39,8 +39,8 @@ export interface WizardOutput {
   scenario: Scenario;
   /** Keyed by field path, e.g. "aiPersona.behavior", "objections.0", "traineeGoal". */
   sources: Record<string, FieldSource>;
+  /** "llm" when the configured model drafted it. The model id itself is never sent to the browser. */
   method: "llm" | "template";
-  model?: string;
 }
 
 export interface FetchedPage {

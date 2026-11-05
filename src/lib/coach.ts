@@ -5,7 +5,7 @@ import { APOLOGY_STEP_RE, isApology } from "./apology";
 import { detectSlotOffer, gradeHeuristically } from "./grader";
 import { chat, extractJson } from "./llm";
 import { normalizeWeights, talkTrackSteps, type Objection, type ObjectionType, type RubricCriterion, type Scenario } from "./scenarios";
-import { llmKey, llmModel } from "./serverConfig";
+import { llmKey } from "./serverConfig";
 
 /**
  * Live coach. Called after every finished turn of a practice call; returns a
@@ -639,7 +639,6 @@ async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptio
     cueKey: picked?.key,
     talkRatio: talkRatioOf(spoken),
     source: "llm",
-    model: llmModel(),
   };
 }
 

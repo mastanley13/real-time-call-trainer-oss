@@ -28,7 +28,6 @@ function CheckResult({ check, keySet }: { check: Check; keySet: boolean }) {
         <span className="flex items-center gap-2 font-semibold"><span className={`lamp ${lamp}`} aria-hidden />{r.ok ? "Connected" : t === "caution" ? "No key configured" : "Connection failed"}</span>
         {r.latencyMs !== null && <span className="mono text-xs text-ink-soft">{r.latencyMs} ms</span>}
         {r.status !== null && !r.ok && <span className="mono text-xs text-ink-soft">HTTP {r.status}</span>}
-        <span className="chip-model">{r.model}</span>
       </p>
       <p className="mt-1.5 text-ink-soft">{r.hint}</p>
     </div>
@@ -73,7 +72,7 @@ export default function ModelsClient() {
       <header>
         <p className="eyebrow">Settings</p>
         <h1 className="mt-1 text-3xl font-bold">Models</h1>
-        <p className="mt-2 max-w-2xl text-ink-soft">Each AI job in the app, the model that runs it, and what takes over without a working key. Keys and endpoint URLs stay on the server and never appear here.</p>
+        <p className="mt-2 max-w-2xl text-ink-soft">Each AI job in the app, whether AI runs it, and what takes over without a working key. Keys, model ids and endpoint URLs stay on the server and never appear here.</p>
       </header>
 
       <section className="panel p-4 sm:p-5" aria-labelledby="provider-h">
@@ -88,7 +87,7 @@ export default function ModelsClient() {
               <dt className="text-ink-muted">API key</dt>
               <dd className="flex items-center gap-2"><span className={`lamp ${keySet ? "lamp-ok" : "lamp-off"}`} aria-hidden />{keySet ? "Set on the server" : "Not set"}</dd>
               <dt className="text-ink-muted">Model</dt>
-              <dd><span className="chip-model">{capabilities.model ?? "not reported"}</span></dd>
+              <dd>{keySet ? <>Set by <code className="kbd">LLM_MODEL</code> on the server</> : "Not in use"}</dd>
             </dl>
           </div>
           {/* aria-disabled, not disabled, so keyboard focus stays on the button while the check runs. */}
@@ -147,7 +146,6 @@ export default function ModelsClient() {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-[15px] font-semibold">{v.label}</h3>
-                  {v.model && <span className="chip-model">{v.model}</span>}
                   {v.preferred && voices.filter((x) => x.available).length > 1 && <span className="chip">Used first</span>}
                 </div>
                 <p className="mt-1 flex items-center gap-2 text-sm"><span className={`lamp ${v.available ? "lamp-ok" : "lamp-off"}`} aria-hidden />{v.available ? "Ready for voice calls" : "Not set up"}</p>

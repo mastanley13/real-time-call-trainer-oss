@@ -117,7 +117,8 @@ describe("Premium voice limit", () => {
       vi.setSystemTime(at(310));
       const second = await (await mint()).json();
       expect(bodies[1].session.model).toBe("model-standard-test");
-      expect(second.model).toBe("model-standard-test");
+      // The engine choice is visible upstream only; the browser response never names the model.
+      expect(second.model).toBeUndefined();
       await heartbeat("u-1", second.callId, "connected", at(310));
       await endCall("u-1", second.callId, "user_hangup", at(310 + 180));
       // Standard minutes count against the plan but not against the Premium share.

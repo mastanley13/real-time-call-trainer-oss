@@ -193,7 +193,7 @@ export default function PersonaWizard() {
           <p className="eyebrow">AI persona wizard</p>
           <h1 className="mt-1 text-3xl font-bold">New persona</h1>
         </div>
-        <span className="chip-model"><Sparkles size={12} aria-hidden /> {out ? (out.method === "llm" ? `Generated with ${out.model ?? capabilities.model}` : "Template draft (AI unavailable)") : capabilities.llm ? `Drafts with ${capabilities.model ?? "your model"}` : "Template drafts (no AI key on this server)"}</span>
+        <span className="chip-model"><Sparkles size={12} aria-hidden /> {out ? (out.method === "llm" ? "Generated with AI" : "Template draft (AI unavailable)") : capabilities.llm ? "Drafts with AI" : "Template drafts (no AI key on this server)"}</span>
       </div>
 
       {/* minmax(0,1fr) and min-w-0: the step list scrolls sideways on phones instead of widening the page. */}
@@ -323,7 +323,7 @@ export default function PersonaWizard() {
                   </div>
                 </div>
               </section>
-              <PackPreview draft={draft} valid={!!validation?.success} issues={issues} model={out?.method === "llm" ? out.model : undefined} />
+              <PackPreview draft={draft} valid={!!validation?.success} issues={issues} ai={out?.method === "llm"} />
             </div>
           )}
 
@@ -368,7 +368,7 @@ export default function PersonaWizard() {
                   <button className="btn-ghost mt-3" onClick={copyPack}><Copy size={15} aria-hidden /> {copied ? "Copied" : "Copy pack JSON"}</button>
                 </div>
               </section>
-              <PackPreview draft={{ ...draft, status: "draft" }} valid={!!validation?.success} issues={[]} model={out?.method === "llm" ? out.model : undefined} />
+              <PackPreview draft={{ ...draft, status: "draft" }} valid={!!validation?.success} issues={[]} ai={out?.method === "llm"} />
             </div>
           )}
 
@@ -395,7 +395,7 @@ export default function PersonaWizard() {
   );
 }
 
-function PackPreview({ draft, valid, issues, model }: { draft: Scenario; valid: boolean; issues: string[]; model?: string }) {
+function PackPreview({ draft, valid, issues, ai }: { draft: Scenario; valid: boolean; issues: string[]; ai?: boolean }) {
   return (
     <aside className="deck min-w-0 self-start overflow-hidden rounded-panel border border-line xl:sticky xl:top-[calc(var(--header-h,3.5rem)+1rem)]">
       <div className="flex items-center justify-between gap-2 border-b border-line bg-surface px-3 py-2">
@@ -404,7 +404,7 @@ function PackPreview({ draft, valid, issues, model }: { draft: Scenario; valid: 
       </div>
       {issues.length > 0 && <ul className="border-b border-line bg-caution-soft px-3 py-2 font-mono text-[11px] text-ink">{issues.map((i) => <li key={i}>{i}</li>)}</ul>}
       <pre className="scroll-thin max-h-[70vh] overflow-auto p-3 font-mono text-[11.5px] leading-relaxed text-ink-soft">{packJson(draft)}</pre>
-      {model && <p className="border-t border-line px-3 py-2 font-mono text-[10px] text-ink-muted">Generated with {model} · structured JSON, checked with zod</p>}
+      {ai && <p className="border-t border-line px-3 py-2 font-mono text-[10px] text-ink-muted">Generated with AI · structured JSON, checked with zod</p>}
     </aside>
   );
 }
