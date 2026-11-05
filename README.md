@@ -64,8 +64,9 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 ### Environment variables
 | Variable | Required | Purpose |
 |---|---|---|
-| `OPENAI_REALTIME_API_KEY` | For voice | OpenAI key for Realtime voice calls. Falls back to `OPENAI_API_KEY`, then to `LLM_API_KEY` when `LLM_BASE_URL` is api.openai.com |
-| `OPENAI_API_KEY` | Optional | Voice key when `OPENAI_REALTIME_API_KEY` is unset. Also stands in for `LLM_API_KEY`, but only while `LLM_BASE_URL` is unset or points at api.openai.com, so an OpenAI key is never sent to another provider |
+| `OPENAI_REALTIME_API_KEY` | For voice | OpenAI key for Realtime voice calls, used alone with no failover. Falls back to the OpenAI key slots (`OPENAI_API_KEY`, then the backups), then to `LLM_API_KEY` when `LLM_BASE_URL` is api.openai.com |
+| `OPENAI_API_KEY` | Optional | Key slot 0. Voice key when `OPENAI_REALTIME_API_KEY` is unset. Also stands in for `LLM_API_KEY`, but only while `LLM_BASE_URL` is unset or points at api.openai.com, so an OpenAI key is never sent to another provider |
+| `OPENAI_API_KEY_BACKUP_1` / `OPENAI_API_KEY_BACKUP_2` | Optional | Key slots 1 and 2, server-only. When OpenAI answers that a key's account or project is out of quota, out of billing or deactivated, the same request is retried once on the next slot. Nothing else fails over (rate limits, 5xx, timeouts, bad keys). Same boundaries as `OPENAI_API_KEY`: not used for voice when `OPENAI_REALTIME_API_KEY` is set, not used for chat when `LLM_API_KEY` is set, never sent to a custom `LLM_BASE_URL`. Platform admins and cron (`CRON_SECRET`) can read slot health at `GET /api/cron/openai-keys`. Use keys from separately billed projects or organizations |
 | `REALTIME_MODEL_STANDARD` | Optional | Standard voice model, used by default. Falls back to `REALTIME_MODEL`, then `gpt-realtime-2.1-mini` ([docs](https://platform.openai.com/docs/models/gpt-realtime-2.1-mini)) |
 | `REALTIME_MODEL_PREMIUM` | Optional | Premium voice model. Used only for organizations that are comped for Premium voice quality (`Organization.voiceModelComped`, set by hand in the database) and chose Premium on the Team page. The paid Premium Voice add-on does not select this model; its minute caps and metering are unchanged. Default `gpt-realtime-2.1` ([docs](https://platform.openai.com/docs/models/gpt-realtime-2.1)) |
 | `REALTIME_MODEL` | Optional | Legacy. Used for Standard when `REALTIME_MODEL_STANDARD` is unset, so an install that already sets it keeps that model. Never changes Premium |
@@ -80,7 +81,7 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `LLM_MODEL` | Optional | Default `gpt-4.1-mini` |
 | `DATABASE_URL` | For accounts | Postgres connection string |
 | `JWT_SECRET` | For accounts | 32+ random bytes (`node generate-jwt-secret.js`). Also keys the grade seal and the access-code cookie |
-| `CRON_SECRET` | Optional | Bearer secret for `/api/cron/purge-expired`. The route accepts only `Authorization: Bearer $CRON_SECRET` (Vercel Cron sends it when the variable is set) and returns 401 without it |
+| `CRON_SECRET` | Optional | Bearer secret for `/api/cron/purge-expired` and `/api/cron/openai-keys` (OpenAI key slot health, also open to platform admins). The purge route accepts only `Authorization: Bearer $CRON_SECRET` (Vercel Cron sends it when the variable is set) and returns 401 without it |
 | `APP_URL` | Optional | Public origin for canonical URLs, Open Graph images and the sitemap. Defaults to `https://calltrainer.tech`; `VERCEL_URL` and preview hosts are never used. Google sign-in has no default: it stays off until `APP_URL` is set, and its redirect URI is built from it, never from the Host header |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Optional | Turns on Continue with Google on `/login` and `/register`. Needs `APP_URL` and `DATABASE_URL` too: without a database Google sign-in stays off. Unset, the button is hidden and `/api/auth/google/*` return 404. See Google sign-in below |
 | `RATE_LIMIT_GOOGLE_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/auth/google/start` and `/callback`. Default 30 per 900 s |

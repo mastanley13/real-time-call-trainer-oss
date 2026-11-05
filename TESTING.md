@@ -125,6 +125,7 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 2. The persona greets you with its opening line; both sides appear in the live transcript; coach cues still arrive; Mute (Space) works; **End & grade** lands on the debrief.
 3. In the browser's network tab, `/api/realtime/session` returns a short-lived client secret, never your API key.
 4. Without an OpenAI key, `POST /api/realtime/session` returns 503 `realtime_not_configured` and the briefing points you to Text.
+5. Quota failover between `OPENAI_API_KEY` and its backups is covered in [OpenAI key failover](#openai-key-failover) below.
 
 ### 13. Voice: ElevenLabs
 1. Set `ELEVENLABS_API_KEY` and `ELEVENLABS_AGENT_ID` and leave the OpenAI keys unset (OpenAI Realtime is preferred when an OpenAI key exists).
@@ -197,6 +198,7 @@ Each `_MAX` has a matching `_WINDOW_SEC`.
 | `/api/team/overview` | 60 per minute |
 | `POST` and `DELETE /api/team/assignments` | 20 per minute |
 | `/api/auth/mfa/enroll`, `/activate`, `/disable` | 10, 8 and 6 per minute |
+| `GET /api/cron/openai-keys` (key slot health) | 30 per minute per platform admin, or per IP for the cron bearer, with `Retry-After` |
 
 A quick wizard check with curl (demo mode skips login):
 
@@ -215,6 +217,34 @@ done                              # 200, 200, 429
 ```bash
 node -e 'process.stdout.write(JSON.stringify({ url: "x".repeat(250000) }))' |
   curl -s -i -X POST localhost:3000/api/persona/fetch-url -H "content-type: application/json" --data-binary @-
+```
+
+## OpenAI key failover
+
+`npx vitest run tests/openai-key-failover.test.ts tests/openai-key-health.test.ts` covers everything below without real keys or network. The tests stub `fetch` with `vi.stubGlobal` and answer per `Authorization` header, so each key slot can return a different reply. Fixture keys are random placeholders built at runtime. To simulate a quota failure, return `new Response(JSON.stringify({ error: { type: "insufficient_quota", code: "insufficient_quota" } }), { status: 429 })` for one slot and a normal reply for the next. Never use real keys to test this.
+
+1. **Slots**: `OPENAI_API_KEY`, `OPENAI_API_KEY_BACKUP_1`, `OPENAI_API_KEY_BACKUP_2`, in that order. Unset, blank and duplicate values are skipped.
+2. **Triggers**: only an allowlisted quota, billing or deactivation `error.code` or `error.type` (`OPENAI_QUOTA_ERROR_CODES` in `src/lib/openaiKeys.ts`) with status 400, 401, 403 or 429, from the exact OpenAI host. The request is sent once more on the next slot.
+3. **Not triggers**: ordinary 429s (`rate_limit_exceeded`, `slow_down`, no code, empty or HTML body), any 5xx, network errors, timeouts, 401 `invalid_api_key`, 403, 404 and 400. Each sends exactly the requests it sent before. The 400 `temperature` retry stays on the same slot and runs before classification.
+4. **Exhausted**: chat throws `LLM_QUOTA_EXHAUSTED` and the coach, grader, wizard and text caller fall back as on any LLM error; a re-grade answers 502 `llm_failed`. Voice answers 503 `realtime_unavailable` with `Retry-After: 300`. The Models check shows the 429 hint plus "All configured OpenAI keys are out of quota. Check billing."
+5. **Cooldown**: an exhausted slot is skipped for 15 minutes, then tried first again. Its first success logs `openai_key_recovered`.
+6. **Boundaries**: an explicit `LLM_API_KEY` (chat and check) or `OPENAI_REALTIME_API_KEY` (voice) is used alone. A custom `LLM_BASE_URL`, including a look-alike such as `https://api.openai.com.attacker.example`, never gets a slot key.
+7. **Logs**: one JSON line per event, slot numbers only: `openai_key_failover`, `openai_key_exhausted`, `openai_key_recovered` (`console.warn`) and `openai_key_served` (`console.info`, once per successful chat, voice or check request on the ladder).
+
+**Key slot health route.** `GET /api/cron/openai-keys` reads this instance's memory only: no OpenAI call, no state change, `Cache-Control: no-store`. It lives under `/api/cron/` because the access-gate exemption for `/api/health` is an exact match.
+
+| Caller | Result |
+|---|---|
+| No session | 401 |
+| Wrong bearer, or `x-vercel-cron` alone | 401 |
+| Signed-in trainee, manager or owner who is not a platform admin | 403 |
+| Platform admin | 200 |
+| `Authorization: Bearer $CRON_SECRET` | 200 |
+| Demo mode, any caller | 404 |
+| Over 30 a minute | 429 with `Retry-After` |
+
+```bash
+curl -s -H "Authorization: Bearer $CRON_SECRET" localhost:3000/api/cron/openai-keys
 ```
 
 ## Voice minute metering: limits and residual risk
