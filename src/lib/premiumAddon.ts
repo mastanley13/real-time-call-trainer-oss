@@ -48,6 +48,8 @@ export interface AddonDeps {
   readScheduleRef(subject: AddonSubject): Promise<string | null>;
   /** Sets the marker to `to` only if it is still `from` (compare and set). True when it was written. */
   swapScheduleRef(subject: AddonSubject, from: string | null, to: string | null): Promise<boolean>;
+  /** The server clock (epoch ms), for the schedule setup lease. */
+  now(): number;
 }
 
 async function readScheduleRefDb(s: AddonSubject): Promise<string | null> {
@@ -76,6 +78,7 @@ export const liveAddonDeps: AddonDeps = {
   sync: (id) => syncSubscriptionNow(id),
   readScheduleRef: readScheduleRefDb,
   swapScheduleRef: swapScheduleRefDb,
+  now: () => Date.now(),
 };
 
 /** The billing subject the actor may change: a Pro user's own subscription, or a Team organization (owner only). */
@@ -381,26 +384,121 @@ export async function confirmAddPremium(subject: AddonSubject, userId: string, t
 type PhaseItem = { price: string; quantity: number };
 
 /**
- * The app's own schedule setup while it is unfinished, stored on the billing subject (premiumScheduleRef): the
- * subscription, the attempt key (Stripe idempotency keys derive from it) and the schedule id once Stripe returned it.
- * Written BEFORE the schedule is created and cleared once the setup is done or the schedule is released, so a setup cut
- * short (a failed read, a failed or unanswered update, a release that did not go through) is resumed or released by the
- * next attempt instead of blocking it. A schedule this marker does not name is never touched.
+ * How long one operation holds a subscription's schedule setup without renewing it. Every Stripe call is preceded by a
+ * renewal, and every Stripe call times out after 15 seconds (src/lib/stripe.ts), so a holder's call has finished long
+ * before anyone else can take the setup over.
  */
-const ScheduleRef = z.object({ sub: z.string().max(255), key: z.string().max(200), id: z.string().max(255).nullable() });
+export const SCHEDULE_LEASE_MS = 60_000;
+/** The stored original schedule is bounded; a larger one is not set up by the app (released at once). */
+const MAX_ORIG_CHARS = 16_000;
+
+/**
+ * The app's own schedule setup while it is unfinished, stored on the billing subject (premiumScheduleRef):
+ * - `sub`, `key`: the subscription and the attempt key (Stripe idempotency keys derive from it);
+ * - `id`: the schedule id once Stripe returned it;
+ * - `orig`: the schedule EXACTLY as Stripe created it (canonical JSON of the whole create response, nothing parsed away),
+ *   the baseline every later decision compares against;
+ * - `op`, `lease`: the one operation that holds the setup now, and until when (epoch ms). Null `op` means nobody.
+ * Written BEFORE the schedule is created, renewed by compare-and-set before every Stripe call, and cleared once the setup
+ * is done or the schedule is released. A setup cut short is resumed or released by the next attempt instead of blocking
+ * it; an operation that lost the setup to another one stops without touching Stripe. A schedule this marker does not name
+ * is never touched.
+ */
+const ScheduleRef = z.object({
+  sub: z.string().max(255),
+  key: z.string().max(200),
+  id: z.string().max(255).nullable(),
+  op: z.string().max(64).nullable().default(null),
+  lease: z.number().default(0),
+  orig: z.string().max(MAX_ORIG_CHARS).nullable().default(null),
+});
 type ScheduleRef = z.infer<typeof ScheduleRef>;
 interface OwnedSetup { raw: string; ref: ScheduleRef }
+
+const parseRef = (raw: string | null): ScheduleRef | null => {
+  if (!raw) return null;
+  try {
+    return ScheduleRef.parse(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+};
 
 /** The unfinished setup recorded for THIS subscription, or null. Read-only. */
 async function ownedSetup(subject: AddonSubject, live: LiveSubscription, deps: AddonDeps): Promise<OwnedSetup | null> {
   const raw = await deps.readScheduleRef(subject);
-  if (!raw) return null;
-  try {
-    const ref = ScheduleRef.parse(JSON.parse(raw));
-    return ref.sub === live.id ? { raw, ref } : null;
-  } catch {
-    return null;
-  }
+  const ref = parseRef(raw);
+  return raw && ref && ref.sub === live.id ? { raw, ref } : null;
+}
+
+// ---- Exact schedule comparison (nothing parsed away) -------------------------------------------------------------
+
+/** JSON with object keys sorted at every level, so two equal Stripe objects always give the same string. */
+export function canonicalJson(v: unknown): string {
+  const norm = (x: unknown): unknown => {
+    if (Array.isArray(x)) return x.map(norm);
+    if (x && typeof x === "object") return Object.fromEntries(Object.keys(x as object).sort().map((k) => [k, norm((x as Record<string, unknown>)[k])]));
+    return x === undefined ? null : x;
+  };
+  return JSON.stringify(norm(v));
+}
+
+/** null, "", false, [] or {} at every level: what Stripe shows for a setting nobody set. */
+const emptyish = (v: unknown): boolean =>
+  v == null || v === "" || v === false
+  || (Array.isArray(v) ? v.every(emptyish) : typeof v === "object" ? Object.values(v as object).every(emptyish) : false);
+
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => !!v && typeof v === "object" && !Array.isArray(v);
+const sameJson = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
+const itemPrice = (i: Obj): string | null => (typeof i.price === "string" ? i.price : isObj(i.price) && typeof i.price.id === "string" ? i.price.id : null);
+
+/** Every key of `obs` outside `skip` is either what `base` had or a setting nobody set. */
+const onlyBaseOrEmpty = (obs: Obj, base: Obj, skip: string[]) =>
+  Object.keys(obs).filter((k) => !skip.includes(k)).every((k) => emptyish(obs[k]) || sameJson(obs[k], base[k]));
+
+/** A phase's items are exactly `want` (price and quantity), and carry nothing else the original items did not. */
+function itemsExactly(items: unknown, want: PhaseItem[], baseItems: unknown): boolean {
+  if (!Array.isArray(items) || items.length !== want.length) return false;
+  const base = Array.isArray(baseItems) ? baseItems.filter(isObj) : [];
+  return items.every((i) => {
+    if (!isObj(i)) return false;
+    const price = itemPrice(i);
+    const w = want.find((x) => x.price === price);
+    if (!w || (i.quantity ?? 1) !== w.quantity) return false;
+    const b = base.find((x) => itemPrice(x) === price) ?? {};
+    return onlyBaseOrEmpty(i, b, ["price", "quantity"]);
+  });
+}
+
+/**
+ * True only when `obs` is the original schedule with exactly this change applied by the app: every top-level term the
+ * same as the original except end_behavior (now "release"); two phases; the current phase with the original items and
+ * dates; the next phase starting at the period end with exactly `next`; proration "none" on both; and every other phase
+ * setting either the original's or unset. A discount, tax rate, collection method, metadata or any other setting added by
+ * someone else fails this. (Only success is decided here; a false answer never leads to an update or a release.)
+ */
+function appliedExactly(orig: Obj, obs: Obj, endSec: number, currentItems: PhaseItem[], next: PhaseItem[]): boolean {
+  const top = new Set([...Object.keys(orig), ...Object.keys(obs)]);
+  for (const k of top) if (k !== "phases" && k !== "end_behavior" && !sameJson(orig[k], obs[k])) return false;
+  if (obs.end_behavior !== "release") return false;
+  const op = Array.isArray(orig.phases) && isObj(orig.phases[0]) ? orig.phases[0] : null;
+  if (!op || !Array.isArray(obs.phases) || obs.phases.length !== 2) return false;
+  const [p0, p1] = obs.phases;
+  if (!isObj(p0) || !isObj(p1)) return false;
+  const pr = (p: Obj) => p.proration_behavior === undefined || p.proration_behavior === "none";
+  if (p0.start_date !== op.start_date || p0.end_date !== endSec || !pr(p0) || !itemsExactly(p0.items, currentItems, op.items)) return false;
+  if (!onlyBaseOrEmpty(p0, op, ["start_date", "end_date", "items", "proration_behavior"])) return false;
+  if (p1.start_date !== endSec || !pr(p1) || !itemsExactly(p1.items, next, op.items)) return false;
+  return onlyBaseOrEmpty(p1, op, ["start_date", "end_date", "items", "proration_behavior", "iterations"]);
+}
+
+/** A create response that mirrors the subscription: one phase ending at the period end, active, releasing at the end. */
+function createdMirror(resp: Obj, endSec: number): boolean {
+  if (resp.status != null && resp.status !== "active" && resp.status !== "not_started") return false;
+  if (resp.end_behavior != null && resp.end_behavior !== "release") return false;
+  const phases = Array.isArray(resp.phases) ? resp.phases : [];
+  return phases.length === 1 && isObj(phases[0]) && phases[0].end_date === endSec;
 }
 
 /**
@@ -428,29 +526,43 @@ const CHANGE_PENDING = "A scheduled change for this plan is still being set up. 
 /** A Stripe answer that proves the request was NOT applied: a 4xx other than 409 (a concurrent request with the same key). */
 const rejected = (e: unknown): boolean => e instanceof StripeApiError && e.status >= 400 && e.status < 500 && e.status !== 409;
 
+const SCHEDULE_EDITED = "This plan's scheduled change was changed outside the app, so it was left exactly as it is. Nothing new was changed. Check it in Manage billing or contact support.";
+
 const phaseItems = (items: z.infer<typeof SchedulePhase>["items"]): PhaseItem[] =>
   items.map((i) => ({ price: typeof i.price === "string" ? i.price : i.price.id, quantity: i.quantity ?? 1 }));
-const sameItems = (a: PhaseItem[], b: PhaseItem[]) => {
-  const key = (l: PhaseItem[]) => JSON.stringify([...l].sort((x, y) => x.price.localeCompare(y.price)));
-  return key(a) === key(b);
-};
 
 type ScheduleState = { kind: "pristine"; current: z.infer<typeof SchedulePhase>; currentItems: PhaseItem[]; next: PhaseItem[] } | { kind: "applied" } | { kind: "other" };
 
 /**
- * Where a schedule stands for this change: "pristine" (exactly as created from the subscription: one phase ending at the
- * period end), "applied" (this change's next phase is already on it) or "other" (anything else, never edited).
+ * Where a schedule stands for this change, judged against `orig` (the schedule exactly as Stripe created it):
+ * - "pristine": byte-for-byte the original (canonical JSON of the whole object, every field, nothing parsed away). Only
+ *   this state is ever updated or released after a resume. Any edit, even one that keeps the phase count and dates (a
+ *   discount, a tax rate, a collection method, end_behavior, metadata), is not pristine;
+ * - "applied": exactly this change on top of the original (appliedExactly);
+ * - "other": anything else, including no stored original. Left untouched.
+ * Throws when the object cannot be read at all (the caller treats that as unreadable).
  */
-function scheduleState(raw: unknown, endSec: number, nextItems: (items: PhaseItem[]) => PhaseItem[]): ScheduleState {
-  const s = ScheduleObject.parse(raw);
-  if (s.status && s.status !== "active" && s.status !== "not_started") return { kind: "other" };
-  const [current, second] = s.phases;
-  if (!current || current.end_date !== endSec) return { kind: "other" };
-  const currentItems = phaseItems(current.items);
+function scheduleState(raw: unknown, orig: string | null, endSec: number, nextItems: (items: PhaseItem[]) => PhaseItem[]): ScheduleState {
+  ScheduleObject.parse(raw);
+  if (!orig || !isObj(raw)) return { kind: "other" };
+  const origObj = JSON.parse(orig) as unknown;
+  if (!isObj(origObj)) return { kind: "other" };
+  const origPhase = ScheduleObject.parse(origObj).phases[0];
+  if (!origPhase || origPhase.end_date !== endSec) return { kind: "other" };
+  const currentItems = phaseItems(origPhase.items);
   const next = nextItems(currentItems).filter((i) => i.quantity > 0);
-  if (s.phases.length === 1) return { kind: "pristine", current, currentItems, next };
-  if (s.phases.length === 2 && second && second.start_date === endSec && sameItems(phaseItems(second.items), next)) return { kind: "applied" };
+  // Equal to the original, so its current phase is the original's.
+  if (canonicalJson(raw) === orig) return { kind: "pristine", current: origPhase, currentItems, next };
+  if (appliedExactly(origObj, raw, endSec, currentItems, next)) return { kind: "applied" };
   return { kind: "other" };
+}
+
+/** The id and the exact original terms of a schedule, from a create response (or its idempotent replay). */
+function createdSchedule(resp: unknown, endSec: number): { id: string; orig: string | null; mirror: boolean } {
+  const id = z.object({ id: z.string().max(255) }).parse(resp).id;
+  const c = canonicalJson(resp);
+  const orig = c.length <= MAX_ORIG_CHARS ? c : null;
+  return { id, orig, mirror: !!orig && isObj(resp) && createdMirror(resp, endSec) };
 }
 
 /**
@@ -458,111 +570,149 @@ function scheduleState(raw: unknown, endSec: number, nextItems: (items: PhaseIte
  * phase (one period, then released) gets `nextItems(currentItems)`. Proration is off for both phases: nothing is
  * credited or charged now. Never edits a schedule it does not own (assertSchedulable, and the marker above).
  *
+ * Exclusive ownership. One operation at a time holds the subscription's setup: it takes the marker by compare-and-set
+ * (refused while another operation's lease is live), and RENEWS it by compare-and-set right before every Stripe call
+ * (create, read, update, release, the create replay) and before every marker write. If the marker is no longer exactly
+ * the one it wrote (another operation took the setup over after the lease ran out, finished it, or cleared it), it
+ * stops with "still being set up" and touches nothing. So a slow or failed operation can never release or overwrite a
+ * schedule that another operation has since completed.
+ *
+ * External edits. The create response is stored as the exact original. A resumed schedule is updated or released only
+ * when it is still byte-for-byte that original; a schedule that already carries exactly this change is a success; any
+ * other state (a phase discount, a tax rate, a collection method, end_behavior, metadata, even with the same phase count
+ * and dates) is left untouched and refused.
+ *
  * Failure handling, so a setup cut short never blocks the next attempt and never undoes a change that went through:
- * - The schedule this call just created, if it cannot be read or parsed, or Stripe rejects the update (a 4xx), is
- *   released: nothing was applied to it yet, so the subscription is exactly as it was. "Nothing was changed. Try again."
- * - An update with no clear answer (5xx, 409, network) is checked by reading the schedule again: already applied is
- *   success; still as created is released; unknown keeps the marker ("still being set up"), and the next attempt
- *   resumes from the schedule's real state. The same applies when a release itself fails.
- * - A create with no clear answer keeps the marker; the next attempt replays that exact create (same idempotency key),
- *   which names the schedule it made, and resumes only when that is the schedule on the subscription.
+ * - The schedule this operation just created, if it does not mirror the subscription, cannot be read, or Stripe rejects
+ *   the update (a 4xx), is released while still held: nothing was applied to it, so the subscription is exactly as it
+ *   was. "Nothing was changed. Try again."
+ * - An update with no clear answer (5xx, 409, network) is checked by reading the schedule again: exactly this change is
+ *   success; still the original is released; anything else is left as it is.
+ * - A create with no clear answer, an unreadable resumed schedule, or a failed release keeps the marker and gives up the
+ *   lease ("still being set up"); the next attempt resumes from the schedule's real state. A lost create is recovered by
+ *   replaying that exact create (same idempotency key), which returns the original schedule as created.
  */
 async function scheduleAtRenewal(subject: AddonSubject, live: LiveSubscription, nextItems: (items: PhaseItem[]) => PhaseItem[], scope: string, deps: AddonDeps): Promise<Date> {
-  const owned = await ownedSetup(subject, live, deps);
+  const raw0 = await deps.readScheduleRef(subject);
+  const ref0 = parseRef(raw0);
+  const owned: OwnedSetup | null = raw0 && ref0 && ref0.sub === live.id ? { raw: raw0, ref: ref0 } : null;
   assertSchedulable(live, owned);
   const end = periodEndOf(live);
   if (!end) throw new AddonError("subscription_changed", "Your renewal date could not be read. Try again in a moment.");
   const endSec = Math.floor(end.getTime() / 1000);
   const attached = scheduleId(live);
+  const op = randomBytes(8).toString("hex");
   const pending = () => new AddonError("change_pending", CHANGE_PENDING);
+  // Another operation holds this subscription's setup right now: touch nothing, not even the marker.
+  if (owned?.ref.op && owned.ref.lease > deps.now()) throw pending();
+
+  let raw: string | null = raw0;
+  let ref: ScheduleRef = owned?.ref ?? { sub: live.id, key: "", id: null, op: null, lease: 0, orig: null };
+  /** Replaces the marker only if it is still exactly what this operation last wrote (or read); else ownership is lost. */
+  const write = async (next: ScheduleRef | null): Promise<void> => {
+    const to = next ? JSON.stringify(next) : null;
+    if (!(await deps.swapScheduleRef(subject, raw, to))) throw pending();
+    raw = to;
+    if (next) ref = next;
+  };
+  /** Takes or renews the lease. Called right before every Stripe call: no call is made without exclusive ownership. */
+  const own = () => write({ ...ref, op, lease: deps.now() + SCHEDULE_LEASE_MS });
+  /** Leaves the marker for the next attempt and gives up the lease, then reports "still being set up". */
+  const park = async (): Promise<AddonError> => {
+    await deps.swapScheduleRef(subject, raw, JSON.stringify({ ...ref, op: null, lease: 0 })).catch(() => false);
+    return pending();
+  };
 
   // 1. The schedule: the app's own unfinished one (resume), or a new one under a fresh marker.
-  let raw: string;
-  let ref: ScheduleRef;
   let fresh: boolean;
   let id: string;
   if (attached && owned) {
-    ({ raw, ref } = owned);
     fresh = false;
+    await own();
     if (ref.id) id = ref.id;
     else {
-      // The earlier create never reported its id. Its exact replay does; anything else means the schedule is not ours.
-      let replayed: string;
+      // The earlier create never reported its id. Its exact replay does (with the schedule as created); anything else
+      // means the attached schedule is not ours.
+      let created: ReturnType<typeof createdSchedule>;
       try {
-        replayed = z.object({ id: z.string() }).parse(await deps.createSubscriptionSchedule({ from_subscription: live.id }, `${ref.key}:create`)).id;
+        created = createdSchedule(await deps.createSubscriptionSchedule({ from_subscription: live.id }, `${ref.key}:create`), endSec);
       } catch (e) {
-        if (!rejected(e)) throw pending();
-        await deps.swapScheduleRef(subject, raw, null);
+        if (!rejected(e)) throw await park();
+        await write(null);
         throw new AddonError("change_scheduled", SCHEDULE_EXISTS);
       }
-      if (replayed !== attached) {
-        await deps.swapScheduleRef(subject, raw, null);
+      if (created.id !== attached) {
+        await write(null);
         throw new AddonError("change_scheduled", SCHEDULE_EXISTS);
       }
-      id = replayed;
-      const withId = JSON.stringify({ ...ref, id });
-      if (await deps.swapScheduleRef(subject, raw, withId)) raw = withId;
+      id = created.id;
+      await write({ ...ref, id, orig: created.orig });
     }
   } else {
     // Nothing of the app's is on the subscription: a marker left over (released, or a create that never landed) is stale.
-    ref = { sub: live.id, key: `${scope}:${live.id}:${endSec}:${randomBytes(6).toString("hex")}`, id: null };
-    raw = JSON.stringify(ref);
-    if (!(await deps.swapScheduleRef(subject, owned?.raw ?? (await deps.readScheduleRef(subject)) ?? null, raw))) throw pending();
     fresh = true;
+    await write({ sub: live.id, key: `${scope}:${live.id}:${endSec}:${randomBytes(6).toString("hex")}`, id: null, op, lease: deps.now() + SCHEDULE_LEASE_MS, orig: null });
+    let created: ReturnType<typeof createdSchedule>;
     try {
-      id = z.object({ id: z.string() }).parse(await deps.createSubscriptionSchedule({ from_subscription: live.id }, `${ref.key}:create`)).id;
+      created = createdSchedule(await deps.createSubscriptionSchedule({ from_subscription: live.id }, `${ref.key}:create`), endSec);
     } catch (e) {
       if (rejected(e)) {
         // Stripe refused it: no schedule exists. The original error answers as before.
-        await deps.swapScheduleRef(subject, raw, null);
+        await write(null);
         throw e;
       }
-      throw pending();
+      throw await park();
     }
-    const withId = JSON.stringify({ ...ref, id });
-    if (await deps.swapScheduleRef(subject, raw, withId)) raw = withId;
+    id = created.id;
+    await write({ ...ref, id, orig: created.orig });
+    if (!created.mirror) return releaseOwn("change_scheduled");
   }
 
-  const done = async () => { await deps.swapScheduleRef(subject, raw, null); };
-  /** Releases the app's own schedule (nothing applied to it), clears the marker, and reports that nothing changed. */
-  const releaseOwn = async (code: "schedule_setup_failed" | "change_scheduled"): Promise<never> => {
+  /** The setup is finished (or no longer the app's to finish): clear the marker this operation holds. */
+  async function done(): Promise<void> {
+    await write(null);
+  }
+  /** Releases the app's own schedule, still held and still as created, clears the marker, reports nothing changed. */
+  async function releaseOwn(code: "schedule_setup_failed" | "change_scheduled"): Promise<never> {
+    await own();
     try {
       await deps.releaseSubscriptionSchedule(id, `${ref.key}:release`);
     } catch {
-      throw pending();
+      throw await park();
     }
     await done();
     throw new AddonError(code, code === "change_scheduled" ? SCHEDULE_EXISTS : SETUP_FAILED);
-  };
+  }
   const readState = async (): Promise<ScheduleState | null> => {
+    await own();
     try {
-      return scheduleState(await deps.retrieveSubscriptionSchedule(id), endSec, nextItems);
+      return scheduleState(await deps.retrieveSubscriptionSchedule(id), ref.orig, endSec, nextItems);
     } catch {
       return null;
     }
+  };
+  const leaveUntouched = async (): Promise<never> => {
+    await done();
+    throw new AddonError("change_scheduled", SCHEDULE_EDITED);
   };
 
   // 2. Where it stands now.
   const state = await readState();
   if (!state) {
-    // Just created here, so not yet edited: releasing restores the subscription exactly. A resumed one may carry an
-    // update whose answer was lost, so it is left for the next attempt.
+    // Created by this operation and held since, so nothing has been applied to it: releasing restores the subscription.
+    // A resumed one may carry an update whose answer was lost, so it is left for the next attempt.
     if (fresh) return releaseOwn("schedule_setup_failed");
-    throw pending();
+    throw await park();
   }
   if (state.kind === "applied") {
     await done();
     return end;
   }
-  if (state.kind === "other") {
-    if (fresh) return releaseOwn("change_scheduled");
-    // Not as created and not this change: someone edited it, or another change finished on it. Left exactly as it is.
-    await done();
-    throw new AddonError("change_scheduled", SCHEDULE_EXISTS);
-  }
+  if (state.kind === "other") return leaveUntouched();
 
   // 3. The update. Its idempotency key is per attempt: a retry after an unclear answer is a new, identical request.
   const { current, currentItems, next } = state;
+  await own();
   try {
     await deps.updateSubscriptionSchedule(id, {
       end_behavior: "release",
@@ -579,7 +729,8 @@ async function scheduleAtRenewal(subject: AddonSubject, live: LiveSubscription, 
       return end;
     }
     if (after?.kind === "pristine") return releaseOwn("schedule_setup_failed");
-    throw pending();
+    if (after?.kind === "other") return leaveUntouched();
+    throw await park();
   }
   await done();
   return end;

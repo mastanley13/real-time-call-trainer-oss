@@ -10,7 +10,7 @@ vi.mock("@/lib/apiAuth", () => ({ requireAuth: () => ({ id: mocks.authId, email:
 
 import {
   AddonError, addonQuantity, confirmAddPremium, confirmSeatChange, planAddPremium, previewAddPremium, previewSeatChange, readPreviewToken,
-  renewalTotal, scheduleRemovePremium, seatItems, signPreviewToken, splitItems, type AddonDeps, type AddonSubject,
+  renewalTotal, scheduleRemovePremium, seatItems, signPreviewToken, splitItems, canonicalJson, SCHEDULE_LEASE_MS, type AddonDeps, type AddonSubject,
 } from "@/lib/premiumAddon";
 import { PRICE_ENV, parseLiveSubscription, resetPriceCache, type PriceIds } from "@/lib/billing";
 import { setPremiumEventSink, type PremiumEvent } from "@/lib/billingEvents";
@@ -77,12 +77,14 @@ function deps(sub: ReturnType<typeof subscription>, extra: Partial<MockDeps> = {
     retrievePrice: vi.fn<AddonDeps["retrievePrice"]>(async (id) => ({ id, unit_amount: UNIT[id] })),
     previewInvoice: vi.fn<AddonDeps["previewInvoice"]>(async () => ({ amount_due: 1333, currency: "usd" })),
     updateSubscription: vi.fn<AddonDeps["updateSubscription"]>(async () => ({})),
-    createSubscriptionSchedule: vi.fn<AddonDeps["createSubscriptionSchedule"]>(async () => ({ id: "sub_sched_test_1" })),
+    // Stripe's create answers with the whole schedule as created; the app stores it as the exact original.
+    createSubscriptionSchedule: vi.fn<AddonDeps["createSubscriptionSchedule"]>(async () => structuredClone(schedule)),
     retrieveSubscriptionSchedule: vi.fn<AddonDeps["retrieveSubscriptionSchedule"]>(async () => schedule),
     updateSubscriptionSchedule: vi.fn<AddonDeps["updateSubscriptionSchedule"]>(async () => ({})),
     releaseSubscriptionSchedule: vi.fn<AddonDeps["releaseSubscriptionSchedule"]>(async () => ({})),
     prices: vi.fn<AddonDeps["prices"]>(async () => PRICES),
     sync: vi.fn<AddonDeps["sync"]>(async () => undefined),
+    now: vi.fn<AddonDeps["now"]>(() => Date.now()),
     ...extra,
   };
 }
@@ -309,12 +311,14 @@ describe("removing Premium at period end", () => {
   });
 
   it("a new schedule that does not mirror the subscription is released at once and nothing changes", async () => {
+    // Stripe created it (the create response is the schedule as created) with a phase that does not end at the period end.
+    const odd = { id: "sub_sched_test_1", phases: [{ start_date: PERIOD_START_S, end_date: END_S + 86400, items: [{ price: "price_test_team_m", quantity: 4 }] }] };
     const d = deps(subscription({ seats: 4, premium: 4 }), {
-      retrieveSubscriptionSchedule: vi.fn<AddonDeps["retrieveSubscriptionSchedule"]>(async () => ({ id: "sub_sched_test_1", phases: [
-        { start_date: PERIOD_START_S, end_date: END_S + 86400, items: [{ price: "price_test_team_m", quantity: 4 }] },
-      ] })),
+      createSubscriptionSchedule: vi.fn<AddonDeps["createSubscriptionSchedule"]>(async () => structuredClone(odd)),
+      retrieveSubscriptionSchedule: vi.fn<AddonDeps["retrieveSubscriptionSchedule"]>(async () => structuredClone(odd)),
     });
     expect(await codeOf(() => scheduleRemovePremium(TEAM, d))).toBe("change_scheduled");
+    expect(d.retrieveSubscriptionSchedule).not.toHaveBeenCalled();
     // The release key is the attempt's own (scope, subscription, period end, attempt nonce).
     expect(d.releaseSubscriptionSchedule).toHaveBeenCalledWith("sub_sched_test_1", expect.stringMatching(/^premium-remove:sub_test_team:\d+:[0-9a-f]{12}:release$/));
     expect(d.updateSubscriptionSchedule).not.toHaveBeenCalled();
@@ -336,47 +340,78 @@ describe("removing Premium at period end", () => {
 
 // ---- Schedule setup cut short: release only the app's own, resume on retry, never touch anyone else's -------------
 
-type Phase = { start_date: number; end_date: number | null; items: { price: string; quantity: number }[] };
+type Phase = { start_date: number; end_date: number | null; items: { price: string; quantity: number }[]; [setting: string]: unknown };
+type Sched = { id: string; phases: Phase[]; [term: string]: unknown };
+
+/** Phase settings nobody set, as Stripe shows them. */
+const PHASE_DEFAULTS = { discounts: [], default_tax_rates: [], collection_method: null, metadata: {} };
 
 /**
  * A small stand-in for Stripe's schedules on one subscription: create attaches a schedule (at most one per
- * subscription) and replays by idempotency key, update writes the two phases, release detaches. No network.
+ * subscription) and answers with the whole schedule as created, replaying that same answer for the same idempotency key;
+ * update replaces the phases (settings not sent reset to unset) and end_behavior; release detaches. The clock is the
+ * world's own, so a test decides when a lease runs out. No network.
  */
-function scheduleWorld(o: SubOpts, foreign: { id: string; phases: Phase[] } | null = null) {
+function scheduleWorld(o: SubOpts, foreign: Sched | null = null) {
   const sub = subscription(o);
-  let attached: { id: string; phases: Phase[] } | null = foreign;
+  let attached: Sched | null = foreign;
   let n = 0;
-  const byKey = new Map<string, string>();
+  let clock = Date.parse("2026-11-05T15:00:00Z");
+  const byKey = new Map<string, Sched>();
   const d = deps(sub, {
     retrieveSubscription: vi.fn<AddonDeps["retrieveSubscription"]>(async () => ({ ...sub, schedule: attached?.id ?? null })),
     createSubscriptionSchedule: vi.fn<AddonDeps["createSubscriptionSchedule"]>(async (_p, key) => {
       const replay = byKey.get(key);
-      if (replay) return { id: replay };
+      if (replay) return structuredClone(replay);
       if (attached) throw new StripeApiError(400);
       const id = `sub_sched_test_new_${++n}`;
-      attached = { id, phases: [{ start_date: PERIOD_START_S, end_date: END_S, items: sub.items.data.map((i) => ({ price: i.price.id, quantity: i.quantity })) }] };
-      byKey.set(key, id);
-      return { id };
+      const created: Sched = {
+        id, object: "subscription_schedule", status: "active", end_behavior: "release", subscription: sub.id, metadata: {},
+        default_settings: { collection_method: "charge_automatically", default_tax_rates: [] },
+        phases: [{ start_date: PERIOD_START_S, end_date: END_S, items: sub.items.data.map((i) => ({ price: i.price.id, quantity: i.quantity })), ...PHASE_DEFAULTS, proration_behavior: "create_prorations" }],
+      };
+      attached = structuredClone(created);
+      byKey.set(key, structuredClone(created));
+      return created;
     }),
     retrieveSubscriptionSchedule: vi.fn<AddonDeps["retrieveSubscriptionSchedule"]>(async (id) => {
       const cur = attached;
       if (cur?.id !== id) throw new StripeApiError(404);
-      return { id, status: "active", phases: structuredClone(cur.phases) };
+      return structuredClone(cur);
     }),
     updateSubscriptionSchedule: vi.fn<AddonDeps["updateSubscriptionSchedule"]>(async (id, params) => {
       const cur = attached;
       if (cur?.id !== id) throw new StripeApiError(400);
-      const [first, second] = (params as unknown as { phases: { items: Phase["items"] }[] }).phases;
-      cur.phases = [{ start_date: PERIOD_START_S, end_date: END_S, items: first.items }, { start_date: END_S, end_date: END_S + 30 * 86400, items: second.items }];
-      return {};
+      const p = params as unknown as { end_behavior: string; phases: { items: Phase["items"]; start_date?: number; proration_behavior: string }[] };
+      const [first, second] = p.phases;
+      cur.end_behavior = p.end_behavior;
+      cur.phases = [
+        { start_date: first.start_date ?? PERIOD_START_S, end_date: END_S, items: first.items, ...PHASE_DEFAULTS, proration_behavior: first.proration_behavior },
+        { start_date: END_S, end_date: END_S + 30 * 86400, items: second.items, ...PHASE_DEFAULTS, proration_behavior: second.proration_behavior },
+      ];
+      return structuredClone(cur);
     }),
     releaseSubscriptionSchedule: vi.fn<AddonDeps["releaseSubscriptionSchedule"]>(async (id) => {
       if (attached?.id !== id) throw new StripeApiError(400);
       attached = null;
       return {};
     }),
+    now: vi.fn<AddonDeps["now"]>(() => clock),
   });
-  return { d, schedule: () => attached };
+  return {
+    d,
+    schedule: () => attached,
+    /** Someone edits the attached schedule in the Dashboard. */
+    edit: (fn: (s: Sched) => void) => { if (attached) fn(attached); },
+    tick: (ms: number) => { clock += ms; },
+  };
+}
+
+/** A promise the test resolves by hand, to hold one request mid-flight while another runs. */
+function deferred<T = void>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
 }
 const refOf = async (d: MockDeps) => {
   const raw = await d.readScheduleRef(TEAM);
@@ -533,12 +568,214 @@ describe("a schedule setup cut short never blocks the retry", () => {
     expect(await refOf(edited.d)).toBeNull();
   });
 
+  it("the stored original is the exact create response (canonical JSON, nothing parsed away)", async () => {
+    const w = scheduleWorld({ seats: 4, premium: 4 });
+    w.d.retrieveSubscriptionSchedule.mockRejectedValueOnce(new StripeApiError(500));
+    w.d.releaseSubscriptionSchedule.mockRejectedValueOnce(new StripeApiError(500));
+    await codeOf(() => scheduleRemovePremium(TEAM, w.d));
+    const ref = JSON.parse((await w.d.readScheduleRef(TEAM))!) as { orig: string; op: string | null; lease: number };
+    expect(ref.orig).toBe(canonicalJson(w.schedule()));
+    expect(JSON.parse(ref.orig)).toMatchObject({ end_behavior: "release", default_settings: { collection_method: "charge_automatically" } });
+    // Parked: nobody holds it, so the next attempt may take it at once.
+    expect(ref).toMatchObject({ op: null, lease: 0 });
+  });
+
   it("the billing routes map a released setup to 502 schedule_setup_failed and an unfinished one to 409 change_pending", async () => {
     const { addonFailure } = await import("@/app/api/billing/_lib/addonRoute");
     const failed = addonFailure(new AddonError("schedule_setup_failed", "x"), "test");
     const pending = addonFailure(new AddonError("change_pending", "y"), "test");
     expect([failed.status, pending.status]).toEqual([502, 409]);
     expect(await failed.json()).toEqual({ error: "schedule_setup_failed", message: "x" });
+  });
+});
+
+// ---- Overlapping attempts: one owner at a time, and a lost owner never mutates -------------------------------------
+
+describe("overlapping schedule attempts (controlled A/B interleaving)", () => {
+  const counts = (w: ReturnType<typeof scheduleWorld>) => ({
+    create: w.d.createSubscriptionSchedule.mock.calls.length,
+    update: w.d.updateSubscriptionSchedule.mock.calls.length,
+    release: w.d.releaseSubscriptionSchedule.mock.calls.length,
+  });
+
+  it("B arrives while A holds the setup: B is refused and touches nothing; A then finishes", async () => {
+    const w = scheduleWorld({ seats: 4, premium: 4 });
+    const realRetrieve = w.d.retrieveSubscriptionSchedule.getMockImplementation()!;
+    const reached = deferred();
+    const gate = deferred();
+    w.d.retrieveSubscriptionSchedule.mockImplementationOnce(async (id) => { reached.resolve(); await gate.promise; return realRetrieve(id); });
+    const a = scheduleRemovePremium(TEAM, w.d);
+    await reached.promise; // A created the schedule and is reading it
+    const before = counts(w);
+    const marker = await w.d.readScheduleRef(TEAM);
+    expect(await codeOf(() => scheduleRemovePremium(TEAM, w.d))).toBe("change_pending");
+    expect(counts(w)).toEqual(before);
+    expect(await w.d.readScheduleRef(TEAM)).toBe(marker); // B did not even write the marker
+    gate.resolve();
+    expect((await a).removeAt?.getTime()).toBe(END_S * 1000);
+    expect(w.schedule()?.phases[1].items).toEqual(WITHOUT_PREMIUM);
+    expect(counts(w)).toEqual({ create: 1, update: 1, release: 0 });
+  });
+
+  it("Codex P1: A stalls past its lease, B takes over and completes, then A's read fails: A cannot release B's change", async () => {
+    const w = scheduleWorld({ seats: 4, premium: 4 });
+    const reached = deferred();
+    const gate = deferred();
+    w.d.retrieveSubscriptionSchedule.mockImplementationOnce(async () => { reached.resolve(); await gate.promise; throw new StripeApiError(500); });
+    const a = scheduleRemovePremium(TEAM, w.d).then(() => null, (e: AddonError) => e);
+    await reached.promise;
+    w.tick(SCHEDULE_LEASE_MS + 1);
+    // B resumes A's schedule (it is still exactly as created), applies the change and clears the marker.
+    const b = await scheduleRemovePremium(TEAM, w.d);
+    expect(b.removeAt?.getTime()).toBe(END_S * 1000);
+    expect(await refOf(w.d)).toBeNull();
+    // A wakes up with its "fresh" schedule unreadable. Before releasing it re-checks ownership, finds it lost, and stops.
+    gate.resolve();
+    expect(await a).toMatchObject({ code: "change_pending" });
+    expect(counts(w)).toEqual({ create: 1, update: 1, release: 0 });
+    expect(w.schedule()?.phases).toHaveLength(2);
+    expect(w.schedule()?.phases[1].items).toEqual(WITHOUT_PREMIUM);
+    expect(await refOf(w.d)).toBeNull();
+  });
+
+  it("A stalls between its read and its update past the lease, B completes: A sends no update", async () => {
+    const w = scheduleWorld({ seats: 4, premium: 4 });
+    const realRetrieve = w.d.retrieveSubscriptionSchedule.getMockImplementation()!;
+    const reached = deferred();
+    const gate = deferred();
+    // A reads the schedule while it is still as created, then is held before it can update.
+    w.d.retrieveSubscriptionSchedule.mockImplementationOnce(async (id) => { const snap = await realRetrieve(id); reached.resolve(); await gate.promise; return snap; });
+    const a = scheduleRemovePremium(TEAM, w.d).then(() => null, (e: AddonError) => e);
+    await reached.promise;
+    w.tick(SCHEDULE_LEASE_MS + 1);
+    await scheduleRemovePremium(TEAM, w.d);
+    const afterB = structuredClone(w.schedule());
+    gate.resolve();
+    expect(await a).toMatchObject({ code: "change_pending" });
+    expect(counts(w)).toEqual({ create: 1, update: 1, release: 0 });
+    expect(w.schedule()).toEqual(afterB);
+  });
+
+  it("a lost owner's cleanup after an unclear update cannot release what the new owner completed", async () => {
+    const w = scheduleWorld({ seats: 4, premium: 4 });
+    const reached = deferred();
+    const gate = deferred();
+    // A's update never reaches Stripe and its answer is held.
+    w.d.updateSubscriptionSchedule.mockImplementationOnce(async () => { reached.resolve(); await gate.promise; throw new TypeError("fetch failed"); });
+    const a = scheduleRemovePremium(TEAM, w.d).then(() => null, (e: AddonError) => e);
+    await reached.promise;
+    w.tick(SCHEDULE_LEASE_MS + 1);
+    await scheduleRemovePremium(TEAM, w.d); // B applies the change
+    gate.resolve();
+    // A's re-read would find it applied; but it must re-check ownership first, and it has lost it.
+    expect(await a).toMatchObject({ code: "change_pending" });
+    expect(counts(w)).toEqual({ create: 1, update: 2, release: 0 });
+    expect(w.schedule()?.phases[1].items).toEqual(WITHOUT_PREMIUM);
+  });
+});
+
+// ---- External edits on the app's unfinished schedule: detected and left untouched ----------------------------------
+
+describe("external edits are left untouched (same phase count and dates)", () => {
+  /** A parked, unfinished app schedule still exactly as created: its read failed and its release failed. */
+  async function parkedPristine() {
+    const w = scheduleWorld({ seats: 4, premium: 4 });
+    w.d.retrieveSubscriptionSchedule.mockRejectedValueOnce(new StripeApiError(500));
+    w.d.releaseSubscriptionSchedule.mockRejectedValueOnce(new StripeApiError(500));
+    expect(await codeOf(() => scheduleRemovePremium(TEAM, w.d))).toBe("change_pending");
+    return w;
+  }
+  /** A parked app schedule that already carries this change: the update landed but its answer and the re-read were lost. */
+  async function parkedApplied() {
+    const w = scheduleWorld({ seats: 4, premium: 4 });
+    const realUpdate = w.d.updateSubscriptionSchedule.getMockImplementation()!;
+    const realRetrieve = w.d.retrieveSubscriptionSchedule.getMockImplementation()!;
+    w.d.updateSubscriptionSchedule.mockImplementationOnce(async (...a) => { await realUpdate(...a); throw new StripeApiError(500); });
+    w.d.retrieveSubscriptionSchedule.mockImplementationOnce(realRetrieve).mockRejectedValueOnce(new StripeApiError(500));
+    expect(await codeOf(() => scheduleRemovePremium(TEAM, w.d))).toBe("change_pending");
+    expect(w.schedule()?.phases).toHaveLength(2);
+    return w;
+  }
+  const expectUntouched = async (w: ReturnType<typeof scheduleWorld>, label: string) => {
+    const snapshot = structuredClone(w.schedule());
+    const updates = w.d.updateSubscriptionSchedule.mock.calls.length;
+    const releases = w.d.releaseSubscriptionSchedule.mock.calls.length;
+    const err = await scheduleRemovePremium(TEAM, w.d).catch((e: AddonError) => e);
+    expect(err, label).toMatchObject({ code: "change_scheduled" });
+    expect((err as AddonError).message, label).toMatch(/changed outside the app, so it was left exactly as it is/);
+    expect(w.d.updateSubscriptionSchedule.mock.calls.length, label).toBe(updates);
+    expect(w.d.releaseSubscriptionSchedule.mock.calls.length, label).toBe(releases);
+    expect(w.schedule(), label).toEqual(snapshot);
+    // No longer the app's to finish: the marker is cleared, and later attempts refuse it like anyone else's.
+    expect(await refOf(w.d), label).toBeNull();
+    expect(await codeOf(() => scheduleRemovePremium(TEAM, w.d)), label).toBe("change_scheduled");
+    expect(w.schedule(), label).toEqual(snapshot);
+  };
+
+  const ONE_PHASE_EDITS: [string, (s: Sched) => void][] = [
+    ["phase discount", (s) => { s.phases[0].discounts = [{ coupon: "co_test_1" }]; }],
+    ["phase tax rate", (s) => { s.phases[0].default_tax_rates = ["txr_test_1"]; }],
+    ["phase collection method", (s) => { s.phases[0].collection_method = "send_invoice"; }],
+    ["phase metadata", (s) => { s.phases[0].metadata = { note: "edited" }; }],
+    ["item tax rate", (s) => { (s.phases[0].items[0] as Record<string, unknown>).tax_rates = ["txr_test_2"]; }],
+    ["end_behavior", (s) => { s.end_behavior = "cancel"; }],
+    ["default settings", (s) => { s.default_settings = { collection_method: "send_invoice", default_tax_rates: [] }; }],
+    ["schedule metadata", (s) => { s.metadata = { owner: "someone else" }; }],
+  ];
+
+  it.each(ONE_PHASE_EDITS)("unfinished, still one phase with the same dates, edited: %s", async (label, edit) => {
+    const w = await parkedPristine();
+    w.edit(edit);
+    expect(w.schedule()?.phases).toHaveLength(1);
+    expect(w.schedule()?.phases[0].end_date).toBe(END_S);
+    await expectUntouched(w, label);
+  });
+
+  const TWO_PHASE_EDITS: [string, (s: Sched) => void][] = [
+    ["next phase discount", (s) => { s.phases[1].discounts = [{ coupon: "co_test_1" }]; }],
+    ["next phase tax rate", (s) => { s.phases[1].default_tax_rates = ["txr_test_1"]; }],
+    ["current phase collection method", (s) => { s.phases[0].collection_method = "send_invoice"; }],
+    ["end_behavior", (s) => { s.end_behavior = "cancel"; }],
+    ["schedule metadata", (s) => { s.metadata = { owner: "someone else" }; }],
+  ];
+
+  it.each(TWO_PHASE_EDITS)("change applied, then edited with the same phases and dates: %s", async (label, edit) => {
+    const w = await parkedApplied();
+    w.edit(edit);
+    await expectUntouched(w, label);
+  });
+
+  it("an unedited applied schedule is still recognised as done (the control case)", async () => {
+    const w = await parkedApplied();
+    const { removeAt } = await scheduleRemovePremium(TEAM, w.d);
+    expect(removeAt?.getTime()).toBe(END_S * 1000);
+    expect(w.d.updateSubscriptionSchedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("edited between the app's create and its first read: not updated, not released", async () => {
+    const w = scheduleWorld({ seats: 4, premium: 4 });
+    const realRetrieve = w.d.retrieveSubscriptionSchedule.getMockImplementation()!;
+    w.d.retrieveSubscriptionSchedule.mockImplementationOnce(async (id) => { w.edit((s) => { s.phases[0].discounts = [{ coupon: "co_test_1" }]; }); return realRetrieve(id); });
+    const err = await scheduleRemovePremium(TEAM, w.d).catch((e: AddonError) => e);
+    expect(err).toMatchObject({ code: "change_scheduled" });
+    expect(w.d.updateSubscriptionSchedule).not.toHaveBeenCalled();
+    expect(w.d.releaseSubscriptionSchedule).not.toHaveBeenCalled();
+    expect(w.schedule()?.phases[0].discounts).toEqual([{ coupon: "co_test_1" }]);
+  });
+
+  it("edited between the app's unclear update and its re-read: not released", async () => {
+    const w = scheduleWorld({ seats: 4, premium: 4 });
+    const realUpdate = w.d.updateSubscriptionSchedule.getMockImplementation()!;
+    w.d.updateSubscriptionSchedule.mockImplementationOnce(async (...a) => {
+      await realUpdate(...a);
+      w.edit((s) => { s.phases[1].default_tax_rates = ["txr_test_1"]; });
+      throw new StripeApiError(502);
+    });
+    const err = await scheduleRemovePremium(TEAM, w.d).catch((e: AddonError) => e);
+    expect(err).toMatchObject({ code: "change_scheduled" });
+    expect(w.d.releaseSubscriptionSchedule).not.toHaveBeenCalled();
+    expect(w.d.updateSubscriptionSchedule).toHaveBeenCalledTimes(1);
+    expect(w.schedule()?.phases[1].default_tax_rates).toEqual(["txr_test_1"]);
   });
 });
 
@@ -641,8 +878,10 @@ describe("/api/billing/premium and /api/billing/seats", () => {
       live = subscription({ seats: 4, premium: 4 });
       return live;
     });
-    vi.spyOn(stripeApi, "createSubscriptionSchedule").mockResolvedValue({ id: "sub_sched_test_1" });
-    vi.spyOn(stripeApi, "retrieveSubscriptionSchedule").mockImplementation(async () => ({ id: "sub_sched_test_1", phases: [{ start_date: PERIOD_START_S, end_date: END_S, items: live.items.data.map((i) => ({ price: i.price.id, quantity: i.quantity })) }] }));
+    // Create answers with the whole schedule as created, and an unedited read returns exactly the same object.
+    const asCreated = () => ({ id: "sub_sched_test_1", phases: [{ start_date: PERIOD_START_S, end_date: END_S, items: live.items.data.map((i) => ({ price: i.price.id, quantity: i.quantity })) }] });
+    vi.spyOn(stripeApi, "createSubscriptionSchedule").mockImplementation(async () => asCreated());
+    vi.spyOn(stripeApi, "retrieveSubscriptionSchedule").mockImplementation(async () => asCreated());
     vi.spyOn(stripeApi, "updateSubscriptionSchedule").mockResolvedValue({});
     vi.spyOn(stripeApi, "releaseSubscriptionSchedule").mockResolvedValue({});
     events = [];

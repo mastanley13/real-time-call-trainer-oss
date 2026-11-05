@@ -192,15 +192,28 @@ describe("one Premium trial call per Free organization", () => {
 
   it("3: no reset across sessions, members, sign-ins, retries or failed calls", async () => {
     const first = await begin("u-1");
+    const claimedAt = org().premiumTrialCallUsedAt;
     await endCall("u-1", first.callId, "failed_connect", at(5));
     // The same member again (a new session, or after signing in again: nothing per session or per login is read).
-    expect((await begin("u-1", 10)).premium.source).toBeNull();
+    const again = await begin("u-1", 10);
+    expect(again.premium.source).toBeNull();
+    // A duplicate start while that call is still open is refused by the normal reservation guard (the open Free call
+    // holds the plan's minutes), not turned into a second trial. The guards stay exactly as they are.
+    expect(await beginCall("u-1", scn, at(12), { offerTrialSample: true })).toMatchObject({ ok: false, error: "minutes_reserved" });
+    await endCall("u-1", again.callId, "failed_connect", at(15));
     // Another member of the same organization.
-    expect((await begin("u-2", 20)).premium.source).toBeNull();
+    const member = await begin("u-2", 20);
+    expect(member.premium.source).toBeNull();
+    await endCall("u-2", member.callId, "failed_connect", at(25));
     // Even with the trial call's row gone (a retention purge), the claim on the organization stays.
     await fake.db.trainerSession.deleteMany({ where: { id: first.callId } });
-    expect((await begin("u-1", 30)).premium.source).toBeNull();
-    expect(org().premiumTrialCallSessionId).toBe(first.callId);
+    const afterPurge = await begin("u-1", 30);
+    expect(afterPurge.premium.source).toBeNull();
+    await endCall("u-1", afterPurge.callId, "failed_connect", at(35));
+    // The claim never moved, and only the first call ever ran as the trial.
+    expect(org()).toMatchObject({ premiumTrialCallUsedAt: claimedAt, premiumTrialCallSessionId: first.callId });
+    expect(fake.rows("trainerSession").filter((s) => s.organizationId === "org-free" && s.premiumTrial === true)).toHaveLength(0); // the trial row was purged
+    expect(fake.rows("trainerSession").filter((s) => s.organizationId === "org-free").every((s) => s.voiceTier === "standard")).toBe(true);
     // A member of another Free organization still gets that organization's own trial.
     addOrg("org-other");
     addUser("u-9", "org-other");
