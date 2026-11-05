@@ -87,8 +87,18 @@ export async function GET(req: NextRequest) {
         if (gate && !(await hasValidAccessCookie(req, gate))) {
           return back(req, "/access?next=%2Fregister&reason=google_invite");
         }
-        user = await createSoloUser(profile, ip, userAgent, sanitizeSignupIntent(flow.intent ?? {}));
-        created = true;
+        try {
+          user = await createSoloUser(profile, ip, userAgent, sanitizeSignupIntent(flow.intent ?? {}));
+          created = true;
+        } catch (error) {
+          // Two first-time callbacks can both pass the email lookup and then lose on user.email or
+          // user.googleSub. Sign in the row that committed; do not fail a paying signup on a retry.
+          if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") throw error;
+          const recovered = await recoverAfterCreateClash(profile);
+          if (!recovered) return fail(req, "google_failed");
+          user = recovered.user;
+          pendingLink = recovered.pendingLink;
+        }
       }
     }
 
@@ -137,6 +147,15 @@ export async function GET(req: NextRequest) {
     console.error("[google] account error:", error instanceof Error ? error.name : "unknown");
     return fail(req, "google_failed");
   }
+}
+
+/** After a unique clash, load the winner by Google id, then by verified email. Never attach to a different Google id. */
+async function recoverAfterCreateClash(profile: GoogleProfile) {
+  const bySub = await prisma.user.findUnique({ where: { googleSub: profile.sub }, include: { organization: true } });
+  if (bySub) return { user: bySub, pendingLink: false };
+  const byEmail = await prisma.user.findUnique({ where: { email: profile.email }, include: { organization: true } });
+  if (!byEmail || (byEmail.googleSub && byEmail.googleSub !== profile.sub)) return null;
+  return { user: byEmail, pendingLink: !byEmail.googleSub };
 }
 
 /** Same shape as POST /api/auth/register with a new team: a new org, the user as its owner, the default Free plan. */
