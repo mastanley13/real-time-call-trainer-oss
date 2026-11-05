@@ -6,13 +6,13 @@ import SiteHeader from "@/components/SiteHeader";
 import MobileTabBar from "@/components/MobileTabBar";
 import CommandPalette from "@/components/CommandPalette";
 import { shareImages, siteUrl } from "@/lib/seo";
-import { BRAND_CSS, HOME_TITLE, META_DESCRIPTION, brand, featureAllowed } from "@/lib/tenant";
+import { BRAND_CSS, HOME_TITLE, META_DESCRIPTION, featureAllowed, tenantIcons } from "@/lib/tenant";
 
-/** The tenant icon and favicon (copied to /tenant/ by the prebuild), else the stock /icon.svg. */
-const ICONS: Metadata["icons"] = {
-  icon: brand.icon ? [{ url: brand.icon }] : [{ url: "/icon.svg", type: "image/svg+xml", sizes: "any" }],
-  ...(brand.favicon ? { shortcut: [{ url: brand.favicon }] } : {}),
-};
+/**
+ * The tenant icon and favicon (copied to /tenant/ by the prebuild). Unset for the default tenant, so Next serves
+ * src/app/icon.svg through the App Router icon convention with its content-hashed URL, as before tenants.
+ */
+const ICONS = tenantIcons();
 
 const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-inter" });
 const sora = Sora({ subsets: ["latin"], display: "swap", variable: "--font-sora" });
@@ -22,7 +22,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteUrl()),
   title: HOME_TITLE,
   description: META_DESCRIPTION,
-  icons: ICONS,
+  ...(ICONS ? { icons: ICONS } : {}),
   openGraph: {
     title: HOME_TITLE,
     description: META_DESCRIPTION,

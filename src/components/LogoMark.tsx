@@ -1,5 +1,5 @@
 /**
- * Brand mark: a call waveform inside an instrument bezel. Mirrors public/icon.svg (the default tenant's icon).
+ * Brand mark: a call waveform inside an instrument bezel. Mirrors src/app/icon.svg (the default tenant's icon).
  * Brand exception to the token rule: the mark keeps the favicon's fixed colors in every theme
  * (deck background, line, signal and ok as they are in the dark scope), so it never differs from the tab icon.
  * Change them together with icon.svg.

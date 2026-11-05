@@ -13,7 +13,7 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint src",
-    "postinstall": "prisma generate",
+    "postinstall": "prisma generate && npm run tenant",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "pretypecheck": "npm run tenant",

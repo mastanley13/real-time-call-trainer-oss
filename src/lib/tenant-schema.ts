@@ -11,6 +11,7 @@
  * src/lib/tenantBuild.ts and run in the prebuild.
  */
 import { z } from "zod";
+import { hasModelId } from "./modelIds";
 
 export const TENANT_SCHEMA_VERSION = 1;
 /** tenant.json and the merge input are capped at 64 KiB. */
@@ -51,7 +52,10 @@ const CONTROL = /[\u0000-\u001f\u007f]/;
 const slug = (min: number, max: number) =>
   z.string().min(min).max(max).regex(SLUG, "use lowercase letters, digits and single hyphens");
 
-/** Copy is rendered as text: no markup, no URLs, no em dashes, no control characters. */
+/** Copy names no model: the same families tests/no-model-labels.test.ts keeps off every page. The value is never echoed. */
+const NO_MODEL_NAMES = "no model names in copy";
+
+/** Copy is rendered as text: no markup, no URLs, no em dashes, no control characters, no model names. */
 export const plainText = (max: number) =>
   z
     .string()
@@ -61,7 +65,8 @@ export const plainText = (max: number) =>
     .refine((v) => !v.includes("<") && !v.includes(">"), "plain text only, no < or >")
     .refine((v) => !v.includes("—"), "no em dashes")
     .refine((v) => !URLISH.test(v), "no URLs or domain names in copy")
-    .refine((v) => !CONTROL.test(v), "no control characters or line breaks");
+    .refine((v) => !CONTROL.test(v), "no control characters or line breaks")
+    .refine((v) => !hasModelId(v), NO_MODEL_NAMES);
 
 const assetPath = z
   .string()
@@ -90,7 +95,12 @@ const origin = httpsUrl.refine((v) => {
 }, "an origin only, like https://example.com (no path, query or trailing slash)");
 
 /** A noun used where the UI already has a slot, such as "rep" or "recruiter". Lowercase words only. */
-const noun = z.string().min(2).max(24).regex(/^[a-z][a-z -]*[a-z]$/, "lowercase words only");
+const noun = z
+  .string()
+  .min(2)
+  .max(24)
+  .regex(/^[a-z][a-z -]*[a-z]$/, "lowercase words only")
+  .refine((v) => !hasModelId(v), NO_MODEL_NAMES);
 
 const BrandSchema = z
   .object({

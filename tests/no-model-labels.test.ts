@@ -21,10 +21,8 @@ import { POST as sessionPOST } from "@/app/api/realtime/session/route";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import Home from "@/app/page";
 import { brand } from "@/lib/tenant";
-
-/** Model id families: OpenAI chat, realtime, transcription and speech, reasoning, Gemini, ElevenLabs and Claude. */
-const MODEL_ID_RE =
-  /\b(?:[Gg][Pp][Tt]-(?:5|4\.1|4o|realtime)[\w.-]*|o[34](?:-[\w-]+)?|whisper-1|tts-1(?:-hd)?|gemini-[\w.-]+|eleven_\w+|claude-[\w.-]+)\b/;
+/** Model id families, shared with the tenant schema's copy check (src/lib/modelIds.ts). */
+import { MODEL_ID_RE } from "@/lib/modelIds";
 
 /**
  * Backend defaults that must stay: they are sent to providers, never rendered or returned. Exact files, no globs.

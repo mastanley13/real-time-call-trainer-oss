@@ -81,3 +81,20 @@ export const HOME_TITLE = isDefaultTenant || brand.showOssSections
 
 /** Default meta description: copy.meta.description, else today's text for OSS builds, else a neutral one. */
 export const META_DESCRIPTION = tenant.copy.meta.description ?? (isDefaultTenant || brand.showOssSections ? DEFAULT_DESCRIPTION : TENANT_DESCRIPTION);
+
+type IconLink = { url: string; type?: string; sizes?: string };
+/** The root layout's metadata.icons, or undefined to leave the App Router file convention in charge. */
+export type TenantIcons = { icon: IconLink[]; shortcut?: IconLink[] } | undefined;
+
+/**
+ * Browser tab icons. With neither brand.icon nor brand.favicon (the default tenant) this is undefined, so Next serves
+ * src/app/icon.svg as before: a content-hashed /icon.svg URL with its own caching. Next uses that file only when
+ * metadata.icons is unset, so a tenant icon replaces it, and a favicon alone keeps the stock /icon.svg next to it.
+ */
+export function tenantIcons(b: Pick<TenantConfig["brand"], "icon" | "favicon"> = brand): TenantIcons {
+  if (!b.icon && !b.favicon) return undefined;
+  return {
+    icon: b.icon ? [{ url: b.icon }] : [{ url: "/icon.svg", type: "image/svg+xml", sizes: "any" }],
+    ...(b.favicon ? { shortcut: [{ url: b.favicon }] } : {}),
+  };
+}

@@ -11,6 +11,7 @@
     "poweredBy": true,
     "showOssSections": false,
     "logo": { "mark": "/tenant/mark.png", "alt": "Larkspur" },
+    "icon": "/tenant/mark.png",
     "disclaimer": "Fictional example tenant for tests and docs. Not a real company."
   },
   "theme": { "primary": "#9a3412" },

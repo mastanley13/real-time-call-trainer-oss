@@ -10,7 +10,7 @@ import {
 import {
   OSS_TENANT_IDS, legacyEnvOverlay, libraryProblems, listTenantDirs, resolveTenantDir, secretFieldFindings, secretFindings,
 } from "@/lib/tenantBuild";
-import { featureOn, storedOrDefaultTier, tierToStore } from "@/lib/tenant";
+import { featureOn, storedOrDefaultTier, tenantIcons, tierToStore } from "@/lib/tenant";
 import { effectiveVoiceTier } from "@/lib/voiceTier";
 import { JOB_FAMILIES } from "@/lib/scenarios";
 import { REALTIME_VOICES } from "@/lib/realtime";
@@ -108,6 +108,62 @@ describe("tenant schema", () => {
     expect(() => mergeTenantConfig(DEFAULTS, { copy: { landing: { headline: text } } })).toThrow(/copy\.landing\.headline/);
   });
 
+  const MODEL_IDS = [
+    "gpt-realtime", "gpt-realtime-2.1", "gpt-realtime-2.1-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini-transcribe", "GPT-5",
+    "o3-mini", "o4-mini", "whisper-1", "tts-1-hd", "claude-sonnet-4-5", "gemini-2.5-flash", "eleven_turbo_v2_5",
+  ];
+  /** Every copy slot a tenant can fill, as an overlay builder. */
+  const COPY_SLOTS: [string, (t: string) => Record<string, unknown>][] = [
+    ["brand.tagline", (t) => ({ brand: { tagline: `Powered by ${t}` } })],
+    ["brand.name", (t) => ({ brand: { name: `Desk ${t}` } })],
+    ["brand.shortName", (t) => ({ brand: { shortName: t } })],
+    ["brand.operatorName", (t) => ({ brand: { operatorName: `${t} Labs` } })],
+    ["brand.disclaimer", (t) => ({ brand: { disclaimer: `Coach runs on ${t}.` } })],
+    ["brand.logo.alt", (t) => ({ brand: { logo: { mark: "/tenant/mark.png", alt: t } } })],
+    ["copy.landing.eyebrow", (t) => ({ copy: { landing: { eyebrow: t } } })],
+    ["copy.landing.headline", (t) => ({ copy: { landing: { headline: `Practise with ${t}` } } })],
+    ["copy.landing.subhead", (t) => ({ copy: { landing: { subhead: `Voice by ${t}, coach by us.` } } })],
+    ["copy.landing.featureBlurb", (t) => ({ copy: { landing: { featureBlurb: t } } })],
+    ["copy.library.intro", (t) => ({ copy: { library: { intro: t } } })],
+    ["copy.library.draftBanner", (t) => ({ copy: { library: { draftBanner: t } } })],
+    ["copy.wizard.shareLine", (t) => ({ copy: { wizard: { shareLine: t } } })],
+    ["copy.team.noOrg", (t) => ({ copy: { team: { noOrg: t } } })],
+    ["copy.team.inviteHelp", (t) => ({ copy: { team: { inviteHelp: t } } })],
+    ["copy.meta.description", (t) => ({ copy: { meta: { description: `Built on ${t}.` } } })],
+    ["personas.customFamilies.0.label", (t) => ({ personas: { customFamilies: [{ id: "field-ops", label: t }] } })],
+  ];
+
+  it.each(COPY_SLOTS.flatMap(([key, build]) => MODEL_IDS.map((id) => [key, id, build] as const)))(
+    "rejects a model name in %s (%s)",
+    (key, id, build) => {
+      let message = "";
+      try {
+        mergeTenantConfig(DEFAULTS, build(id));
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      expect(message).toContain(`${key}: no model names in copy`);
+      // The error names the field, never the value.
+      expect(message).not.toContain(id);
+    },
+  );
+
+  it.each(["gpt-realtime", "gpt-4o", "claude-sonnet"])("rejects the terminology noun %s", (noun) => {
+    expect(() => mergeTenantConfig(DEFAULTS, { copy: { terminology: { trainee: noun } } })).toThrow(/copy\.terminology\.trainee: no model names in copy/);
+  });
+
+  it("accepts neutral copy that mentions AI, providers or similar words", () => {
+    const ok = {
+      brand: { tagline: "Practise with an AI coach", disclaimer: "Voice by OpenAI Realtime or ElevenLabs. Your chat model grades the call." },
+      copy: {
+        landing: { headline: "Five calls, one coach", subhead: "Model answers for every objection, scored in real time.", eyebrow: "GPT style practice, no setup" },
+        library: { intro: "Claude, Gemini and Eleven are persona names, not models." },
+        terminology: { trainee: "rep", customer: "buyer", team: "team", manager: "manager" },
+      },
+    };
+    expect(() => mergeTenantConfig(DEFAULTS, ok)).not.toThrow();
+  });
+
   it("rejects an oversize file, a bad id and non-https or path-bearing URLs", () => {
     expect(() => parseTenantJson(JSON.stringify({ pad: "x".repeat(TENANT_MAX_BYTES) }))).toThrow(/larger than/);
     expect(() => parseTenantJson("[1,2]")).toThrow(/JSON object/);
@@ -197,6 +253,38 @@ describe("default-tenant parity (calltrainer.tech unchanged)", () => {
 
   it("keeps every OSS public path", () => {
     expect(publicPathKeys(DEFAULTS)).toEqual(DEFAULTS.access.publicPaths);
+  });
+
+  it("leaves the tab icon to src/app/icon.svg (content-hashed App Router icon), as on main", () => {
+    expect(DEFAULTS.brand.icon).toBeUndefined();
+    expect(DEFAULTS.brand.favicon).toBeUndefined();
+    // Next uses the file convention only while metadata.icons is unset.
+    expect(tenantIcons(DEFAULTS.brand)).toBeUndefined();
+    expect(statSync(join(ROOT, "src/app/icon.svg")).isFile()).toBe(true);
+    // A second copy in public/ would be served as a plain static file at the same path.
+    expect(() => statSync(join(ROOT, "public/icon.svg"))).toThrow();
+    const layout = read("src/app/layout.tsx");
+    expect(layout).toContain("tenantIcons()");
+    expect(layout).toContain("...(ICONS ? { icons: ICONS } : {})");
+    expect(layout).not.toContain('"/icon.svg"');
+  });
+});
+
+describe("tenant tab icons", () => {
+  it("uses brand.icon as the tab icon, replacing the stock icon", () => {
+    expect(tenantIcons({ icon: "/tenant/mark.png" })).toEqual({ icon: [{ url: "/tenant/mark.png" }] });
+    expect(tenantIcons(EXAMPLE.brand)).toEqual({ icon: [{ url: "/tenant/mark.png" }] });
+  });
+
+  it("adds brand.favicon as the shortcut icon, keeping the stock icon when brand.icon is unset", () => {
+    expect(tenantIcons({ icon: "/tenant/tab.png", favicon: "/tenant/favicon.ico" })).toEqual({
+      icon: [{ url: "/tenant/tab.png" }],
+      shortcut: [{ url: "/tenant/favicon.ico" }],
+    });
+    expect(tenantIcons({ favicon: "/tenant/favicon.ico" })).toEqual({
+      icon: [{ url: "/icon.svg", type: "image/svg+xml", sizes: "any" }],
+      shortcut: [{ url: "/tenant/favicon.ico" }],
+    });
   });
 });
 

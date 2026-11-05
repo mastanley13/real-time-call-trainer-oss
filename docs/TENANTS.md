@@ -75,7 +75,7 @@ Every object is strict. `?` marks optional fields.
 | `brand.poweredBy` | footer reads "<name> · powered by Real-Time Call Trainer" |
 | `brand.showOssSections` | GitHub, contribute and "What runs each job" sections, the OSS header pill |
 | `brand.logo?` | `{ mark, wordmark?, alt }`, each a `/tenant/<file>` path |
-| `brand.icon?`, `brand.favicon?` | `/tenant/<file>` paths. Default: `/icon.svg` |
+| `brand.icon?`, `brand.favicon?` | `/tenant/<file>` paths for the browser tab (`favicon` is the shortcut icon). Unset: `src/app/icon.svg` through the App Router icon convention (content-hashed `/icon.svg`) |
 | `brand.disclaimer?` | plain text at most 240 chars, shown in the footers and on sign-in and sign-up |
 | `theme.primary?`, `theme.primaryDark?` | lowercase `#rrggbb`. Generates the primary tokens; without a dark color the dark theme uses a lighter shade |
 | `copy.landing.{eyebrow,headline,subhead,featureBlurb}?` | landing hero and first feature card |
@@ -97,7 +97,7 @@ Every object is strict. `?` marks optional fields.
 | `access.mode` | `accounts` (access code optional, as today) or `accounts_and_code` (code required) |
 | `access.publicPaths` | the subset of the OSS public-path allowlist that stays public behind the access code |
 
-Copy fields are rendered as text. The build rejects `<` and `>`, URLs and domain names, em dashes and line breaks.
+Copy fields are rendered as text. The build rejects `<` and `>`, URLs and domain names, em dashes, line breaks and model names (such as `gpt-realtime` or `claude-sonnet-4-5`; the same families `tests/no-model-labels.test.ts` keeps off every page, from `src/lib/modelIds.ts`). The terminology nouns get the model-name check too.
 
 ### Validation
 
