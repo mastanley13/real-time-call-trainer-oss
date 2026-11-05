@@ -10,6 +10,7 @@ import { evaluateCall } from "@/lib/grader";
 import type { Evaluation } from "@/lib/grader-types";
 import { canRegrade, gradable, gradedNote, isAiGrade, withoutModelId } from "@/lib/gradable";
 import { getCapabilities, llmKey, llmModel } from "@/lib/serverConfig";
+import { SESSION_VIEW_SELECT, sessionView } from "@/lib/sessionView";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -33,10 +34,11 @@ export async function GET(req: NextRequest, { params }: Params) {
   if (auth instanceof NextResponse) return auth;
   const { id } = await params;
 
-  const session = await prisma.trainerSession.findUnique({ where: { id } });
+  // Allowlisted columns only, and an allowlisted response: realtimeModel, metering fields and future columns never leave.
+  const session = await prisma.trainerSession.findUnique({ where: { id }, select: SESSION_VIEW_SELECT });
   if (!session) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (!(await canAccess(auth.id, session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  return NextResponse.json({ session: { ...session, evaluation: withoutModelId(session.evaluation) } });
+  return NextResponse.json({ session: sessionView(session) });
 }
 
 /**

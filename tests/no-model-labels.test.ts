@@ -89,6 +89,13 @@ describe("no model ids in user-facing source", () => {
     expect(hitsOf(/["']use client["']/, [SERVER_ONLY_MODEL_MODULE, ...importers])).toEqual([]);
   });
 
+  it("touches the TrainerSession.realtimeModel column only where a verified receipt writes it", () => {
+    // Code lines only: doc comments may name the column. Reading it anywhere else (a response, a page) needs a review.
+    const code = (f: string) => readFileSync(join(ROOT, f), "utf8").split("\n").filter((l) => !/^\s*(?:\/\/|\/?\*)/.test(l)).join("\n");
+    const users = files.filter((f) => /\brealtimeModel\b/.test(code(f)));
+    expect(users).toEqual(["src/app/api/transcripts/route.ts"]);
+  });
+
   it("no client code reads a model id from capabilities or a coach result", () => {
     expect(hitsOf(/capabilities\??\.(?:model|realtimeModel)\b|\.result\??\.model\b|\bcaps\??\.(?:model|realtimeModel)\b|\bsecret\??\.model\b/, files)).toEqual([]);
   });
