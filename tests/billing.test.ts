@@ -13,10 +13,11 @@ vi.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get: (_t, k) => (mocks.fake
 vi.mock("@/lib/rateLimit", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/rateLimit")>()), ipLimitResponse: () => null, userLimitResponse: () => null }));
 vi.mock("@/lib/apiAuth",() => ({ requireAuth: () => ({ id: mocks.authId, email: `${mocks.authId}@example.test` }), isDemoUser: () => false }));
 
-import { buildCheckoutParams, CheckoutConfigError, entitlementFromItems, PRICE_ENV, priceAllowlist, resetPriceCache, resolvePriceIds, type PriceIds } from "@/lib/billing";
+import { buildCheckoutParams, CheckoutConfigError, entitlementFromItems, lifecycleEventFor, lifecycleRef, PRICE_ENV, priceAllowlist, resetPriceCache, resolvePriceIds, type PriceIds } from "@/lib/billing";
 import { isTeamPlan } from "@/lib/usagePlan";
 import { billingGate, encodeForm, stripeApi, StripeApiError, stripeLiveMode, stripeReady, stripeSecretKey, stripeStatus, stripeTestMode, StripeConfigError, verifyWebhookSignature } from "@/lib/stripe";
 import { classifyPlanChange, setBillingEventSink, type BillingLifecycleEvent } from "@/lib/billingEvents";
+import { ghlBillingSink, settleGhlEvents } from "@/lib/ghlWebhook";
 import { POST as webhook } from "@/app/api/stripe/webhook/route";
 import { POST as checkout } from "@/app/api/billing/checkout/route";
 import { POST as portal } from "@/app/api/billing/portal/route";
@@ -1134,19 +1135,74 @@ describe("idempotency", () => {
 describe("CRM lifecycle hook (off by default)", () => {
   const seen: BillingLifecycleEvent[] = [];
   beforeEach(() => { seen.length = 0; setBillingEventSink((e) => { seen.push(e); }); });
-  const checkoutPro = (id: string) => deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata: { plan: "pro", userId: "owner-1" } }, id));
+  const CT = { app: "calltrainer", userId: "owner-1" };
+  const checkoutPro = (id: string, metadata: Record<string, string> = { ...CT, plan: "pro" }) =>
+    deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata }, id));
 
   it("emits nothing unless GHL_BILLING_EVENTS=true", async () => {
     await checkoutPro("evt_a");
     expect(seen).toEqual([]);
   });
 
-  it("emits upgrade and churn with ids and plans only", async () => {
+  const SUB1 = lifecycleRef("sub_test_1", null)!;
+
+  it("lifecycleRef digests the subscription id and falls back only when there is none", () => {
+    expect(SUB1).toMatch(/^subscription:[0-9a-f]{32}$/);
+    expect(SUB1).not.toContain("sub_test_1");
+    expect(lifecycleRef("sub_test_1", "evt_x")).toBe(SUB1);
+    expect(lifecycleRef("sub_test_2", null)).not.toBe(SUB1);
+    expect(lifecycleRef(null, "evt_x")).toBe("evt_x");
+    expect(lifecycleRef(undefined, "checkout_session:cs_test_1")).toBe("checkout_session:cs_test_1");
+  });
+
+  it("emits upgrade and churn with ids, plans and the subscription reference only", async () => {
     vi.stubEnv("GHL_BILLING_EVENTS", "true");
     await checkoutPro("evt_b");
-    await deliver(event("customer.subscription.deleted", sub({ pro: true })));
-    expect(seen.map((e) => [e.kind, e.fromPlan, e.toPlan])).toEqual([["upgrade", "free", "pro"], ["churn", "pro", "free"]]);
+    await deliver(event("customer.subscription.deleted", sub({ pro: true, metadata: CT }), "evt_b_del"));
+    expect(seen.map((e) => [e.kind, e.fromPlan, e.toPlan, e.stripeRef, e.purchaserUserId])).toEqual([
+      ["upgrade", "free", "pro", SUB1, "owner-1"],
+      ["churn", "pro", "free", SUB1, "owner-1"],
+    ]);
     expect(JSON.stringify(seen)).not.toContain("@");
+    expect(JSON.stringify(seen)).not.toContain("cus_");
+    expect(JSON.stringify(seen)).not.toContain("sub_");
+  });
+
+  it("forwards only Calltrainer subscriptions (metadata app=calltrainer)", async () => {
+    vi.stubEnv("GHL_BILLING_EVENTS", "true");
+    await checkoutPro("evt_other", { plan: "pro", userId: "owner-1", app: "another-product" });
+    expect(user().planTier).toBe("pro");
+    await deliver(event("customer.subscription.deleted", sub({ pro: true, metadata: { userId: "owner-1" } }), "evt_other_del"));
+    expect(user().planTier).toBe("free");
+    expect(seen).toEqual([]);
+  });
+
+  it("the GHL sink posts the classified lifecycle payload, never the Stripe object, and a GHL outage keeps the 200", async () => {
+    vi.stubEnv("GHL_BILLING_EVENTS", "true");
+    vi.stubEnv("GHL_WEBHOOK_URL", "https://hooks.example.test/hooks/loc-test/webhook-trigger/trigger-test");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => { throw new TypeError("fetch failed"); });
+    vi.stubGlobal("fetch", fetchMock);
+    setBillingEventSink(ghlBillingSink);
+    expect((await checkoutPro("evt_ghl")).status).toBe(200);
+    await settleGhlEvents();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const body = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string;
+    expect(JSON.parse(body)).toMatchObject({ eventId: `stripe:${SUB1}:upgrade`, event: "upgrade", app: "calltrainer", subject: "user", userId: "owner-1", email: "owner-1@example.test", fromPlan: "free", toPlan: "pro", stripeRef: SUB1 });
+    for (const leak of ["cus_", "sub_", "price_", "items"]) expect(body).not.toContain(leak);
+    expect(user().planTier).toBe("pro");
+  });
+
+  it("a redelivered Stripe event emits once", async () => {
+    vi.stubEnv("GHL_BILLING_EVENTS", "true");
+    await checkoutPro("evt_once");
+    await checkoutPro("evt_once");
+    expect(seen.map((e) => e.stripeRef)).toEqual([SUB1]);
+  });
+
+  it("an event with no subscription id falls back to the Stripe event id", () => {
+    const change = { kind: "upgrade" as const, subject: "user" as const, subjectId: "owner-1", fromPlan: "free" as const, toPlan: "pro" as const, seats: 1, premiumVoice: false };
+    expect(lifecycleEventFor(change, { stripeRef: lifecycleRef(null, "evt_rare"), metadata: [CT] })).toMatchObject({ stripeRef: "evt_rare" });
   });
 
   it("a sink that throws never fails the webhook", async () => {
@@ -1381,6 +1437,32 @@ describe("one outstanding Checkout Session per billing subject", () => {
       await deliverRaw(event("checkout.session.completed", doc({ subscription: "sub_test_9", payment_status: "paid" })));
       expect(user()).toMatchObject({ planTier: "pro", stripeSubscriptionId: "sub_test_9" });
       expect(cancelSpy).not.toHaveBeenCalled();
+    });
+
+    describe("the CRM key is the same whichever path applies the checkout first", () => {
+      const seen: BillingLifecycleEvent[] = [];
+      const ct = { plan: "pro", userId: "owner-1", app: "calltrainer" };
+      const SUB9 = lifecycleRef("sub_test_9", null);
+      beforeEach(() => {
+        seen.length = 0;
+        vi.stubEnv("GHL_BILLING_EVENTS", "true");
+        setBillingEventSink((e) => { seen.push(e); });
+        liveSub({ id: "sub_test_9", pro: true, metadata: ct });
+      });
+
+      it("success page first: keyed on the subscription, and the later webhook sends nothing", async () => {
+        await post({ plan: "pro", interval: "month" });
+        failExpire(400);
+        vi.spyOn(stripeApi, "retrieveCheckoutSession").mockResolvedValue(doc({ status: "complete", payment_status: "paid", subscription: "sub_test_9", metadata: ct }));
+        expect((await post({ plan: "pro", interval: "year" })).status).toBe(409);
+        await deliverRaw(event("checkout.session.completed", doc({ subscription: "sub_test_9", payment_status: "paid", metadata: ct })));
+        expect(seen.map((e) => [e.kind, e.stripeRef])).toEqual([["upgrade", SUB9]]);
+      });
+
+      it("webhook first: the same key", async () => {
+        await deliverRaw(event("checkout.session.completed", doc({ subscription: "sub_test_9", payment_status: "paid", metadata: ct })));
+        expect(seen.map((e) => [e.kind, e.stripeRef])).toEqual([["upgrade", SUB9]]);
+      });
     });
 
     it("a completed session whose payment is still pending keeps blocking, and a failed payment frees the account", async () => {

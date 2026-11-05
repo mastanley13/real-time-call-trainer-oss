@@ -20,6 +20,7 @@ import { ACCESS_COOKIE, accessToken } from "@/lib/access";
 import { verifyMfaChallenge, verifyMfaChallengeToken, verifySessionToken } from "@/lib/auth";
 import { authorizeUrl, checkIdTokenClaims, GOOGLE_FLOW_COOKIE, googleConfig, pkceChallenge, randomToken, safeNextPath, signFlowState, verifyFlowState } from "@/lib/googleAuth";
 import { GET as status } from "@/app/api/auth/google/status/route";
+import { settleGhlEvents } from "@/lib/ghlWebhook";
 
 const NOW = 1_800_000_000;
 const good = {
@@ -272,6 +273,43 @@ describe("GET /api/auth/google/callback", () => {
     expect(mocks.prisma.auditEvent.create.mock.calls[0][0].data).toMatchObject({ action: "user.registered", metadata: { via: "google" } });
     expect(loc(res).pathname).toBe("/auth/complete");
     expect(res.headers.get("set-cookie")).toContain("authToken=");
+  });
+
+  describe("GHL signup event", () => {
+    const GHL = "https://hooks.example.test/hooks/loc-test/webhook-trigger/trigger-test";
+    /** Google's token endpoint answers with the ID token; the GHL webhook answers `ghl`. */
+    const routedFetch = (ghl: () => Promise<Response>) => {
+      const f = vi.fn(async (url: string) => (url === GHL ? ghl() : new Response(JSON.stringify({ id_token: jwt.sign(claims(), "google-key") }), { status: 200 })));
+      vi.stubGlobal("fetch", f);
+      return { ghlBodies: () => f.mock.calls.filter(([u]) => u === GHL).map((c) => JSON.parse((c as unknown as [string, RequestInit])[1].body as string)) };
+    };
+    beforeEach(() => {
+      vi.stubEnv("GHL_BILLING_EVENTS", "true");
+      vi.stubEnv("GHL_WEBHOOK_URL", GHL);
+    });
+
+    it("a new Google account sends signup with signupMethod google", async () => {
+      const f = routedFetch(async () => new Response("ok"));
+      await call({ flow: { intent: { plan: "team", src: "pricing" } } });
+      await settleGhlEvents();
+      expect(f.ghlBodies()).toEqual([expect.objectContaining({ eventId: "signup:u-new", event: "signup", email: "rep@example.test", signupMethod: "google", role: "owner", planIntent: "team", source: "pricing" })]);
+    });
+
+    it("signing in or linking an existing account sends nothing", async () => {
+      const f = routedFetch(async () => new Response("ok"));
+      mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: Record<string, string> }) => (where.email === "rep@example.test" ? existing() : null));
+      await call();
+      await settleGhlEvents();
+      expect(f.ghlBodies()).toEqual([]);
+    });
+
+    it("a GHL outage does not fail the sign-in", async () => {
+      routedFetch(async () => { throw new TypeError("fetch failed"); });
+      const res = await call();
+      await settleGhlEvents();
+      expect(loc(res).pathname).toBe("/auth/complete");
+      expect(res.headers.get("set-cookie")).toContain("authToken=");
+    });
   });
 
   it("stores a new account's sign-up intent and sends a paid plan to /checkout/start", async () => {
