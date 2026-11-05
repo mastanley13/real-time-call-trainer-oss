@@ -3,16 +3,20 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
-import { VOICE_TIERS, canEditVoiceTier, canSetVoiceTier, normalizeVoiceTier } from "@/lib/voiceTier";
+import { VOICE_TIERS, canEditVoiceTier, canSetVoiceTier, effectiveVoiceTier, normalizeVoiceTier } from "@/lib/voiceTier";
 import { limitFor, loadActor, noOrganization, serverError, teamIsLocal, type Actor } from "../_lib/server";
 
 /**
  * Voice quality for the organization's OpenAI Realtime calls: Standard (default) or Premium.
  * /api/realtime/session reads the stored tier on every call, so a change applies to the next call.
  *
- * GET    any member: { tier, comped, canEdit }
+ * GET    any member: { tier, comped, canEdit }, plus { selected } when canEdit.
  * PATCH  { tier: "standard" | "premium" }: owner of a comped org, or a platform admin for any org.
- *        Managers, trainees and owners of an org that is not comped get 403.
+ *        Managers, trainees and owners of an org that is not comped get 403. Answers like GET.
+ *
+ * `tier` is always the EFFECTIVE tier, the one the next call actually runs on: Standard unless the org is
+ * comped AND premium is selected. `selected` is the stored preference, sent only to people who can change
+ * it, because it differs from `tier` only when a platform admin sets Premium on an org that is not comped.
  *
  * Comped gate: a call runs on Premium only when the org is comped (voiceModelComped = true) AND its tier
  * is premium (effectiveVoiceTier). Comped is set by hand in the database; no route here changes it.
@@ -52,6 +56,16 @@ async function targetOrg(actor: Actor, code: string | undefined) {
   return org ?? ("no_org" as const);
 }
 
+/** Response body for GET and PATCH: the effective tier, and the stored preference only for an editor. */
+function voiceView(stored: unknown, comped: boolean, canEdit: boolean) {
+  return {
+    tier: effectiveVoiceTier(stored, comped),
+    comped,
+    canEdit,
+    ...(canEdit ? { selected: normalizeVoiceTier(stored) } : {}),
+  };
+}
+
 const orgNotFound = () => NextResponse.json({ error: "not_found", message: "No organization has that code. Check the code and try again." }, { status: 404 });
 
 export async function GET(req: NextRequest) {
@@ -73,7 +87,7 @@ export async function GET(req: NextRequest) {
     if (org === "no_org") return noOrganization();
     const comped = org.voiceModelComped === true;
     return NextResponse.json(
-      { tier: normalizeVoiceTier(org.voiceModelTier), comped, canEdit: canEditVoiceTier(actor.role, actor.isPlatformAdmin, comped) },
+      voiceView(org.voiceModelTier, comped, canEditVoiceTier(actor.role, actor.isPlatformAdmin, comped)),
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
@@ -124,7 +138,7 @@ export async function PATCH(req: NextRequest) {
         metadata: { from, to: body.tier, comped, byPlatformAdmin: actor.isPlatformAdmin && actor.organizationId !== org.id },
       },
     });
-    return NextResponse.json({ tier: body.tier, comped, canEdit: true });
+    return NextResponse.json(voiceView(body.tier, comped, true));
   } catch (error) {
     console.error("[/api/team/voice] PATCH error:", error instanceof Error ? error.name : "unknown error");
     return serverError("save voice quality");

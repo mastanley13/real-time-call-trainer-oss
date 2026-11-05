@@ -170,13 +170,31 @@ describe("/api/team/voice", () => {
   const read = async () => (await voiceGET(new NextRequest("http://localhost/api/team/voice"))).json();
 
   it("reads Standard for a comped organization that never chose, editable by its owner", async () => {
-    expect(await read()).toEqual({ tier: "standard", comped: true, canEdit: true });
+    expect(await read()).toEqual({ tier: "standard", selected: "standard", comped: true, canEdit: true });
+  });
+
+  it.each([["false", NOT_COMPED], ["null", "o-2"]])("reads the effective tier, Standard, for an org with comped %s and premium stored", async (_label, orgId) => {
+    org(orgId).voiceModelTier = "premium";
+    for (const role of ["owner", "manager", "trainee"]) {
+      as({ role, organizationId: orgId });
+      const body = await read();
+      // Not editable, so no stored preference either: only what calls actually run on.
+      expect(body).toEqual({ tier: "standard", comped: false, canEdit: false });
+      expect(JSON.stringify(body)).not.toContain("premium");
+    }
+  });
+
+  it("reads Premium only when the org is comped AND premium is selected", async () => {
+    org(COMPED).voiceModelTier = "premium";
+    expect(await read()).toEqual({ tier: "premium", selected: "premium", comped: true, canEdit: true });
+    as({ role: "manager" });
+    expect(await read()).toEqual({ tier: "premium", comped: true, canEdit: false });
   });
 
   it("lets the owner of a comped org switch to Premium and back, storing Standard as null", async () => {
     let res = await patch({ tier: "premium" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ tier: "premium", comped: true, canEdit: true });
+    expect(await res.json()).toEqual({ tier: "premium", selected: "premium", comped: true, canEdit: true });
     expect(mocks.prisma.organization.update).toHaveBeenCalledWith({ where: { id: COMPED }, data: { voiceModelTier: "premium" } });
     expect(org(COMPED).voiceModelTier).toBe("premium");
     expect(mocks.prisma.auditEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "org.voice_tier_changed", metadata: expect.objectContaining({ from: "standard", to: "premium", comped: true }) }) }));
@@ -206,7 +224,7 @@ describe("/api/team/voice", () => {
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe("forbidden");
     expect(mocks.prisma.organization.update).not.toHaveBeenCalled();
-    // They can still see the current setting, read-only.
+    // GET still answers with the effective tier, but canEdit false hides the panel and no preference is sent.
     expect(await read()).toEqual({ tier: "standard", comped: true, canEdit: false });
   });
 
@@ -214,10 +232,11 @@ describe("/api/team/voice", () => {
     as({ role: "trainee", isPlatformAdmin: true, organizationId: null });
     let res = await patch({ tier: "premium", orgCode: "556" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ tier: "premium", comped: false, canEdit: true });
+    // Stored as premium, but the org is not comped, so the effective tier stays Standard.
+    expect(await res.json()).toEqual({ tier: "standard", selected: "premium", comped: false, canEdit: true });
     expect(org(NOT_COMPED).voiceModelTier).toBe("premium");
     const view = await (await voiceGET(new NextRequest("http://localhost/api/team/voice?org=556"))).json();
-    expect(view).toEqual({ tier: "premium", comped: false, canEdit: true });
+    expect(view).toEqual({ tier: "standard", selected: "premium", comped: false, canEdit: true });
 
     as({ role: "owner" });
     res = await patch({ tier: "premium", orgCode: "556" });
