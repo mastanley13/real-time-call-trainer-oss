@@ -23,6 +23,7 @@ const SAMPLE: CoachResult = {
   cue: null,
   talkRatio: 0.46,
   source: "llm",
+  model: "gpt-4.1-mini",
   latencyMs: 1300,
 };
 const CUE: LiveCue = {

@@ -3,7 +3,7 @@ import {
   DEFAULT_REALTIME_VOICE, TurnAssembler, applyRealtimeEvent, averageLevel, chooseVoiceEngine,
   micErrorMessage, openingInstructions, orderVoiceEngines, pickRealtimeVoice, realtimeUpstreamMessage, resolveRealtimeKey,
 } from "@/lib/realtime";
-import { STANDARD_REALTIME_MODEL } from "@/lib/voiceModels";
+import { PREMIUM_REALTIME_MODEL, STANDARD_REALTIME_MODEL, resolveTierModel } from "@/lib/voiceModels";
 import { getCapabilities } from "@/lib/serverConfig";
 import { BUILT_IN_SCENARIOS, buildAgentPrompt } from "@/lib/scenarios";
 import { NextRequest } from "next/server";
@@ -30,6 +30,11 @@ describe("resolveRealtimeKey", () => {
 });
 
 describe("model and voice", () => {
+  it("defaults the Standard model and honours REALTIME_MODEL for it", () => {
+    expect(resolveTierModel("standard", {})).toBe(STANDARD_REALTIME_MODEL);
+    expect(resolveTierModel("standard", { REALTIME_MODEL: "gpt-realtime-legacy" })).toBe("gpt-realtime-legacy");
+    expect(resolveTierModel("premium", { REALTIME_MODEL: "gpt-realtime-legacy" })).toBe(PREMIUM_REALTIME_MODEL);
+  });
   it("picks persona voice, then env voice, then the default, ignoring unknown names", () => {
     expect(pickRealtimeVoice("Cedar", "ash")).toBe("cedar");
     expect(pickRealtimeVoice(undefined, "ash")).toBe("ash");
@@ -63,8 +68,10 @@ describe("engine selection", () => {
     expect(caps.realtime).toBe(true);
     expect(caps.voiceEngines).toEqual(["openai", "elevenlabs"]);
     expect(JSON.stringify(caps)).not.toContain("sk-test");
-    expect(caps).not.toHaveProperty("realtimeModel");
-    expect(caps).not.toHaveProperty("model");
+    // The default (Standard) model, never the Premium one.
+    vi.stubEnv("REALTIME_MODEL", "");
+    vi.stubEnv("REALTIME_MODEL_STANDARD", "");
+    expect(getCapabilities().realtimeModel).toBe(STANDARD_REALTIME_MODEL);
 
     vi.stubEnv("OPENAI_API_KEY", "");
     vi.stubEnv("LLM_API_KEY", "");
@@ -162,10 +169,10 @@ describe("small helpers", () => {
     expect(micErrorMessage(new Error("x"))).toMatch(/Could not open/);
   });
   it("maps upstream failures to friendly messages without echoing a body", () => {
-    expect(realtimeUpstreamMessage(401)).toBe("OpenAI rejected the API key. Check OPENAI_API_KEY.");
-    expect(realtimeUpstreamMessage(400)).toMatch(/REALTIME_MODEL_STANDARD/);
-    expect(realtimeUpstreamMessage(400)).not.toMatch(/gpt-/);
-    expect(realtimeUpstreamMessage(503)).toMatch(/Try again/);
+    expect(realtimeUpstreamMessage(401, "m")).toBe("OpenAI rejected the API key. Check OPENAI_API_KEY.");
+    expect(realtimeUpstreamMessage(400, "gpt-x")).toContain("gpt-x");
+    expect(realtimeUpstreamMessage(400, "gpt-x")).toMatch(/REALTIME_MODEL_STANDARD/);
+    expect(realtimeUpstreamMessage(503, "m")).toMatch(/Try again/);
   });
 });
 
@@ -201,10 +208,9 @@ describe("POST /api/realtime/session", () => {
     const text = await res.text();
     expect(res.status).toBe(200);
     expect(text).not.toContain("sk-secret-test");
-    // No model id for the browser; demo mode mints Standard.
+    // Demo mode mints Standard. The signed receipt is covered in voice-tier.test.ts.
     const { receipt: _receipt, ...shown } = JSON.parse(text);
-    expect(shown).toEqual({ clientSecret: "ek_abc123456789", expiresAt: 1_900_000_000, voice: "marin" });
-    expect(text).not.toContain("gpt-");
+    expect(shown).toEqual({ clientSecret: "ek_abc123456789", expiresAt: 1_900_000_000, model: STANDARD_REALTIME_MODEL, voice: "marin" });
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://api.openai.com/v1/realtime/client_secrets");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer sk-secret-test");

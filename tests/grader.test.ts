@@ -195,10 +195,9 @@ describe("LLM grader", () => {
   });
 
   it("labels provenance from the stored grade, not the current config", () => {
-    // The stored model id stays in the record for operators; the label never shows it.
-    expect(graderLabel({ method: "llm", model: "gpt-4.1-mini" } as { method: "llm" })).toBe("AI");
-    expect(graderLabel({ method: "llm" })).toBe("AI");
-    expect(graderLabel({ method: "heuristic" })).toBe("rules-based");
+    expect(graderLabel({ method: "llm", model: "gpt-4.1-mini" })).toBe("gpt-4.1-mini");
+    expect(graderLabel({ method: "llm" })).toBe("AI (model not recorded)");
+    expect(graderLabel({ method: "heuristic", model: "ignored" })).toBe("rules-based");
   });
 });
 
@@ -326,11 +325,8 @@ describe("POST /api/llm/check", () => {
     withKey();
     const fn = provider(200, { choices: [{ message: { content: "O" } }] });
     const { body } = await check();
-    expect(body).toMatchObject({ ok: true, status: 200 });
+    expect(body).toMatchObject({ ok: true, status: 200, model: "gpt-test-mini" });
     expect(typeof body.latencyMs).toBe("number");
-    // The server still sends the configured model upstream, but never returns it.
-    expect(body).not.toHaveProperty("model");
-    expect(JSON.stringify(body)).not.toContain("gpt-test-mini");
     const [, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body))).toMatchObject({ model: "gpt-test-mini", max_tokens: 1 });
   });
@@ -338,13 +334,13 @@ describe("POST /api/llm/check", () => {
   it("maps provider failures to plain hints and never echoes the endpoint or error body", async () => {
     withKey();
     process.env.LLM_BASE_URL = "https://llm.internal.example/v1";
-    const cases: [number, RegExp][] = [[401, /rejected the API key/], [403, /permissions/], [404, /configured model/], [429, /quota/], [503, /server error/]];
+    const cases: [number, RegExp][] = [[401, /rejected the API key/], [403, /permissions/], [404, /gpt-test-mini/], [429, /quota/], [503, /server error/]];
     for (const [status, hint] of cases) {
       provider(status, { error: { message: "secret-provider-detail sk-live-123" } });
       const { body } = await check();
       expect(body).toMatchObject({ ok: false, status });
       expect(body.hint).toMatch(hint);
-      expect(JSON.stringify(body)).not.toMatch(/secret-provider-detail|sk-live|internal\.example|test-key|gpt-test-mini/);
+      expect(JSON.stringify(body)).not.toMatch(/secret-provider-detail|sk-live|internal\.example|test-key/);
     }
   });
 
@@ -372,8 +368,7 @@ describe("POST /api/llm/check", () => {
 
 describe("Models settings page", () => {
   it("shows the model for every job with a key, and the fallback without one", () => {
-    // "AI", never the model id, even if an older server still sends one.
-    expect(jobRows({ llm: true, model: "gpt-4.1-mini" }).every((j) => j.ai && j.engine === "AI")).toBe(true);
+    expect(jobRows({ llm: true, model: "gpt-4.1-mini" }).every((j) => j.ai && j.engine === "gpt-4.1-mini")).toBe(true);
     const off = jobRows({ llm: false, model: "gpt-4.1-mini" });
     expect(off.map((j) => j.engine)).toEqual(["Rules-based coach", "Rules-based grader", "Template wizard", "Scripted caller"]);
     expect(jobRows(null).every((j) => !j.ai)).toBe(true);
@@ -383,15 +378,12 @@ describe("Models settings page", () => {
     const ids = (caps: Record<string, unknown> | null) => voiceEngines(caps).map((v) => [v.id, v.available, v.preferred]);
     // The shape getCapabilities() returns today.
     expect(ids({ realtime: true, elevenlabs: true, voiceEngines: ["elevenlabs", "openai"] })).toEqual([["elevenlabs", true, true], ["realtime", true, false]]);
-    const rt = voiceEngines({ realtime: true, voiceEngines: ["openai"], realtimeModel: "gpt-realtime" })[0];
-    expect(rt).toMatchObject({ id: "realtime", label: "OpenAI Realtime" });
-    expect(JSON.stringify(rt)).not.toContain("gpt-realtime");
+    expect(voiceEngines({ realtime: true, voiceEngines: ["openai"], realtimeModel: "gpt-realtime" })[0]).toMatchObject({ id: "realtime", label: "OpenAI Realtime", model: "gpt-realtime" });
     expect(ids({ elevenlabs: false, realtime: false, voiceEngines: [] })).toEqual([["realtime", false, false], ["elevenlabs", false, false]]);
     // Older payloads without the list fall back to the flags.
     expect(ids({ elevenlabs: true })).toEqual([["elevenlabs", true, true], ["realtime", false, false]]);
     expect(ids(null)).toEqual([["realtime", false, false], ["elevenlabs", false, false]]);
-    expect(voiceEngines({ realtime: "gpt-realtime-mini" })[0]).toMatchObject({ id: "realtime", available: true });
-    expect(voiceEngines({ realtime: "gpt-realtime-mini" })[0]).not.toHaveProperty("model");
+    expect(voiceEngines({ realtime: "gpt-realtime-mini" })[0]).toMatchObject({ id: "realtime", model: "gpt-realtime-mini", available: true });
   });
 
   it("tolerates oddly shaped voice engine lists", () => {

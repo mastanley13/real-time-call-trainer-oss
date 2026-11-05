@@ -41,16 +41,16 @@ export interface Capabilities {
   realtime?: boolean;
   /** Voice engines in the server's preference order; empty or missing means text only. */
   voiceEngines?: ("openai" | "elevenlabs")[];
+  /** Realtime model id for the voice provenance chip, when realtime is on. */
+  realtimeModel?: string;
   llm: boolean;
   database: boolean;
   /** Stripe test-mode billing is on. Absent or false hides the Billing tab. */
   billing?: boolean;
   /** Hosted build: paid plans are configured on the server. Absent means self-host. */
   hosted?: boolean;
-  /**
-   * Provider of the AI for coach, grading and wizard. Shown by name ("OpenAI") so self-hosters know which key to
-   * set. /api/config never sends model ids; the UI says "AI".
-   */
+  /** Model id for coach, grading and wizard (e.g. "gpt-4.1-mini"). */
+  model?: string;
   provider?: "openai" | "custom";
 }
 

@@ -23,7 +23,8 @@ import { POST as mintPOST } from "@/app/api/realtime/session/route";
 import { POST as savePOST } from "@/app/api/transcripts/route";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { MINT_RECEIPT_TTL_MS, signMintReceipt, verifyMintReceipt } from "@/lib/mintReceipt";
-import { canEditVoiceTier, canSetVoiceTier, effectiveVoiceTier, mintVoiceTier, normalizeVoiceTier } from "@/lib/voiceTier";
+import * as voiceTierModule from "@/lib/voiceTier";
+import { canEditVoiceTier, canSetVoiceTier, effectiveVoiceTier, normalizeVoiceTier } from "@/lib/voiceTier";
 import { PREMIUM_REALTIME_MODEL, STANDARD_REALTIME_MODEL, resolveTierModel } from "@/lib/voiceModels";
 
 const TEST_KEY = "test-only-not-a-secret-0123456789abcdef";
@@ -116,11 +117,9 @@ describe("voice tier config", () => {
     expect(effectiveVoiceTier("standard", true)).toBe("standard");
   });
 
-  it("leaves the paid Premium Voice engine on Premium only when metered", () => {
-    expect(mintVoiceTier("standard", { metered: false, engine: "premium" })).toBe("standard");
-    expect(mintVoiceTier("premium", { metered: false, engine: "premium" })).toBe("premium");
-    expect(mintVoiceTier("standard", { metered: true, engine: "premium" })).toBe("premium");
-    expect(mintVoiceTier("standard", { metered: true, engine: "standard" })).toBe("standard");
+  it("has no paid-engine path onto Premium: the comped gate is the only one", () => {
+    // The paid Premium Voice add-on is metered in src/lib/usage.ts and never picks the model (see usage-hardening.test.ts).
+    expect(Object.keys(voiceTierModule)).not.toContain("mintVoiceTier");
   });
 
   it("lets owners of comped orgs and platform admins change it, nobody else", () => {
@@ -265,14 +264,12 @@ describe("POST /api/realtime/session picks the model from the organization's eff
   };
   const sentModel = (fetchMock: ReturnType<typeof upstream>) => JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string).session.model;
 
-  it("uses Standard for a comped organization with no tier, and never tells the browser the model", async () => {
+  it("uses Standard for a comped organization with no tier, and ignores a model or tier sent by the client", async () => {
     const fetchMock = upstream();
-    const res = await mint();
+    const res = await mintPOST(json("http://localhost/api/realtime/session", "POST", { scenario, model: PREMIUM_REALTIME_MODEL, tier: "premium" }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).not.toHaveProperty("model");
-    expect(body).not.toHaveProperty("realtimeModel");
-    expect(JSON.stringify(body)).not.toMatch(/gpt-/);
+    expect(body.model).toBe("gpt-realtime-2.1-mini");
     expect(sentModel(fetchMock)).toBe("gpt-realtime-2.1-mini");
     // The receipt is opaque to the client but carries the minted model for the save.
     expect(verifyMintReceipt(body.receipt, mocks.user.id)).toBe("gpt-realtime-2.1-mini");

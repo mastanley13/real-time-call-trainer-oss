@@ -2,6 +2,7 @@ import "server-only";
 import { safeEqual } from "./access";
 import { orderVoiceEngines, realtimeKey } from "./realtime";
 import { stripeReady, stripeStatus } from "./stripe";
+import { resolveTierModel } from "./voiceModels";
 
 /**
  * Voice minutes are metered for stored accounts (not demo mode, with a database) when USAGE_CAPS=on or Stripe is
@@ -27,8 +28,9 @@ export const billingOn = (env: Record<string, string | undefined> = process.env)
 type Env = Record<string, string | undefined>;
 
 /*
- * The OpenAI Realtime model for a session is picked by voice tier (src/lib/voiceTier.ts mintVoiceTier,
- * src/lib/voiceModels.ts resolveTierModel), in /api/realtime/session. It is never sent to the browser.
+ * The OpenAI Realtime model for a session is picked by the organization's voice tier in /api/realtime/session
+ * (orgVoiceTierForUser in src/lib/voiceTierServer.ts, resolveTierModel in src/lib/voiceModels.ts), not by the
+ * metered engine. The engine still drives minute caps and billing (src/lib/usage.ts) and the ElevenLabs agent below.
  */
 
 /**
@@ -54,16 +56,16 @@ export function getCapabilities() {
     realtime,
     /** Voice engines in preference order: OpenAI first unless VOICE_ENGINE=elevenlabs. Empty means text only. */
     voiceEngines: orderVoiceEngines({ openai: realtime, elevenlabs }, process.env.VOICE_ENGINE),
+    /** The default (Standard tier) Realtime model; comped Premium orgs run REALTIME_MODEL_PREMIUM instead. */
+    ...(realtime ? { realtimeModel: resolveTierModel("standard", process.env) } : {}),
     llm: Boolean(llmKey()),
     database: Boolean(process.env.DATABASE_URL),
     /** Stripe test-mode billing: false when unset, in demo mode, or when the key is not an sk_test_ key. */
     billing: billingOn(),
-    /** Hosted build: Stripe is configured (billingActive). The header hides the AI status chip from non-admins. */
+    /** Hosted build: Stripe is configured (billingActive). The header hides the model chip from non-admins. */
     hosted: billingActive(),
-    /*
-     * No model ids here: this object is the public /api/config payload. LLM_MODEL and the Realtime models stay
-     * on the server (llmModel(), src/lib/voiceModels.ts). The UI says "AI" and names only the provider.
-     */
+    /** Model used for the coach, grading, persona wizard and text caller. Shown in provenance chips. */
+    model: llmModel(),
     /** "openai" when LLM_BASE_URL is unset or points at api.openai.com; the URL itself is never exposed. */
     provider: isOpenAiBaseUrl(llmBaseUrl()) ? ("openai" as const) : ("custom" as const),
   };

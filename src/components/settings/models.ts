@@ -1,5 +1,5 @@
 /**
- * Pure helpers for the Models settings page: whether AI runs each job, and
+ * Pure helpers for the Models settings page: which model runs each job, and
  * which voice engines this server offers. Capabilities come from /api/config
  * and may gain fields from other features (realtime, voiceEngines), so every
  * read here is defensive and tolerates missing or oddly shaped values.
@@ -11,9 +11,9 @@ export interface JobRow {
   id: JobId;
   name: string;
   detail: string;
-  /** True when this job runs on the configured AI right now. */
+  /** True when this job runs on the configured model right now. */
   ai: boolean;
-  /** What runs this job right now: "AI", or the fallback's name. Never a model id. */
+  /** What runs this job right now: the model id, or the fallback's name. */
   engine: string;
   fallbackName: string;
   fallback: string;
@@ -32,12 +32,15 @@ const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : unde
 
 export function jobRows(caps: CapsLike): JobRow[] {
   const ai = caps?.llm === true;
-  return JOBS.map((j) => ({ ...j, ai, engine: ai ? "AI" : j.fallbackName }));
+  const model = str(caps?.model) ?? "AI model";
+  return JOBS.map((j) => ({ ...j, ai, engine: ai ? model : j.fallbackName }));
 }
 
 export interface VoiceEngineRow {
   id: string;
   label: string;
+  /** Model id when the engine reports one (the realtime model). */
+  model?: string;
   available: boolean;
   /** The engine a new voice call uses first. */
   preferred: boolean;
@@ -46,7 +49,6 @@ export interface VoiceEngineRow {
 }
 
 const KNOWN = ["realtime", "elevenlabs"] as const;
-/** Provider names stay: self-hosters need to know which key to set. Model ids never appear. */
 const VOICE_LABELS: Record<string, string> = { realtime: "OpenAI Realtime", elevenlabs: "ElevenLabs voice agent" };
 const VOICE_SETUP: Record<string, string> = {
   realtime: "Set OPENAI_API_KEY (or OPENAI_REALTIME_API_KEY) on the server.",
@@ -60,13 +62,13 @@ function availability(o: Record<string, unknown>): boolean {
   return true;
 }
 
-type Entry = { id: string; available: boolean; label?: string };
+type Entry = { id: string; available: boolean; label?: string; model?: string };
 
 /** Entries from `voiceEngines`: an ordered array of ids or objects (listed means available), or a map of id to flag. */
 function listedEngines(listed: unknown): Entry[] {
   const out: Entry[] = [];
   const add = (id: string | undefined, available: boolean, o: Record<string, unknown> = {}) => {
-    if (id) out.push({ id: canonical(id), available, label: str(o.label) });
+    if (id) out.push({ id: canonical(id), available, label: str(o.label), model: str(o.model) });
   };
   if (Array.isArray(listed)) {
     for (const e of listed) {
@@ -97,6 +99,7 @@ export function voiceEngines(caps: CapsLike): VoiceEngineRow[] {
     realtime: typeof rt === "boolean" ? rt : typeof rt === "string" ? !!str(rt) : rt && typeof rt === "object" ? availability(rtObj) : false,
     elevenlabs: caps?.elevenlabs === true,
   };
+  const realtimeModel = (typeof rt === "string" ? str(rt) : str(rtObj.model)) ?? str(caps?.realtimeModel);
   const listed = listedEngines(caps?.voiceEngines);
   // A usable list is the source of truth (listed means available); otherwise fall back to the flags.
   const hasList = listed.length > 0;
@@ -114,6 +117,7 @@ export function voiceEngines(caps: CapsLike): VoiceEngineRow[] {
   return entries.map((e) => ({
     id: e.id,
     label: e.label ?? VOICE_LABELS[e.id] ?? e.id,
+    model: e.model ?? (e.id === "realtime" ? realtimeModel : undefined),
     available: e.available,
     preferred: e.id === firstAvailable,
     setup: VOICE_SETUP[e.id] ?? "Not set up on this server.",

@@ -12,7 +12,6 @@ vi.mock("@/lib/apiAuth", async () => ({
 
 import { beginCall, chooseEngine, endCall, ensureAllowance, heartbeat, usageSummary } from "@/lib/usage";
 import { elevenLabsAgentFor } from "@/lib/serverConfig";
-import { mintVoiceTier } from "@/lib/voiceTier";
 import { resolveTierModel } from "@/lib/voiceModels";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { MAX_CALL_SECONDS } from "@/lib/usagePlan";
@@ -77,13 +76,7 @@ describe("Premium voice limit", () => {
     expect(chooseEngine({ premiumVoice: true, allowance: a(60, 60) }, 60).engine).toBe("standard");
   });
 
-  it("the model tier and agent each engine maps to", () => {
-    // Metered: the paid Premium engine keeps the Premium model; otherwise the org's voice tier decides.
-    expect(mintVoiceTier("standard", { metered: true, engine: "premium" })).toBe("premium");
-    expect(mintVoiceTier("standard", { metered: true, engine: "standard" })).toBe("standard");
-    expect(mintVoiceTier("premium", { metered: true, engine: "standard" })).toBe("premium");
-    // Unmetered calls always report the premium engine; that alone never means Premium.
-    expect(mintVoiceTier("standard", { metered: false, engine: "premium" })).toBe("standard");
+  it("the model each voice tier maps to, and the agent each engine maps to", () => {
     expect(resolveTierModel("premium", { REALTIME_MODEL_PREMIUM: "model-premium-test" })).toBe("model-premium-test");
     expect(resolveTierModel("standard", { REALTIME_MODEL_STANDARD: "model-standard-test" })).toBe("model-standard-test");
     expect(elevenLabsAgentFor("standard", { ELEVENLABS_AGENT_ID: "main" })).toEqual({ agentId: "main", standardAvailable: false });
@@ -106,13 +99,15 @@ describe("Premium voice limit", () => {
     });
     const mint = () => realtimeSession(new NextRequest("http://localhost/api/realtime/session", { method: "POST", body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }), headers: { "content-type": "application/json" } }));
 
-    it("a call holding the last Premium minute is stopped when it ends; the NEXT session is minted on the standard model", async () => {
+    it("a call holding the last Premium minute is stopped when it ends; the NEXT session is on the standard engine", async () => {
       addUser("u-1", { planTier: "pro", premiumVoice: true });
       await ensureAllowance(fake.db as never, { userId: "u-1" }, base);
       allowanceOf("u-1").premiumMinutesUsed = 119; // 120 of 200 minutes is the Premium limit
 
       const first = await (await mint()).json();
-      expect(bodies[0].session.model).toBe("model-premium-test");
+      // The paid add-on engine does not pick the model: the org is not comped, so the call mints Standard.
+      // Its metering (Premium minutes, maxSeconds, engineTier) is exactly as before.
+      expect(bodies[0].session.model).toBe("model-standard-test");
       expect(first.maxSeconds).toBe(60); // the whole call is the one Premium minute it holds
       await heartbeat("u-1", first.callId, "connected", at(0));
       expect(await heartbeat("u-1", first.callId, "ok", at(30))).toMatchObject({ found: true, stop: false });
@@ -122,8 +117,7 @@ describe("Premium voice limit", () => {
       vi.setSystemTime(at(310));
       const second = await (await mint()).json();
       expect(bodies[1].session.model).toBe("model-standard-test");
-      // The model id never goes to the browser.
-      expect(second).not.toHaveProperty("model");
+      expect(second.model).toBe("model-standard-test");
       await heartbeat("u-1", second.callId, "connected", at(310));
       await endCall("u-1", second.callId, "user_hangup", at(310 + 180));
       // Standard minutes count against the plan but not against the Premium share.
@@ -166,10 +160,44 @@ describe("Premium voice limit", () => {
       expect(session(minted.callId).engineTier).toBe("standard");
     });
 
+    it("a comped Premium org still hits the plan's minute cap: 402 and nothing is minted", async () => {
+      addUser("u-1", { planTier: "pro", premiumVoice: false, organization: { voiceModelTier: "premium", voiceModelComped: true } });
+      await ensureAllowance(fake.db as never, { userId: "u-1" }, base);
+      allowanceOf("u-1").minutesUsed = allowanceOf("u-1").minutesCap;
+      const res = await mint();
+      expect(res.status).toBe(402);
+      expect((await res.json()).error).toBe("cap_reached");
+      expect(bodies).toHaveLength(0);
+    });
+
     it("a stored Premium tier without the comped flag stays on the standard model", async () => {
       addUser("u-1", { planTier: "pro", premiumVoice: false, organization: { voiceModelTier: "premium", voiceModelComped: false } });
       await (await mint()).json();
       expect(bodies[0].session.model).toBe("model-standard-test");
+    });
+
+    it("the paid add-on never bypasses the comped gate, with or without a stored Premium tier", async () => {
+      for (const organization of [null, { voiceModelTier: "premium", voiceModelComped: false }, { voiceModelTier: "premium", voiceModelComped: null }, { voiceModelTier: null, voiceModelComped: true }]) {
+        fake = createFakePrisma();
+        mocks.fake = fake;
+        bodies.length = 0;
+        addUser("u-1", { planTier: "pro", premiumVoice: true, ...(organization ? { organization } : {}) });
+        const minted = await (await mint()).json();
+        expect(bodies[0].session.model).toBe("model-standard-test");
+        // Billing is untouched: the add-on still books this call on the Premium engine and its 60% share.
+        expect(session(minted.callId).engineTier).toBe("premium");
+        expect(allowanceOf("u-1").premiumMinutesReserved).toBeGreaterThan(0);
+      }
+    });
+
+    it("the paid add-on on a comped Premium org mints Premium; engine and caps are the add-on's as before", async () => {
+      addUser("u-1", { planTier: "pro", premiumVoice: true, organization: { voiceModelTier: "premium", voiceModelComped: true } });
+      await ensureAllowance(fake.db as never, { userId: "u-1" }, base);
+      allowanceOf("u-1").premiumMinutesUsed = 119;
+      const minted = await (await mint()).json();
+      expect(bodies[0].session.model).toBe("model-premium-test");
+      expect(minted.maxSeconds).toBe(60);
+      expect(session(minted.callId).engineTier).toBe("premium");
     });
   });
 

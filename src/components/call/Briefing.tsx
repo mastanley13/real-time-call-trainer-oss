@@ -160,7 +160,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
   const voiceLookupFailed = mode === "voice" && !!usageUnavailable;
   const outOfMinutes = mode === "voice" && !!usage && usage.remaining <= 0;
   const voiceDetail = !voiceReady ? "Voice isn't configured on this server."
-    : engine === "openai" ? "OpenAI Realtime over WebRTC. Your browser asks for the mic when the call starts."
+    : engine === "openai" ? `${capabilities.realtimeModel ?? "OpenAI Realtime"} over WebRTC. Your browser asks for the mic when the call starts.`
     : "ElevenLabs Agents over WebRTC. Your browser asks for the mic when the call starts.";
 
   return (
@@ -261,7 +261,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
               <ul className="divide-y divide-line">
                 <Lamp state="ok" label="Persona loaded" detail={`${p.name} stays in character and never coaches you.`} />
                 <Lamp state={goalRead ? "ok" : "off"} label="Goal read" detail={goalRead ? "You know what a win looks like." : "Tick “Got it” once you've read your goal."} />
-                <Lamp state={capabilities.llm ? "ok" : "caution"} label="Coach" detail={capabilities.llm ? "AI coach. Cues and grading use AI." :"Rules-based coach. Add an AI key for smarter cues and grading."} />
+                <Lamp state={capabilities.llm ? "ok" : "caution"} label="Coach" detail={capabilities.llm ? `AI coach on ${capabilities.model ?? "your model"}` : "Rules-based coach. Add an AI key for smarter cues and grading."} />
                 <Lamp state={mode === "text" ? "ok" : voiceLookupFailed ? "off" : voiceReady ? "ok" : "caution"} label={mode === "voice" ? (voiceReady && engine && !voiceLookupFailed ? `Voice · ${VOICE_ENGINE_LABELS[engine]}` : "Voice") : "Text simulation"} detail={mode === "voice" ? (voiceLookupFailed ? "Voice is unavailable right now. Text practice still works." : voiceDetail) : capabilities.llm ? "Type your side; the caller replies in seconds." : "Scripted caller replies (no AI key)."} />
                 {mode === "voice" && voiceReady && (
                   <Lamp state={mic === "ok" ? "ok" : mic ? "caution" : "off"} label="Mic"

@@ -4,10 +4,9 @@ import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { meteringEnabled } from "@/lib/serverConfig";
-import { beginCall, endCall, type VoiceEngine } from "@/lib/usage";
+import { beginCall, endCall } from "@/lib/usage";
 import { capReached, dailySessionLimit, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
 import { realtimeKey, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
-import { mintVoiceTier } from "@/lib/voiceTier";
 import { orgVoiceTierForUser, voiceModelFor } from "@/lib/voiceTierServer";
 import { signMintReceipt } from "@/lib/mintReceipt";
 
@@ -22,8 +21,8 @@ const SECRET_TTL_SEC = 600;
  * Docs: https://developers.openai.com/api/reference/resources/realtime/subresources/client_secrets/methods/create
  *
  * The model is picked here, on the server, from the organization's voice tier (Standard or Premium, comped gate,
- * src/lib/voiceTier.ts) and is never sent to the browser. `receipt` (src/lib/mintReceipt.ts) is signed proof of
- * that model; the client hands it back when it saves the session so the server can log the model it really minted.
+ * src/lib/voiceTier.ts); the client never chooses it. `receipt` (src/lib/mintReceipt.ts) is signed proof of that
+ * model; the client hands it back when it saves the session so the server can log the model it really minted.
  */
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
@@ -56,8 +55,8 @@ export async function POST(req: NextRequest) {
   // The engine is chosen here, per session: Premium until its 60% share of the minutes is used, then standard
   // for the next session. A running call is never switched to another engine, but a Premium call may use only the
   // Premium minutes it reserved, so it ends when those run out (maxSeconds) and the next call starts on standard.
+  // The engine beginCall picks drives minute caps and billing only (TrainerSession.engineTier); it no longer picks the model.
   let callId: string | undefined;
-  let engine: VoiceEngine = "premium";
   let maxSeconds = SECRET_TTL_SEC;
   if (meteringEnabled()) {
     // A failed lookup refuses voice (fail closed); text practice never reaches this route.
@@ -72,15 +71,13 @@ export async function POST(req: NextRequest) {
     if (!begun.ok && begun.error === "daily_session_limit") return dailySessionLimit();
     if (!begun.ok) return voiceUnavailable();
     callId = begun.callId;
-    engine = begun.engine;
     maxSeconds = begun.maxSeconds;
   }
 
-  // Voice quality, read from the database on every call; the client never chooses it. A comped org on Premium gets
-  // the Premium model. A metered call on the paid Premium Voice engine keeps the Premium model it pays for; the
-  // engine, its minute caps and engineTier are unchanged by the voice tier.
-  const tier = mintVoiceTier(await orgVoiceTierForUser(auth.id), { metered: Boolean(callId), engine });
-  const model = voiceModelFor(tier);
+  // Voice quality, read from the database on every call; the client never chooses it. Premium only when the org is
+  // comped AND set to premium (effectiveVoiceTier). There is no other way onto the Premium model: the paid Premium
+  // Voice engine does not bypass the comped gate. Minute caps, engineTier and metering are unchanged by the tier.
+  const model = voiceModelFor(await orgVoiceTierForUser(auth.id));
   const voice = realtimeVoice(scenario.aiPersona.realtimeVoice);
   const session = {
     type: "realtime",
@@ -115,17 +112,17 @@ export async function POST(req: NextRequest) {
       console.error("[realtime/session] upstream status", res.status);
       if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
       return NextResponse.json(
-        { error: "realtime_upstream_error", message: realtimeUpstreamMessage(res.status) },
+        { error: "realtime_upstream_error", message: realtimeUpstreamMessage(res.status, model) },
         { status: res.status === 429 ? 429 : 502 },
       );
     }
     const data = (await res.json().catch(() => null)) as { value?: unknown; expires_at?: unknown } | null;
     if (!data || typeof data.value !== "string" || !data.value) throw new Error("no client secret in response");
     const expiresAt = typeof data.expires_at === "number" ? data.expires_at : Math.floor(Date.now() / 1000) + SECRET_TTL_SEC;
-    // No model id in the response: the browser does not need it. The receipt carries it, signed and opaque to the client.
+    // The receipt is signed proof of the minted model; the server logs the model only from a receipt that verifies.
     const receipt = signMintReceipt(auth.id, model);
     return NextResponse.json(
-      { clientSecret: data.value, expiresAt, voice, ...(callId ? { callId, maxSeconds } : {}), ...(receipt ? { receipt } : {}) },
+      { clientSecret: data.value, expiresAt, model, voice, ...(callId ? { callId, maxSeconds } : {}), ...(receipt ? { receipt } : {}) },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (e) {
