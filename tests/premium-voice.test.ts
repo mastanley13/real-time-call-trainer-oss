@@ -665,6 +665,8 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
       expect(addonQuantitySync(parse(teamLive(3, 4)))).toEqual({ subscriptionId: "sub_test_team", itemId: "si_test_prem", from: 4, quantity: 3, direction: "down" });
       expect(addonQuantitySync(parse(teamLive(4, 4)))).toBeNull();
       expect(addonQuantitySync(parse(teamLive(6, 4, { schedule: "sub_sched_test_1" })))).toBeNull();
+      // A decrease is never skipped because a schedule is attached: it goes to the renewal step (resume or read-only check).
+      expect(addonQuantitySync(parse(teamLive(3, 4, { schedule: "sub_sched_test_1" })))).toMatchObject({ quantity: 3, direction: "down" });
       expect(addonQuantitySync(parse(teamLive(6, 4, { cancel_at_period_end: true })))).toBeNull();
       expect(addonQuantitySync(parse(teamLive(6, 4, { status: "past_due" })))).toBeNull();
       // Paid Premium is active-only, so a trialing subscription gets no add-on sync either (Triage B2).
@@ -771,18 +773,116 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
       expect(premiumSeatsForUnits(6, 4, 6)).toBe(6);
     });
 
-    it("terms a schedule would drop: no schedule is written over them; the add-on is lowered now without a credit (fail closed)", async () => {
-      vi.spyOn(console, "warn").mockImplementation(() => {});
+    const needsSupport = () => fake.rows("auditEvent").filter((e) => e.action === "billing.addon_decrease_needs_support");
+
+    it("terms a schedule would drop: NOTHING is lowered now; the paid pool and pending target are kept; the webhook fails for support", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      live = teamLive(3, 4, { discounts: ["di_test_1"] });
+      const res = await seatChange();
+      expect(res.status).toBe(500);
+      // No immediate decrease, no schedule written over the discount.
+      expect(update).not.toHaveBeenCalled();
+      expect(create).not.toHaveBeenCalled();
+      expect(updateSched).not.toHaveBeenCalled();
+      // The already-paid quantity and pool stay; the pending target is recorded.
+      expect(org()).toMatchObject({ seatCount: 3, premiumVoiceQuantity: 4, seatCountAtRenewal: 3 });
+      expect(orgAllowance().premiumMinutesCap).toBe(160);
+      // Explicit, actionable record for an operator; the event is not acknowledged, so Stripe retries it.
+      expect(needsSupport()).toHaveLength(1);
+      expect(needsSupport()[0].metadata).toMatchObject({ reason: "unsupported_terms", pendingSeats: 3, addonQuantity: 4 });
+      expect(String((needsSupport()[0].metadata as { action: string }).action)).toMatch(/Stripe Dashboard/);
+      expect(fake.rows("stripeEvent")).toHaveLength(0);
+      // A retry (or any later event) changes nothing either: still no shrink, still failing visibly.
+      expect((await seatChange()).status).toBe(500);
+      expect(update).not.toHaveBeenCalled();
+      expect(orgAllowance().premiumMinutesCap).toBe(160);
+    });
+
+    it("unsupported terms still unresolved after a renewal: Stripe bills the old quantity, so the Team keeps exactly those units", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
       live = teamLive(3, 4, { discounts: ["di_test_1"] });
       await seatChange();
-      expect(create).not.toHaveBeenCalled();
-      expect(update.mock.calls[0]).toEqual(["sub_test_team", { items: [{ id: "si_test_prem", quantity: 3 }], proration_behavior: "none" }, expect.stringMatching(/^addon-sync:sub_test_team:si_test_prem:4-3:evt_test_pv_\d+$/)]);
-      expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/could not wait for renewal/));
-      // Once Stripe reports the lowered add-on, the pending mark clears and the pool is 3 units.
-      live = teamLive(3, 3, { discounts: ["di_test_1"] });
-      await seatChange();
+      const nextEnd = Math.floor(future().getTime() / 1000) + 30 * 86400;
+      vi.setSystemTime(new Date(future().getTime() + 60_000));
+      live = teamLive(3, 4, { discounts: ["di_test_1"], current_period_end: nextEnd });
+      expect((await seatChange()).status).toBe(500);
+      // Never more than the billed add-on quantity, never less while it is billed; the target stays pending.
+      expect(org()).toMatchObject({ premiumVoiceQuantity: 4, seatCountAtRenewal: 3 });
+      expect(orgAllowance().premiumMinutesCap).toBe(160);
+      expect(update).not.toHaveBeenCalled();
+      // Once support lowers it (here: Stripe reports 3), the mark clears and the pool follows.
+      live = teamLive(3, 3, { discounts: ["di_test_1"], current_period_end: nextEnd });
+      expect((await seatChange()).status).toBe(200);
       expect(org().seatCountAtRenewal).toBeNull();
       expect(orgAllowance().premiumMinutesCap).toBe(120);
+    });
+
+    it("Codex P1: the schedule is created (attached), a later step fails, and the replay of the event completes it on the original renewal date", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      live = teamLive(3, 4);
+      const originalEnd = Math.floor(future().getTime() / 1000);
+      // The create lands and attaches the schedule; the read that follows fails, and so does the release of it.
+      vi.mocked(stripeApi.retrieveSubscriptionSchedule).mockRejectedValueOnce(new StripeApiError(500));
+      vi.mocked(stripeApi.releaseSubscriptionSchedule).mockRejectedValueOnce(new StripeApiError(500));
+      const raw = JSON.stringify({ id: "evt_test_portal_partial", type: "customer.subscription.updated", livemode: false, data: { object: { id: "sub_test_team", customer: "cus_test_team" } } });
+      const send = () => {
+        const t = Math.floor(Date.now() / 1000);
+        const sig = `t=${t},v1=${createHmac("sha256", WHSEC).update(`${t}.${raw}`).digest("hex")}`;
+        return webhook(new NextRequest("http://localhost/api/stripe/webhook", { method: "POST", body: raw, headers: { "stripe-signature": sig } }));
+      };
+      expect((await send()).status).toBe(500);
+      expect((live as { schedule: string | null }).schedule).toBe("sub_sched_test_portal");
+      expect(updateSched).not.toHaveBeenCalled();
+      expect(fake.rows("stripeEvent").some((r) => r.id === "evt_test_portal_partial")).toBe(false);
+      // Meanwhile the paid pool is kept.
+      expect(orgAllowance().premiumMinutesCap).toBe(160);
+      // Stripe's retry: the attached schedule is the app's own unfinished setup, resumed through the lease and baseline.
+      expect((await send()).status).toBe(200);
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(updateSched).toHaveBeenCalledTimes(1);
+      const phases = (updateSched.mock.calls[0][1] as unknown as { phases: { end_date?: number; items: unknown[] }[] }).phases;
+      expect(phases[0].end_date).toBe(originalEnd);
+      expect(phases[1].items).toEqual([{ price: "price_test_team_m", quantity: 3 }, { price: "price_test_prem_m", quantity: 3 }]);
+      expect(sched?.phases[1].start_date).toBe(originalEnd);
+      expect(update).not.toHaveBeenCalled();
+      expect(org().premiumScheduleRef).toBeNull();
+      expect(needsSupport()).toHaveLength(0);
+    });
+
+    it("someone else's schedule: untouched, nothing lowered, pool kept, and an explicit failure for support", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const end = Math.floor(future().getTime() / 1000);
+      // A schedule made in the Dashboard whose renewal phase keeps the add-on at 4.
+      sched = { id: "sub_sched_test_foreign", status: "active", end_behavior: "release", phases: [
+        { start_date: periodStart(), end_date: end, items: [{ price: "price_test_team_m", quantity: 3 }, { price: "price_test_prem_m", quantity: 4 }] },
+        { start_date: end, end_date: end + 30 * 86400, items: [{ price: "price_test_team_m", quantity: 3 }, { price: "price_test_prem_m", quantity: 4 }] },
+      ] };
+      const before = structuredClone(sched);
+      live = teamLive(3, 4, { schedule: "sub_sched_test_foreign" });
+      expect((await seatChange()).status).toBe(500);
+      expect(create).not.toHaveBeenCalled();
+      expect(updateSched).not.toHaveBeenCalled();
+      expect(stripeApi.releaseSubscriptionSchedule).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+      expect(sched).toEqual(before);
+      expect(orgAllowance().premiumMinutesCap).toBe(160);
+      expect(needsSupport()[0].metadata).toMatchObject({ reason: "schedule_conflict", pendingSeats: 3 });
+    });
+
+    it("someone else's schedule that already lowers the add-on at the renewal date: arranged, read only, acknowledged", async () => {
+      const end = Math.floor(future().getTime() / 1000);
+      sched = { id: "sub_sched_test_ops", status: "active", end_behavior: "release", phases: [
+        { start_date: periodStart(), end_date: end, items: [{ price: "price_test_team_m", quantity: 3 }, { price: "price_test_prem_m", quantity: 4 }] },
+        { start_date: end, end_date: end + 30 * 86400, items: [{ price: "price_test_team_m", quantity: 3 }, { price: "price_test_prem_m", quantity: 3 }] },
+      ] };
+      const before = structuredClone(sched);
+      live = teamLive(3, 4, { schedule: "sub_sched_test_ops" });
+      expect((await seatChange()).status).toBe(200);
+      expect(create).not.toHaveBeenCalled();
+      expect(updateSched).not.toHaveBeenCalled();
+      expect(sched).toEqual(before);
+      expect(orgAllowance().premiumMinutesCap).toBe(160);
+      expect(needsSupport()).toHaveLength(0);
     });
 
     it("a schedule setup that fails answers 500 and drops the event id; Stripe's retry finishes it, still at renewal", async () => {

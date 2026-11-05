@@ -1,7 +1,7 @@
 import "server-only";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { itemKind, parseLiveSubscription, periodEndOf, resolvePriceIds, syncSubscriptionNow, type Interval, type LiveSubscription, type PriceIds } from "./billing";
+import { ADDON_SEATS_SCOPE, itemKind, parseLiveSubscription, periodEndOf, resolvePriceIds, syncSubscriptionNow, type AddonDecreaseOutcome, type Interval, type LiveSubscription, type PriceIds } from "./billing";
 import { prisma } from "./db";
 import { stripeApi, StripeApiError, type StripeParams } from "./stripe";
 import { PREMIUM_STATUSES } from "./premiumVoice";
@@ -771,24 +771,49 @@ export async function scheduleRemovePremium(subject: AddonSubject, deps: AddonDe
  * refusal of any other schedule as every scheduled change (scheduleAtRenewal). The current period keeps the add-on
  * quantity it paid for. Called by the webhook after commit (billing.ts afterApplied).
  *
- * "refused" when it cannot be done without overwriting or dropping something: a schedule already on the subscription,
- * discounts or tax settings a scheduled phase would drop, the plan ending, or nothing left to lower. The caller then
- * lowers the add-on now, without a credit (the earlier behavior). Any other failure throws so the webhook retries,
- * and the retry resumes the app's own unfinished schedule.
+ * Outcomes (it never lowers anything now, and never writes over a schedule it does not own):
+ * - "scheduled": the next phase lowers the add-on at the CURRENT period end (the original renewal date): set up now, the
+ *   app's own unfinished setup resumed and finished (or found already finished) through the lease and exact baseline,
+ *   or an attached schedule (read only) that already lowers it at that date.
+ * - "not_needed": nothing left to lower, or the plan ends at period end anyway.
+ * - "unsupported_terms": discounts, tax or collection settings a scheduled phase would drop.
+ * - "schedule_conflict": someone else's schedule, or the app's own one changed outside the app (left untouched).
+ * The last two need support; the caller keeps the paid quantity and pool and fails the webhook visibly. Any other
+ * failure (a lease held by another operation, a setup cut short, a Stripe error) throws so Stripe's retry resumes it.
  */
-export async function scheduleAddonSeatsAtRenewal(owner: { kind: "organization"; id: string }, subscriptionId: string, seats: number, deps: AddonDeps = liveAddonDeps): Promise<"scheduled" | "refused"> {
+export async function scheduleAddonSeatsAtRenewal(owner: { kind: "organization"; id: string }, subscriptionId: string, seats: number, deps: AddonDeps = liveAddonDeps): Promise<AddonDecreaseOutcome> {
   const subject: AddonSubject = { kind: "organization", id: owner.id, plan: "team", subscriptionId, seats };
   const live = await loadLive(subject, deps);
   const { premium } = splitItems(live);
-  if (!premium || (premium.quantity ?? 1) <= seats || live.cancel_at_period_end) return "refused";
+  if (!premium || (premium.quantity ?? 1) <= seats || live.cancel_at_period_end) return "not_needed";
   const ids = premiumPriceIds(live, await deps.prices());
   try {
-    await scheduleAtRenewal(subject, live, (items) => items.map((i) => (ids.has(i.price) ? { ...i, quantity: seats } : i)), `addon-seats-${seats}`, deps);
+    await scheduleAtRenewal(subject, live, (items) => items.map((i) => (ids.has(i.price) ? { ...i, quantity: seats } : i)), `${ADDON_SEATS_SCOPE}${seats}`, deps);
     return "scheduled";
   } catch (e) {
-    if (e instanceof AddonError && (e.code === "change_scheduled" || e.code === "unsupported_billing_terms")) return "refused";
+    if (e instanceof AddonError && e.code === "unsupported_billing_terms") return "unsupported_terms";
+    // A schedule the app may not edit (anyone else's, or the app's own finished or externally changed one): only READ
+    // it. If its renewal phase already lowers the add-on to the seats, the decrease is arranged; otherwise support.
+    if (e instanceof AddonError && e.code === "change_scheduled") return (await decreaseArrangedAtRenewal(live, seats, ids, deps)) ? "scheduled" : "schedule_conflict";
     throw e;
   }
+}
+
+/**
+ * Read-only: whether the schedule attached to `live` already lowers the Premium add-on to at most `seats` in the phase
+ * that starts at the current period end (the original renewal date). Never writes anything. A read that fails throws, so
+ * the webhook retries; an object that cannot be read as a schedule is "not arranged".
+ */
+async function decreaseArrangedAtRenewal(live: LiveSubscription, seats: number, premiumIds: Set<string>, deps: AddonDeps): Promise<boolean> {
+  const attached = scheduleId(live);
+  const end = periodEndOf(live);
+  if (!attached || !end) return false;
+  const endSec = Math.floor(end.getTime() / 1000);
+  const parsed = ScheduleObject.safeParse(await deps.retrieveSubscriptionSchedule(attached));
+  if (!parsed.success) return false;
+  const next = parsed.data.phases.find((p) => p.start_date === endSec);
+  if (!next) return false;
+  return phaseItems(next.items).every((i) => !premiumIds.has(i.price) || i.quantity <= seats);
 }
 
 // ---- Seats ----------------------------------------------------------------------------------------------------

@@ -181,17 +181,42 @@ describe("Prism 1: the rep may choose Standard or Premium; the server rechecks",
     expect(VOICE_CHOICE_KEY).toBe("rtct.voiceTier");
   });
 
+  /** The attributes of one start tag, whatever order React renders them in. Boolean attributes map to "". */
+  const attrsOf = (tag: string): Record<string, string> =>
+    Object.fromEntries([...tag.replace(/^<\w+/, "").matchAll(/([A-Za-z_:][\w:.-]*)(?:="([^"]*)")?/g)].map((m) => [m[1], m[2] ?? ""]));
+  /** Each <label> of the field with the one radio it wraps and its visible text. */
+  const radiosOf = (html: string) => (html.match(/<label\b[^>]*>[\s\S]*?<\/label>/g) ?? []).map((label) => {
+    const inputs = label.match(/<input\b[^>]*>/g) ?? [];
+    return { inputs: inputs.length, attrs: attrsOf(inputs[0] ?? "<input>"), text: label.replace(/<[^>]+>/g, " ") };
+  });
+
   it("native fieldset, legend and labeled radios in one group (arrow keys move the selection natively)", () => {
-    const html = renderToStaticMarkup(createElement(VoiceChoiceField, { premium: snap({}), usage: { remaining: 100, cap: 200 }, value: "premium", onChange: () => {} }));
-    expect(html).toMatch(/^<fieldset[^>]*><legend[^>]*>Voice for this call<\/legend>/);
-    expect(html.match(/<input type="radio" name="voice-choice"/g)).toHaveLength(2);
-    expect(html).toMatch(/<label[^>]*><input type="radio" name="voice-choice" value="premium" checked=""/);
-    expect(html).toContain("Premium voice");
-    expect(html).toContain("Standard voice");
-    expect(html).toContain("Saves your Premium minutes");
-    const std = renderToStaticMarkup(createElement(VoiceChoiceField, { premium: snap({}), usage: { remaining: 100, cap: 200 }, value: "standard", onChange: () => {} }));
-    expect(std).toMatch(/value="standard" checked=""/);
-    expect(std).not.toMatch(/value="premium" checked=""/);
+    const render = (value: "premium" | "standard") => renderToStaticMarkup(createElement(VoiceChoiceField, { premium: snap({}), usage: { remaining: 100, cap: 200 }, value, onChange: () => {} }));
+    const html = render("premium");
+    // A fieldset whose first child is its legend, with every label (and so every radio) inside it.
+    expect(html).toMatch(/^<fieldset\b[^>]*>\s*<legend\b[^>]*>Voice for this call<\/legend>/);
+    expect(html.trimEnd().endsWith("</fieldset>")).toBe(true);
+    expect((html.match(/<fieldset\b/g) ?? [])).toHaveLength(1);
+    const radios = radiosOf(html);
+    expect(radios).toHaveLength(2);
+    for (const r of radios) {
+      // Each label wraps exactly one native radio, so clicking the text selects it and its name is the label text.
+      expect(r.inputs).toBe(1);
+      expect(r.attrs.type).toBe("radio");
+      // One shared name: one group, where arrow keys move the single selection and Tab enters it once.
+      expect(r.attrs.name).toBe("voice-choice");
+      // Nothing overrides native radio semantics or focus.
+      for (const a of ["role", "tabindex", "tabIndex", "disabled", "aria-hidden"]) expect(r.attrs, a).not.toHaveProperty(a);
+    }
+    expect(radios.map((r) => r.attrs.value)).toEqual(["premium", "standard"]);
+    expect(radios[0].text).toContain("Premium voice");
+    expect(radios[1].text).toContain("Standard voice");
+    expect(radios[1].text).toContain("Saves your Premium minutes");
+    // Premium is the default selection: exactly one radio is checked.
+    const checked = (h: string) => radiosOf(h).filter((r) => "checked" in r.attrs).map((r) => r.attrs.value);
+    expect(checked(html)).toEqual(["premium"]);
+    const std = render("standard");
+    expect(checked(std)).toEqual(["standard"]);
     expect(html + std).not.toMatch(MODEL_ID);
     // Wired on the setup only when the choice is available, and the pick is sent with the mint request.
     expect(src("src/components/call/Briefing.tsx")).toContain("premiumChoiceAvailable(premium) && onVoiceChoiceChange");
@@ -262,7 +287,11 @@ describe("Prism 2: the setup and the live call say when THIS call ends", () => {
   it("the setup shows it (polite live region) for Premium, and not when Standard is picked", () => {
     const premium: PremiumSnapshot = { enabled: true, remaining: 2, cap: 40, plan: "pro", onSale: true, canBuy: true, offerReady: true, comped: false, removeAt: null };
     const on = renderToStaticMarkup(createElement(VoiceChoiceField, { premium, usage: { remaining: 5, cap: 200 }, value: "premium", onChange: () => {} }));
-    expect(on).toMatch(/role="status" aria-live="polite"[^>]*>This Premium call ends after 2 minutes/);
+    // The notice is the text of a polite status region (attributes checked in any order).
+    const region = on.match(/<p\b[^>]*>This Premium call ends after 2 minutes[^<]*<\/p>/);
+    expect(region).not.toBeNull();
+    const attrs = Object.fromEntries([...region![0].match(/^<p\b[^>]*>/)![0].replace(/^<p/, "").matchAll(/([A-Za-z_:][\w:.-]*)(?:="([^"]*)")?/g)].map((m) => [m[1], m[2] ?? ""]));
+    expect(attrs).toMatchObject({ role: "status", "aria-live": "polite" });
     const off = renderToStaticMarkup(createElement(VoiceChoiceField, { premium, usage: { remaining: 5, cap: 200 }, value: "standard", onChange: () => {} }));
     expect(off).not.toContain("ends after");
   });
@@ -357,11 +386,10 @@ describe("Prism 5 and 6: billing review focus and the seat stepper", () => {
 
   it("6: the stepper's value is the current seat count (not a placeholder), so ArrowUp on 3 gives 4", () => {
     const html = renderToStaticMarkup(createElement(PremiumVoiceControl, { usage: team(), onSale: true }));
-    const input = html.match(/<input id="premium-seats"[^>]*>/)![0];
-    expect(input).toContain('value="3"');
-    expect(input).toContain('type="number"');
-    expect(input).toContain('min="3"');
-    expect(input).not.toContain("placeholder=");
+    const tag = html.match(/<input\b[^>]*\bid="premium-seats"[^>]*>/)![0];
+    const input = Object.fromEntries([...tag.replace(/^<input/, "").matchAll(/([A-Za-z_:][\w:.-]*)(?:="([^"]*)")?/g)].map((m) => [m[1], m[2] ?? ""]));
+    expect(input).toMatchObject({ value: "3", type: "number", min: "3" });
+    expect(input).not.toHaveProperty("placeholder");
   });
 
   it("6: a refetch never wipes what the owner typed; untouched, it follows the server", () => {
