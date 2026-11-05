@@ -11,11 +11,13 @@ vi.mock("@/lib/apiAuth", async () => ({
 }));
 
 import { beginCall, creditManual, endCall, ensureAllowance, heartbeat, resolveAllowance, usageSummary } from "@/lib/usage";
+import { CONNECT_WINDOW_SECONDS } from "@/lib/usagePlan";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { POST as endRoute } from "@/app/api/usage/end/route";
 import { POST as heartbeatRoute } from "@/app/api/usage/heartbeat/route";
 import { POST as creditRoute } from "@/app/api/usage/credit/route";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
+import { POST as sdpPOST } from "@/app/api/realtime/sdp/route";
 import { POST as saveTranscript } from "@/app/api/transcripts/route";
 
 const T0 = new Date("2026-10-15T12:00:00Z");
@@ -448,6 +450,72 @@ describe("caps", () => {
     const failed = fake.rows("trainerSession").filter((s) => s.id !== ok.callId);
     expect(failed).toHaveLength(1);
     expect(failed[0]).toMatchObject({ endReason: "failed_connect", billedMinutes: 0 });
+  });
+
+  it("after a successful mint, an SDP timeout does not release the reservation; a failed_connect end does", async () => {
+    mocks.authId = "u-sdp";
+    addUser("u-sdp");
+    vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ value: "ek_abc123456789", expires_at: 9999999999 }), { status: 200 })));
+    const mint = () => realtimeSession(new NextRequest("http://localhost/api/realtime/session", { method: "POST", body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }), headers: { "content-type": "application/json" } }));
+    const ok = await (await mint()).json();
+    expect(typeof ok.callId).toBe("string");
+    expect(session(ok.callId).endedAt).toBeNull();
+    expect(allowanceOf("u-sdp").minutesReserved).toBeGreaterThan(0);
+
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const sdp = await sdpPOST(new NextRequest("http://localhost/api/realtime/sdp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clientSecret: "ek_abc123456789", sdp: "v=0 offer sdp" }),
+    }));
+    const sdpText = await sdp.text();
+    expect(sdp.status).toBe(502);
+    expect(JSON.parse(sdpText).error).toBe("realtime_upstream_error");
+    expect(sdpText).not.toContain("ek_abc123456789");
+    expect(sdpText).not.toContain("sk-test-not-real");
+    // SDP does not know the callId, so a failed connect leaves the mint holding the minutes.
+    expect(session(ok.callId).endedAt).toBeNull();
+    expect(allowanceOf("u-sdp").minutesReserved).toBeGreaterThan(0);
+
+    const blocked = await mint();
+    expect(blocked.status).toBe(409);
+    expect((await blocked.json()).error).toBe("minutes_reserved");
+
+    const ended = await endCall("u-sdp", ok.callId, "failed_connect", new Date((session(ok.callId).createdAt as Date).getTime() + 5_000));
+    expect(ended).toMatchObject({ outcome: "failed_connect", billedMinutes: 0 });
+    expect(session(ok.callId).endReason).toBe("failed_connect");
+    expect(allowanceOf("u-sdp").minutesReserved).toBe(0);
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ value: "ek_retry123456789", expires_at: 9999999999 }), { status: 200 })));
+    const retry = await mint();
+    expect(retry.status).toBe(200);
+    const again = await retry.json();
+    expect(again.callId).toBeTruthy();
+    expect(again.callId).not.toBe(ok.callId);
+  });
+
+  it("a mint nobody ends stays reserved through the connect window, then stale-settles as a heartbeat timeout", async () => {
+    mocks.authId = "u-stale";
+    addUser("u-stale");
+    vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ value: "ek_test", expires_at: 9999999999 }), { status: 200 })));
+    const mint = () => realtimeSession(new NextRequest("http://localhost/api/realtime/session", { method: "POST", body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }), headers: { "content-type": "application/json" } }));
+    const ok = await (await mint()).json();
+    expect(typeof ok.callId).toBe("string");
+    expect(session(ok.callId).endedAt).toBeNull();
+
+    const created = session(ok.callId).createdAt as Date;
+    await usageSummary("u-stale", new Date(created.getTime() + CONNECT_WINDOW_SECONDS * 1000));
+    expect(session(ok.callId).endedAt).toBeNull();
+    expect(allowanceOf("u-stale").minutesReserved).toBeGreaterThan(0);
+
+    await usageSummary("u-stale", new Date(created.getTime() + (CONNECT_WINDOW_SECONDS + 1) * 1000));
+    expect(session(ok.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 10 });
+    expect(allowanceOf("u-stale")).toMatchObject({ minutesReserved: 0, minutesUsed: 10 });
   });
 
   it("13: a Pro user with 2 minutes left who talks 5 minutes is stopped at 2m and billed 2", async () => {

@@ -267,4 +267,48 @@ describe("POST /api/realtime/sdp", () => {
     const res = await sdpPOST(req({ clientSecret: "ek_abc123456789", sdp: "v=0 offer sdp" }));
     expect((await res.json()).error).toBe("realtime_secret_expired");
   });
+
+  it("maps a timeout to 502 without leaking the ephemeral secret", async () => {
+    vi.stubEnv("DEMO_MODE", "true");
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await sdpPOST(req({ clientSecret: "ek_abc123456789", sdp: "v=0 offer sdp" }));
+    const text = await res.text();
+    expect(res.status).toBe(502);
+    expect(JSON.parse(text)).toMatchObject({ error: "realtime_upstream_error" });
+    expect(text).not.toContain("ek_abc123456789");
+  });
+
+  it("maps an empty SDP answer to 502", async () => {
+    vi.stubEnv("DEMO_MODE", "true");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("   ", { status: 201 })));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await sdpPOST(req({ clientSecret: "ek_abc123456789", sdp: "v=0 offer sdp" }));
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toBe("realtime_upstream_error");
+  });
+
+  it("maps an upstream 500 to 502 without forwarding the body", async () => {
+    vi.stubEnv("DEMO_MODE", "true");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response('{"error":{"message":"internal","secret":"ek_should_not_leak"}}', { status: 500 })));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await sdpPOST(req({ clientSecret: "ek_abc123456789", sdp: "v=0 offer sdp" }));
+    const text = await res.text();
+    expect(res.status).toBe(502);
+    expect(JSON.parse(text)).toMatchObject({ error: "realtime_upstream_error" });
+    expect(text).not.toContain("ek_should_not_leak");
+    expect(text).not.toContain("internal");
+  });
+
+  it("rejects a short offer without calling OpenAI", async () => {
+    vi.stubEnv("DEMO_MODE", "true");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await sdpPOST(req({ clientSecret: "ek_abc123456789", sdp: "short" }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("invalid_offer");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

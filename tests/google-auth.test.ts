@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import jwt from "jsonwebtoken";
+import { Prisma } from "@prisma/client";
 import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => {
@@ -378,6 +379,36 @@ describe("GET /api/auth/google/callback", () => {
     await call();
     const logged = JSON.stringify((console.error as unknown as ReturnType<typeof vi.fn>).mock.calls);
     for (const secret of ["abc", "secret-1", flow.verifier, "google-key"]) expect(logged).not.toContain(secret);
+  });
+
+  it("a token-exchange timeout answers google_failed, creates nothing, and logs no secrets", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    }));
+    const res = await call();
+    expect(loc(res).searchParams.get("error")).toBe("google_failed");
+    expect(mocks.prisma.user.create).not.toHaveBeenCalled();
+    expect(res.headers.get("set-cookie")).not.toContain("authToken=");
+    const logged = JSON.stringify((console.error as unknown as ReturnType<typeof vi.fn>).mock.calls);
+    for (const secret of ["abc", "secret-1", flow.verifier]) expect(logged).not.toContain(secret);
+  });
+
+  it("a token response without an id_token answers google_failed and creates nothing", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ access_token: "ya29.not-an-id" }), { status: 200 })));
+    const res = await call();
+    expect(loc(res).searchParams.get("error")).toBe("google_failed");
+    expect(mocks.prisma.user.create).not.toHaveBeenCalled();
+    expect(res.headers.get("set-cookie")).not.toContain("authToken=");
+  });
+
+  it("a lost create race (P2002) answers google_failed and does not issue a session", async () => {
+    googleReplies(claims());
+    mocks.prisma.user.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" }),
+    );
+    const res = await call();
+    expect(loc(res).searchParams.get("error")).toBe("google_failed");
+    expect(res.headers.get("set-cookie")).not.toContain("authToken=");
   });
 });
 
