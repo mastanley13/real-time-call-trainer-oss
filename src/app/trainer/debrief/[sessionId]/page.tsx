@@ -5,12 +5,12 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, CheckCircle2, Loader2, Printer, Quote, RefreshCw, RotateCcw, TrendingUp } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getLocalSession, updateLocalEvaluation, type CoachLog } from "@/lib/sessionStore";
+import { getLocalSession, listLocalSessions, updateLocalEvaluation, type CoachLog } from "@/lib/sessionStore";
 import { listScenarios } from "@/lib/scenarioStore";
 import type { Scenario } from "@/lib/scenarios";
 import type { Evaluation } from "@/lib/grader-types";
 import { goalStatusOf, graderLabel, isLegacyGrader, scoreLabel, stripGraderNote } from "@/lib/grader-types";
-import { nextDrill, retryPoint } from "@/lib/debrief";
+import { isFirstGradedCall, nextDrill, nextStepLine, resolveFirstCall, retryPoint, scoreHeadline, type FirstCallState } from "@/lib/debrief";
 import { canRegrade, isAiGrade, wasCapped } from "@/lib/gradable";
 import { canManageTeam } from "@/lib/team";
 import { CUE_LABELS } from "@/lib/coach-types";
@@ -20,6 +20,8 @@ import { PersonaAvatar } from "@/components/ui/Persona";
 import { CUE_ICON } from "@/components/call/CopilotRail";
 
 interface View {
+  /** The session this view was loaded for, so a view left over from another session never renders. */
+  sessionId: string;
   title: string;
   scenario?: Scenario;
   scenarioId?: string;
@@ -50,11 +52,12 @@ const BG = { ok: "bg-ok", signal: "bg-signal", caution: "bg-caution" } as const;
 /** Categorical tokens --cat-1 to --cat-8 from globals.css. */
 const CRIT_COLORS = Array.from({ length: 8 }, (_, i) => `rgb(var(--cat-${i + 1}))`);
 
-function ScoreRing({ score, grade }: { score: number; grade: string }) {
+function ScoreRing({ score, grade, first }: { score: number; grade: string; first: boolean }) {
+  const head = scoreHeadline({ overallScore: score, grade: grade as Evaluation["grade"] }, first);
   const r = 52, c = 2 * Math.PI * r;
   const t = tone(score);
   return (
-    <div className={`relative h-40 w-40 shrink-0 ${TEXT[t]}`} role="img" aria-label={`Grade ${grade}, ${score} out of 100, ${scoreLabel(score)}`}>
+    <div className={`relative h-40 w-40 shrink-0 ${TEXT[t]}`} role="img" aria-label={first ? `Baseline, ${score} out of 100` : `Grade ${grade}, ${score} out of 100, ${scoreLabel(score)}`}>
       <svg viewBox="0 0 120 120" className="h-full w-full -rotate-90" aria-hidden>
         <circle cx="60" cy="60" r={r} fill="none" stroke="rgb(var(--line))" strokeWidth="8" />
         {Array.from({ length: 40 }, (_, i) => {
@@ -66,7 +69,7 @@ function ScoreRing({ score, grade }: { score: number; grade: string }) {
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center" aria-hidden>
         <span className="mono text-5xl font-semibold leading-none">{score}</span>
-        <span className="mt-1 font-heading text-sm font-bold text-ink">Grade {grade}</span>
+        <span className="mt-1 font-heading text-sm font-bold text-ink">{head.ring}</span>
       </div>
     </div>
   );
@@ -79,6 +82,9 @@ export default function DebriefPage() {
   const [view, setView] = useState<View | null>(null);
   const [error, setError] = useState("");
   const [focus, setFocus] = useState<number | null>(null);
+  // Tied to the session it was worked out for; until it resolves the grade shows as a baseline rather than a letter that may be wrong.
+  const [firstState, setFirstState] = useState<FirstCallState | null>(null);
+  const firstCall = resolveFirstCall(firstState, sessionId);
   const [regrading, setRegrading] = useState(false);
   const [regradeMsg, setRegradeMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const lineRefs = useRef<Record<number, HTMLLIElement | null>>({});
@@ -88,21 +94,31 @@ export default function DebriefPage() {
 
   useEffect(() => {
     if (!capabilities || isLoading) return;
+    // Drop another session's view at once, and ignore any response that arrives after leaving this one.
+    let stale = false;
+    setView((v) => (v && v.sessionId === sessionId ? v : null));
+    setError("");
     if (sessionId.startsWith("local-")) {
       const s = getLocalSession(sessionId);
       if (!s) { setError("This session isn’t stored in this browser."); return; }
-      setView({ title: s.scenario.title, scenario: s.scenario, scenarioId: s.scenario.id, role: s.scenario.role, createdAt: s.createdAt, durationSeconds: s.durationSeconds, transcript: s.transcript, evaluation: s.evaluation, callerName: s.scenario.aiPersona.name, coach: s.coach, local: true });
+      const earlier = listLocalSessions().filter((x) => x.id !== sessionId).map((x) => ({ createdAt: x.createdAt, graded: !!x.evaluation }));
+      setFirstState({ sessionId, first: isFirstGradedCall(s.createdAt, earlier) });
+      setView({ sessionId, title: s.scenario.title, scenario: s.scenario, scenarioId: s.scenario.id, role: s.scenario.role, createdAt: s.createdAt, durationSeconds: s.durationSeconds, transcript: s.transcript, evaluation: s.evaluation, callerName: s.scenario.aiPersona.name, coach: s.coach, local: true });
       return;
     }
     if (!isAuthenticated) { router.replace("/login"); return; }
-    fetch(`/api/transcripts/${sessionId}`)
+    fetch(`/api/transcripts/${encodeURIComponent(sessionId)}`)
       .then(async (r) => {
         if (!r.ok) throw new Error(r.status === 404 ? "Session not found." : "Could not load this session.");
-        const { session } = await r.json();
+        // The server works out first-call status for the session's owner, so a manager sees the trainee's baseline, not their own.
+        const { session, firstGradedCall } = await r.json();
+        if (stale) return;
         const sc = listScenarios().find((x) => x.id === session.scenarioId);
-        setView({ title: session.scenarioTitle ?? session.scenarioId, scenario: sc, scenarioId: session.scenarioId, role: sc?.role, createdAt: session.createdAt, durationSeconds: session.durationSeconds, transcript: session.transcript, evaluation: session.evaluation, supervisorNotes: session.supervisorNotes, callerName: sc?.aiPersona.name ?? "Caller", local: false, ownerId: session.userId });
+        setFirstState({ sessionId, first: firstGradedCall !== false });
+        setView({ sessionId, title: session.scenarioTitle ?? session.scenarioId, scenario: sc, scenarioId: session.scenarioId, role: sc?.role, createdAt: session.createdAt, durationSeconds: session.durationSeconds, transcript: session.transcript, evaluation: session.evaluation, supervisorNotes: session.supervisorNotes, callerName: sc?.aiPersona.name ?? "Caller", local: false, ownerId: session.userId });
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => { if (!stale) setError(e.message); });
+    return () => { stale = true; };
   }, [sessionId, capabilities, isLoading, isAuthenticated, router]);
 
   const ev = view?.evaluation ?? null;
@@ -155,7 +171,7 @@ export default function DebriefPage() {
   }
 
   if (error && !view) return <div className="deck min-h-screen"><div className="page"><p className="banner-warn">{error} <Link className="font-semibold underline" href="/dashboard">Back to progress</Link></p></div></div>;
-  if (!view) return <div className="deck min-h-screen"><PageSkeleton rows={2} /></div>;
+  if (!view || view.sessionId !== sessionId) return <div className="deck min-h-screen"><PageSkeleton rows={2} /></div>;
 
   const spoke = view.transcript.some((t) => t.role === "user" && t.text.trim());
   const gs = ev ? goalStatusOf(ev) : null;
@@ -208,8 +224,8 @@ export default function DebriefPage() {
             <aside className="space-y-4 lg:sticky lg:top-[calc(var(--header-h,3.5rem)+1rem)] lg:self-start">
               {ev ? (
                 <div className="panel flex flex-col items-center gap-3 p-5 text-center">
-                  <ScoreRing score={ev.overallScore} grade={ev.grade} />
-                  <p className="font-heading text-lg font-bold">{scoreLabel(ev.overallScore)}</p>
+                  <ScoreRing score={ev.overallScore} grade={ev.grade} first={firstCall} />
+                  <p className="font-heading text-lg font-bold">{scoreHeadline(ev, firstCall).label ?? scoreLabel(ev.overallScore)}</p>
                   {stamp && <span className={`-rotate-2 rounded-md border-2 px-3 py-1 font-mono text-xs font-bold uppercase tracking-[0.14em] ${stamp[1]}`}>{stamp[0]}</span>}
                   <div className="w-full space-y-2 border-t border-line pt-3 text-left">
                     <p className="flex items-center gap-2 text-xs">
@@ -240,7 +256,7 @@ export default function DebriefPage() {
               {retry && (
                 <div className="panel p-4">
                   <p className="eyebrow">Retry point</p>
-                  <p className="mt-1 text-sm"><strong>{retry.criterion}</strong> was your weakest area ({retry.score}). Pick the call back up at turn {retry.turn} and try it again.</p>
+                  <p className="mt-1 text-sm">{nextStepLine({ name: retry.criterion, score: retry.score, weight: retry.weight })} It was your weakest area. Pick the call back up at turn {retry.turn} and try it again.</p>
                   <Link href={retryHref} className="btn-primary btn-sm mt-3 w-full print:hidden"><RotateCcw size={13} aria-hidden /> Retry from turn {retry.turn}</Link>
                 </div>
               )}

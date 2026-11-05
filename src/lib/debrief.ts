@@ -26,7 +26,7 @@ function keywordsFor(name: string, description: string) {
  * the first persona line that touches the weakest criterion's topic, else the persona
  * line just before that criterion's best evidence, else the persona's second line.
  */
-export function retryPoint(transcript: { role: string; text: string }[], ev: Evaluation): { turn: number; criterion: string; score: number } | null {
+export function retryPoint(transcript: { role: string; text: string }[], ev: Evaluation): { turn: number; criterion: string; score: number; weight: number } | null {
   if (!ev.criteria.length || transcript.length < 2) return null;
   const weakest = [...ev.criteria].sort((a, b) => a.score - b.score)[0];
   const kws = keywordsFor(weakest.name, "");
@@ -36,7 +36,32 @@ export function retryPoint(transcript: { role: string; text: string }[], ev: Eva
   const evidenceLine = weakest.evidence[0]?.line;
   const beforeEvidence = evidenceLine ? [...callerIdx].reverse().find((i) => i < evidenceLine - 1) : undefined;
   const idx = topical ?? beforeEvidence ?? callerIdx[Math.min(1, callerIdx.length - 1)];
-  return { turn: idx + 1, criterion: weakest.name, score: weakest.score };
+  return { turn: idx + 1, criterion: weakest.name, score: weakest.score, weight: weakest.weight };
+}
+
+/** True when no other graded call in `others` was made before this one. */
+export function isFirstGradedCall(thisCreatedAt: string, others: { createdAt: string; graded: boolean }[]): boolean {
+  const t = Date.parse(thisCreatedAt);
+  return !others.some((o) => o.graded && Date.parse(o.createdAt) < t);
+}
+
+/**
+ * A first-call answer tied to the session it was worked out for. Anything unresolved or
+ * left over from another session reads as a baseline, so a stale "not first" never shows a letter grade.
+ */
+export interface FirstCallState { sessionId: string; first: boolean }
+export function resolveFirstCall(state: FirstCallState | null | undefined, sessionId: string): boolean {
+  return state && state.sessionId === sessionId ? state.first : true;
+}
+
+/** Score ring and label text: a first call is a baseline, never a bare letter grade. */
+export function scoreHeadline(ev: Pick<Evaluation, "overallScore" | "grade">, first: boolean): { ring: string; label?: string } {
+  return first ? { ring: "Baseline", label: `Your baseline: ${ev.overallScore}%` } : { ring: `Grade ${ev.grade}` };
+}
+
+/** The next-step line: "You scored 35% on Greeting & rapport (worth 15%)." */
+export function nextStepLine(c: { name: string; score: number; weight: number }): string {
+  return `You scored ${c.score}% on ${c.name} (worth ${Math.round(c.weight)}%).`;
 }
 
 const TOPIC_TO_OBJECTION: [RegExp, ObjectionType][] = [
