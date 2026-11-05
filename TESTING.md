@@ -21,7 +21,7 @@ npm run validate:personas         # 0 errors expected; warnings flag weak script
 npx tsx scripts/coach-smoke.ts    # no-key coach, template wizard and URL guard
 ```
 
-`npm ci` (and `npm install`) runs `prisma generate` and then `npm run tenant` on postinstall, so `src/generated/tenant.json` and `src/generated/tenant-personas.json` exist straight after install. Bare `npx tsc --noEmit`, `npx vitest run` and your editor work on a fresh clone without another step. The files stay gitignored; never commit them.
+`npm ci` (and `npm install`) runs `prisma generate` and then `npm run tenant` on postinstall, so `src/generated/tenant.json` and `src/generated/tenant-personas.json` exist straight after install. The hook runs `tsx`, which is a runtime dependency for that reason, so `npm ci --omit=dev` generates the files too. Bare `npx tsc --noEmit`, `npx vitest run` and your editor work on a fresh clone without another step. The files stay gitignored; never commit them.
 
 ## Tenants
 

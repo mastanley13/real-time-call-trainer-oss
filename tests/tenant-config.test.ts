@@ -110,6 +110,7 @@ describe("tenant schema", () => {
 
   const MODEL_IDS = [
     "gpt-realtime", "gpt-realtime-2.1", "gpt-realtime-2.1-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini-transcribe", "GPT-5",
+    "gpt-4", "gpt-4-turbo", "gpt-4-0613", "gpt-4.5-preview", "gpt-3.5-turbo",
     "o3-mini", "o4-mini", "whisper-1", "tts-1-hd", "claude-sonnet-4-5", "gemini-2.5-flash", "eleven_turbo_v2_5",
   ];
   /** Every copy slot a tenant can fill, as an overlay builder. */

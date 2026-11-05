@@ -51,6 +51,7 @@ const hitsOf = (re: RegExp, files: string[]) =>
 
 describe("model id pattern", () => {
   it.each([
+    "gpt-4", "gpt-4-turbo", "gpt-4-0613", "gpt-4.5-preview", "GPT-4", "gpt-3.5-turbo",
     "gpt-5", "gpt-5-mini", "gpt-5.1", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "gpt-4o-mini-transcribe",
     "gpt-realtime", "gpt-realtime-1.5", "gpt-realtime-mini", "GPT-4o", "o3", "o3-mini", "o4-mini", "whisper-1", "tts-1", "tts-1-hd",
     "gemini-2.5-flash", "gemini-pro", "eleven_turbo_v2_5", "eleven_multilingual_v2", "claude-sonnet-4-5", "claude-3-5-haiku",
@@ -59,7 +60,7 @@ describe("model id pattern", () => {
     expect(`"${id}"`).toMatch(MODEL_ID_RE);
   });
 
-  it.each(["OpenAI Realtime", "ElevenLabs voice agent", "AI model", "Your chat model", "LLM_MODEL", "REALTIME_MODEL", "Text · AI", "Coach: AI", "video", "photo3"])(
+  it.each(["OpenAI Realtime", "ElevenLabs voice agent", "AI model", "Your chat model", "LLM_MODEL", "REALTIME_MODEL", "Text · AI", "Coach: AI", "video", "photo3", "OpenAI", "GPT", "GPT style practice", "gpt-", "chatgpt-like"])(
     "leaves %s alone",
     (text) => expect(text).not.toMatch(MODEL_ID_RE),
   );
