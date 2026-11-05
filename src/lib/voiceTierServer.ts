@@ -7,8 +7,9 @@ import { resolveTierModel } from "./voiceModels";
 export const voiceModelFor = (tier: VoiceTier): string => resolveTierModel(tier, process.env);
 
 /**
- * The voice tier a logged model id stands for, decided on the server only (the id never leaves it): the configured
- * Premium model is Premium, anything else Standard. Used for the debrief's "voice used" label.
+ * The voice tier a sealed model id stands for, decided on the server only (the id never leaves it): the configured
+ * Premium model is Premium, anything else Standard. Used once, when an unmetered save stores TrainerSession.voiceTier
+ * from a verified receipt; never at read time.
  */
 export const tierOfModel = (model: string | null | undefined): VoiceTier | null =>
   !model ? null : model === resolveTierModel("premium", process.env) ? "premium" : "standard";

@@ -89,11 +89,24 @@ describe("no model ids in user-facing source", () => {
     expect(hitsOf(/["']use client["']/, [SERVER_ONLY_MODEL_MODULE, ...importers])).toEqual([]);
   });
 
-  it("touches the TrainerSession.realtimeModel column only where a verified receipt writes it", () => {
+  it("touches the TrainerSession.realtimeModel column only in its two trusted writers: the mint writer and the verified-receipt save", () => {
     // Code lines only: doc comments may name the column. Reading it anywhere else (a response, a page) needs a review.
     const code = (f: string) => readFileSync(join(ROOT, f), "utf8").split("\n").filter((l) => !/^\s*(?:\/\/|\/?\*)/.test(l)).join("\n");
-    const users = files.filter((f) => /\brealtimeModel\b/.test(code(f)));
-    expect(users).toEqual(["src/app/api/transcripts/route.ts"]);
+    const users = files.filter((f) => /\brealtimeModel\b/.test(code(f))).sort();
+    // Exact files, no globs: the server-only mint writer (src/lib/voiceMintLog.ts, called by /api/realtime/session after a
+    // successful mint) and the receipt-verified save (POST /api/transcripts).
+    expect(users).toEqual(["src/app/api/transcripts/route.ts", "src/lib/voiceMintLog.ts"]);
+    const writer = readFileSync(join(ROOT, "src/lib/voiceMintLog.ts"), "utf8");
+    expect(writer.split("\n")[0]).toBe('import "server-only";');
+    // The writer only writes: no select or read of the column, and it returns a boolean, never the row.
+    expect(code("src/lib/voiceMintLog.ts")).not.toMatch(/select\s*:|findUnique|findFirst|findMany/);
+    const writerImporters = files.filter((f) => f !== "src/lib/voiceMintLog.ts" && /from ["']@\/lib\/voiceMintLog["']/.test(readFileSync(join(ROOT, f), "utf8")));
+    expect(writerImporters).toEqual(["src/app/api/realtime/session/route.ts"]);
+    // Neither writer puts the column (or the model) in a response body.
+    for (const f of users) {
+      const responses = code(f).split("\n").filter((l) => /NextResponse\.json\(|Response\.json\(/.test(l));
+      for (const line of responses) expect(line, `${f}: ${line.trim()}`).not.toMatch(/realtimeModel|\bmodel\b/);
+    }
   });
 
   it("no client code reads a model id from capabilities or a coach result", () => {
@@ -133,12 +146,16 @@ afterEach(() => {
 });
 
 describe("GET /api/config (unauthenticated JSON)", () => {
-  const CONFIG_KEYS = ["billing", "database", "demoMode", "elevenlabs", "hosted", "llm", "provider", "realtime", "voiceEngines"];
+  // premiumOnSale: the Premium Voice sale flag (PREMIUM_VOICE_ON_SALE exactly "true" with billing on). A boolean only.
+  const CONFIG_KEYS = ["billing", "database", "demoMode", "elevenlabs", "hosted", "llm", "premiumOnSale", "provider", "realtime", "voiceEngines"];
   const read = async () => {
     const res = await configGET();
     expect(res.status).toBe(200);
     const text = await res.text();
-    return { text, body: JSON.parse(text) as Record<string, unknown> };
+    const body = JSON.parse(text) as Record<string, unknown>;
+    // Every flag is a plain boolean; only provider is a string and voiceEngines a list of provider names.
+    for (const k of ["billing", "database", "demoMode", "elevenlabs", "hosted", "llm", "premiumOnSale", "realtime"]) expect(typeof body[k], k).toBe("boolean");
+    return { text, body };
   };
 
   it("reports booleans and provider names, never the chat or realtime model ids", async () => {

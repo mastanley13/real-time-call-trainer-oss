@@ -142,6 +142,8 @@ export const stripeApi = {
   createSubscriptionSchedule: (params: StripeParams, idempotencyKey: string) => request<unknown>("POST", "subscription_schedules", params, idempotencyKey),
   retrieveSubscriptionSchedule: (id: string) => request<unknown>("GET", `subscription_schedules/${seg(id)}`),
   updateSubscriptionSchedule: (id: string, params: StripeParams, idempotencyKey: string) => request<unknown>("POST", `subscription_schedules/${seg(id)}`, params, idempotencyKey),
+  /** Detaches a schedule the app just created but cannot use, leaving the subscription exactly as it was. */
+  releaseSubscriptionSchedule: (id: string, idempotencyKey: string) => request<unknown>("POST", `subscription_schedules/${seg(id)}/release`, {}, idempotencyKey),
 };
 
 // ---- Webhook signatures -----------------------------------------------------------------------

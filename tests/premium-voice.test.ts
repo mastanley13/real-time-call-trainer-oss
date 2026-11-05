@@ -111,6 +111,7 @@ describe("Premium entitlement (pure)", () => {
     expect(premiumBlock(row({ subscriptionPeriodEnd: null }), now)).toBe("expired");
     expect(premiumBlock(row({ subscriptionPeriodEnd: now }), now)).toBe("expired");
     expect(premiumBlock(row({ subscriptionPeriodEnd: new Date(now.getTime() - 1) }), now)).toBe("expired");
+    expect(premiumBlock(row({ premiumSuspendedAt: new Date(now.getTime() - DAY) }), now)).toBe("suspended");
   });
 
   it("cancel at period end keeps Premium until current_period_end, then not", () => {
@@ -182,6 +183,8 @@ describe("mint check: the next call is Standard whenever Premium is not entitled
       const r = await begin("u-1");
       expect(r.engine, name).toBe(want);
       expect(session(r.callId).engineTier, name).toBe(want);
+      // The effective tier is durable from the moment the row exists (ElevenLabs calls get it this way too).
+      expect(session(r.callId).voiceTier, name).toBe(want);
       if (want === "standard") {
         expect(r.premium.fallback, name).toBe("not_entitled");
         expect(session(r.callId).premiumReservedMinutes, name).toBe(0);
@@ -200,6 +203,8 @@ describe("mint check: the next call is Standard whenever Premium is not entitled
     const c = await begin("u-1", 5, { compedPremium: true });
     expect(c).toMatchObject({ engine: "standard", maxSeconds: 3600 });
     expect(c.premium).toMatchObject({ source: "comped", fallback: null });
+    // Billed on standard, but the durable effective tier says premium.
+    expect(session(c.callId)).toMatchObject({ engineTier: "standard", voiceTier: "premium" });
   });
 
   it("the past_due base plan keeps its grace (still Pro minutes) while Premium is off", async () => {
@@ -442,16 +447,61 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
     expect((await begin("u-1")).engine).toBe("standard");
   });
 
-  it("invoice.payment_failed turns Premium off for the next call even before Stripe reports past_due; invoice.paid restores it", async () => {
+  it("invoice.payment_failed persists a suspension: the next call is Standard even before Stripe reports past_due; paying THAT invoice restores it", async () => {
     live = liveSub("active", { premium: 1 }); // Stripe still says active
     await deliver("invoice.payment_failed", { id: "in_test_1", customer: "cus_test_pro", subscription: "sub_test_pro" });
-    expect(user()).toMatchObject({ premiumVoice: false, planTier: "pro" });
-    expect((await begin("u-1")).engine).toBe("standard");
+    // The add-on itself is untouched; the suspension is what blocks Premium.
+    expect(user()).toMatchObject({ premiumVoice: true, premiumVoiceQuantity: 1, planTier: "pro", premiumSuspendedInvoiceId: "in_test_1" });
+    expect(user().premiumSuspendedAt).toBeInstanceOf(Date);
+    const first = await begin("u-1");
+    expect(first.engine).toBe("standard");
+    expect(first.premium.fallback).toBe("not_entitled");
     expect(events).toContainEqual(expect.objectContaining({ name: "premium_removed", reason: "payment_failed" }));
-    await deliver("invoice.paid", { id: "in_test_1", customer: "cus_test_pro", parent: { subscription_details: { subscription: "sub_test_pro" } } });
-    expect(user().premiumVoice).toBe(true);
-    expect(events).toContainEqual(expect.objectContaining({ name: "premium_added" }));
+    await endCall("u-1", first.callId, "failed_connect", at(5));
+    await deliver("invoice.paid", { id: "in_test_1", status: "paid", customer: "cus_test_pro", parent: { subscription_details: { subscription: "sub_test_pro" } } });
+    expect(user()).toMatchObject({ premiumVoice: true, premiumSuspendedAt: null, premiumSuspendedInvoiceId: null });
+    expect(events).toContainEqual(expect.objectContaining({ name: "premium_added", reason: "payment_recovered" }));
     expect((await begin("u-1", 10)).engine).toBe("premium");
+  });
+
+  it("failed payment, then an unrelated subscription update reporting active: the next mint stays Standard", async () => {
+    live = liveSub("active", { premium: 1 });
+    await deliver("invoice.payment_failed", { id: "in_test_9", customer: "cus_test_pro", subscription: "sub_test_pro" });
+    // Something else changes on the subscription; Stripe reports it active with the add-on on.
+    await deliver("customer.subscription.updated", { id: "sub_test_pro", customer: "cus_test_pro" });
+    expect(user()).toMatchObject({ subscriptionStatus: "active", premiumVoice: true, premiumSuspendedInvoiceId: "in_test_9" });
+    expect(allowanceOf("u-1")).toMatchObject({ premiumMinutesCap: 0 });
+    const r = await begin("u-1");
+    expect(r.engine).toBe("standard");
+    // No premium_added was reported for that update.
+    expect(events.filter((e) => e.name === "premium_added")).toEqual([]);
+  });
+
+  it("invoice.paid clears the suspension only for the failed invoice, only when paid, and only while Stripe reports good standing", async () => {
+    live = liveSub("active", { premium: 1 });
+    await deliver("invoice.payment_failed", { id: "in_test_bad", customer: "cus_test_pro", subscription: "sub_test_pro" });
+    // Another invoice is paid: the failed one is still open.
+    await deliver("invoice.paid", { id: "in_test_other", status: "paid", customer: "cus_test_pro", subscription: "sub_test_pro" });
+    expect(user().premiumSuspendedInvoiceId).toBe("in_test_bad");
+    // The right invoice, but Stripe still reports past_due.
+    live = liveSub("past_due", { premium: 1 });
+    await deliver("invoice.paid", { id: "in_test_bad", status: "paid", customer: "cus_test_pro", subscription: "sub_test_pro" });
+    expect(user().premiumSuspendedInvoiceId).toBe("in_test_bad");
+    // The right invoice, but not actually paid.
+    live = liveSub("active", { premium: 1 });
+    await deliver("invoice.paid", { id: "in_test_bad", status: "open", customer: "cus_test_pro", subscription: "sub_test_pro" });
+    expect(user().premiumSuspendedInvoiceId).toBe("in_test_bad");
+    expect((await begin("u-1")).engine).toBe("standard");
+    // Verified recovery.
+    await deliver("invoice.paid", { id: "in_test_bad", status: "paid", customer: "cus_test_pro", subscription: "sub_test_pro" });
+    expect(user()).toMatchObject({ premiumSuspendedAt: null, premiumSuspendedInvoiceId: null });
+  });
+
+  it("a suspension ends with its subscription: a new subscription after cancellation is not blocked by it", async () => {
+    live = liveSub("active", { premium: 1 });
+    await deliver("invoice.payment_failed", { id: "in_test_old", customer: "cus_test_pro", subscription: "sub_test_pro" });
+    await deliver("customer.subscription.deleted", { id: "sub_test_pro", customer: "cus_test_pro" });
+    expect(user()).toMatchObject({ planTier: "free", premiumSuspendedAt: null, premiumSuspendedInvoiceId: null });
   });
 
   it("cancel at period end keeps Premium until the period end, then the next mint is Standard", async () => {
@@ -514,16 +564,38 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
 
     it("pure: quantity = seats (Pro 1); nothing when in step, scheduled, ending, or not in good standing", () => {
       const parse = (o: unknown) => parseLiveSubscription(o);
-      expect(addonQuantitySync(parse(teamLive(6, 4)))).toEqual({ subscriptionId: "sub_test_team", itemId: "si_test_prem", quantity: 6, direction: "up" });
-      expect(addonQuantitySync(parse(teamLive(3, 4)))).toEqual({ subscriptionId: "sub_test_team", itemId: "si_test_prem", quantity: 3, direction: "down" });
+      expect(addonQuantitySync(parse(teamLive(6, 4)))).toEqual({ subscriptionId: "sub_test_team", itemId: "si_test_prem", from: 4, quantity: 6, direction: "up" });
+      expect(addonQuantitySync(parse(teamLive(3, 4)))).toEqual({ subscriptionId: "sub_test_team", itemId: "si_test_prem", from: 4, quantity: 3, direction: "down" });
       expect(addonQuantitySync(parse(teamLive(4, 4)))).toBeNull();
       expect(addonQuantitySync(parse(teamLive(6, 4, { schedule: "sub_sched_test_1" })))).toBeNull();
       expect(addonQuantitySync(parse(teamLive(6, 4, { cancel_at_period_end: true })))).toBeNull();
       expect(addonQuantitySync(parse(teamLive(6, 4, { status: "past_due" })))).toBeNull();
       expect(addonQuantitySync(parse(liveSub("active", { premium: 2 })))).toMatchObject({ quantity: 1, direction: "down" });
-      expect(addonSyncRequest({ subscriptionId: "sub_test_team", itemId: "si_test_prem", quantity: 6, direction: "up" })).toEqual({
-        id: "sub_test_team", params: { items: [{ id: "si_test_prem", quantity: 6 }], proration_behavior: "create_prorations" }, idempotencyKey: "addon-sync:sub_test_team:si_test_prem:6",
+      const up = { subscriptionId: "sub_test_team", itemId: "si_test_prem", from: 4, quantity: 6, direction: "up" as const };
+      expect(addonSyncRequest(up, "evt_a")).toEqual({
+        id: "sub_test_team", params: { items: [{ id: "si_test_prem", quantity: 6 }], proration_behavior: "create_prorations" }, idempotencyKey: "addon-sync:sub_test_team:si_test_prem:4-6:evt_a",
       });
+      // Same transition, same trigger: same key (a retry). Another trigger or another transition: another key.
+      expect(addonSyncRequest(up, "evt_a").idempotencyKey).toBe(addonSyncRequest(up, "evt_a").idempotencyKey);
+      expect(addonSyncRequest(up, "evt_b").idempotencyKey).not.toBe(addonSyncRequest(up, "evt_a").idempotencyKey);
+      expect(addonSyncRequest({ ...up, from: 3 }, "evt_a").idempotencyKey).not.toBe(addonSyncRequest(up, "evt_a").idempotencyKey);
+    });
+
+    it("3 -> 4 -> 3 -> 4 in the portal: every transition is a distinct Stripe request, never answered from an earlier one", async () => {
+      const keys = () => update.mock.calls.map((c) => c[2]);
+      const quantities = () => update.mock.calls.map((c) => (c[1] as { items: { quantity: number }[] }).items[0].quantity);
+      Object.assign(org(), { seatCount: 3, premiumVoiceQuantity: 3 });
+      live = teamLive(4, 3); await seatChange(); // up to 4
+      live = teamLive(4, 4); await seatChange(); // landed, in step: nothing written
+      live = teamLive(3, 4); await seatChange(); // down to 3
+      live = teamLive(3, 3); await seatChange(); // landed
+      live = teamLive(4, 3); await seatChange(); // up to 4 again
+      expect(quantities()).toEqual([4, 3, 4]);
+      expect(new Set(keys()).size).toBe(3);
+      // The two 3 -> 4 transitions come from different events, so their keys differ.
+      expect(keys()[0]).toMatch(/^addon-sync:sub_test_team:si_test_prem:3-4:evt_test_pv_\d+$/);
+      expect(keys()[2]).toMatch(/^addon-sync:sub_test_team:si_test_prem:3-4:evt_test_pv_\d+$/);
+      expect(keys()[0]).not.toBe(keys()[2]);
     });
 
     it("more seats in the portal: the pool stays at what is paid until the add-on follows, then grows", async () => {
@@ -533,7 +605,7 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
       expect(org()).toMatchObject({ seatCount: 6, premiumVoiceQuantity: 4 });
       expect(orgAllowance()).toMatchObject({ minutesCap: 1800, premiumMinutesCap: 160 });
       expect(update).toHaveBeenCalledTimes(1);
-      expect(update.mock.calls[0]).toEqual(["sub_test_team", { items: [{ id: "si_test_prem", quantity: 6 }], proration_behavior: "create_prorations" }, "addon-sync:sub_test_team:si_test_prem:6"]);
+      expect(update.mock.calls[0]).toEqual(["sub_test_team", { items: [{ id: "si_test_prem", quantity: 6 }], proration_behavior: "create_prorations" }, expect.stringMatching(/^addon-sync:sub_test_team:si_test_prem:4-6:evt_test_pv_\d+$/)]);
       // Stripe reports the synced add-on: the pool grows to 6 units and nothing more is written.
       live = teamLive(6, 6);
       await seatChange();
@@ -545,7 +617,7 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
       live = teamLive(3, 4);
       await seatChange();
       expect(orgAllowance()).toMatchObject({ minutesCap: 900, premiumMinutesCap: 120 });
-      expect(update.mock.calls[0]).toEqual(["sub_test_team", { items: [{ id: "si_test_prem", quantity: 3 }], proration_behavior: "none" }, "addon-sync:sub_test_team:si_test_prem:3"]);
+      expect(update.mock.calls[0]).toEqual(["sub_test_team", { items: [{ id: "si_test_prem", quantity: 3 }], proration_behavior: "none" }, expect.stringMatching(/^addon-sync:sub_test_team:si_test_prem:4-3:evt_test_pv_\d+$/)]);
     });
 
     it("writes nothing while Premium is off sale, or while a schedule owns the next quantities", async () => {
@@ -572,7 +644,9 @@ describe("webhook downgrade paths (signed events, Stripe read mocked)", () => {
       expect(fake.rows("stripeEvent").some((r) => r.id === "evt_test_sync_retry")).toBe(false);
       expect((await send()).status).toBe(200);
       expect(update).toHaveBeenCalledTimes(2);
-      expect(update.mock.calls[1][2]).toBe("addon-sync:sub_test_team:si_test_prem:6");
+      // The retry of the same event repeats the exact key, so Stripe applies the change once.
+      expect(update.mock.calls[1][2]).toBe("addon-sync:sub_test_team:si_test_prem:4-6:evt_test_sync_retry");
+      expect(update.mock.calls[0][2]).toBe(update.mock.calls[1][2]);
     });
   });
 
@@ -612,15 +686,20 @@ describe("session log: model provenance from the mr3 receipt, tier label from it
     return { status: res.status, text: await res.text() };
   };
 
-  it("a paid Premium call: the receipt logs the Premium model once on the call's own row; the label says Premium", async () => {
+  it("a paid Premium call: the mint logs the model and tier on the call's own row; the save's receipt is its one use", async () => {
     addUser("u-1", proPremium());
     const minted = await mint();
     expect(models).toEqual(["model-premium-test"]);
     expect(minted.sessionId).toBe(minted.callId);
-    // Nothing is logged at mint; the model arrives with the save, from the sealed receipt only.
-    expect(session(minted.callId)).toMatchObject({ engineTier: "premium", realtimeModel: null });
+    // Logged by the server at mint, before (and without) any save.
+    expect(session(minted.callId)).toMatchObject({ engineTier: "premium", voiceTier: "premium", realtimeModel: "model-premium-test" });
     expect((await save(minted)).status).toBe(200);
     expect(session(minted.callId)).toMatchObject({ engineTier: "premium", realtimeModel: "model-premium-test" });
+    const audits = () => fake.rows("auditEvent").filter((e) => e.action === "session.saved").map((e) => (e.metadata as { receiptRejected?: boolean }).receiptRejected ?? false);
+    expect(audits()).toEqual([false]);
+    // A replay is still refused: single use is kept.
+    await save(minted);
+    expect(audits()).toEqual([false, true]);
     const v = await voiceOf(minted.callId);
     expect(v).toEqual({ status: 200, text: JSON.stringify({ voiceUsed: "premium" }) });
     // The session view itself stays the exact allowlist: no tier, no model.
@@ -628,13 +707,41 @@ describe("session log: model provenance from the mr3 receipt, tier label from it
     expect(detail).not.toMatch(/model-premium-test|realtimeModel|engineTier|voiceUsed|"premium"/);
   });
 
-  it("a comped call stays on the standard billing engine, and the label still says Premium (from the logged model)", async () => {
+  it("a comped call stays on the standard billing engine; its durable voiceTier says Premium, saved or not", async () => {
     addUser("u-1", { planTier: "pro", organization: { voiceModelTier: "premium", voiceModelComped: true } });
     const minted = await mint();
     expect(models).toEqual(["model-premium-test"]);
-    await save(minted);
-    expect(session(minted.callId)).toMatchObject({ engineTier: "standard", premiumReservedMinutes: 0, realtimeModel: "model-premium-test" });
+    // Abandoned: never saved. The row already has the model and the effective tier.
+    expect(session(minted.callId)).toMatchObject({ engineTier: "standard", premiumReservedMinutes: 0, voiceTier: "premium", realtimeModel: "model-premium-test" });
     expect(JSON.parse((await voiceOf(minted.callId)).text).voiceUsed).toBe("premium");
+  });
+
+  it("the label reads the stored tier, not the environment: changing the Premium model later does not relabel a call", async () => {
+    addUser("u-1", { planTier: "pro", organization: { voiceModelTier: "premium", voiceModelComped: true } });
+    const minted = await mint();
+    vi.stubEnv("REALTIME_MODEL_PREMIUM", "model-premium-next");
+    expect(JSON.parse((await voiceOf(minted.callId)).text).voiceUsed).toBe("premium");
+  });
+
+  it("a failed upstream mint logs no model (the secret was never issued)", async () => {
+    addUser("u-1", proPremium());
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 500 })));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await realtimeSession(new NextRequest("http://localhost/api/realtime/session", { method: "POST", body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }), headers: { "content-type": "application/json" } }));
+    expect(res.status).toBe(502);
+    expect(fake.rows("trainerSession").every((s) => s.realtimeModel == null)).toBe(true);
+  });
+
+  it("an unmetered save stores the tier from the verified receipt once; the label then reads it", async () => {
+    vi.stubEnv("STRIPE_SECRET_KEY", "");
+    vi.stubEnv("USAGE_CAPS", "");
+    addUser("u-1", { organization: { voiceModelTier: "premium", voiceModelComped: true } });
+    const minted = await mint();
+    expect(minted.callId).toBeUndefined();
+    const saved = await (await save(minted)).json();
+    expect(saved.id).toBe(`rt_${minted.sessionId}`);
+    expect(session(saved.id)).toMatchObject({ realtimeModel: "model-premium-test", voiceTier: "premium" });
+    expect(JSON.parse((await voiceOf(saved.id)).text).voiceUsed).toBe("premium");
   });
 
   it("a Standard call reads Standard; a text session reads null; another trainee gets 403 and a manager gets the label", async () => {
@@ -658,8 +765,12 @@ describe("session log: model provenance from the mr3 receipt, tier label from it
     const a = await mint();
     vi.setSystemTime(at(5));
     const b = await mint();
+    // a holds the 40 Premium minutes, so b is Standard; a's Premium receipt cannot relabel it.
+    expect(session(b.callId)).toMatchObject({ realtimeModel: "model-standard-test", voiceTier: "standard" });
     await save({ ...b, receipt: a.receipt });
-    expect(session(b.callId).realtimeModel).toBeNull();
+    expect(session(b.callId)).toMatchObject({ realtimeModel: "model-standard-test", voiceTier: "standard" });
+    const audit = fake.rows("auditEvent").find((e) => e.action === "session.saved")!;
+    expect((audit.metadata as { receiptRejected?: boolean }).receiptRejected).toBe(true);
   });
 });
 

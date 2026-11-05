@@ -48,7 +48,7 @@ describe("model ids stay in the narrow server-only baseline", () => {
     const files = [
       "src/lib/premiumVoice.ts", "src/lib/premiumAddon.ts", "src/lib/premiumEventTypes.ts", "src/lib/billingEvents.ts", "src/lib/mintReceipt.ts",
       "src/lib/billing.ts", "src/lib/usage.ts", "src/lib/usagePlan.ts", "src/lib/pricing.ts", "src/lib/billingUi.ts", "src/lib/checkoutStart.ts",
-      "src/lib/sessionView.ts", "src/lib/voiceTier.ts", "src/lib/voiceTierServer.ts",
+      "src/lib/sessionView.ts", "src/lib/voiceTier.ts", "src/lib/voiceTierServer.ts", "src/lib/voiceMintLog.ts",
       "src/app/api/billing/premium/route.ts", "src/app/api/billing/seats/route.ts", "src/app/api/billing/_lib/addonRoute.ts",
       "src/app/api/billing/checkout/route.ts", "src/app/api/usage/route.ts", "src/app/api/realtime/session/route.ts", "src/app/api/elevenlabs/token/route.ts",
       "src/app/api/transcripts/route.ts", "src/app/api/transcripts/[id]/route.ts", "src/app/api/transcripts/[id]/voice/route.ts", "src/app/api/stripe/webhook/route.ts",
@@ -131,8 +131,8 @@ describe("browser-facing answers on the Premium path carry no model data", () =>
       body: JSON.stringify({ sessionId: minted.sessionId, callId: minted.callId, transcript: [{ role: "user", text: "Hi" }], scenario: { id: BUILT_IN_SCENARIOS[0].id }, realtimeReceipt: minted.receipt }),
     }));
     texts.push(await saved.text());
-    // Provenance is kept on the server row, from the receipt.
-    expect(fake.rows("trainerSession").find((s) => s.id === minted.callId)).toMatchObject({ realtimeModel: PREMIUM_REALTIME_MODEL, engineTier: "premium" });
+    // Provenance is kept on the server row: written by the mint itself, and the save's receipt agrees with it.
+    expect(fake.rows("trainerSession").find((s) => s.id === minted.callId)).toMatchObject({ realtimeModel: PREMIUM_REALTIME_MODEL, engineTier: "premium", voiceTier: "premium" });
     // The list reads with an explicit select that leaves the model out (the in-memory fake ignores `select`, so the
     // select itself is what is checked here).
     const listSrc = readFileSync(path.join(ROOT, "src/app/api/transcripts/route.ts"), "utf8");

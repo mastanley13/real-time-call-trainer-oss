@@ -310,11 +310,23 @@ const SubscriptionObject = z.object({
   cancel_at_period_end: z.boolean().nullish(),
   /** A subscription schedule managing this subscription (a scheduled removal or seat decrease), if any. */
   schedule: z.union([z.string(), z.object({ id: z.string() })]).nullish(),
+  /**
+   * Billing terms that change what a charge or a scheduled phase is. Read only to bind a Premium/seat preview to them
+   * and to refuse a scheduled change the app could not carry them into (src/lib/premiumAddon.ts). Never interpreted.
+   */
+  current_period_start: z.number().nullish(),
+  discount: z.unknown().nullish(),
+  discounts: z.array(z.unknown()).nullish(),
+  default_tax_rates: z.array(z.unknown()).nullish(),
+  automatic_tax: z.object({ enabled: z.boolean().nullish() }).passthrough().nullish(),
+  collection_method: z.string().nullish(),
   items: z.object({
     data: z.array(z.object({
       id: z.string().optional(),
       quantity: z.number().nullish(),
       current_period_end: z.number().nullish(),
+      tax_rates: z.array(z.unknown()).nullish(),
+      discounts: z.array(z.unknown()).nullish(),
       price: z.object({
         id: z.string(),
         type: z.string().nullish(),
@@ -503,7 +515,7 @@ interface Applied {
   addonSync?: AddonSync;
 }
 
-export interface AddonSync { subscriptionId: string; itemId: string; quantity: number; direction: "up" | "down" }
+export interface AddonSync { subscriptionId: string; itemId: string; from: number; quantity: number; direction: "up" | "down" }
 
 /**
  * Seats changed outside the app (the Billing Portal changes only the base item), so the Premium add-on quantity no longer
@@ -528,7 +540,7 @@ export function addonQuantitySync(live: LiveSubscription): AddonSync | null {
   const target = kind === "team" ? Math.max(0, Math.floor(base.quantity ?? 1)) : 1;
   const current = premium.quantity ?? 1;
   if (target <= 0 || target === current) return null;
-  return { subscriptionId: live.id, itemId: premium.id, quantity: target, direction: target > current ? "up" : "down" };
+  return { subscriptionId: live.id, itemId: premium.id, from: current, quantity: target, direction: target > current ? "up" : "down" };
 }
 
 interface StripeState { customerId?: string | null; subscriptionId?: string | null; status: string; periodEnd?: Date | null }
@@ -569,9 +581,16 @@ async function applyEntitlement(
   };
   // A free result (canceled, gone, refused) keeps no period end; a paid one records Stripe's.
   const periodEnd = next.plan === "free" ? null : (stripe.periodEnd ?? null);
+  // A failed-payment suspension belongs to the subscription it was raised on. It is never cleared here by an update
+  // that reports the subscription active (only invoice.paid for that invoice clears it, see onInvoice), but it ends
+  // with the subscription: once the subject is unlinked, or another subscription becomes current, it no longer applies.
+  const suspensionEnds = (held: string | null) => keepIds.stripeSubscriptionId === null || (!!stripe.subscriptionId && !!held && held !== stripe.subscriptionId);
+  const clearSuspension = { premiumSuspendedAt: null, premiumSuspendedInvoiceId: null };
   let from: PlanTier;
   if (subject.kind === "organization") {
-    const org = await tx.organization.findUniqueOrThrow({ where: { id: subject.id }, select: { planTier: true, pastDueSince: true, premiumVoice: true, seatCountAtRenewal: true, subscriptionStatus: true } });
+    const org = await tx.organization.findUniqueOrThrow({ where: { id: subject.id }, select: { planTier: true, pastDueSince: true, premiumVoice: true, seatCountAtRenewal: true, subscriptionStatus: true, stripeSubscriptionId: true, premiumSuspendedAt: true } });
+    const ends = suspensionEnds(org.stripeSubscriptionId);
+    const suspendedAfter = !!org.premiumSuspendedAt && !ends;
     from = org.planTier === "team" ? "team" : "free";
     const plan: PlanTier = next.plan === "team" ? "team" : "free";
     const seats = plan === "team" ? next.seats : 1;
@@ -584,16 +603,24 @@ async function applyEntitlement(
         // A scheduled removal is done once the add-on has left; a scheduled seat decrease is done once it has landed.
         ...(premium ? {} : { premiumVoiceRemoveAt: null }),
         ...(plan !== "team" || org.seatCountAtRenewal === seats ? { seatCountAtRenewal: null } : {}),
+        ...(ends ? clearSuspension : {}),
         pastDueSince: nextPastDueSince(stripe.status, org.pastDueSince, now), ...keepIds,
       },
     });
     await ensureAllowance(tx, { organizationId: subject.id }, now);
     return {
       event: build(subject, from, plan, seats, premium),
-      premiumEvents: premiumFlip(subject, plan === "team" ? plan : from, !!org.premiumVoice && premiumStatus(org.subscriptionStatus), premium && premiumStatus(stripe.status), Math.min(qty, seats), stripe.status),
+      premiumEvents: premiumFlip(
+        subject, plan === "team" ? plan : from,
+        !!org.premiumVoice && premiumStatus(org.subscriptionStatus) && !org.premiumSuspendedAt,
+        premium && premiumStatus(stripe.status) && !suspendedAfter,
+        Math.min(qty, seats), stripe.status,
+      ),
     };
   }
-  const user = await tx.user.findUniqueOrThrow({ where: { id: subject.id }, select: { planTier: true, pastDueSince: true, premiumVoice: true, subscriptionStatus: true } });
+  const user = await tx.user.findUniqueOrThrow({ where: { id: subject.id }, select: { planTier: true, pastDueSince: true, premiumVoice: true, subscriptionStatus: true, stripeSubscriptionId: true, premiumSuspendedAt: true } });
+  const userEnds = suspensionEnds(user.stripeSubscriptionId);
+  const userSuspendedAfter = !!user.premiumSuspendedAt && !userEnds;
   from = isPlanTier(user.planTier) && user.planTier !== "team" ? user.planTier : "free";
   const plan: PlanTier = next.plan === "pro" ? "pro" : "free";
   const premium = plan === "pro" && next.premium;
@@ -603,13 +630,19 @@ async function applyEntitlement(
     data: {
       planTier: plan, premiumVoice: premium, premiumVoiceQuantity: qty, subscriptionPeriodEnd: periodEnd,
       ...(premium ? {} : { premiumVoiceRemoveAt: null }),
+      ...(userEnds ? clearSuspension : {}),
       pastDueSince: nextPastDueSince(stripe.status, user.pastDueSince, now), ...keepIds,
     },
   });
   await ensureAllowance(tx, { userId: subject.id }, now);
   return {
     event: build(subject, from, plan, 1, premium),
-    premiumEvents: premiumFlip(subject, plan === "pro" ? plan : from, !!user.premiumVoice && premiumStatus(user.subscriptionStatus), premium && premiumStatus(stripe.status), premium ? 1 : 0, stripe.status),
+    premiumEvents: premiumFlip(
+      subject, plan === "pro" ? plan : from,
+      !!user.premiumVoice && premiumStatus(user.subscriptionStatus) && !user.premiumSuspendedAt,
+      premium && premiumStatus(stripe.status) && !userSuspendedAfter,
+      premium ? 1 : 0, stripe.status,
+    ),
   };
 }
 
@@ -685,6 +718,8 @@ async function reconcile(
 const SubRef = z.union([z.string(), z.object({ id: z.string() })]).nullish();
 const InvoiceObject = z.object({
   id: z.string().optional(),
+  /** draft | open | paid | uncollectible | void. invoice.paid carries "paid". */
+  status: z.string().nullish(),
   customer: z.union([z.string(), z.object({ id: z.string() })]).nullish(),
   /** Older API versions. */
   subscription: SubRef,
@@ -700,30 +735,62 @@ export function invoiceSubscriptionId(obj: unknown): string | null {
   return refId(parsed.data.subscription) ?? refId(parsed.data.parent?.subscription_details?.subscription);
 }
 
+type SuspensionRow = { premiumVoice: boolean; premiumSuspendedAt: Date | null; premiumSuspendedInvoiceId: string | null };
+const SUSPENSION_SELECT = { premiumVoice: true, premiumSuspendedAt: true, premiumSuspendedInvoiceId: true } as const;
+
+async function suspensionOf(tx: Tx, s: Subject): Promise<SuspensionRow | null> {
+  return s.kind === "organization"
+    ? tx.organization.findUnique({ where: { id: s.id }, select: SUSPENSION_SELECT })
+    : tx.user.findUnique({ where: { id: s.id }, select: SUSPENSION_SELECT });
+}
+
+async function writeSuspension(tx: Tx, s: Subject, where: { premiumSuspendedInvoiceId?: string }, data: { premiumSuspendedAt: Date | null; premiumSuspendedInvoiceId: string | null }): Promise<number> {
+  const w = { id: s.id, ...where };
+  const r = s.kind === "organization" ? await tx.organization.updateMany({ where: w, data }) : await tx.user.updateMany({ where: w, data });
+  return r.count;
+}
+
 /**
- * invoice.paid and invoice.payment_failed: re-read the subscription and apply it, like any other event. A failed payment
- * also switches the add-on off right away for the subject whose current subscription this is, so the NEXT call is
- * Standard even before Stripe reports past_due. The base plan keeps its past_due grace (only premiumVoice changes here).
- * The next subscription.updated or invoice.paid that shows the subscription in good standing turns Premium back on.
+ * invoice.paid and invoice.payment_failed: re-read the subscription and apply it, like any other event. Then:
+ * - payment_failed persists a Premium suspension (premiumSuspendedAt, and the failed invoice id) on the subject whose
+ *   current subscription this is, so the NEXT call is Standard even while Stripe still reports `active`. The base plan
+ *   keeps its past_due grace; the add-on flag and quantity stay as the items say.
+ * - paid clears that suspension ONLY when the paid invoice is the one that failed, the invoice says `paid` (when it says
+ *   anything), and the subscription as Stripe has it now is active or trialing. No other event clears it: an unrelated
+ *   customer.subscription.updated reporting `active` leaves Premium suspended (see applyEntitlement).
  */
 async function onInvoice(tx: Tx, obj: unknown, live: Live, now: Date, failed: boolean): Promise<Applied | null> {
   const subscriptionId = invoiceSubscriptionId(obj);
   if (!subscriptionId) return null;
   const inv = InvoiceObject.safeParse(obj);
+  const invoiceId = inv.success ? inv.data.id ?? null : null;
   const customerId = inv.success ? refId(inv.data.customer as z.infer<typeof SubRef>) : null;
   const applied = await reconcile(tx, subscriptionId, live, { customerId }, now);
-  if (!failed) return applied;
   const holder = await subjectOfSubscription(tx, subscriptionId);
   if (!holder) return applied;
-  const where = { id: holder.id, premiumVoice: true };
-  const off = holder.kind === "organization"
-    ? await tx.organization.updateMany({ where, data: { premiumVoice: false } })
-    : await tx.user.updateMany({ where, data: { premiumVoice: false } });
-  await ensureAllowance(tx, holder.kind === "organization" ? { organizationId: holder.id } : { userId: holder.id }, now);
-  // A flip already reported by reconcile (status no longer entitled) is not reported twice.
-  const already = applied?.premiumEvents?.some((e) => e.name === "premium_removed") ?? false;
-  const events = off.count > 0 && !already ? [{ name: "premium_removed" as const, subject: holder.kind, subjectId: holder.id, reason: "payment_failed" }] : [];
-  return { event: applied?.event ?? null, cancelSubscriptionId: applied?.cancelSubscriptionId, premiumEvents: [...(applied?.premiumEvents ?? []).filter((e) => e.name !== "premium_added"), ...events] };
+  const before = await suspensionOf(tx, holder);
+  if (!before) return applied;
+  const allowance = holder.kind === "organization" ? { organizationId: holder.id } : { userId: holder.id };
+
+  if (failed) {
+    // Keep the first suspension time; point it at the latest failed invoice, which is the one that must be paid.
+    await writeSuspension(tx, holder, {}, { premiumSuspendedAt: before.premiumSuspendedAt ?? now, premiumSuspendedInvoiceId: invoiceId });
+    await ensureAllowance(tx, allowance, now);
+    // A flip already reported by reconcile (status no longer entitled) is not reported twice.
+    const already = applied?.premiumEvents?.some((e) => e.name === "premium_removed") ?? false;
+    const events = before.premiumVoice && !before.premiumSuspendedAt && !already
+      ? [{ name: "premium_removed" as const, subject: holder.kind, subjectId: holder.id, reason: "payment_failed" }] : [];
+    return { event: applied?.event ?? null, cancelSubscriptionId: applied?.cancelSubscriptionId, premiumEvents: [...(applied?.premiumEvents ?? []).filter((e) => e.name !== "premium_added"), ...events] };
+  }
+
+  const invoicePaid = !inv.success || inv.data.status == null || inv.data.status === "paid";
+  const goodStanding = !!live && live !== "gone" && live.id === subscriptionId && premiumStatus(live.status);
+  if (!before.premiumSuspendedAt || !invoiceId || !invoicePaid || !goodStanding) return applied;
+  const cleared = await writeSuspension(tx, holder, { premiumSuspendedInvoiceId: invoiceId }, { premiumSuspendedAt: null, premiumSuspendedInvoiceId: null });
+  if (cleared === 0) return applied;
+  await ensureAllowance(tx, allowance, now);
+  const events = before.premiumVoice ? [{ name: "premium_added" as const, subject: holder.kind, subjectId: holder.id, reason: "payment_recovered" }] : [];
+  return { ...(applied ?? { event: null }), premiumEvents: [...(applied?.premiumEvents ?? []), ...events] };
 }
 
 async function onCheckoutPaid(tx: Tx, obj: unknown, live: Live, now: Date, requirePaid: boolean): Promise<Applied | null> {
@@ -774,12 +841,18 @@ const liveDeps: StripeDeps = {
   updateSubscription: (id, params, key) => stripeApi.updateSubscription(id, params, key),
 };
 
-/** The Stripe write that puts the add-on back in step with the seats. The key makes a retried delivery one change. */
-export function addonSyncRequest(s: AddonSync): { id: string; params: StripeParams; idempotencyKey: string } {
+/**
+ * The Stripe write that puts the add-on back in step with the seats. The idempotency key names ONE transition: the
+ * subscription, the item, the quantity it moves from and to, and the trigger (the Stripe event id, or the app's own sync).
+ * A retried delivery of the same event sends the same key, so Stripe applies it once. A later, separate change (3 to 4,
+ * back to 3, then to 4 again) comes from a different event, so it gets a new key and is never answered from the cache
+ * of an earlier request for the same quantity.
+ */
+export function addonSyncRequest(s: AddonSync, trigger: string): { id: string; params: StripeParams; idempotencyKey: string } {
   return {
     id: s.subscriptionId,
     params: { items: [{ id: s.itemId, quantity: s.quantity }], proration_behavior: s.direction === "up" ? "create_prorations" : "none" },
-    idempotencyKey: `addon-sync:${s.subscriptionId}:${s.itemId}:${s.quantity}`,
+    idempotencyKey: `addon-sync:${s.subscriptionId}:${s.itemId}:${s.from}-${s.quantity}:${trigger}`.slice(0, 255),
   };
 }
 
@@ -838,7 +911,8 @@ export async function handleStripeEvent(event: StripeEventLike, now = new Date()
     throw e;
   }
   try {
-    await afterApplied(applied, deps);
+    // The event id is the trigger: Stripe's retry of this event repeats the same add-on sync key, a later event does not.
+    await afterApplied(applied, deps, event.id);
   } catch (e) {
     // Cancel and add-on sync run after commit. Drop the event id so Stripe's 500 retry can do them again.
     if (applied?.cancelSubscriptionId || applied?.addonSync) {
@@ -850,7 +924,7 @@ export async function handleStripeEvent(event: StripeEventLike, now = new Date()
 }
 
 /** The work that must wait until the transaction has committed: dropping a duplicate subscription, then the lifecycle event. */
-async function afterApplied(applied: Applied | null, deps: StripeDeps): Promise<void> {
+async function afterApplied(applied: Applied | null, deps: StripeDeps, trigger: string): Promise<void> {
   if (applied?.cancelSubscriptionId) {
     try {
       await deps.cancelSubscription(applied.cancelSubscriptionId);
@@ -860,7 +934,7 @@ async function afterApplied(applied: Applied | null, deps: StripeDeps): Promise<
     }
   }
   if (applied?.addonSync && deps.updateSubscription) {
-    const req = addonSyncRequest(applied.addonSync);
+    const req = addonSyncRequest(applied.addonSync, trigger);
     try {
       await deps.updateSubscription(req.id, req.params, req.idempotencyKey);
     } catch (e) {
@@ -879,7 +953,8 @@ async function afterApplied(applied: Applied | null, deps: StripeDeps): Promise<
 export async function syncSubscriptionNow(subscriptionId: string, now = new Date(), deps: StripeDeps = liveDeps): Promise<void> {
   const live = await fetchLive(subscriptionId, deps);
   const applied = await prisma.$transaction((tx) => reconcile(tx, subscriptionId, live, {}, now));
-  await afterApplied(applied, deps);
+  // No Stripe event here: the app's own sync is its own trigger.
+  await afterApplied(applied, deps, `app-sync-${now.getTime()}`);
 }
 
 /**
@@ -889,5 +964,5 @@ export async function syncSubscriptionNow(subscriptionId: string, now = new Date
 async function applyCompletedCheckout(session: z.infer<typeof SessionObject>, now: Date, deps: StripeDeps): Promise<void> {
   const live = await fetchLive(session.subscription ?? null, deps);
   const applied = await prisma.$transaction((tx) => onCheckoutPaid(tx, session, live, now, true));
-  await afterApplied(applied, deps);
+  await afterApplied(applied, deps, `checkout-${session.id ?? now.getTime()}`);
 }

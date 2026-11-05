@@ -32,20 +32,20 @@ export type SessionViewRow = Prisma.TrainerSessionGetPayload<{ select: typeof SE
 
 /**
  * The debrief's "voice used" label is served separately (GET /api/transcripts/[id]/voice) so this view stays exactly
- * the allowlist above. It reads three server-only columns and returns one label, never the columns themselves.
+ * the allowlist above. It reads the durable voiceTier column (written by the server at mint, or from a verified receipt
+ * on an unmetered save) and returns one label. It never reads the model column and never maps a model id at read time.
  */
-export const VOICE_USED_SELECT = { userId: true, organizationId: true, allowanceId: true, engineTier: true, realtimeModel: true } as const satisfies Prisma.TrainerSessionSelect;
+export const VOICE_USED_SELECT = { userId: true, organizationId: true, voiceTier: true, allowanceId: true, engineTier: true } as const satisfies Prisma.TrainerSessionSelect;
 export type VoiceUsedRow = Prisma.TrainerSessionGetPayload<{ select: typeof VOICE_USED_SELECT }>;
 
 /**
- * "premium" or "standard" for a voice call, null for a text call. A model logged from a mint receipt decides (through
- * `tierOf`, which maps the id to a tier on the server); otherwise a metered call's paid engine (engineTier) does.
+ * "premium" or "standard" for a voice call, null for a text call. The stored voiceTier decides. A metered row from
+ * before that column existed falls back to its billing engine (durable too, but it reads a comped call as standard).
  */
-export function voiceUsedView(r: Pick<VoiceUsedRow, "allowanceId" | "engineTier" | "realtimeModel">, tierOf: (model: string) => "premium" | "standard" | null): "premium" | "standard" | null {
-  const fromModel = r.realtimeModel ? tierOf(r.realtimeModel) : null;
-  if (fromModel === "premium") return "premium";
+export function voiceUsedView(r: Pick<VoiceUsedRow, "voiceTier" | "allowanceId" | "engineTier">): "premium" | "standard" | null {
+  if (r.voiceTier === "premium" || r.voiceTier === "standard") return r.voiceTier;
   if (r.allowanceId) return r.engineTier === "premium" ? "premium" : "standard";
-  return fromModel;
+  return null;
 }
 
 /** The response body's `session`, built field by field so nothing else on the row can pass through. */

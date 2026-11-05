@@ -72,11 +72,16 @@ function deps(sub: ReturnType<typeof subscription>, extra: Partial<MockDeps> = {
     createSubscriptionSchedule: vi.fn<AddonDeps["createSubscriptionSchedule"]>(async () => ({ id: "sub_sched_test_1" })),
     retrieveSubscriptionSchedule: vi.fn<AddonDeps["retrieveSubscriptionSchedule"]>(async () => schedule),
     updateSubscriptionSchedule: vi.fn<AddonDeps["updateSubscriptionSchedule"]>(async () => ({})),
+    releaseSubscriptionSchedule: vi.fn<AddonDeps["releaseSubscriptionSchedule"]>(async () => ({})),
     prices: vi.fn<AddonDeps["prices"]>(async () => PRICES),
     sync: vi.fn<AddonDeps["sync"]>(async () => undefined),
     ...extra,
   };
 }
+
+/** The same subscription with extra Stripe fields (discounts, tax, a schedule, another period...). */
+const withTerms = (sub: ReturnType<typeof subscription>, terms: Record<string, unknown>) => ({ ...sub, ...terms }) as ReturnType<typeof subscription>;
+const codeOf = async (fn: () => Promise<unknown>) => { try { await fn(); return null; } catch (e) { return (e as AddonError).code; } };
 
 /** Schedule params read in the shape the assertions need. The mocks themselves stay fully typed. */
 type SchedulePhases = { phases: { items: unknown[] }[] };
@@ -130,7 +135,10 @@ describe("planning a Premium add", () => {
 // ---- Preview tokens ----------------------------------------------------------------------------------------
 
 describe("preview tokens", () => {
-  const payload = { k: "add" as const, s: "organization:org-1", u: "owner-1", sub: "sub_test_team", items: [{ price: "price_test_prem_m", quantity: 3 }], d: NOW_S, a: 1333, exp: NOW_S + 600 };
+  const payload = {
+    k: "add" as const, s: "organization:org-1", u: "owner-1", sub: "sub_test_team", items: [{ price: "price_test_prem_m", quantity: 3 }],
+    d: NOW_S, a: 1333, c: "usd", q: "a".repeat(64), h: "b".repeat(64), exp: NOW_S + 600,
+  };
   it("verify only for the same actor, subject and kind, unexpired and untampered", () => {
     const t = signPreviewToken(payload, JWT);
     const want = { userId: "owner-1", subject: "organization:org-1", kind: "add" as const };
@@ -165,12 +173,15 @@ describe("adding Premium to an existing subscription", () => {
     expect(JSON.stringify({ ...p, token: undefined })).not.toMatch(/sub_|price_|cus_|si_/);
   });
 
-  it("confirm charges exactly the preview: same proration date, always_invoice, error_if_incomplete, idempotent key", async () => {
+  it("confirm re-previews at the SAME proration date, then charges exactly the reviewed amount with an idempotent key", async () => {
     const d = deps(subscription({ seats: 4 }));
     const p = await previewAddPremium({ ...TEAM, seats: 4 }, "owner-1", d, NOW);
     const later = new Date(NOW.getTime() + 120_000);
     await confirmAddPremium({ ...TEAM, seats: 4 }, "owner-1", p.token, d, later);
     await confirmAddPremium({ ...TEAM, seats: 4 }, "owner-1", p.token, d, later);
+    // One preview at review, one re-preview per confirm, all with identical params (same proration_date).
+    expect(d.previewInvoice).toHaveBeenCalledTimes(3);
+    for (const [params] of d.previewInvoice.mock.calls) expect(params).toEqual(d.previewInvoice.mock.calls[0][0]);
     expect(d.updateSubscription).toHaveBeenCalledTimes(2);
     const [id, params, key] = d.updateSubscription.mock.calls[0];
     const key2 = d.updateSubscription.mock.calls[1][2];
@@ -199,6 +210,37 @@ describe("adding Premium to an existing subscription", () => {
     expect(d.updateSubscription).not.toHaveBeenCalled();
     expect(changed.updateSubscription).not.toHaveBeenCalled();
   });
+
+  it("confirm refuses a changed amount, currency, total or balance from the re-preview, and charges nothing", async () => {
+    for (const second of [
+      { amount_due: 1334, currency: "usd" },
+      { amount_due: 1333, currency: "eur" },
+      { amount_due: 1333, currency: "usd", total: 1500 },
+      { amount_due: 1333, currency: "usd", starting_balance: -200 },
+    ]) {
+      const d = deps(subscription({ seats: 4 }));
+      const p = await previewAddPremium({ ...TEAM, seats: 4 }, "owner-1", d, NOW);
+      d.previewInvoice.mockResolvedValueOnce(second);
+      expect(await codeOf(() => confirmAddPremium({ ...TEAM, seats: 4 }, "owner-1", p.token, d, NOW)), JSON.stringify(second)).toBe("price_changed");
+      expect(d.updateSubscription).not.toHaveBeenCalled();
+    }
+  });
+
+  it("confirm refuses changed terms: a discount, a base price amount, the add-on price amount, the billing period, tax", async () => {
+    const base = subscription({ seats: 4 });
+    const changes: [string, MockDeps][] = [
+      ["discount added", deps(withTerms(base, { discounts: ["di_test_1"] }))],
+      ["base unit amount", deps(withTerms(base, { items: { data: [{ ...base.items.data[0], price: { ...base.items.data[0].price, unit_amount: 6900 } }] } }))],
+      ["period moved", deps(withTerms(base, { current_period_end: END_S + 86400 }))],
+      ["tax rate added", deps(withTerms(base, { default_tax_rates: ["txr_test_1"] }))],
+      ["add-on price amount", deps(base, { retrievePrice: vi.fn<AddonDeps["retrievePrice"]>(async (id) => ({ id, unit_amount: UNIT[id] + 500 })) })],
+    ];
+    for (const [label, changed] of changes) {
+      const p = await previewAddPremium({ ...TEAM, seats: 4 }, "owner-1", deps(base), NOW);
+      expect(await codeOf(() => confirmAddPremium({ ...TEAM, seats: 4 }, "owner-1", p.token, changed, NOW)), label).toBe("subscription_changed");
+      expect(changed.updateSubscription, label).not.toHaveBeenCalled();
+    }
+  });
 });
 
 // ---- Removal at period end ------------------------------------------------------------------------------------
@@ -206,7 +248,7 @@ describe("adding Premium to an existing subscription", () => {
 describe("removing Premium at period end", () => {
   it("puts the subscription under a schedule: this period unchanged, next period without the add-on, then released", async () => {
     const d = deps(subscription({ seats: 4, premium: 4 }));
-    const { removeAt } = await scheduleRemovePremium(TEAM, d, NOW);
+    const { removeAt } = await scheduleRemovePremium(TEAM, d);
     expect(removeAt?.getTime()).toBe(END_S * 1000);
     expect(d.createSubscriptionSchedule).toHaveBeenCalledWith({ from_subscription: "sub_test_team" }, expect.stringMatching(/^premium-remove:sub_test_team:/));
     expect(d.updateSubscriptionSchedule).toHaveBeenCalledTimes(1);
@@ -224,30 +266,61 @@ describe("removing Premium at period end", () => {
     expect(d.previewInvoice).not.toHaveBeenCalled();
   });
 
-  it("reuses an existing schedule and keeps its pending seat decrease", async () => {
-    const sub = subscription({ seats: 6, premium: 6, schedule: "sub_sched_test_1" });
-    const d = deps(sub, {
+  it("refuses ANY existing schedule (a multi-phase one ending in cancel) and leaves it exactly as it is", async () => {
+    // Someone else's schedule: a seat decrease at renewal, a later phase, and cancellation at the end.
+    const existing = {
+      id: "sub_sched_test_other", end_behavior: "cancel",
+      phases: [
+        { start_date: PERIOD_START_S, end_date: END_S, items: [{ price: "price_test_team_m", quantity: 6 }, { price: "price_test_prem_m", quantity: 6 }], collection_method: "send_invoice" },
+        { start_date: END_S, end_date: END_S + 30 * 86400, items: [{ price: "price_test_team_m", quantity: 4 }, { price: "price_test_prem_m", quantity: 4 }] },
+        { start_date: END_S + 30 * 86400, end_date: END_S + 60 * 86400, items: [{ price: "price_test_team_m", quantity: 3 }] },
+      ],
+    };
+    const snapshot = JSON.stringify(existing);
+    const d = deps(subscription({ seats: 6, premium: 6, schedule: "sub_sched_test_other" }), {
+      retrieveSubscriptionSchedule: vi.fn<AddonDeps["retrieveSubscriptionSchedule"]>(async () => existing),
+    });
+    const err = await scheduleRemovePremium(TEAM, d).catch((e: AddonError) => e);
+    expect(err).toMatchObject({ code: "change_scheduled" });
+    expect((err as AddonError).message).toMatch(/cannot safely edit.*Nothing was changed/);
+    for (const m of [d.createSubscriptionSchedule, d.retrieveSubscriptionSchedule, d.updateSubscriptionSchedule, d.releaseSubscriptionSchedule, d.updateSubscription]) {
+      expect(m).not.toHaveBeenCalled();
+    }
+    expect(JSON.stringify(existing)).toBe(snapshot);
+    // A seat decrease is refused the same way, at the preview already.
+    expect(await codeOf(() => previewSeatChange({ ...TEAM, seats: 6 }, "owner-1", 4, d, NOW))).toBe("change_scheduled");
+    expect(d.updateSubscriptionSchedule).not.toHaveBeenCalled();
+  });
+
+  it("refuses a subscription whose discounts or tax settings a scheduled phase would drop, before any Stripe write", async () => {
+    for (const terms of [{ discounts: ["di_test_1"] }, { discount: { id: "di_test_2" } }, { default_tax_rates: ["txr_test_1"] }, { automatic_tax: { enabled: true } }, { collection_method: "send_invoice" }]) {
+      const d = deps(withTerms(subscription({ seats: 4, premium: 4 }), terms));
+      expect(await codeOf(() => scheduleRemovePremium(TEAM, d)), JSON.stringify(terms)).toBe("unsupported_billing_terms");
+      expect(d.createSubscriptionSchedule).not.toHaveBeenCalled();
+    }
+  });
+
+  it("a new schedule that does not mirror the subscription is released at once and nothing changes", async () => {
+    const d = deps(subscription({ seats: 4, premium: 4 }), {
       retrieveSubscriptionSchedule: vi.fn<AddonDeps["retrieveSubscriptionSchedule"]>(async () => ({ id: "sub_sched_test_1", phases: [
-        { start_date: PERIOD_START_S, end_date: END_S, items: [{ price: "price_test_team_m", quantity: 6 }, { price: "price_test_prem_m", quantity: 6 }] },
-        { start_date: END_S, end_date: END_S + 30 * 86400, items: [{ price: { id: "price_test_team_m" }, quantity: 4 }, { price: "price_test_prem_m", quantity: 4 }] },
+        { start_date: PERIOD_START_S, end_date: END_S + 86400, items: [{ price: "price_test_team_m", quantity: 4 }] },
       ] })),
     });
-    await scheduleRemovePremium(TEAM, d, NOW);
-    expect(d.createSubscriptionSchedule).not.toHaveBeenCalled();
-    expect(d.updateSubscriptionSchedule).toHaveBeenCalledTimes(1);
-    expect(phasesOf(d.updateSubscriptionSchedule.mock.calls[0][1]).phases[1].items).toEqual([{ price: "price_test_team_m", quantity: 4 }]);
+    expect(await codeOf(() => scheduleRemovePremium(TEAM, d))).toBe("change_scheduled");
+    expect(d.releaseSubscriptionSchedule).toHaveBeenCalledWith("sub_sched_test_1", expect.stringMatching(/^premium-remove:sub_test_team:\d+:release$/));
+    expect(d.updateSubscriptionSchedule).not.toHaveBeenCalled();
   });
 
   it("a subscription already set to cancel at period end needs no schedule: Premium ends with it", async () => {
     const d = deps(subscription({ premium: 3, cancelAtPeriodEnd: true }));
-    const { removeAt } = await scheduleRemovePremium(TEAM, d, NOW);
+    const { removeAt } = await scheduleRemovePremium(TEAM, d);
     expect(removeAt?.getTime()).toBe(END_S * 1000);
     expect(d.createSubscriptionSchedule).not.toHaveBeenCalled();
     expect(d.updateSubscriptionSchedule).not.toHaveBeenCalled();
   });
 
   it("refuses when there is nothing to remove", async () => {
-    await expect(scheduleRemovePremium(TEAM, deps(subscription()), NOW)).rejects.toMatchObject({ code: "not_added" });
+    await expect(scheduleRemovePremium(TEAM, deps(subscription()))).rejects.toMatchObject({ code: "not_added" });
   });
 });
 
@@ -282,6 +355,27 @@ describe("seat changes keep the add-on quantity in step", () => {
     const { phases } = phasesOf(d.updateSubscriptionSchedule.mock.calls[0][1]);
     expect(phases[0].items).toEqual([{ price: "price_test_team_m", quantity: 6 }, { price: "price_test_prem_m", quantity: 6 }]);
     expect(phases[1].items).toEqual([{ price: "price_test_team_m", quantity: 4 }, { price: "price_test_prem_m", quantity: 4 }]);
+  });
+
+  it("seats up: the confirm re-previews at the same proration date and refuses a changed charge or changed terms", async () => {
+    const sub = subscription({ seats: 4, premium: 4 });
+    const d = deps(sub);
+    const p = await previewSeatChange({ ...TEAM, seats: 4 }, "owner-1", 6, d, NOW);
+    d.previewInvoice.mockResolvedValueOnce({ amount_due: 9999, currency: "usd" });
+    expect(await codeOf(() => confirmSeatChange({ ...TEAM, seats: 4 }, "owner-1", 6, p.token, d, NOW))).toBe("price_changed");
+    expect(d.previewInvoice.mock.calls[1][0]).toEqual(d.previewInvoice.mock.calls[0][0]);
+    const discounted = deps(withTerms(sub, { discounts: ["di_test_1"] }));
+    expect(await codeOf(() => confirmSeatChange({ ...TEAM, seats: 4 }, "owner-1", 6, p.token, discounted, NOW))).toBe("subscription_changed");
+    expect(d.updateSubscription).not.toHaveBeenCalled();
+    expect(discounted.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  it("seats down: the confirm refuses changed terms (a new unit price) before any schedule is made", async () => {
+    const sub = subscription({ seats: 6, premium: 6 });
+    const p = await previewSeatChange({ ...TEAM, seats: 6 }, "owner-1", 4, deps(sub), NOW);
+    const repriced = deps(withTerms(sub, { items: { data: sub.items.data.map((i) => ({ ...i, price: { ...i.price, unit_amount: (i.price.unit_amount ?? 0) + 100 } })) } }));
+    expect(await codeOf(() => confirmSeatChange({ ...TEAM, seats: 6 }, "owner-1", 4, p.token, repriced, NOW))).toBe("subscription_changed");
+    expect(repriced.createSubscriptionSchedule).not.toHaveBeenCalled();
   });
 
   it("rejects seat counts out of range, no change, Pro, and a confirm whose seats differ from the preview", async () => {
@@ -332,6 +426,7 @@ describe("/api/billing/premium and /api/billing/seats", () => {
     vi.spyOn(stripeApi, "createSubscriptionSchedule").mockResolvedValue({ id: "sub_sched_test_1" });
     vi.spyOn(stripeApi, "retrieveSubscriptionSchedule").mockImplementation(async () => ({ id: "sub_sched_test_1", phases: [{ start_date: PERIOD_START_S, end_date: END_S, items: live.items.data.map((i) => ({ price: i.price.id, quantity: i.quantity })) }] }));
     vi.spyOn(stripeApi, "updateSubscriptionSchedule").mockResolvedValue({});
+    vi.spyOn(stripeApi, "releaseSubscriptionSchedule").mockResolvedValue({});
     events = [];
     setPremiumEventSink((e) => { events.push(e); });
   });
@@ -404,6 +499,19 @@ describe("/api/billing/premium and /api/billing/seats", () => {
     expect(res.status).toBe(402);
     expect((await res.json()).error).toBe("payment_failed");
     expect(fake.rows("organization")[0].premiumVoice).toBe(false);
+  });
+
+  it("remove on a subscription with an existing schedule answers 409 with a clear message and writes nothing", async () => {
+    live = { ...subscription({ seats: 4, premium: 4 }), schedule: "sub_sched_test_other" };
+    Object.assign(fake.rows("organization")[0], { premiumVoice: true, premiumVoiceQuantity: 4 });
+    const res = await premium({ action: "remove" });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body).toMatchObject({ error: "change_scheduled" });
+    expect(body.message).toMatch(/Manage billing or contact support/);
+    expect(stripeApi.createSubscriptionSchedule).not.toHaveBeenCalled();
+    expect(stripeApi.updateSubscriptionSchedule).not.toHaveBeenCalled();
+    expect(fake.rows("organization")[0].premiumVoiceRemoveAt).toBeNull();
   });
 
   it("remove schedules the end of Premium for the period end and records the date shown on billing", async () => {

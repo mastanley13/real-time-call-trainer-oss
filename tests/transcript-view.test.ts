@@ -46,6 +46,7 @@ const fullRow = () => ({
   allowancePeriodStart: new Date("2026-10-15T00:00:00Z"),
   reservedMinutes: 10,
   engineTier: "premium",
+  voiceTier: "premium",
   realtimeModel: "gpt-realtime-2.1",
   premiumReservedMinutes: 10,
   carriedMinutes: 0,
@@ -89,7 +90,7 @@ describe("GET /api/transcripts/[id] with a populated realtimeModel", () => {
     expect(r.res.status).toBe(200);
     const s = r.body.session!;
     expect(Object.keys(s).sort()).toEqual(VIEW_KEYS);
-    for (const k of ["realtimeModel", "engineTier", "organizationId", "realtimeSessionId", "allowanceId", "billedMinutes", "abuseFlagged", "updatedAt", "futureCostCents", "futureProviderModel"]) {
+    for (const k of ["realtimeModel", "engineTier", "voiceTier", "organizationId", "realtimeSessionId", "allowanceId", "billedMinutes", "abuseFlagged", "updatedAt", "futureCostCents", "futureProviderModel"]) {
       expect(s).not.toHaveProperty(k);
     }
     expect(r.text).not.toMatch(MODEL_ID_RE);
@@ -134,6 +135,7 @@ describe("GET /api/transcripts/[id] with a populated realtimeModel", () => {
     expect(select).toEqual(SESSION_VIEW_SELECT);
     expect(select).not.toHaveProperty("realtimeModel");
     expect(select).not.toHaveProperty("engineTier");
+    expect(select).not.toHaveProperty("voiceTier");
     // organizationId is read for the access check, never returned.
     expect(Object.keys(select).sort()).toEqual([...VIEW_KEYS, "organizationId"].sort());
   });

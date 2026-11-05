@@ -7,6 +7,7 @@ import { prisma } from "@/lib/db";
 import { verifySeal } from "@/lib/gradeSeal";
 import { isReceiptReplay, receiptRowId, verifyMintReceipt } from "@/lib/mintReceipt";
 import { HAS_TRANSCRIPT } from "@/lib/usage";
+import { tierOfModel } from "@/lib/voiceTierServer";
 
 const Body = z.object({
   sessionId: z.string().min(1).max(128),
@@ -74,7 +75,9 @@ export async function POST(req: NextRequest) {
   try {
     // A metered voice call already has its row (created when the call started, empty transcript). Fill it so the
     // call has one row. durationSeconds is display only: billing never reads it, so a client cannot change what it is charged.
-    const metered = body.callId ? await prisma.trainerSession.findUnique({ where: { id: body.callId }, select: { userId: true, transcript: true } }) : null;
+    // realtimeModel is read only to tell whether the mint already logged this call (src/lib/voiceMintLog.ts); it is
+    // never returned.
+    const metered = body.callId ? await prisma.trainerSession.findUnique({ where: { id: body.callId }, select: { userId: true, transcript: true, realtimeModel: true } }) : null;
     const fillExisting = !!body.callId && !!metered && metered.userId === dbUser.id && Array.isArray(metered.transcript) && metered.transcript.length === 0;
     const fields = {
       realtimeSessionId: body.sessionId,
@@ -104,7 +107,9 @@ export async function POST(req: NextRequest) {
       // Single use: the row's primary key comes from the receipt's call id, so a second save of the same
       // receipt is a unique violation. That save is kept, without a model.
       try {
-        created = await prisma.trainerSession.create({ data: { id: receiptRowId(body.sessionId), ...owner, ...fields, realtimeModel: receiptModel } });
+        // Unmetered calls have no row at mint, so the tier is stored here, mapped from the sealed model on the server
+        // when the save lands (within the receipt's lifetime) and never recomputed later.
+        created = await prisma.trainerSession.create({ data: { id: receiptRowId(body.sessionId), ...owner, ...fields, realtimeModel: receiptModel, voiceTier: tierOfModel(receiptModel) } });
         receiptLogged = true;
       } catch (e) {
         if (!isReceiptReplay(e)) throw e;
@@ -117,7 +122,9 @@ export async function POST(req: NextRequest) {
       // Single use on the metered row: the model is written only while it is still unset, in one conditional
       // update, so a replayed or concurrent save of the same receipt changes nothing.
       const logged = await prisma.trainerSession.updateMany({ where: { id: body.sessionId, userId: dbUser.id, realtimeModel: null }, data: { realtimeModel: receiptModel } });
-      receiptLogged = logged.count === 1;
+      // The mint usually logged this call's model already. The save that fills the call's own row with a receipt for
+      // that same model is the receipt's one use; any later save (a replay, a save without callId) is not.
+      receiptLogged = logged.count === 1 || (fillExisting && body.callId === body.sessionId && metered?.realtimeModel === receiptModel);
     }
     await prisma.auditEvent.create({
       data: {

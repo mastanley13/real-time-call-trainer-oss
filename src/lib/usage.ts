@@ -105,7 +105,7 @@ async function stampPastDue<T extends { subscriptionStatus: string | null; pastD
  * and a plan change keeps minutesUsed; only a new period resets it, with no rollover.
  */
 
-const PREMIUM_FIELDS = { premiumVoice: true, premiumVoiceQuantity: true, subscriptionPeriodEnd: true } as const;
+const PREMIUM_FIELDS = { premiumVoice: true, premiumVoiceQuantity: true, subscriptionPeriodEnd: true, premiumSuspendedAt: true } as const;
 
 export async function ensureAllowance(db: Tx, subject: Subject, now: Date, depth = 0): Promise<UsageAllowance> {
   let plan: PlanTier;
@@ -417,6 +417,9 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
           reservedMinutes: reserve,
           premiumReservedMinutes: premiumMinutes,
           engineTier: engine,
+          // The tier the call runs on, durable from the start: comped or paid Premium is premium, else standard.
+          // The realtime mint route confirms it with the model it actually minted (src/lib/voiceMintLog.ts).
+          voiceTier: comped || engine === "premium" ? "premium" : "standard",
           capEnforced: capApplies,
         },
       });

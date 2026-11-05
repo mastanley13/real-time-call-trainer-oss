@@ -117,8 +117,8 @@ describe("Premium voice limit", () => {
       expect(bodies[0].session.model).toBe("model-premium-test");
       expect(first.maxSeconds).toBe(60); // the whole call is the one Premium minute it holds
       expect(first).toMatchObject({ voiceTier: "premium", nextCallStandard: true });
-      // The meter records the paid engine; the model is logged later, from the receipt, when the call is saved.
-      expect(session(first.callId)).toMatchObject({ engineTier: "premium", realtimeModel: null });
+      // The meter records the paid engine, and the mint itself logs the model and effective tier on the call's row.
+      expect(session(first.callId)).toMatchObject({ engineTier: "premium", voiceTier: "premium", realtimeModel: "model-premium-test" });
       await heartbeat("u-1", first.callId, "connected", at(0));
       expect(await heartbeat("u-1", first.callId, "ok", at(30))).toMatchObject({ found: true, stop: false });
       expect(await heartbeat("u-1", first.callId, "ok", at(60))).toMatchObject({ found: true, stop: true, reason: "cap_reached" });
@@ -273,12 +273,17 @@ describe("Premium voice limit", () => {
       it("call A's receipt logs nothing on call B, and a text save logs nothing", async () => {
         const a = await (await mint()).json();
         const b = await (await mint()).json();
+        // The mint logged each call's own model on its own row; nothing else carries one.
+        expect(logged().map((s) => s.id).sort()).toEqual([a.callId, b.callId].sort());
         // A's transcript with B's receipt, and B's with A's.
         await save({ ...clientBody(a), realtimeReceipt: b.receipt });
         await save({ ...clientBody(b), realtimeReceipt: a.receipt });
         // A's receipt and callId on a text save.
         await save({ ...transcriptSaveBody({ ...voiceCall, mode: "text" }, null, undefined, undefined), callId: a.callId, realtimeReceipt: a.receipt });
-        expect(logged()).toHaveLength(0);
+        // The receipts added nothing: no other row got a model, and every one of those saves is recorded as a rejected receipt.
+        expect(logged().map((s) => s.id).sort()).toEqual([a.callId, b.callId].sort());
+        const audits = fake.rows("auditEvent").filter((e) => e.action === "session.saved").map((e) => (e.metadata as { receiptRejected?: boolean }).receiptRejected ?? false);
+        expect(audits).toEqual([true, true, true]);
         // Both calls still got their transcripts on their own rows.
         expect(session(a.callId).transcript).toHaveLength(2);
         expect(session(b.callId).transcript).toHaveLength(2);
@@ -289,8 +294,18 @@ describe("Premium voice limit", () => {
         addUser("u-2");
         mocks.authId = "u-2";
         expect((await save(clientBody(minted))).status).toBe(200);
-        expect(logged()).toHaveLength(0);
+        // Only the mint's own log exists, on the owner's row; u-2's save got no model and did not fill that row.
+        expect(logged().map((s) => s.id)).toEqual([minted.callId]);
         expect(session(minted.callId).transcript).toEqual([]);
+        expect(fake.rows("trainerSession").filter((s) => s.userId === "u-2").every((s) => s.realtimeModel == null)).toBe(true);
+      });
+
+      it("an abandoned metered call (never saved) still has its model and effective tier on its row", async () => {
+        const minted = await (await mint()).json();
+        // No save at all: the server-side mint log is the record.
+        expect(session(minted.callId)).toMatchObject({ realtimeModel: "model-premium-test", voiceTier: "premium", engineTier: "standard", premiumReservedMinutes: 0 });
+        // And the browser answer still names no model.
+        expect(JSON.stringify(minted)).not.toContain("model-premium-test");
       });
     });
 

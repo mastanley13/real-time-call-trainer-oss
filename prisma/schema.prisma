@@ -44,6 +44,9 @@ model Organization {
   premiumVoiceRemoveAt DateTime?
   /// Seat count the subscription drops to at renewal when a seat decrease is scheduled. Null when none is.
   seatCountAtRenewal Int?
+  /// Premium suspended by a failed payment, and the invoice that failed. Cleared only by invoice.paid for that invoice.
+  premiumSuspendedAt        DateTime?
+  premiumSuspendedInvoiceId String?
   /// Stripe ids (test mode only for now). Set by the webhook, never by the client.
   stripeCustomerId     String? @unique
   stripeSubscriptionId String? @unique
@@ -112,6 +115,9 @@ model User {
   premiumVoiceQuantity  Int     @default(0)
   subscriptionPeriodEnd DateTime?
   premiumVoiceRemoveAt  DateTime?
+  /// See Organization: failed-payment Premium suspension.
+  premiumSuspendedAt        DateTime?
+  premiumSuspendedInvoiceId String?
   stripeCustomerId     String? @unique
   stripeSubscriptionId String? @unique
   subscriptionStatus   String?
@@ -179,11 +185,13 @@ model TrainerSession {
   allowancePeriodStart DateTime?
   /// Minutes held for this call at mint time. Also the server-side maximum length of the call.
   reservedMinutes    Int      @default(0)
-  /// Effective voice tier the session was minted on: "premium" or "standard". Written by the server at mint (paid add-on
-  /// or comped); only premiumReservedMinutes draws on the paid Premium pool.
+  /// Billing engine the session was minted on: "premium" (paid Premium minutes) or "standard". A comped call is standard here.
   engineTier         String   @default("standard")
-  /// OpenAI Realtime model id the call was minted with, from a verified mint receipt (src/lib/mintReceipt.ts).
-  /// Cost log only; billing reads engineTier. Null for text, ElevenLabs and unverified calls.
+  /// Effective voice tier the call ran on ("premium" or "standard"), written by the server at mint for every metered call
+  /// (and from a verified receipt for an unmetered save). Comped Premium is "premium" here. Null for text calls.
+  voiceTier          String?
+  /// OpenAI Realtime model id the call was minted with. Written server-side after a successful mint for metered calls
+  /// (src/lib/voiceMintLog.ts), or from a verified mint receipt on save (src/lib/mintReceipt.ts). Cost log only, never returned.
   realtimeModel      String?
   /// Of reservedMinutes, how many were also held against the Premium limit. Minutes beyond this book as standard.
   premiumReservedMinutes Int  @default(0)

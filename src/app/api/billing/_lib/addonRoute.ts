@@ -36,6 +36,8 @@ const STATUS: Record<AddonErrorCode, number> = {
   not_added: 409,
   change_scheduled: 409,
   subscription_changed: 409,
+  price_changed: 409,
+  unsupported_billing_terms: 409,
   not_in_good_standing: 409,
   invalid_token: 400,
   invalid_seats: 400,

@@ -12,6 +12,7 @@ import { capReached, dailySessionLimit, minutesReserved, voiceBlocked, voiceUnav
 import { realtimeKey, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
 import { orgVoiceTierForUser, voiceModelFor } from "@/lib/voiceTierServer";
 import { sealMintReceipt } from "@/lib/mintReceipt";
+import { recordMintedVoice } from "@/lib/voiceMintLog";
 
 const Body = z.object({ scenario: ScenarioSchema });
 
@@ -144,6 +145,14 @@ export async function POST(req: NextRequest) {
     // browser. POST /api/transcripts logs the model only from a receipt that opens for the sessionId it is saved
     // under, and only once. A metered call's browser also gets the tier label and whether the next call drops to
     // Standard (the hosted Premium Voice UI); an unmetered call's answer keeps upstream's exact keys.
+    // Durable server-side provenance for a metered call: the model actually minted and the effective tier, on the
+    // call's own row, now, whether or not the browser ever saves the call. Never returned.
+    if (callId) {
+      await recordMintedVoice(auth.id, callId, { model, tier }).catch((e) => {
+        console.error("[realtime/session] mint log failed", e instanceof Error ? e.name : "unknown error");
+        return false;
+      });
+    }
     const receipt = sealMintReceipt(auth.id, sessionId, model);
     return NextResponse.json(
       {

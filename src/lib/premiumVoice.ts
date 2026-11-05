@@ -25,14 +25,18 @@ export interface PremiumBillingRow {
   subscriptionStatus: string | null | undefined;
   stripeSubscriptionId: string | null | undefined;
   subscriptionPeriodEnd: Date | null | undefined;
+  /** Set by invoice.payment_failed; cleared only by invoice.paid for that invoice. Any value blocks Premium. */
+  premiumSuspendedAt?: Date | null;
 }
 
 /** Why a row has no Premium right now, or null when it does. */
-export type PremiumBlock = "no_addon" | "status" | "expired" | "no_subscription";
+export type PremiumBlock = "no_addon" | "status" | "expired" | "no_subscription" | "suspended";
 
 export function premiumBlock(row: PremiumBillingRow, now: Date): PremiumBlock | null {
   if (!row.premiumVoice || !((row.premiumVoiceQuantity ?? 0) > 0)) return "no_addon";
   if (!row.stripeSubscriptionId) return "no_subscription";
+  // A failed payment suspends Premium until that invoice is paid, whatever later updates report.
+  if (row.premiumSuspendedAt) return "suspended";
   if (!(PREMIUM_STATUSES as readonly string[]).includes(row.subscriptionStatus ?? "")) return "status";
   const end = row.subscriptionPeriodEnd;
   if (!end || !(end.getTime() > now.getTime())) return "expired";
