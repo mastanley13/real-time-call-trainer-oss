@@ -17,6 +17,7 @@ import { buildCheckoutParams, CheckoutConfigError, entitlementFromItems, PRICE_E
 import { isTeamPlan } from "@/lib/usagePlan";
 import { billingGate, encodeForm, stripeApi, StripeApiError, stripeLiveMode, stripeReady, stripeSecretKey, stripeStatus, stripeTestMode, StripeConfigError, verifyWebhookSignature } from "@/lib/stripe";
 import { classifyPlanChange, setBillingEventSink, type BillingLifecycleEvent } from "@/lib/billingEvents";
+import { ghlBillingSink, settleGhlEvents } from "@/lib/ghlWebhook";
 import { POST as webhook } from "@/app/api/stripe/webhook/route";
 import { POST as checkout } from "@/app/api/billing/checkout/route";
 import { POST as portal } from "@/app/api/billing/portal/route";
@@ -1134,19 +1135,57 @@ describe("idempotency", () => {
 describe("CRM lifecycle hook (off by default)", () => {
   const seen: BillingLifecycleEvent[] = [];
   beforeEach(() => { seen.length = 0; setBillingEventSink((e) => { seen.push(e); }); });
-  const checkoutPro = (id: string) => deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata: { plan: "pro", userId: "owner-1" } }, id));
+  const CT = { app: "calltrainer", userId: "owner-1" };
+  const checkoutPro = (id: string, metadata: Record<string, string> = { ...CT, plan: "pro" }) =>
+    deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata }, id));
 
   it("emits nothing unless GHL_BILLING_EVENTS=true", async () => {
     await checkoutPro("evt_a");
     expect(seen).toEqual([]);
   });
 
-  it("emits upgrade and churn with ids and plans only", async () => {
+  it("emits upgrade and churn with ids, plans and the Stripe event id only", async () => {
     vi.stubEnv("GHL_BILLING_EVENTS", "true");
     await checkoutPro("evt_b");
-    await deliver(event("customer.subscription.deleted", sub({ pro: true })));
-    expect(seen.map((e) => [e.kind, e.fromPlan, e.toPlan])).toEqual([["upgrade", "free", "pro"], ["churn", "pro", "free"]]);
+    await deliver(event("customer.subscription.deleted", sub({ pro: true, metadata: CT }), "evt_b_del"));
+    expect(seen.map((e) => [e.kind, e.fromPlan, e.toPlan, e.stripeRef, e.purchaserUserId])).toEqual([
+      ["upgrade", "free", "pro", "evt_b", "owner-1"],
+      ["churn", "pro", "free", "evt_b_del", "owner-1"],
+    ]);
     expect(JSON.stringify(seen)).not.toContain("@");
+    expect(JSON.stringify(seen)).not.toContain("cus_");
+  });
+
+  it("forwards only Calltrainer subscriptions (metadata app=calltrainer)", async () => {
+    vi.stubEnv("GHL_BILLING_EVENTS", "true");
+    await checkoutPro("evt_other", { plan: "pro", userId: "owner-1", app: "another-product" });
+    expect(user().planTier).toBe("pro");
+    await deliver(event("customer.subscription.deleted", sub({ pro: true, metadata: { userId: "owner-1" } }), "evt_other_del"));
+    expect(user().planTier).toBe("free");
+    expect(seen).toEqual([]);
+  });
+
+  it("the GHL sink posts the classified lifecycle payload, never the Stripe object, and a GHL outage keeps the 200", async () => {
+    vi.stubEnv("GHL_BILLING_EVENTS", "true");
+    vi.stubEnv("GHL_WEBHOOK_URL", "https://hooks.example.test/hooks/loc-test/webhook-trigger/trigger-test");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => { throw new TypeError("fetch failed"); });
+    vi.stubGlobal("fetch", fetchMock);
+    setBillingEventSink(ghlBillingSink);
+    expect((await checkoutPro("evt_ghl")).status).toBe(200);
+    await settleGhlEvents();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const body = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string;
+    expect(JSON.parse(body)).toMatchObject({ eventId: "stripe:evt_ghl:upgrade", event: "upgrade", app: "calltrainer", subject: "user", userId: "owner-1", fromPlan: "free", toPlan: "pro", stripeRef: "evt_ghl" });
+    for (const leak of ["cus_", "sub_", "price_", "@", "items"]) expect(body).not.toContain(leak);
+    expect(user().planTier).toBe("pro");
+  });
+
+  it("a redelivered Stripe event emits once", async () => {
+    vi.stubEnv("GHL_BILLING_EVENTS", "true");
+    await checkoutPro("evt_once");
+    await checkoutPro("evt_once");
+    expect(seen.map((e) => e.stripeRef)).toEqual(["evt_once"]);
   });
 
   it("a sink that throws never fails the webhook", async () => {

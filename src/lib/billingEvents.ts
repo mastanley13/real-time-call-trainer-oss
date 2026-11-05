@@ -2,16 +2,16 @@ import "server-only";
 import type { PlanTier } from "./usagePlan";
 
 /**
- * Billing lifecycle hook for the CRM (GoHighLevel). The GHL emitter from STR-714 is not on this branch,
- * so this is a typed seam with a registered sink. Off unless GHL_BILLING_EVENTS=true.
- *
- * TODO(STR-714): when src/lib/ghl lands, register its emitter with setBillingEventSink() and reuse its
- * feature flag in place of GHL_BILLING_EVENTS. Payloads carry ids and plans only, never email or card data.
+ * Billing lifecycle hook for the CRM (GoHighLevel). Off unless GHL_BILLING_EVENTS=true and a sink is registered.
+ * billing.ts registers ghlBillingSink from ghlWebhook.ts, which posts each event to the GHL Inbound Webhook URL
+ * (GHL_WEBHOOK_URL). Only Calltrainer subscriptions (Stripe metadata app=calltrainer) reach this hook. Payloads
+ * carry ids and plans only, never email, Stripe customer ids or card data.
  */
 
 export type BillingLifecycleKind = "upgrade" | "downgrade" | "churn";
 
-export interface BillingLifecycleEvent {
+/** A plan change as billing.ts applies it, before it is tied to the Stripe event that caused it. */
+export interface PlanChange {
   kind: BillingLifecycleKind;
   subject: "user" | "organization";
   subjectId: string;
@@ -19,6 +19,18 @@ export interface BillingLifecycleEvent {
   toPlan: PlanTier;
   seats: number;
   premiumVoice: boolean;
+}
+
+export interface BillingLifecycleEvent extends PlanChange {
+  /** The Stripe event id (evt_...), or checkout_session:{id} when a paid checkout was applied without its webhook. Used for dedupe. */
+  stripeRef: string;
+  /** The user who started the checkout, from Calltrainer's own subscription metadata. Null when absent. */
+  purchaserUserId: string | null;
+}
+
+/** Only subscriptions Calltrainer's own checkout created carry app=calltrainer. Nothing else on a shared Stripe account is forwarded. */
+export function isCalltrainerStripe(metadata: Record<string, string> | null | undefined): boolean {
+  return metadata?.app === "calltrainer";
 }
 
 export type BillingEventSink = (event: BillingLifecycleEvent) => void | Promise<void>;

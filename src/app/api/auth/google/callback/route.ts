@@ -7,6 +7,7 @@ import { generateOrgCode } from "@/lib/orgCodes";
 import { googleLandingPath } from "@/lib/signupIntent";
 import { sanitizeSignupIntent, type SignupIntent } from "@/lib/pricing";
 import { clientIp, ipLimitResponse } from "@/lib/rateLimit";
+import { notifySignup } from "@/lib/ghlWebhook";
 import { linkGoogleAtomically, checkIdTokenClaims, decodeIdToken, exchangeCode, flowCookieOptions, GOOGLE_FLOW_COOKIE, googleConfig, verifyFlowState, type GoogleProfile } from "@/lib/googleAuth";
 
 /**
@@ -87,8 +88,11 @@ export async function GET(req: NextRequest) {
         if (gate && !(await hasValidAccessCookie(req, gate))) {
           return back(req, "/access?next=%2Fregister&reason=google_invite");
         }
-        user = await createSoloUser(profile, ip, userAgent, sanitizeSignupIntent(flow.intent ?? {}));
+        const intent = sanitizeSignupIntent(flow.intent ?? {});
+        user = await createSoloUser(profile, ip, userAgent, intent);
         created = true;
+        // Committed: tell the CRM. Fire and forget, so a GHL outage never fails sign-in.
+        notifySignup({ userId: user.id, organizationId: user.organizationId, email: user.email, method: "google", role: "owner", intent });
       }
     }
 
