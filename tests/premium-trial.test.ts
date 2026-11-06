@@ -461,7 +461,7 @@ describe("8: neutral labels on the call screen and the session detail, no model 
     expect(TRIAL_CALL_NOTICE.includes(String.fromCharCode(0x2014))).toBe(false);
     expect(TRIAL_CALL_NOTICE).not.toMatch(/gpt-|model/i);
     const deck = readFileSync(path.join(process.cwd(), "src/components/call/Deck.tsx"), "utf8");
-    expect(deck).toMatch(/<span className="chip">\{voiceLabel\(voice\.tier\)\}<\/span>/);
+    expect(deck).toMatch(/<span className="badge-tag">\{voiceLabel\(voice\.tier\)\}<\/span>/);
     expect(deck).toContain("if (v.trial) return TRIAL_CALL_NOTICE;");
     expect(deck).toContain("{liveVoiceNotice(voice)}");
     const client = readFileSync(path.join(process.cwd(), "src/components/TrainerClient.tsx"), "utf8");

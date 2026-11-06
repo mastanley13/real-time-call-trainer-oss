@@ -6,6 +6,7 @@ import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
 import { CallMeter, type MeterEndReason } from "@/lib/callMeter";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
+import { CALL_STATUS, speakingStatus } from "./callCopy";
 
 /** Same render-prop contract as the ElevenLabs VoiceSession in TrainerClient. */
 export interface VoiceRender {
@@ -162,7 +163,7 @@ class RealtimeCall {
       const res = await fetch("/api/realtime/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientSecret: secret.clientSecret, sdp: offer.sdp }) });
       const data = await res.json().catch(() => ({}));
       if (this.closed) return;
-      if (!res.ok || typeof data.sdp !== "string") return this.fail(data.error === "realtime_secret_expired" ? EXPIRED : data.message || "OpenAI could not connect the voice call. Try again, or switch to Text.", "failed_connect");
+      if (!res.ok || typeof data.sdp !== "string") return this.fail(data.error === "realtime_secret_expired" ? EXPIRED : data.message || "The voice service could not connect the call. Try again, or switch to Text.", "failed_connect");
       await pc.setRemoteDescription({ type: "answer", sdp: data.sdp });
     } catch {
       this.fail("Could not connect the voice call. Check your network and try again, or switch to Text.", "failed_connect");
@@ -233,7 +234,7 @@ class RealtimeCall {
       case "output_audio_buffer.cleared": this.set({ speaking: false }); break;
       case "error":
         // Most realtime errors are per-event and non-fatal (e.g. cancelling an idle response). Expiry ends the call.
-        if (ev.error?.code === "session_expired") return this.fail("The voice session reached OpenAI's time limit. Your transcript so far is kept.", "provider_error");
+        if (ev.error?.code === "session_expired") return this.fail("The voice session reached its time limit. Your transcript so far is kept.", "provider_error");
         console.warn("[realtime]", ev.error?.code ?? ev.error?.type ?? "error");
         return;
     }
@@ -354,13 +355,13 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   const connected = view.phase === "connected";
   const name = scenario.aiPersona.name.split(" ")[0];
   const orbState: AgentState = grading || !connected ? "thinking" : view.speaking ? "talking" : "listening";
-  const status = view.phase === "mic" ? { label: "Allow the mic to connect", tone: "caution" as const }
-    : view.phase === "connecting" ? { label: "Connecting…", tone: "caution" as const }
-    : view.phase === "ending" ? { label: "Wrapping up…", tone: "signal" as const }
-    : view.phase === "closed" ? { label: "Call ended", tone: "caution" as const }
-    : view.muted ? { label: "Muted", tone: "caution" as const }
-    : view.speaking ? { label: `${name} is speaking`, tone: "signal" as const }
-    : { label: "Your turn", tone: "ok" as const };
+  const status = view.phase === "mic" ? { label: CALL_STATUS.allowMic, tone: "caution" as const }
+    : view.phase === "connecting" ? { label: CALL_STATUS.connecting, tone: "caution" as const }
+    : view.phase === "ending" ? { label: CALL_STATUS.wrappingUp, tone: "signal" as const }
+    : view.phase === "closed" ? { label: CALL_STATUS.ended, tone: "caution" as const }
+    : view.muted ? { label: CALL_STATUS.muted, tone: "caution" as const }
+    : view.speaking ? { label: speakingStatus(name), tone: "signal" as const }
+    : { label: CALL_STATUS.listening, tone: "ok" as const };
 
   return <>{render({ orbState, status, muted: view.muted, toggleMute, end, getInputVolume, getOutputVolume })}</>;
 }
