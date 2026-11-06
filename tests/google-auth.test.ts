@@ -401,7 +401,63 @@ describe("GET /api/auth/google/callback", () => {
     expect(res.headers.get("set-cookie")).not.toContain("authToken=");
   });
 
-  it("a lost create race (P2002) answers google_failed and does not issue a session", async () => {
+  it("a lost create race (P2002) signs in the account that won", async () => {
+    googleReplies(claims());
+    const winner = existing({ id: "u-winner", googleSub: "g-sub-1" });
+    let createTried = false;
+    mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: Record<string, string> }) => {
+      if (createTried && where.googleSub === "g-sub-1") return winner;
+      return null;
+    });
+    mocks.prisma.user.create.mockImplementation(async () => {
+      createTried = true;
+      throw new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" });
+    });
+    const res = await call();
+    expect(loc(res).pathname).toBe("/auth/complete");
+    const token = /authToken=([^;]+)/.exec(res.headers.get("set-cookie")!)![1];
+    expect(verifySessionToken(token)).toMatchObject({ id: "u-winner", email: "rep@example.test" });
+    expect(mocks.prisma.auditEvent.create.mock.calls.at(-1)![0].data).toMatchObject({
+      userId: "u-winner", action: "user.login_success", metadata: { via: "google", created: false, linked: false },
+    });
+  });
+
+  it("a lost create race that finds the same verified email links Google and signs in", async () => {
+    googleReplies(claims());
+    const winner = existing({ id: "u-mail" });
+    let createTried = false;
+    mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: Record<string, string> }) => {
+      if (createTried && where.email === "rep@example.test") return winner;
+      return null;
+    });
+    mocks.prisma.user.create.mockImplementation(async () => {
+      createTried = true;
+      throw new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" });
+    });
+    const res = await call();
+    expect(mocks.prisma.user.updateMany.mock.calls[0][0]).toMatchObject({ where: { id: "u-mail", googleSub: null }, data: { googleSub: "g-sub-1" } });
+    expect(loc(res).pathname).toBe("/auth/complete");
+    const token = /authToken=([^;]+)/.exec(res.headers.get("set-cookie")!)![1];
+    expect(verifySessionToken(token)).toMatchObject({ id: "u-mail" });
+  });
+
+  it("a lost create race does not attach to an email that already has a different Google id", async () => {
+    googleReplies(claims());
+    let createTried = false;
+    mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: Record<string, string> }) => {
+      if (createTried && where.email === "rep@example.test") return existing({ googleSub: "someone-else" });
+      return null;
+    });
+    mocks.prisma.user.create.mockImplementation(async () => {
+      createTried = true;
+      throw new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" });
+    });
+    const res = await call();
+    expect(loc(res).searchParams.get("error")).toBe("google_failed");
+    expect(res.headers.get("set-cookie")).not.toContain("authToken=");
+  });
+
+  it("a lost create race still fails when neither Google id nor email can be loaded", async () => {
     googleReplies(claims());
     mocks.prisma.user.create.mockRejectedValue(
       new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" }),
