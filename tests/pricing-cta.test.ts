@@ -5,7 +5,7 @@ import PricingCards, { tierAction } from "@/components/landing/PricingCards";
 import PricingSummary from "@/components/landing/PricingSummary";
 import PricingPage from "@/app/pricing/page";
 import Home from "@/app/page";
-import { OPEN_SOON_LINE, PREMIUM_COMING_SOON } from "@/lib/pricing";
+import { OPEN_SOON_LINE, PREMIUM_CALL_LENGTH_NOTE, PREMIUM_COMING_SOON, PREMIUM_DISCLOSURE_BOTH, PREMIUM_DISCLOSURE_PRO, PREMIUM_DISCLOSURE_TEAM, PREMIUM_NUDGE_PRO, isPremiumOnSale, premiumPriceLine } from "@/lib/pricing";
 import { billingOn } from "@/lib/serverConfig";
 
 const cards = (billingEnabled: boolean) => renderToStaticMarkup(createElement(PricingCards, { billingEnabled }));
@@ -59,13 +59,49 @@ describe("PricingCards, billing on", () => {
   });
 });
 
-describe("Premium add-on card", () => {
-  it.each([false, true])("shows the coming-soon label, the price and no button (billing %s)", (on) => {
+describe("Premium add-on row", () => {
+  it.each([false, true])("off sale: the coming-soon label, the $20 price, both plan lines and no button (billing %s)", (on) => {
     const html = cards(on);
     const addon = html.slice(html.indexOf("Add-on: Premium AI voice"));
     expect(addon).toContain(PREMIUM_COMING_SOON);
-    expect(addon).toContain("+$30");
+    expect(addon).toContain("+$20");
+    expect(addon).toContain("Premium voice: +$20 a month. 40 Premium minutes, then Standard.");
+    // Final Margin Team line (premium-voice-docs-input.md section 6), verbatim; rendered HTML escapes nothing in it.
+    expect(addon).toContain("Premium voice for Team: +$20 per seat a month, 40 pooled minutes per seat.");
     expect(addon).not.toMatch(/<a |<button|href=/);
+    expect(addon).not.toMatch(/\$30|\$300|60%/);
+  });
+
+  it("on sale: no coming-soon label, still one row under the three cards and no fourth card", () => {
+    const html = renderToStaticMarkup(createElement(PricingCards, { billingEnabled: true, premiumOnSale: true }));
+    expect(html).not.toContain(PREMIUM_COMING_SOON);
+    expect(count(html, "<section")).toBe(3);
+    expect(count(html, "Add-on: Premium AI voice")).toBe(1);
+  });
+
+  it("annual: $200, and Pro never says per seat", () => {
+    expect(premiumPriceLine("pro", "year")).toBe("Premium voice: +$200 a year. 40 Premium minutes a month, then Standard.");
+    expect(premiumPriceLine("team", "year")).toBe("Premium voice for Team: +$200 per seat a year, 40 pooled minutes per seat each month.");
+    expect(premiumPriceLine("pro", "month")).not.toMatch(/seat/);
+  });
+
+  it("final copy (Margin sections 5 and 6, disclosures adapted for the Premium call cap, Prism u63 Medium 1)", () => {
+    expect(premiumPriceLine("team", "month")).toBe("Premium voice for Team: +$20 per seat a month, 40 pooled minutes per seat.");
+    expect(PREMIUM_DISCLOSURE_TEAM).toBe("Premium minutes are pooled, 40 per seat. After the pool is used, the next call starts on Standard voice. A Premium call is capped at the Premium minutes left in your pool, and we tell you before it starts. No overages.");
+    expect(PREMIUM_DISCLOSURE_PRO).toBe("After 40 Premium minutes, the next call switches to Standard voice. A Premium call is capped at your remaining Premium minutes, and we tell you before it starts. You are never charged extra.");
+    // Never promise an uninterrupted call of any length: the Premium call has a deadline (Prism u63 Medium 1).
+    for (const s of [PREMIUM_DISCLOSURE_TEAM, PREMIUM_DISCLOSURE_PRO, PREMIUM_DISCLOSURE_BOTH, PREMIUM_CALL_LENGTH_NOTE]) expect(s).not.toMatch(/never cut|in progress/);
+    expect(PREMIUM_NUDGE_PRO).toBe("Premium minutes used. Your next call uses Standard voice, and nothing extra is charged. Premium resets on your billing date.");
+    // Pro keeps no per-seat wording anywhere; Team says pooled.
+    for (const s of [premiumPriceLine("pro", "month"), premiumPriceLine("pro", "year"), PREMIUM_DISCLOSURE_PRO, PREMIUM_NUDGE_PRO]) expect(s).not.toMatch(/seat/);
+    expect(PREMIUM_DISCLOSURE_TEAM).toMatch(/pooled/);
+    // The cap-specific note sits below the disclosure on setup and billing: no mid-call switch, and the call's deadline.
+    expect(PREMIUM_CALL_LENGTH_NOTE).toMatch(/set to end when they run out/);
+    for (const s of [PREMIUM_DISCLOSURE_TEAM, PREMIUM_DISCLOSURE_PRO, PREMIUM_NUDGE_PRO, PREMIUM_CALL_LENGTH_NOTE]) expect(s.includes(String.fromCharCode(0x2014))).toBe(false);
+  });
+
+  it("base cards keep Standard voice included", () => {
+    expect(count(cards(true), "Standard voice included")).toBe(2);
   });
 });
 
@@ -116,18 +152,39 @@ describe("pricing page", () => {
     expect(html).not.toContain("Start with Team");
   });
 
-  it("the Premium row is No, No, No, label", () => {
+  it("off sale, the Premium row is Your keys, No, then the coming-soon label on Pro and Team", () => {
     const row = html.slice(html.indexOf(">Premium AI voice</th>"));
     const cells = [...row.slice(0, row.indexOf("</tr>")).matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((m) => m[1]);
-    expect(cells).toEqual(["Your keys", "No", "No", PREMIUM_COMING_SOON]);
+    expect(cells).toEqual(["Your keys", "No", PREMIUM_COMING_SOON, PREMIUM_COMING_SOON]);
   });
 
-  it("the Premium FAQ starts with the label, says Team first and keeps the price", () => {
+  it("off sale, the Premium FAQ starts with the label, then the $20 / 40 minute terms with no overages", () => {
     const answer = html.slice(html.indexOf("What does Premium AI voice add?"));
     const text = answer.slice(answer.indexOf("<p"), answer.indexOf("</p>"));
     expect(text).toMatch(new RegExp(`^<p[^>]*>${PREMIUM_COMING_SOON.replace(/[()]/g, "\\$&")}\\.`));
-    expect(text).toContain("Team add-on first");
-    expect(text).toContain("+$30 per seat per month ($300 per seat per year)");
+    expect(text).toContain("Pro: +$20/mo with 40 Premium minutes.");
+    expect(text).toContain("Team: +$20/seat/mo with 40 Premium minutes per seat");
+    expect(text).toContain("come out of your plan minutes, not on top");
+    expect(text).toContain("No overages.");
+    expect(text).not.toMatch(/\$30|\$300|60%|Team add-on first/);
+  });
+
+  it("on sale (PREMIUM_VOICE_ON_SALE=true with billing on), the row reads No, Add-on, Add-on and the FAQ drops the label", () => {
+    vi.stubEnv("DEMO_MODE", "");
+    vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
+    vi.stubEnv("PREMIUM_VOICE_ON_SALE", "true");
+    const on = renderToStaticMarkup(createElement(PricingPage));
+    const row = on.slice(on.indexOf(">Premium AI voice</th>"));
+    const cells = [...row.slice(0, row.indexOf("</tr>")).matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((m) => m[1]);
+    expect(cells).toEqual(["Your keys", "No", "Add-on", "Add-on"]);
+    const answer = on.slice(on.indexOf("What does Premium AI voice add?"));
+    expect(answer.slice(answer.indexOf("<p"), answer.indexOf("</p>"))).not.toContain(PREMIUM_COMING_SOON);
+  });
+
+  it("only the exact string true puts Premium on sale", () => {
+    for (const v of ["TRUE", "1", "yes", " true", "false", ""]) expect(isPremiumOnSale({ PREMIUM_VOICE_ON_SALE: v })).toBe(false);
+    expect(isPremiumOnSale({})).toBe(false);
+    expect(isPremiumOnSale({ PREMIUM_VOICE_ON_SALE: "true" })).toBe(true);
   });
 
   it("prices are unchanged", () => {

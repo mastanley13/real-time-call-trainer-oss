@@ -1,4 +1,5 @@
 import { FREE_MINUTES, PRO_MINUTES, TEAM_MAX_SEATS, TEAM_MIN_SEATS, TEAM_MINUTES_PER_SEAT, type PlanTier } from "./usagePlan";
+import { PRICE as PLAN_PRICE } from "./pricing";
 
 /**
  * Wording and small pure helpers for the billing page and the call screens. Client-safe: no env, no database.
@@ -133,12 +134,11 @@ export function freeOverCapNotice(input: { plan: PlanTier | undefined; used: num
 
 export type Interval = "month" | "year";
 
-/** Display prices in dollars. Annual is ten months for twelve. The Stripe prices are the source of truth at checkout. */
-export const PRICE = {
-  pro: { month: 29, year: 290 },
-  team: { month: 59, year: 590 },
-  premium: { month: 30, year: 300 },
-} as const;
+/**
+ * Display prices in dollars. Annual is ten months for twelve. The Stripe prices are the source of truth at checkout.
+ * The same object as pricing.ts, so the billing page and the pricing page cannot drift (Premium: $20/mo, $200/yr).
+ */
+export const PRICE = PLAN_PRICE;
 
 const per = (i: Interval) => (i === "month" ? "month" : "year");
 
@@ -147,7 +147,181 @@ export function planPriceLine(plan: "pro" | "team", interval: Interval): string 
   return `$${PRICE.team[interval]} per seat per ${per(interval)}, ${TEAM_MIN_SEATS} seats minimum. ${TEAM_MINUTES_PER_SEAT} pooled minutes per seat each month.`;
 }
 
-export const premiumLabel = (interval: Interval): string => `Add Premium Voice (+$${PRICE.premium[interval]} per seat per ${per(interval)})`;
+/** The new-buyer checkbox label. Pro is one account, so it never says "per seat". */
+export const premiumLabel = (interval: Interval, plan: "pro" | "team" = "team"): string =>
+  `Add Premium voice (+$${PRICE.premium[interval]}${plan === "team" ? " per seat" : ""} per ${per(interval)})`;
+
+// ---- Premium voice: setup, live call, results and billing ---------------------------------------------------
+
+/** What the call setup and billing page know about Premium, from /api/usage. Never a model id. */
+export interface PremiumSnapshot {
+  /** Entitled now: Premium minutes this period. */
+  enabled: boolean;
+  /** Whole Premium minutes left that a new call can use. */
+  remaining: number;
+  /** Premium minutes this period (40 per unit; Team scaled by min(add-on quantity, seats)). */
+  cap: number;
+  plan: "pro" | "team" | "free";
+  /** Premium can be bought on this server now (PREMIUM_VOICE_ON_SALE). */
+  onSale: boolean;
+  /** This person may buy or change it (Pro subscriber, Team owner) AND the organization has a graded call. */
+  canBuy: boolean;
+  /**
+   * The organization has at least one graded call, so Premium may be offered at all (spec 10.2, Triage B3). Decided by
+   * the server from stored graded sessions (src/lib/premiumOffer.ts), never from a local count.
+   */
+  offerReady: boolean;
+  /** The organization is comped for Premium and set to it (calls run Premium without paid minutes). */
+  comped: boolean;
+  /** ISO date a scheduled removal takes effect, or null. */
+  removeAt: string | null;
+  /** The add-on is on the account (it may still be off, for example during a Stripe trial). Missing means no. */
+  configured?: boolean;
+  /** This person may change the add-on (the Pro subscriber, the Team owner), whatever the graded-call gate. */
+  canManage?: boolean;
+  /** The billing subject's subscription is in a Stripe trial, so paid Premium waits for the paid plan (Triage B2). */
+  trialing?: boolean;
+}
+
+// ---- Stripe trial (Prism u63 Medium 2) -------------------------------------------------------------------------
+// Paid Premium is not part of a Stripe trial. Nothing is unpaid, so no "paused" or payment wording, and an owner is
+// never sent to an admin.
+
+/** Setup and billing, for the owner of an add-on that is already on the plan during a trial. */
+export const PREMIUM_STARTS_AFTER_TRIAL = "Premium voice starts when your trial ends.";
+/** Billing, after PREMIUM_STARTS_AFTER_TRIAL: what calls use meanwhile. */
+export const PREMIUM_TRIAL_STANDARD_NOTE = "Until then, calls use Standard voice.";
+/** Setup and billing, for an owner during a trial when the add-on is not on the plan yet. */
+export const PREMIUM_AFTER_TRIAL = "Premium voice can be added once your trial ends and your plan is active.";
+/** Billing status chip for an add-on that waits for the trial to end. Not "Paused": nothing failed. */
+export const PREMIUM_TRIAL_STATUS = "Starts after trial";
+/** The setup line for the waiting_trial state. */
+export const premiumTrialLine = (p: Pick<PremiumSnapshot, "configured">): string => (p.configured ? PREMIUM_STARTS_AFTER_TRIAL : PREMIUM_AFTER_TRIAL);
+
+// ---- Standard or Premium for this call (Prism finding 1) -------------------------------------------------------
+
+export type VoiceChoice = "premium" | "standard";
+/** Where the setup remembers the rep's last pick. A preference only: the server decides what the call may run on. */
+export const VOICE_CHOICE_KEY = "rtct.voiceTier";
+/** The stored pick, or Premium (the default for anyone entitled) when nothing valid is stored. */
+export const readVoiceChoice = (raw: string | null | undefined): VoiceChoice => (raw === "standard" ? "standard" : "premium");
+
+/**
+ * Whether the setup offers the Standard or Premium choice: only when this call could actually run Premium (paid
+ * Premium with at least one whole minute left, or a comped organization on Premium). Otherwise every call is Standard
+ * and there is nothing to choose.
+ */
+export const premiumChoiceAvailable = (p: PremiumSnapshot | null): boolean => !!p && ((p.enabled && p.remaining >= 1) || p.comped);
+
+/** The longest call the server reserves at once (usagePlan MAX_RESERVE_MINUTES). */
+const MAX_CALL_RESERVE_MINUTES = 60;
+
+/**
+ * Prism finding 2. When paid Premium is chosen and fewer whole Premium minutes are left than this call would otherwise
+ * get (the plan's own minutes left, at most one reservation), the server ends THIS call when the Premium minutes run
+ * out (its normal deadline, usage.ts beginCall). Returns those minutes, or null when the Premium minutes are not what
+ * limits the call. Never promises more than the server will reserve: the plan's own, lower limit is shown elsewhere.
+ */
+export function premiumCallLimitMinutes(premiumRemaining: number, planRemaining: number): number | null {
+  const left = Math.floor(premiumRemaining);
+  const planned = Math.min(Math.max(1, Math.ceil(planRemaining)), MAX_CALL_RESERVE_MINUTES);
+  return left >= 1 && left < planned ? left : null;
+}
+
+const minutesText = (n: number) => `${n} ${n === 1 ? "minute" : "minutes"}`;
+
+/** Setup: "This Premium call ends after 2 minutes, when your Premium minutes run out. Your next call uses Standard voice." */
+export const premiumCallLimitNotice = (minutes: number): string =>
+  `This Premium call ends after ${minutesText(minutes)}, when your Premium minutes run out. Your next call uses Standard voice.`;
+
+/** "2 minutes", or "1 minute 30 seconds" when the deadline is not whole minutes, from the server's maxSeconds. */
+export function callLengthLabel(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const m = Math.floor(s / 60);
+  const rest = s % 60;
+  if (!rest) return minutesText(m);
+  const sec = `${rest} ${rest === 1 ? "second" : "seconds"}`;
+  return m ? `${minutesText(m)} ${sec}` : sec;
+}
+
+/** Live call, aria-live polite, from the server's deadline for THIS call: when it ends, and that the next is Standard. */
+export const liveCallLimitNotice = (maxSeconds: number): string =>
+  `This call ends after ${callLengthLabel(maxSeconds)}, when your Premium minutes run out. Your next call uses Standard voice.`;
+
+/** The neutral answer when Premium is asked for before the organization's first graded call. */
+export const PREMIUM_NEEDS_GRADED_CALL = "Premium voice can be added after your first graded practice call. Finish a call and get its score, then try again.";
+
+/** "Premium: 12 of 40 min left". */
+export const premiumLeftLabel = (p: Pick<PremiumSnapshot, "remaining" | "cap">): string => `Premium: ${formatMinutes(p.remaining)} of ${formatMinutes(p.cap)} min left`;
+
+export const ADD_PREMIUM_LABEL = "Add Premium voice";
+export const ASK_ADMIN_PREMIUM = "Ask your admin";
+/** Live call, shown once (aria-live polite) when this Premium call holds the last Premium minutes. */
+export const NEXT_CALL_STANDARD_NOTICE = "Your Premium minutes are used up after this call. Your next call uses Standard voice.";
+/** The call screen notice on a Free organization's one Premium trial call (PREMIUM_TRIAL_SAMPLE_ON). */
+export const TRIAL_CALL_NOTICE = "Your team's Premium voice trial call, up to 5 minutes. Later calls use Standard voice.";
+/** A Logbook or history entry's voice: the server's neutral label, or null for anything else. Never guessed. */
+export const voiceOfListEntry = (v: unknown): "premium" | "standard" | null => (v === "premium" || v === "standard" ? v : null);
+/** Live call voice label. Static for the whole call: the voice never changes mid-call. */
+export const voiceLabel = (tier: "premium" | "standard"): string => (tier === "premium" ? "Premium voice" : "Standard voice");
+/** Billing page line for a scheduled removal. */
+export const premiumFallbackLine = (dateIso: string | null | undefined): string => {
+  const d = formatResetDate(dateIso ?? undefined);
+  return d ? `Falls back to Standard on ${d}.` : "Falls back to Standard at the end of this billing period.";
+};
+
+/** Premium state from a /api/usage response, or null when minutes are not metered or the answer is unusable. */
+export function premiumSnapshotFromUsage(data: unknown): PremiumSnapshot | null {
+  const d = data as {
+    metered?: unknown; plan?: unknown;
+    premiumVoice?: { enabled?: unknown; configured?: unknown; remaining?: unknown; minutesCap?: unknown; onSale?: unknown; canBuy?: unknown; canManage?: unknown; offerReady?: unknown; comped?: unknown; removeAt?: unknown };
+    billing?: { status?: unknown };
+  } | null;
+  const p = d?.premiumVoice;
+  if (d?.metered !== true || !p || typeof p.remaining !== "number" || typeof p.minutesCap !== "number") return null;
+  if (!Number.isFinite(p.remaining) || !Number.isFinite(p.minutesCap)) return null;
+  const plan = d.plan === "pro" || d.plan === "team" ? d.plan : "free";
+  return {
+    enabled: p.enabled === true,
+    remaining: Math.max(0, p.remaining),
+    cap: Math.max(0, p.minutesCap),
+    plan,
+    onSale: p.onSale === true,
+    canBuy: p.canBuy === true,
+    offerReady: p.offerReady === true,
+    comped: p.comped === true,
+    removeAt: typeof p.removeAt === "string" ? p.removeAt : null,
+    configured: p.configured === true,
+    // Older answers without canManage fall back to canBuy, as the billing control does.
+    canManage: (p.canManage ?? p.canBuy) === true,
+    trialing: d.billing?.status === "trialing",
+  };
+}
+
+export type PremiumSetupKind = "left" | "used_up" | "locked_buy" | "locked_ask" | "waiting_trial" | "none";
+
+/**
+ * What the call setup shows for Premium. `left` with the count; `used_up` with the nudge (calls continue on Standard);
+ * `locked` with Add Premium voice (a buyer) or Ask your admin (a Team member); `waiting_trial` for the owner during a
+ * Stripe trial (premiumTrialLine, no admin line); nothing on Free, when Premium is off sale and not on the account (no
+ * new paid controls while the sale is off), or before the organization's first graded call (spec 10.2: never offered
+ * before it, unless the add-on is already on the plan).
+ */
+export function premiumSetupState(p: PremiumSnapshot | null): { kind: PremiumSetupKind } {
+  if (!p || p.plan === "free") return { kind: "none" };
+  if (p.enabled) return { kind: p.remaining >= 1 ? "left" : "used_up" };
+  if (!p.onSale) return { kind: "none" };
+  if (p.trialing && p.canManage && (p.configured || p.offerReady)) return { kind: "waiting_trial" };
+  if (!p.offerReady) return { kind: "none" };
+  return { kind: p.canBuy ? "locked_buy" : "locked_ask" };
+}
+
+/** "$12.34" from cents. Currency code shown only when it is not USD. */
+export function formatCents(cents: number | null | undefined, currency = "usd"): string {
+  if (cents == null || !Number.isFinite(cents)) return "Unavailable";
+  const amount = (cents / 100).toFixed(2);
+  return currency.toLowerCase() === "usd" ? `$${amount}` : `${amount} ${currency.toUpperCase()}`;
+}
 
 /** The Pro button: a Team member already has Pro's minutes, so it says so. */
 export function proButtonLabel(plan: PlanTier | undefined): string {

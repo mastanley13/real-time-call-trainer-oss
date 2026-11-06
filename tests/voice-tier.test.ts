@@ -138,9 +138,21 @@ describe("voice tier config", () => {
     expect(effectiveVoiceTier("standard", true)).toBe("standard");
   });
 
-  it("has no paid-engine path onto Premium: the comped gate is the only one", () => {
-    // The paid Premium Voice add-on is metered in src/lib/usage.ts and never picks the model (see usage-hardening.test.ts).
-    expect(Object.keys(voiceTierModule)).not.toContain("mintVoiceTier");
+  it("has exactly three paths onto Premium: the comped gate, the verified paid entitlement, or a claimed Free trial call", () => {
+    // Merge decision (anvil/premium-voice): main's #61 rule that the paid ENGINE never picks the model still holds. The
+    // Premium model is reached only from what beginCall verified in the database: the paid entitlement
+    // (PREMIUM_VOICE_ON_SALE exactly "true", active only (never trialing), add-on quantity, period end, Premium minutes left) or
+    // the organization's one atomically claimed trial call (PREMIUM_TRIAL_SAMPLE_ON exactly "true"). An engine choice
+    // or a stored flag alone never reaches it; see usage-hardening.test.ts, premium-voice.test.ts, premium-trial.test.ts.
+    const { mintVoiceTier } = voiceTierModule;
+    expect(mintVoiceTier("premium", { paidPremium: false })).toBe("premium");
+    expect(mintVoiceTier("standard", { paidPremium: true })).toBe("premium");
+    expect(mintVoiceTier("standard", { paidPremium: false, trialSample: true })).toBe("premium");
+    expect(mintVoiceTier("standard", { paidPremium: false })).toBe("standard");
+    expect(mintVoiceTier("standard", { paidPremium: false, trialSample: false })).toBe("standard");
+    // A stored premium tier without the comped flag is Standard before it ever reaches mintVoiceTier.
+    expect(mintVoiceTier(effectiveVoiceTier("premium", false), { paidPremium: false })).toBe("standard");
+    expect(mintVoiceTier(effectiveVoiceTier("premium", null), { paidPremium: false })).toBe("standard");
   });
 
   it("lets owners of comped orgs and platform admins change it, nobody else", () => {

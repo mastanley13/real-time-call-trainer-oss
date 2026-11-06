@@ -38,3 +38,17 @@ export function effectiveVoiceTier(tier: unknown, comped: boolean | null | undef
 export function canEditVoiceTier(role: string | null | undefined, isPlatformAdmin: boolean, comped: boolean | null | undefined): boolean {
   return canSetVoiceTier(role, isPlatformAdmin) && (comped === true || isPlatformAdmin);
 }
+
+/**
+ * The tier /api/realtime/session mints a call on. Exactly three ways onto Premium:
+ * - the organization is comped AND set to premium (`orgTier`, from effectiveVoiceTier), or
+ * - the usage meter started this call on the paid Premium Voice entitlement (`paidPremium`): PREMIUM_VOICE_ON_SALE
+ *   exactly "true", an active (not trialing) subscription with the add-on and a period that has not ended, and at least
+ *   one Premium minute left. beginCall decides that from the database; a stored add-on flag alone never qualifies, or
+ * - the usage meter claimed this Free organization's one Premium trial call for this call (`trialSample`):
+ *   PREMIUM_TRIAL_SAMPLE_ON exactly "true" and an atomic, permanent claim on the organization (src/lib/premiumTrial.ts).
+ * Everything else is Standard. This only picks the model; minute caps and engineTier are the meter's.
+ */
+export function mintVoiceTier(orgTier: VoiceTier, paid: { paidPremium: boolean; trialSample?: boolean }): VoiceTier {
+  return orgTier === "premium" || paid.paidPremium || paid.trialSample === true ? "premium" : "standard";
+}

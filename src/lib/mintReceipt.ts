@@ -23,6 +23,10 @@ import { Prisma } from "@prisma/client";
  *   hits a unique violation and is stored without a model.
  * Single use keys on the call id, never on the receipt string, so re-encoding a receipt does not reopen it.
  *
+ * The effective voice tier is not sealed separately: a metered call's tier is written on its own row at mint
+ * (src/lib/voiceMintLog.ts), and the tier a logged model stands for on an unmetered save is resolved on the server
+ * from the model id (src/lib/voiceTierServer.ts tierOfModel), so the receipt keeps exactly this shape.
+ *
  * Format: "mr3." + base64url(iv[12] | ciphertext[PLAINTEXT_BYTES] | tag[16]).
  */
 

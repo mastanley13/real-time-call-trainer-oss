@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   beginCall: vi.fn(),
   endCall: vi.fn(),
   prisma: {
-    trainerSession: { findUnique: vi.fn(), update: vi.fn() },
+    trainerSession: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     user: { findUnique: vi.fn() },
     auditEvent: { create: vi.fn() },
     $transaction: vi.fn(),
@@ -84,7 +84,7 @@ beforeEach(() => {
   mocks.beginCall.mockReset();
   mocks.endCall.mockReset();
   mocks.endCall.mockResolvedValue(null);
-  for (const f of [mocks.prisma.trainerSession.findUnique, mocks.prisma.trainerSession.update, mocks.prisma.user.findUnique, mocks.prisma.auditEvent.create, mocks.prisma.$transaction]) f.mockReset();
+  for (const f of [mocks.prisma.trainerSession.findUnique, mocks.prisma.trainerSession.update, mocks.prisma.trainerSession.updateMany, mocks.prisma.user.findUnique, mocks.prisma.auditEvent.create, mocks.prisma.$transaction]) f.mockReset();
   logs = [];
   for (const level of ["log", "info", "warn", "error"] as const) {
     vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
@@ -412,13 +412,20 @@ describe("POST /api/realtime/session", () => {
     vi.stubEnv("USAGE_CAPS", "on");
     vi.stubEnv("JWT_SECRET", JWT);
     mocks.prisma.user.findUnique.mockResolvedValue(null);
-    mocks.beginCall.mockResolvedValue({ ok: true, callId: CALL_ID, remaining: 100, pooled: false, engine: "standard", maxSeconds: 300 });
+    // A Standard mint under the Premium Voice contract: no paid, comped or trial Premium on this call.
+    mocks.beginCall.mockResolvedValue({
+      ok: true, callId: CALL_ID, remaining: 100, pooled: false, engine: "standard", maxSeconds: 300,
+      premium: { source: null, cap: 0, leftAfter: 0, fallback: null, nextCallStandard: false },
+    });
+    // recordMintedVoice (src/lib/voiceMintLog.ts) must log exactly one row, or the route withholds the secret.
+    mocks.prisma.trainerSession.updateMany.mockResolvedValue({ count: 1 });
   };
   const mint = () =>
     sessionPOST(new NextRequest("http://localhost/api/realtime/session", {
       method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": ip() }, body: JSON.stringify({ scenario }),
     }));
-  const METERED_KEYS = ["callId", "clientSecret", "expiresAt", "maxSeconds", "receipt", "sessionId", "voice"];
+  // A metered mint also carries the neutral tier labels (voiceTrial only on a trial call, never here).
+  const METERED_KEYS = ["callId", "clientSecret", "expiresAt", "maxSeconds", "nextCallStandard", "receipt", "sessionId", "voice", "voiceTier"];
 
   it("on exhaustion: 503 realtime_unavailable with Retry-After, beginCall once and endCall once with the same callId", async () => {
     metered();
@@ -454,6 +461,9 @@ describe("POST /api/realtime/session", () => {
     expect(body.sessionId).toBe(CALL_ID);
     expect(body.callId).toBe(CALL_ID);
     expect(body.maxSeconds).toBe(300);
+    expect(body.voiceTier).toBe("standard");
+    expect(body.nextCallStandard).toBe(false);
+    expect(body).not.toHaveProperty("voiceTrial");
     expect(verifyMintReceipt(body.receipt, mocks.user.id, body.sessionId)).toEqual(expect.any(String));
     expect(calls.map((c) => c.slot)).toEqual([0, 1]);
     // Both attempts sent the same session payload.
@@ -592,8 +602,8 @@ describe("compatibility boundaries", () => {
   it("capabilities: llm is true with only a backup slot on the OpenAI base, and /api/config fields are unchanged", () => {
     slots(1);
     const caps = getCapabilities();
-    expect(caps).toMatchObject({ llm: true, realtime: true, provider: "openai" });
-    expect(Object.keys(caps).sort()).toEqual(["billing", "database", "demoMode", "elevenlabs", "hosted", "llm", "provider", "realtime", "voiceEngines"]);
+    expect(caps).toMatchObject({ llm: true, realtime: true, provider: "openai", premiumOnSale: false });
+    expect(Object.keys(caps).sort()).toEqual(["billing", "database", "demoMode", "elevenlabs", "hosted", "llm", "premiumOnSale", "provider", "realtime", "voiceEngines"]);
   });
 });
 

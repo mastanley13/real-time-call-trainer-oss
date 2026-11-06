@@ -33,8 +33,23 @@ model Organization {
   planTier  String   @default("free")
   /// Paid seats on the Team plan; the voice pool is seatCount x 300 minutes. 1 while on Free.
   seatCount Int      @default(1)
-  /// Premium Voice add-on (quantity = seats). Premium voice is capped at 60% of plan minutes.
+  /// Premium Voice add-on (quantity = seats). 40 Premium minutes per unit a month, taken from the plan pool
+  /// (src/lib/premiumVoice.ts). Set by the webhook only.
   premiumVoice Boolean @default(false)
+  /// Quantity of the Premium Voice add-on item on the subscription. The pool is 40 x min(this, seatCount).
+  premiumVoiceQuantity Int @default(0)
+  /// The subscription's current_period_end as Stripe last reported it. Premium needs it in the future.
+  subscriptionPeriodEnd DateTime?
+  /// When a scheduled removal of the add-on takes effect (period end). Null when none is scheduled.
+  premiumVoiceRemoveAt DateTime?
+  /// Seat count the subscription drops to at renewal when a seat decrease is scheduled. Null when none is.
+  seatCountAtRenewal Int?
+  /// Premium suspended by a failed payment, and the invoice that failed. Cleared only by invoice.paid for that invoice.
+  premiumSuspendedAt        DateTime?
+  premiumSuspendedInvoiceId String?
+  /// The app's own subscription schedule while its setup is unfinished (JSON: subscription, attempt key, schedule id
+  /// once known), so a retried removal or seat decrease resumes or releases it. Null when no setup is in flight.
+  premiumScheduleRef String?
   /// Stripe ids (test mode only for now). Set by the webhook, never by the client.
   stripeCustomerId     String? @unique
   stripeSubscriptionId String? @unique
@@ -55,6 +70,10 @@ model Organization {
   voiceModelTier   String?
   /// Set by hand in the database, never by the API. Null or false means the org is not comped for Premium.
   voiceModelComped Boolean?
+  /// The organization's one Premium voice trial call (PREMIUM_TRIAL_SAMPLE_ON): when it was claimed and the call id that
+  /// claimed it. Written once, at mint, by a conditional update; never cleared. Null means not claimed.
+  premiumTrialCallUsedAt    DateTime?
+  premiumTrialCallSessionId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -99,6 +118,14 @@ model User {
   /// Individual plan: free | pro. Team members draw from their organization's pool instead.
   planTier         String   @default("free")
   premiumVoice     Boolean  @default(false)
+  /// See Organization: add-on item quantity (Pro is 1), subscription period end and scheduled removal.
+  premiumVoiceQuantity  Int     @default(0)
+  subscriptionPeriodEnd DateTime?
+  premiumVoiceRemoveAt  DateTime?
+  /// See Organization: failed-payment Premium suspension, and the unfinished schedule setup marker.
+  premiumSuspendedAt        DateTime?
+  premiumSuspendedInvoiceId String?
+  premiumScheduleRef        String?
   stripeCustomerId     String? @unique
   stripeSubscriptionId String? @unique
   subscriptionStatus   String?
@@ -166,11 +193,17 @@ model TrainerSession {
   allowancePeriodStart DateTime?
   /// Minutes held for this call at mint time. Also the server-side maximum length of the call.
   reservedMinutes    Int      @default(0)
-  /// Voice engine the session was minted for: "premium" or "standard".
+  /// Billing engine the session was minted on: "premium" (paid Premium minutes) or "standard". A comped call is standard here.
   engineTier         String   @default("standard")
-  /// OpenAI Realtime model id the call was minted with, from a verified mint receipt (src/lib/mintReceipt.ts).
-  /// Cost log only; billing reads engineTier. Null for text, ElevenLabs and unverified calls.
+  /// Effective voice tier the call ran on ("premium" or "standard"), written by the server at mint for every metered call
+  /// (and from a verified receipt for an unmetered save). Comped Premium is "premium" here. Null for text calls.
+  voiceTier          String?
+  /// OpenAI Realtime model id the call was minted with. Written server-side after a successful mint for metered calls
+  /// (src/lib/voiceMintLog.ts), or from a verified mint receipt on save (src/lib/mintReceipt.ts). Cost log only; billing
+  /// reads engineTier; never returned. Null for text, ElevenLabs and unverified calls.
   realtimeModel      String?
+  /// True for the one call that ran as its organization's Premium trial: its deadline is min(existing deadline, 300 s).
+  premiumTrial       Boolean  @default(false)
   /// Of reservedMinutes, how many were also held against the Premium limit. Minutes beyond this book as standard.
   premiumReservedMinutes Int  @default(0)
   /// What this open call holds in the NEXT period when the period rolled over mid-call (set by the rollover).
@@ -229,7 +262,10 @@ model UsageAllowance {
   /// Minutes held by calls that have started and not settled. A new call can only take what is left after
   /// used and reserved, which is what stops two calls from spending the same minutes.
   minutesReserved Int     @default(0)
-  /// Net minutes this period that ran on the premium voice engine (the 60% Premium limit counts these).
+  /// Premium minutes this period: 40 per entitlement unit, part of minutesCap (not extra). Re-derived at every resolve
+  /// from the owner's row, so a lapsed or removed add-on is 0 for the next call.
+  premiumMinutesCap Int    @default(0)
+  /// Net minutes this period that ran on the paid Premium engine (premiumMinutesCap counts these).
   premiumMinutesUsed Int  @default(0)
   /// Premium minutes held by open calls. Premium is only chosen for a call while used + reserved is under the limit.
   premiumMinutesReserved Int @default(0)

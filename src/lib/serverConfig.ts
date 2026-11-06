@@ -4,6 +4,8 @@ import { OPENAI_DEFAULT_BASE_URL, isOpenAiBaseUrl } from "./openaiHost";
 import { chatKeyPlan, voiceKeyPlan } from "./openaiKeys";
 import { orderVoiceEngines } from "./realtime";
 import { stripeReady, stripeStatus } from "./stripe";
+import { isPremiumOnSale } from "./pricing";
+import { isTrialSampleOn } from "./premiumTrial";
 
 /**
  * Voice minutes are metered for stored accounts (not demo mode, with a database) when USAGE_CAPS=on or Stripe is
@@ -25,6 +27,20 @@ export const billingActive = (env: Record<string, string | undefined> = process.
  * missing one, or demo mode reads as off and the buttons show the billing-off state.
  */
 export const billingOn = (env: Record<string, string | undefined> = process.env): boolean => stripeReady(env);
+
+/**
+ * Premium Voice is on sale: PREMIUM_VOICE_ON_SALE is exactly "true" AND billing is on. Default off. Gates purchases
+ * (checkout premium:true, add to an existing subscription, the buy controls), the add-on quantity sync, and paid
+ * Premium at mint (usage.ts ensureAllowance). Never comped Premium, and never removal.
+ */
+export const premiumOnSale = (env: Record<string, string | undefined> = process.env): boolean => isPremiumOnSale(env) && billingOn(env);
+
+/**
+ * The Free organization Premium trial call is offered: PREMIUM_TRIAL_SAMPLE_ON is exactly "true" and not demo mode.
+ * Default off. Independent of PREMIUM_VOICE_ON_SALE and of billing (a USAGE_CAPS=on install without Stripe is all Free
+ * and may offer it). Read at every mint (usage.ts beginCall); see src/lib/premiumTrial.ts for who is eligible.
+ */
+export const premiumTrialSampleOn = (env: Record<string, string | undefined> = process.env): boolean => isTrialSampleOn(env) && env.DEMO_MODE !== "true";
 
 type Env = Record<string, string | undefined>;
 
@@ -69,6 +85,8 @@ export function getCapabilities() {
     billing: billingOn(),
     /** Hosted build: Stripe is configured (billingActive). The header hides the AI status chip from non-admins. */
     hosted: billingActive(),
+    /** Premium Voice is on sale (PREMIUM_VOICE_ON_SALE=true with billing on). False hides every Premium buy control. */
+    premiumOnSale: premiumOnSale(),
     /** "openai" when LLM_BASE_URL is unset or points at api.openai.com; the URL itself is never exposed. */
     provider: isOpenAiBaseUrl(llmBaseUrl()) ? ("openai" as const) : ("custom" as const),
   };

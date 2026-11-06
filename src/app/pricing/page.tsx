@@ -4,10 +4,10 @@ import ComparePlans, { type CompareRow } from "@/components/landing/ComparePlans
 import PricingCards from "@/components/landing/PricingCards";
 import PublicFooter from "@/components/landing/PublicFooter";
 import {
-  FREE_SUMMARY, FREE_VOICE_MIN, MINUTES_ROUNDED_NOTE, PREMIUM_VOICE_CAP_PCT, PREMIUM_COMING_SOON, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT, registerHref,
+  FREE_SUMMARY, FREE_VOICE_MIN, MINUTES_ROUNDED_NOTE, PREMIUM_COMING_SOON, PREMIUM_FAQ, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT, registerHref,
 } from "@/lib/pricing";
 import { GITHUB_URL, pageMetadata } from "@/lib/seo";
-import { billingOn } from "@/lib/serverConfig";
+import { billingOn, premiumOnSale } from "@/lib/serverConfig";
 
 // The plan buttons depend on whether billing is on, which is read from the server environment on each request.
 export const dynamic = "force-dynamic";
@@ -18,7 +18,15 @@ export const metadata = pageMetadata({
   path: "/pricing",
 });
 
-const COMPARE: CompareRow[] = [
+/** Premium AI voice row: Free No, Pro Add-on, Team Add-on. Off sale, the paid cells carry the coming-soon label. */
+const premiumCompareRow = (onSale: boolean): CompareRow => ({
+  feature: "Premium AI voice", self: "Your keys", free: "No", pro: onSale ? "Add-on" : PREMIUM_COMING_SOON, team: onSale ? "Add-on" : PREMIUM_COMING_SOON,
+});
+
+/** The Premium FAQ answer. Off sale it leads with the coming-soon label, then the same terms. */
+const premiumFaqAnswer = (onSale: boolean): string => (onSale ? PREMIUM_FAQ : `${PREMIUM_COMING_SOON}. ${PREMIUM_FAQ}`);
+
+const COMPARE_BASE: CompareRow[] = [
   { feature: "Price", self: "$0, you pay your own API bill", free: "$0",
     pro: { month: `$${PRICE.pro.month}/mo`, year: `$${PRICE.pro.year}/yr` },
     team: { month: `$${PRICE.team.month}/seat/mo, ${TEAM_MIN_SEATS}-seat min`, year: `$${PRICE.team.year}/seat/yr, ${TEAM_MIN_SEATS}-seat min` } },
@@ -34,13 +42,18 @@ const COMPARE: CompareRow[] = [
   { feature: "Team view for managers", self: "You host it", free: "No", pro: "No", team: "Managed" },
   { feature: "Assignments", self: "You host it", free: "No", pro: "No", team: "Yes" },
   { feature: "MFA", self: "You configure it", free: "Yes", pro: "Yes", team: "Enforced for team" },
-  { feature: "Premium AI voice", self: "Your keys", free: "No", pro: "No", team: PREMIUM_COMING_SOON },
   { feature: "Updates and backups", self: "You handle them", free: "Automatic", pro: "Automatic", team: "Automatic" },
   { feature: "Support", self: "GitHub community", free: "Community", pro: "Email", team: "Priority email" },
   { feature: "Overage charges", self: "None", free: "None", pro: "None", team: "None" },
 ];
 
-const FAQ: { q: string; a: string }[] = [
+/** The table with the Premium row in its old place (after MFA, before Updates and backups). */
+function compareRows(onSale: boolean): CompareRow[] {
+  const at = COMPARE_BASE.findIndex((r) => r.feature === "Updates and backups");
+  return [...COMPARE_BASE.slice(0, at), premiumCompareRow(onSale), ...COMPARE_BASE.slice(at)];
+}
+
+const FAQ_BASE: { q: string; a: string }[] = [
   { q: "What do I get on Free?", a: FREE_SUMMARY },
   { q: "What happens when I hit my voice minute cap?", a: "Voice calls pause until your next billing cycle. We never charge overages, ever. The text sim stays fully available, so you can keep practicing, get coached and get graded. You can upgrade anytime if you want more voice minutes now." },
   { q: "Will I ever get a surprise bill?", a: "No. There are no overage charges on any plan. Your price is your price, whatever you use." },
@@ -53,13 +66,16 @@ const FAQ: { q: string; a: string }[] = [
   { q: "How do Team minutes work?", a: `Each seat adds ${TEAM_VOICE_MIN_PER_SEAT} voice minutes to one shared pool. A rep who practices more can use minutes a lighter user does not. When the pool runs out, voice pauses for the team and the text sim stays on.` },
   { q: "Why a 3-seat minimum on Team?", a: "Team view and assignments are built for a manager coaching several reps. Solo reps get the best value on Pro." },
   { q: "What are reviewed persona packs?", a: "Industry buyer sets, like final expense, Medicare, P&C insurance and residential solar, with realistic objections and grading tuned to that sale. Each pack is reviewed before release. They are coming soon to Pro and Team." },
-  { q: "What does Premium AI voice add?", a: `${PREMIUM_COMING_SOON}. It will be a Team add-on first. The full realtime voice model for your buyers, more natural and expressive. It can use up to ${PREMIUM_VOICE_CAP_PCT}% of your plan minutes. After that, calls fall back to standard voice and never stop. It costs +$${PRICE.premium.month} per seat per month ($${PRICE.premium.year} per seat per year).` },
+  { q: "What does Premium AI voice add?", a: "" },
   { q: "How does annual billing work?", a: `Pay for 10 months, get 12. Pro is $${PRICE.pro.year} a year. Team is $${PRICE.team.year} per seat per year.` },
   { q: "Can I cancel anytime?", a: "Yes. Cancel anytime from Settings > Billing and your access continues until the end of the period you paid for. There are no refunds. Payments to StrategixAI LLC are non-refundable except where the law requires." },
   { q: "What happens to my data?", a: "Transcripts are kept until an admin sets a retention window. No call audio is stored on our servers." },
 ];
 
 export default function PricingPage() {
+  const onSale = premiumOnSale();
+  const COMPARE = compareRows(onSale);
+  const FAQ = FAQ_BASE.map((f) => (f.q === "What does Premium AI voice add?" ? { ...f, a: premiumFaqAnswer(onSale) } : f));
   return (
     <div>
       <section className="border-b border-line">
@@ -79,7 +95,7 @@ export default function PricingPage() {
 
       <BillingProvider>
         <section id="plans" className="page py-12 sm:py-14" aria-label="Plans">
-          <PricingCards billingEnabled={billingOn()} />
+          <PricingCards billingEnabled={billingOn()} premiumOnSale={onSale} />
           <p className="mt-4 text-sm text-ink-muted">No overage charges on any plan. Free has no card and resets monthly from your signup date, with no rollover.</p>
         </section>
 

@@ -8,9 +8,10 @@ import { CALL_TYPE_LABELS, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps, typ
 import { VOICE_ENGINE_LABELS, averageLevel, micErrorMessage, type VoiceEngine } from "@/lib/realtime";
 import type { Capabilities } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
-import { isCapMessage, type UsageSnapshot } from "@/lib/billingUi";
+import { isCapMessage, premiumCallLimitMinutes, premiumCallLimitNotice, premiumChoiceAvailable, premiumLeftLabel, voiceLabel, type PremiumSnapshot, type UsageSnapshot, type VoiceChoice } from "@/lib/billingUi";
 import CallError from "./CallError";
 import MinutesLeft from "./MinutesLeft";
+import PremiumMinutes from "./PremiumMinutes";
 import VoiceUnavailable, { VOICE_UNAVAILABLE_ID } from "./VoiceUnavailable";
 import { ModeDial, radioKeys } from "./CopilotRail";
 
@@ -124,7 +125,43 @@ function MicCheck({ onResult }: { onResult: (r: MicResult) => void }) {
   );
 }
 
-export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, usage, canUpgrade = true, usageUnavailable }: {
+/**
+ * Standard or Premium for this call, for anyone who can run Premium now (Prism finding 1). Premium is the default; a
+ * rep may pick Standard to save Premium minutes. Native fieldset, legend and radio inputs, so arrow keys move the
+ * single selection and a screen reader hears the group name and the choice.
+ * Pattern reference (semantics only, not visuals): Calm's language setting, a single-choice list of labeled rows with
+ * one visible selected marker, https://mobbin.com/screens/5a84112e-6cb6-404b-87c1-f484abd4f561 . Drawn with the app's
+ * own tokens; no new icons.
+ * The pick is a request: the server rechecks the entitlement at mint, so Premium without one is still Standard.
+ */
+export function VoiceChoiceField({ premium, usage, value, onChange }: { premium: PremiumSnapshot; usage: UsageSnapshot | null; value: VoiceChoice; onChange: (c: VoiceChoice) => void }) {
+  const limit = value === "premium" && !premium.comped && premium.enabled ? premiumCallLimitMinutes(premium.remaining, usage?.remaining ?? Number.POSITIVE_INFINITY) : null;
+  const options: { id: VoiceChoice; hint: string }[] = [
+    { id: "premium", hint: premium.comped ? "Included for your team" : premiumLeftLabel(premium) },
+    { id: "standard", hint: "Saves your Premium minutes" },
+  ];
+  return (
+    <fieldset className="min-w-0 space-y-1">
+      <legend className="label">Voice for this call</legend>
+      {options.map((o) => (
+        <label key={o.id} className="flex min-h-[38px] cursor-pointer flex-wrap items-center gap-x-2 rounded-md px-2 py-1 text-sm hover:bg-sunken">
+          <input type="radio" name="voice-choice" value={o.id} checked={value === o.id} onChange={() => onChange(o.id)} className="h-4 w-4 shrink-0 accent-[rgb(var(--primary))]" />
+          <span className="font-medium">{voiceLabel(o.id)}</span>
+          <span className="min-w-0 text-xs text-ink-muted">{o.hint}</span>
+        </label>
+      ))}
+      {/* Prism finding 2: when the Premium minutes are what will end THIS call, say so before it starts. */}
+      <p role="status" aria-live="polite" className="text-xs text-ink-soft">{limit != null ? premiumCallLimitNotice(limit) : ""}</p>
+    </fieldset>
+  );
+}
+
+export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, usage, canUpgrade = true, usageUnavailable, premium, voiceChoice = "premium", onVoiceChoiceChange }: {
+  /** Premium minutes left, or the locked Add Premium voice / Ask your admin state. Null when not metered. */
+  premium?: PremiumSnapshot | null;
+  /** Standard or Premium for this call, shown only when Premium can run (premiumChoiceAvailable). */
+  voiceChoice?: VoiceChoice;
+  onVoiceChoiceChange?: (c: VoiceChoice) => void;
   scenario: Scenario;
   capabilities: Capabilities;
   mode: "voice" | "text";
@@ -308,6 +345,10 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
 
             {/* Minutes near Start, in every state: voice keys set up or not. */}
             <MinutesLeft usage={usage ?? null} mode={mode} canUpgrade={canUpgrade} />
+            {mode === "voice" && <PremiumMinutes premium={premium ?? null} />}
+            {mode === "voice" && premium && premiumChoiceAvailable(premium) && onVoiceChoiceChange && (
+              <VoiceChoiceField premium={premium} usage={usage ?? null} value={voiceChoice} onChange={onVoiceChoiceChange} />
+            )}
 
             {voiceLookupFailed && <VoiceUnavailable onUseText={() => onModeChange("text")} />}
             {outOfMinutes && !voiceLookupFailed && <button type="button" className="btn-ghost btn-sm w-full" onClick={() => onModeChange("text")}>Switch to text practice</button>}

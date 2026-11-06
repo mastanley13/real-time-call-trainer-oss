@@ -6,6 +6,7 @@ import { CUE_LABELS, type CoachMode } from "@/lib/coach-types";
 import { talkTrackSteps, type Scenario } from "@/lib/scenarios";
 import type { StoredTurn } from "@/lib/sessionStore";
 import { formatDuration } from "@/lib/format";
+import { NEXT_CALL_STANDARD_NOTICE, TRIAL_CALL_NOTICE, liveCallLimitNotice, voiceLabel } from "@/lib/billingUi";
 import CallOrb, { type AgentState } from "@/components/CallOrb";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import CallError from "./CallError";
@@ -17,7 +18,29 @@ export interface DeckText {
   /** Who plays the persona: "Text · AI" or "Text · scripted". Never a model id. */
   caller?: string;
 }
-export interface DeckVoice { muted: boolean; onToggleMute: () => void; getInputVolume: () => number; getOutputVolume: () => number; engine?: "openai" | "elevenlabs" }
+export interface DeckVoice {
+  muted: boolean; onToggleMute: () => void; getInputVolume: () => number; getOutputVolume: () => number; engine?: "openai" | "elevenlabs";
+  /** Voice tier this call was minted on. A label only; never a model id. */
+  tier?: "premium" | "standard";
+  /** This Premium call holds the last Premium minutes: the next call is Standard. */
+  nextCallStandard?: boolean;
+  /** The organization's one Premium trial call. Changes only the notice wording. */
+  trial?: boolean;
+  /** The server's deadline for THIS call (its normal end), in seconds. */
+  maxSeconds?: number;
+}
+
+/**
+ * The polite live notice under the static voice label (Prism finding 2). The trial call keeps its own 5 minute notice.
+ * A paid Premium call that holds the last Premium minutes says when THIS call ends (the server's deadline) and that
+ * the next one is Standard. A Standard call (chosen or not) has no Premium cutoff, so it says nothing.
+ */
+export function liveVoiceNotice(v: Pick<DeckVoice, "tier" | "trial" | "nextCallStandard" | "maxSeconds"> | undefined): string {
+  if (!v || v.tier !== "premium") return "";
+  if (v.trial) return TRIAL_CALL_NOTICE;
+  if (!v.nextCallStandard) return "";
+  return v.maxSeconds ? liveCallLimitNotice(v.maxSeconds) : NEXT_CALL_STANDARD_NOTICE;
+}
 
 const FOCUSABLE = "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
 const clock = (iso: string | undefined, start: number) => (iso ? formatDuration(Math.max(0, Math.round((Date.parse(iso) - start) / 1000))) : "");
@@ -235,6 +258,13 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
                 <span className={`lamp ${voice.muted ? "lamp-alert" : "lamp-ok"}`} aria-hidden />
                 {voice.muted ? "Your mic is muted." : "Mic is live. Just talk; the transcript and coach follow along."}
               </p>
+            )}
+            {/* Static for the whole call: the voice never changes mid-call. The notice is announced once, politely. */}
+            {voice?.tier && (
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-xs text-ink-muted">
+                <span className="chip">{voiceLabel(voice.tier)}</span>
+                <p aria-live="polite" className="min-w-0 text-center">{liveVoiceNotice(voice)}</p>
+              </div>
             )}
           </div>
         </section>

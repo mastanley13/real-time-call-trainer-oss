@@ -12,7 +12,8 @@ const MAX_WEBHOOK_BYTES = 1_000_000;
  * authentication, so this route skips requireAuth and the per-IP limit (a throttled delivery would
  * only be retried later). Bypasses the access-code gate in src/proxy.ts for the same reason.
  * Handles checkout.session.completed, .async_payment_succeeded and .expired, customer.subscription.updated and
- * customer.subscription.deleted. Events only name a subscription; access follows its current state at Stripe.
+ * customer.subscription.deleted, invoice.paid and invoice.payment_failed (Premium off for the next call at once).
+ * Events only name a subscription; access follows its current state at Stripe.
  */
 export async function POST(req: NextRequest) {
   const gate = billingGate();

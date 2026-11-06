@@ -129,8 +129,23 @@ export const stripeApi = {
   createPortalSession: (params: StripeParams) => request<{ url: string }>("POST", "billing_portal/sessions", params),
   /** The subscription as Stripe has it now. Webhook payloads are snapshots and can arrive out of order. */
   retrieveSubscription: (id: string) => request<unknown>("GET", `subscriptions/${seg(id)}`, { expand: ["items.data.price.product"] }),
+  /** One invoice as Stripe has it now (status draft | open | paid | uncollectible | void). Webhook bodies can be stale. */
+  retrieveInvoice: (id: string) => request<unknown>("GET", `invoices/${seg(id)}`),
   /** Cancels immediately. Used only to drop a duplicate subscription for a subject that already has one. */
   cancelSubscription: (id: string) => request<{ id: string }>("DELETE", `subscriptions/${seg(id)}`),
+  /**
+   * Updates a subscription's items (Premium add, seat increase). Callers always pass an idempotency key, a
+   * proration_date fixed at preview time and payment_behavior=error_if_incomplete, so a failed charge changes nothing.
+   */
+  updateSubscription: (id: string, params: StripeParams, idempotencyKey: string) => request<unknown>("POST", `subscriptions/${seg(id)}`, params, idempotencyKey),
+  /** The prorated invoice an item change would produce, without changing anything (POST /v1/invoices/create_preview). */
+  previewInvoice: (params: StripeParams) => request<unknown>("POST", "invoices/create_preview", params),
+  /** Puts an existing subscription under a schedule, so a change can wait for the period end. */
+  createSubscriptionSchedule: (params: StripeParams, idempotencyKey: string) => request<unknown>("POST", "subscription_schedules", params, idempotencyKey),
+  retrieveSubscriptionSchedule: (id: string) => request<unknown>("GET", `subscription_schedules/${seg(id)}`),
+  updateSubscriptionSchedule: (id: string, params: StripeParams, idempotencyKey: string) => request<unknown>("POST", `subscription_schedules/${seg(id)}`, params, idempotencyKey),
+  /** Detaches a schedule the app just created but cannot use, leaving the subscription exactly as it was. */
+  releaseSubscriptionSchedule: (id: string, idempotencyKey: string) => request<unknown>("POST", `subscription_schedules/${seg(id)}/release`, {}, idempotencyKey),
 };
 
 // ---- Webhook signatures -----------------------------------------------------------------------

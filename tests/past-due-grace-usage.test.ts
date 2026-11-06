@@ -54,16 +54,25 @@ describe("paid plan resolution follows the entitlement helper", () => {
     mocks.fake.seed("organization", { id: "org-1", code: "123", planTier: "team", seatCount: 3, premiumVoice: true, subscriptionStatus: "past_due", pastDueSince: null, createdAt: daysAgo(90) });
     mocks.fake.seed("user", { id: "m-1", email: "m-1@example.test", organizationId: "org-1", usageAnchorAt: daysAgo(40) });
     const org = () => mocks.fake.rows("organization").find((o) => o.id === "org-1")!;
-    expect((await resolveAllowance(mocks.fake.db as never, "m-1", NOW))).toMatchObject({ pooled: true, plan: "team", premiumVoice: true });
+    // The base plan keeps its past_due grace; Premium has none, so it is off from the next call.
+    expect((await resolveAllowance(mocks.fake.db as never, "m-1", NOW))).toMatchObject({ pooled: true, plan: "team", premiumVoice: false, premiumConfigured: true });
     expect((org().pastDueSince as Date).getTime()).toBe(NOW.getTime());
     expect((await resolveAllowance(mocks.fake.db as never, "m-1", new Date(NOW.getTime() + 8 * DAY)))).toMatchObject({ pooled: false, plan: "free", premiumVoice: false });
   });
 
-  it("Premium voice goes off with paid access when grace runs out, even though the stored flag is still true", async () => {
-    mocks.fake.seed("user", { id: "u-1", email: "u-1@example.test", planTier: "pro", premiumVoice: true, subscriptionStatus: "past_due", pastDueSince: daysAgo(6), usageAnchorAt: daysAgo(40) });
-    expect((await resolveAllowance(mocks.fake.db as never, "u-1", NOW))).toMatchObject({ plan: "pro", premiumVoice: true });
+  it("Premium voice has no past_due grace: off while the base plan is still in grace, and still off after it", async () => {
+    vi.stubEnv("PREMIUM_VOICE_ON_SALE", "true");
+    mocks.fake.seed("user", {
+      id: "u-1", email: "u-1@example.test", planTier: "pro", premiumVoice: true, premiumVoiceQuantity: 1, stripeSubscriptionId: "sub_test_1",
+      subscriptionPeriodEnd: new Date(NOW.getTime() + 20 * DAY), subscriptionStatus: "past_due", pastDueSince: daysAgo(6), usageAnchorAt: daysAgo(40),
+    });
+    expect((await resolveAllowance(mocks.fake.db as never, "u-1", NOW))).toMatchObject({ plan: "pro", premiumVoice: false, premiumConfigured: true });
     expect((await resolveAllowance(mocks.fake.db as never, "u-1", new Date(NOW.getTime() + 2 * DAY)))).toMatchObject({ plan: "free", premiumVoice: false });
     expect(mocks.fake.rows("user")[0].premiumVoice).toBe(true);
+    // Back to active (same row, as the webhook would leave it): Premium returns for the next call.
+    mocks.fake.rows("user")[0].subscriptionStatus = "active";
+    mocks.fake.rows("user")[0].pastDueSince = null;
+    expect((await resolveAllowance(mocks.fake.db as never, "u-1", NOW))).toMatchObject({ plan: "pro", premiumVoice: true });
   });
 
   it("chooseEngine gives no Premium engine once the plan has lapsed", async () => {

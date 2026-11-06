@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  billedMinutes, capFor, nextAnchorUnix, periodFor, premiumVoiceCap, secondsUntilCap, settleCall,
+  billedMinutes, capFor, nextAnchorUnix, periodFor, premiumUnits, premiumVoiceCap, secondsUntilCap, settleCall,
   MAX_CALL_SECONDS, type CallEndReasonId,
 } from "@/lib/usagePlan";
 
@@ -18,10 +18,23 @@ describe("caps", () => {
     expect(capFor("team", 1)).toBe(900);
   });
 
-  it("premium voice is capped at 60% of plan minutes", () => {
-    expect(premiumVoiceCap(200)).toBe(120);
-    expect(premiumVoiceCap(900)).toBe(540);
-    expect(premiumVoiceCap(20)).toBe(12);
+  it("premium voice is a flat 40 minutes per unit, never more than the plan's minutes", () => {
+    expect(premiumVoiceCap(1)).toBe(40);
+    expect(premiumVoiceCap(3)).toBe(120);
+    expect(premiumVoiceCap(0)).toBe(0);
+    expect(premiumVoiceCap(-2)).toBe(0);
+    expect(premiumVoiceCap(1, 200)).toBe(40);
+    expect(premiumVoiceCap(10, 300)).toBe(300);
+  });
+
+  it("units: Pro is 1 with the add-on, Team is min(add-on quantity, seats), Free is 0", () => {
+    expect(premiumUnits("pro", 1)).toBe(1);
+    expect(premiumUnits("pro", 5)).toBe(1);
+    expect(premiumUnits("pro", 0)).toBe(0);
+    expect(premiumUnits("team", 5, 5)).toBe(5);
+    expect(premiumUnits("team", 5, 3)).toBe(3);
+    expect(premiumUnits("team", 3, 6)).toBe(3);
+    expect(premiumUnits("free", 3, 3)).toBe(0);
   });
 });
 

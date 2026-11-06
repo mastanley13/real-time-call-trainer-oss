@@ -8,7 +8,8 @@ import { appBaseUrl, buildCheckoutParams, checkoutFingerprint, createOrReuseChec
 import { blocksCheckout } from "@/lib/subscriptionStatus";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "@/lib/usagePlan";
 import { CHECKOUT_UNAVAILABLE_MESSAGE } from "@/lib/billingUi";
-import { PREMIUM_COMING_SOON, PREMIUM_VOICE_ON_SALE } from "@/lib/pricing";
+import { PREMIUM_COMING_SOON, isPremiumOnSale } from "@/lib/pricing";
+import { gradedCallRequired, hasGradedCall } from "@/lib/premiumOffer";
 
 const Body = z.object({
   plan: z.enum(["pro", "team"]),
@@ -39,12 +40,16 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  // Premium is off sale. This answers before the billing check so a hand-crafted POST gets the same 400 in both states.
-  if (body.premium && !PREMIUM_VOICE_ON_SALE) {
+  // Premium is off sale unless PREMIUM_VOICE_ON_SALE is exactly "true". This answers before the billing check so a
+  // hand-crafted POST gets the same 400 in both billing states.
+  if (body.premium && !isPremiumOnSale(process.env)) {
     return NextResponse.json({ error: "premium_not_available", message: PREMIUM_COMING_SOON }, { status: 400 });
   }
   const gate = billingGate();
   if (gate) return gate;
+  // Spec 10.2: never before the organization's first graded call. Checked on the server at the operation itself, so a
+  // forged premium:true is refused before anything reaches Stripe. A base checkout (premium false) is never gated.
+  if (body.premium && !(await hasGradedCall(auth.id))) return gradedCallRequired();
   if (body.plan === "team" && body.seats === undefined) {
     return NextResponse.json({ error: "invalid_request", message: `Team needs at least ${TEAM_MIN_SEATS} seats.` }, { status: 400 });
   }

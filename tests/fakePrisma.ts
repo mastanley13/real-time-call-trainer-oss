@@ -21,11 +21,11 @@ const UNIQUE: Record<string, string[][]> = {
 const NO_CHECKOUT = { stripeCheckoutSessionId: null, stripeCheckoutFingerprint: null, stripeCheckoutUrl: null, stripeCheckoutExpiresAt: null };
 
 const DEFAULTS: Record<string, () => Record<string, unknown>> = {
-  user: () => ({ voiceBlockedUntil: null, planTier: "free", premiumVoice: false, stripeCustomerId: null, stripeSubscriptionId: null, subscriptionStatus: null, pastDueSince: null, ...NO_CHECKOUT, organizationId: null, role: "trainee", isPlatformAdmin: false, createdAt: new Date(), usageAnchorAt: new Date() }),
-  organization: () => ({ planTier: "free", seatCount: 1, premiumVoice: false, stripeCustomerId: null, stripeSubscriptionId: null, subscriptionStatus: null, pastDueSince: null, ...NO_CHECKOUT, createdAt: new Date() }),
-  usageAllowance: () => ({ userId: null, organizationId: null, minutesUsed: 0, minutesReserved: 0, premiumMinutesUsed: 0, premiumMinutesReserved: 0, version: 0 }),
+  user: () => ({ voiceBlockedUntil: null, planTier: "free", premiumVoice: false, premiumVoiceQuantity: 0, subscriptionPeriodEnd: null, premiumVoiceRemoveAt: null, premiumSuspendedAt: null, premiumSuspendedInvoiceId: null, premiumScheduleRef: null, stripeCustomerId: null, stripeSubscriptionId: null, subscriptionStatus: null, pastDueSince: null, ...NO_CHECKOUT, organizationId: null, role: "trainee", isPlatformAdmin: false, createdAt: new Date(), usageAnchorAt: new Date() }),
+  organization: () => ({ planTier: "free", seatCount: 1, premiumVoice: false, premiumVoiceQuantity: 0, subscriptionPeriodEnd: null, premiumVoiceRemoveAt: null, seatCountAtRenewal: null, premiumSuspendedAt: null, premiumSuspendedInvoiceId: null, premiumScheduleRef: null, premiumTrialCallUsedAt: null, premiumTrialCallSessionId: null, voiceModelTier: null, voiceModelComped: null, stripeCustomerId: null, stripeSubscriptionId: null, subscriptionStatus: null, pastDueSince: null, ...NO_CHECKOUT, createdAt: new Date() }),
+  usageAllowance: () => ({ userId: null, organizationId: null, minutesUsed: 0, minutesReserved: 0, premiumMinutesCap: 0, premiumMinutesUsed: 0, premiumMinutesReserved: 0, version: 0 }),
   usageEntry: () => ({ trainerSessionId: null, ranFrom: null, ranTo: null, createdAt: new Date() }),
-  trainerSession: () => ({ connectedAt: null, endedAt: null, endReason: null, lastHeartbeatAt: null, degradedAt: null, billableSeconds: 0, billedMinutes: 0, durationSeconds: 0, allowanceId: null, allowancePeriodStart: null, reservedMinutes: 0, engineTier: "standard", premiumReservedMinutes: 0, carriedMinutes: 0, carriedPremiumMinutes: 0, abuseFlagged: false, capEnforced: true, createdAt: new Date() }),
+  trainerSession: () => ({ connectedAt: null, endedAt: null, endReason: null, lastHeartbeatAt: null, degradedAt: null, billableSeconds: 0, billedMinutes: 0, durationSeconds: 0, allowanceId: null, allowancePeriodStart: null, reservedMinutes: 0, engineTier: "standard", voiceTier: null, realtimeModel: null, premiumTrial: false, premiumReservedMinutes: 0, carriedMinutes: 0, carriedPremiumMinutes: 0, abuseFlagged: false, capEnforced: true, createdAt: new Date() }),
   stripeEvent: () => ({ processedAt: new Date() }),
   auditEvent: () => ({}),
 };
@@ -37,7 +37,9 @@ function matches(row: Row, where: Where): boolean {
     const have = row[k] ?? null;
     if (isDate(v)) return isDate(have) && have.getTime() === v.getTime();
     if (v && typeof v === "object") {
-      const o = v as { lt?: Date; gte?: Date; gt?: number; in?: unknown[] };
+      const o = v as { lt?: Date; gte?: Date; gt?: number; in?: unknown[]; not?: unknown };
+      // { not: null } is "set", { not: x } is "anything but x" (scalar values only).
+      if ("not" in o && (o.not === null || typeof o.not !== "object")) return have !== (o.not ?? null);
       if (o.in) return o.in.includes(have);
       if (o.gt !== undefined) return typeof have === "number" && have > o.gt;
       if (o.lt) return isDate(have) && have.getTime() < o.lt.getTime();

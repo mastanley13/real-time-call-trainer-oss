@@ -13,6 +13,7 @@ import { PersonaAvatar } from "@/components/ui/Persona";
 import { isLegacyGrader } from "@/lib/grader-types";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatDuration } from "@/lib/format";
+import { voiceLabel, voiceOfListEntry } from "@/lib/billingUi";
 import { listScenarios } from "@/lib/scenarioStore";
 import { nextDrill } from "@/lib/debrief";
 import { deleteLocalSession, getLocalSession, listLocalSessions, resetDemoData, restoreLocalSession, type StoredSession } from "@/lib/sessionStore";
@@ -29,6 +30,8 @@ interface Row {
   method: "llm" | "heuristic" | null;
   /** Sessions graded before versioning (keyword grader on the old scale). */
   legacy: boolean;
+  /** Voice the call ran on, from the server's neutral label; null for text, browser-only and older calls (no label). */
+  voice: "premium" | "standard" | null;
 }
 
 const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -37,6 +40,8 @@ const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), 
 const toRow = (s: StoredSession): Row => ({
   id: s.id, title: s.scenario.title, scenarioId: s.scenario.id, role: s.scenario.role, createdAt: s.createdAt, durationSeconds: s.durationSeconds,
   score: s.evaluation?.overallScore ?? null, grade: s.evaluation?.grade ?? null, method: s.evaluation?.method ?? null, legacy: isLegacyGrader(s.evaluation),
+  // Calls kept only in this browser have no server-verified voice label.
+  voice: null,
 });
 
 /** Tiny line chart; values are drawn to one 0..max scale. */
@@ -165,7 +170,7 @@ export default function DashboardPage() {
       .then(async (r) => {
         if (!r.ok) throw new Error("Could not load sessions.");
         const { sessions } = await r.json();
-        const remote: Row[] = sessions.map((s: { id: string; scenarioTitle: string | null; scenarioId: string; createdAt: string; durationSeconds: number; overallScore: number | null; grade: string | null; graderVersion: string | null; graderMethod: string | null }) => ({ id: s.id, title: s.scenarioTitle ?? s.scenarioId, scenarioId: s.scenarioId, createdAt: s.createdAt, durationSeconds: s.durationSeconds, score: s.overallScore, grade: s.grade, method: (s.graderMethod as Row["method"]) ?? null, legacy: s.overallScore !== null && !s.graderVersion && s.graderMethod !== "llm" }));
+        const remote: Row[] = sessions.map((s: { id: string; scenarioTitle: string | null; scenarioId: string; createdAt: string; durationSeconds: number; overallScore: number | null; grade: string | null; graderVersion: string | null; graderMethod: string | null; voiceUsed?: unknown }) => ({ id: s.id, title: s.scenarioTitle ?? s.scenarioId, scenarioId: s.scenarioId, createdAt: s.createdAt, durationSeconds: s.durationSeconds, score: s.overallScore, grade: s.grade, method: (s.graderMethod as Row["method"]) ?? null, legacy: s.overallScore !== null && !s.graderVersion && s.graderMethod !== "llm", voice: voiceOfListEntry(s.voiceUsed) }));
         setRows([...remote, ...local].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
       })
       .catch((e) => { setError(e.message); setRows(local); });
@@ -290,7 +295,7 @@ export default function DashboardPage() {
               <li key={r.id} className="group flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 transition-colors hover:bg-sunken sm:flex-nowrap">
                 <Link href={`/trainer/debrief/${r.id}`} className="min-w-0 basis-full rounded sm:basis-auto sm:flex-1">
                   <p className="break-words text-sm font-semibold">{r.title}</p>
-                  <p className="font-mono text-[11px] text-ink-muted">{new Date(r.createdAt).toLocaleString()} · {formatDuration(r.durationSeconds)}{r.id.startsWith("local-") ? " · this browser" : ""}</p>
+                  <p className="font-mono text-[11px] text-ink-muted">{new Date(r.createdAt).toLocaleString()} · {formatDuration(r.durationSeconds)}{r.voice ? ` · ${voiceLabel(r.voice)}` : ""}{r.id.startsWith("local-") ? " · this browser" : ""}</p>
                 </Link>
                 <div className="flex w-36 items-center gap-2" aria-label={r.score !== null ? `Score ${r.score}, grade ${r.grade}` : "Ungraded"}>
                   {r.score !== null ? (

@@ -50,6 +50,8 @@ beforeEach(() => {
   vi.stubEnv("DATABASE_URL", "postgresql://ci:ci@localhost:5432/ci");
   vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
   vi.stubEnv("DEMO_MODE", "");
+  // Paid Premium at mint also needs the sale flag; the reservation tests exercise the paid engine.
+  vi.stubEnv("PREMIUM_VOICE_ON_SALE", "true");
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -72,42 +74,47 @@ describe("period split helpers", () => {
   });
 });
 
+/** A Pro row with an entitled Premium add-on: active subscription, quantity 1, period end in the future. */
+const PRO_PREMIUM = { planTier: "pro", premiumVoice: true, premiumVoiceQuantity: 1, stripeSubscriptionId: "sub_test_prem", subscriptionStatus: "active", subscriptionPeriodEnd: new Date("2027-06-01T00:00:00Z") };
+
 describe("Premium minutes are reserved at mint", () => {
-  it("concurrent calls cannot all pick Premium: the share is held by the calls that already have it", async () => {
-    addUser("u-1", { planTier: "pro", premiumVoice: true }); // 200 minutes, Premium limit 120
+  it("concurrent calls cannot all pick Premium: the 40 Premium minutes are held by the call that has them", async () => {
+    addUser("u-1", PRO_PREMIUM); // 200 minutes, 40 of them Premium
     const a = await beginCall("u-1", scn, at(0));
     const b = await beginCall("u-1", scn, at(1));
     const c = await beginCall("u-1", scn, at(2));
     if (!a.ok || !b.ok || !c.ok) throw new Error("begin failed");
-    expect([a.engine, b.engine, c.engine]).toEqual(["premium", "premium", "standard"]);
-    expect(session(a.callId).premiumReservedMinutes).toBe(60);
-    expect(allowanceOf("u-1")).toMatchObject({ minutesReserved: 180, premiumMinutesReserved: 120 });
+    expect([a.engine, b.engine, c.engine]).toEqual(["premium", "standard", "standard"]);
+    expect(session(a.callId).premiumReservedMinutes).toBe(40);
+    // a's whole reservation is its Premium minutes: min(60 minute call allowance, 40 Premium left).
+    expect(a.maxSeconds).toBe(40 * 60);
+    expect(allowanceOf("u-1")).toMatchObject({ minutesReserved: 160, premiumMinutesReserved: 40, premiumMinutesCap: 40 });
   });
 
-  it("a call that holds only part of the Premium share is limited to it: its reservation is that share", async () => {
-    addUser("u-1", { planTier: "pro", premiumVoice: true });
-    const a = await beginCall("u-1", scn, at(0)); // 60 premium
-    const b = await beginCall("u-1", scn, at(1)); // 60 premium
-    const c = await beginCall("u-1", scn, at(2)); // standard
-    if (!a.ok || !b.ok || !c.ok) throw new Error("begin failed");
+  it("a call that holds only part of the Premium minutes is limited to it: its reservation is that share", async () => {
+    addUser("u-1", PRO_PREMIUM);
+    const a = await beginCall("u-1", scn, at(0)); // 40 premium
+    const b = await beginCall("u-1", scn, at(1)); // standard
+    if (!a.ok || !b.ok) throw new Error("begin failed");
     await heartbeat("u-1", a.callId, "connected", at(0));
-    // a ends after 10 minutes: 10 premium minutes used, the other 50 it held go back.
+    // a ends after 10 minutes: 10 premium minutes used, the other 30 it held go back.
     await endCall("u-1", a.callId, "user_hangup", at(600));
-    expect(allowanceOf("u-1")).toMatchObject({ premiumMinutesUsed: 10, premiumMinutesReserved: 60 });
-    // That freed Premium share goes to the next call, which holds all 50 and can run no longer than that.
+    expect(allowanceOf("u-1")).toMatchObject({ premiumMinutesUsed: 10, premiumMinutesReserved: 0 });
+    // The freed Premium minutes go to the next call, which holds all 30 and can run no longer than that.
     const d = await beginCall("u-1", scn, at(700));
     if (!d.ok) throw new Error(d.error);
-    expect(d).toMatchObject({ engine: "premium", maxSeconds: 50 * 60 });
-    expect(session(d.callId)).toMatchObject({ premiumReservedMinutes: 50, reservedMinutes: 50 });
+    expect(d).toMatchObject({ engine: "premium", maxSeconds: 30 * 60 });
+    expect(d.premium).toMatchObject({ source: "paid", leftAfter: 0, nextCallStandard: true });
+    expect(session(d.callId)).toMatchObject({ premiumReservedMinutes: 30, reservedMinutes: 30 });
     await heartbeat("u-1", d.callId, "connected", at(700));
-    expect(await heartbeat("u-1", d.callId, "ok", at(700 + 49 * 60))).toMatchObject({ found: true, stop: false });
-    expect(await heartbeat("u-1", d.callId, "ok", at(700 + 50 * 60))).toMatchObject({ found: true, stop: true, reason: "cap_reached" });
+    expect(await heartbeat("u-1", d.callId, "ok", at(700 + 29 * 60))).toMatchObject({ found: true, stop: false });
+    expect(await heartbeat("u-1", d.callId, "ok", at(700 + 30 * 60))).toMatchObject({ found: true, stop: true, reason: "cap_reached" });
     // Every minute of d booked as Premium; none drifted onto the standard rate.
-    expect(allowanceOf("u-1")).toMatchObject({ premiumMinutesUsed: 60, premiumMinutesReserved: 60, minutesUsed: 60 });
+    expect(allowanceOf("u-1")).toMatchObject({ premiumMinutesUsed: 40, premiumMinutesReserved: 0, minutesUsed: 40 });
   });
 
   it("a failed mint releases its Premium share", async () => {
-    addUser("u-1", { planTier: "pro", premiumVoice: true });
+    addUser("u-1", PRO_PREMIUM);
     const a = await beginCall("u-1", scn, at(0));
     if (!a.ok) throw new Error(a.error);
     await endCall("u-1", a.callId, "failed_connect", at(5));

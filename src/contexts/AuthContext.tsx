@@ -48,6 +48,8 @@ export interface Capabilities {
   billing?: boolean;
   /** Hosted build: paid plans are configured on the server. Absent means self-host. */
   hosted?: boolean;
+  /** Premium Voice can be bought on this server. Absent or false hides every Premium buy control. */
+  premiumOnSale?: boolean;
   provider?: "openai" | "custom";
 }
 
