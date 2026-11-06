@@ -107,7 +107,9 @@ describe("register link intent", () => {
 
   it("the register page forwards the whitelisted intent in the sign-up POST and uses afterSignin for both paths", () => {
     const src = readFileSync("src/app/register/page.tsx", "utf8");
-    expect(src).toContain("...intent,");
+    // The POST body is built by buildRegisterPayload in registerForm.ts; the page hands it the intent.
+    expect(readFileSync("src/lib/registerForm.ts", "utf8")).toContain("...intent,");
+    expect(src).toContain("submitRef.current(values, mode, intent)");
     expect(src).toContain("intentFromQuery(useSearchParams())");
     expect(src.match(/goAfterSignin\(\)/g)?.length).toBeGreaterThanOrEqual(2);
     expect(src).not.toContain('router.replace("/trainer")');
