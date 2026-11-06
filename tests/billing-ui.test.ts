@@ -278,7 +278,8 @@ describe("Team pool members who cannot buy minutes (Prism 2)", () => {
     const read = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
     expect(read("src/components/call/Briefing.tsx")).toMatch(/<CallError message=\{error\} canUpgrade=\{canUpgrade\} \/>/);
     expect(read("src/components/call/Briefing.tsx")).toMatch(/<MinutesLeft usage=\{usage \?\? null\} mode=\{mode\} canUpgrade=\{canUpgrade\} \/>/);
-    expect(read("src/components/call/Deck.tsx")).toMatch(/<CallError message=\{error\} className="mb-3" canUpgrade=\{canUpgrade\} \/>/);
+    // The call screen neutralises vendor or setting names in the line; cap messages pass through unchanged (call-screen test).
+    expect(read("src/components/call/Deck.tsx")).toMatch(/<CallError message=\{callErrorText\(error\)\} className="mb-3" canUpgrade=\{canUpgrade\} \/>/);
     expect(read("src/components/TrainerClient.tsx")).toMatch(/canUpgrade=\{canUpgrade\}/);
     expect(read("src/components/TrainerClient.tsx")).toMatch(/error, canUpgrade \};/);
   });

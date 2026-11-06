@@ -64,8 +64,9 @@ src/app/                          App Router pages and API routes
     sessions/[sessionId]/notes    Supervisor notes (Postgres, org-scoped); PUT with expectedNotesAt gets 409 conflict on a stale save
     auth/*, me, access, config, health, cron/purge-expired
 src/components/
-  call/Deck.tsx                   Live call deck (dark .deck scope): transcript, composer, phone coach sheet
-  call/CopilotRail.tsx            Rubric tapes, talk track, cues, "Use line", coach mode dial
+  call/Deck.tsx                   Live call, "Buyer and brief": transcript as the primary pane, rail, control bar, phone brief disclosure; no live score
+  call/CopilotRail.tsx            Buyer brief, one next move ("Use line"), talk track, earlier cues, coach mode dial
+  call/callCopy.ts                Call status words, headline, error neutraliser, nextMoveCue (pure)
   call/useCoach.ts                Client hook: calls /api/coach/turn after each finished turn, tracks cue keys
   call/Briefing.tsx               Pre-flight briefing: systems-check lamps, call mode, coach mode
   call/RealtimeVoiceSession.tsx   OpenAI Realtime voice call over WebRTC (mic, transcript turns, hang-up)
@@ -137,7 +138,7 @@ Every route in `src/app/api` follows the same order. Copy `src/app/api/coach/tur
 Personas are plain data in `src/lib/personas/<family>.ts`, validated by `ScenarioSchema` on load and by `npm run validate:personas` in CI. Rules the validator enforces: `role` is a `JOB_FAMILIES` id, pack ids start with `<role>-`, rubric weights sum to exactly 100 with unique criterion ids, at least one objection, a non-empty numbered talk track. It warns on fewer than 4 `sampleReplies` and on missing price, availability, objection or closing replies. New personas are `status: "draft"`; only maintainers set `reviewed`. Full field reference and review checklist: [docs/PERSONA_PACKS.md](docs/PERSONA_PACKS.md).
 
 ### Live coach
-The coach is a separate channel. Cues are shown to the rep only and are never sent to the persona or included in its prompt. "Use line" inserts text into the composer; nothing is auto-sent. Blind mode shows no live help, Guided shows the estimate and talk track without cues, Coached shows everything. At most one cue per turn, never one whose key is in `recentCueKeys`. The client shows objection cues at once; any other cue that arrives within 8 seconds of the last cue shown is dropped, not queued, and its key is not added to `recentCueKeys` (`COOLDOWN_MS` in `useCoach.ts`).
+The coach is a separate channel. Cues are shown to the rep only and are never sent to the persona or included in its prompt. "Use line" inserts text into the composer; nothing is auto-sent. Blind mode shows no live help, Guided shows talk-track progress without cues, Coached adds one next move. The call screen draws no live score (no overall estimate or rubric meters); the grade is on the debrief. At most one cue per turn, never one whose key is in `recentCueKeys`. The client shows objection cues at once; any other cue that arrives within 8 seconds of the last cue shown is dropped, not queued, and its key is not added to `recentCueKeys` (`COOLDOWN_MS` in `useCoach.ts`).
 
 ### Tests
 Vitest, files in `tests/*.test.ts`, `environment: "node"`. `@` resolves to `src` and `server-only` is stubbed, so server modules import directly. Add tests for any pure logic you add or change (parsers, scoring, limits, guards). Keep tests deterministic: no network, no real keys, clear `LLM_API_KEY`/`OPENAI_API_KEY` when testing fallbacks.

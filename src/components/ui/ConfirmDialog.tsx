@@ -13,16 +13,12 @@ interface Props {
 
 const FOCUSABLE = "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
 
-/** Modal confirm: focus moves in, Tab is trapped, Esc cancels, focus returns to the opener. Follows the deck theme when opened from a live call. */
+/** Modal confirm: focus moves in, Tab is trapped, Esc cancels, focus returns to the opener. Follows the page theme, live call included. */
 export default function ConfirmDialog({ title, message, confirmLabel, onConfirm, onCancel }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [mounted, setMounted] = useState(false);
-  const [deck, setDeck] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-    setDeck(document.documentElement.hasAttribute("data-incall"));
-  }, []);
+  useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     if (!mounted) return;
@@ -44,7 +40,7 @@ export default function ConfirmDialog({ title, message, confirmLabel, onConfirm,
 
   if (!mounted) return null;
   return createPortal(
-    <div className={`fixed inset-0 z-[200] flex items-center justify-center bg-[rgb(var(--shadow)/0.5)] p-4 ${deck ? "deck !bg-[rgb(var(--shadow)/0.6)]" : ""}`} onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-[rgb(var(--shadow)/0.5)] p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
       <div ref={ref} role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-desc" onKeyDown={onKeyDown} className="w-full max-w-sm rounded-sheet border border-line bg-surface p-5 text-ink shadow-pop">
         <h2 id="confirm-title" className="text-lg font-bold">{title}</h2>
         <p id="confirm-desc" className="mt-2 text-sm text-ink-soft">{message}</p>

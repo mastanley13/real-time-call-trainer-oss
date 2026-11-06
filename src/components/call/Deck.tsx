@@ -1,17 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronUp, Loader2, Mic, MicOff, PhoneOff, Send, Target, X } from "lucide-react";
-import { CUE_LABELS, type CoachMode } from "@/lib/coach-types";
+import { Loader2, Mic, MicOff, PhoneOff, Send } from "lucide-react";
+import type { CoachMode } from "@/lib/coach-types";
 import { talkTrackSteps, type Scenario } from "@/lib/scenarios";
 import type { StoredTurn } from "@/lib/sessionStore";
 import { formatDuration } from "@/lib/format";
-import { NEXT_CALL_STANDARD_NOTICE, TRIAL_CALL_NOTICE, liveCallLimitNotice, voiceLabel } from "@/lib/billingUi";
-import CallOrb, { type AgentState } from "@/components/CallOrb";
+import { NEXT_CALL_STANDARD_NOTICE, TRIAL_CALL_NOTICE, liveCallLimitNotice, voiceLabel, type UsageSnapshot } from "@/lib/billingUi";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import CallError from "./CallError";
-import CopilotRail, { CueCard, Instruments } from "./CopilotRail";
-import type { LiveCue, RubricChip, useCoach } from "./useCoach";
+import MinutesLeft from "./MinutesLeft";
+import { BlindNote, BuyerBrief, CoachSettings, EarlierCues, NextMove, TalkTrackPanel } from "./CopilotRail";
+import { CALL_HEADLINE, callErrorText, nextMoveCue } from "./callCopy";
+import type { LiveCue, useCoach } from "./useCoach";
 
 export interface DeckText {
   value: string; onChange: (v: string) => void; onSend: () => void; hungUp: boolean; typing: boolean;
@@ -19,8 +20,8 @@ export interface DeckText {
   caller?: string;
 }
 export interface DeckVoice {
-  muted: boolean; onToggleMute: () => void; getInputVolume: () => number; getOutputVolume: () => number; engine?: "openai" | "elevenlabs";
-  /** Voice tier this call was minted on. A label only; never a model id. */
+  muted: boolean; onToggleMute: () => void;
+  /** Voice tier this call was minted on (the effective tier, not the request). A label only; never a model id. */
   tier?: "premium" | "standard";
   /** This Premium call holds the last Premium minutes: the next call is Standard. */
   nextCallStandard?: boolean;
@@ -42,10 +43,21 @@ export function liveVoiceNotice(v: Pick<DeckVoice, "tier" | "trial" | "nextCallS
   return v.maxSeconds ? liveCallLimitNotice(v.maxSeconds) : NEXT_CALL_STANDARD_NOTICE;
 }
 
-const FOCUSABLE = "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
 const clock = (iso: string | undefined, start: number) => (iso ? formatDuration(Math.max(0, Math.round((Date.parse(iso) - start) / 1000))) : "");
+const DOT = { ok: "bg-ok", signal: "bg-signal", caution: "bg-caution" } as const;
+/** Space mutes only when focus is not on something Space already operates. */
+const SPACE_OWNERS = "input, textarea, select, button, a, summary, [role='radio'], [contenteditable='true']";
 
-export default function Deck({ scenario, turns, startedAt, elapsed, orbState, status, grading, gradingLabel, onEnd, coach, coachMode, onCoachModeChange, coachLabel, text, voice, inserted, onInsert, error, canUpgrade = true }: {
+/**
+ * The live call screen, "Buyer and brief". The transcript is the primary pane (about two thirds on wide screens) under
+ * the heading "Stay with the buyer."; a compact rail holds the buyer brief and exactly one next move. There is no live
+ * score here. On phones the brief, talk track, earlier cues and coach mode sit in one titled disclosure, the transcript
+ * keeps every turn (scroll back for earlier ones), and the next move docks above the controls. The controls sit in a
+ * bar that never overlays the transcript and clears the home indicator.
+ */
+export default function Deck({ scenario, turns, startedAt, elapsed, status, grading, gradingLabel, onEnd, coach, coachMode, onCoachModeChange, coachLabel, text, voice, inserted, onInsert, usage = null, error, canUpgrade = true }: {
+  /** Minutes left when this call started (from the briefing's /api/usage read). Null when minutes are not metered. */
+  usage?: UsageSnapshot | null;
   error?: string;
   /** False for a Team pool member who is not an owner or manager: the cap message says to ask their admin, with no Upgrade link. */
   canUpgrade?: boolean;
@@ -53,7 +65,6 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
   turns: StoredTurn[];
   startedAt: number;
   elapsed: number;
-  orbState: AgentState;
   status: { label: string; tone: "ok" | "signal" | "caution" };
   grading: boolean;
   gradingLabel: string;
@@ -68,21 +79,18 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
   onInsert: (cue: LiveCue) => void;
 }) {
   const persona = scenario.aiPersona;
-  const logRef = useRef<HTMLOListElement>(null);
+  const firstName = persona.name.split(" ")[0] || persona.name;
+  const logRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
-  const [sheet, setSheet] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
+  /** The phone brief disclosure is open: the docked cue shrinks to one line so both fit above the controls. */
+  const [briefOpen, setBriefOpen] = useState(false);
   const [announce, setAnnounce] = useState("");
-  const sheetRef = useRef<HTMLDivElement>(null);
-  const sheetClose = useRef<HTMLButtonElement>(null);
-  const sheetOpener = useRef<HTMLButtonElement>(null);
-  /** Where focus goes when the coach sheet closes: back to its opener, or to the composer after "Use line". */
-  const afterSheet = useRef<"opener" | "composer">("opener");
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const announced = useRef<string | null>(null);
   const steps = talkTrackSteps(scenario.callScript);
-  const activeCue = coach.cues.find((c) => c.status === "active");
-  const objectionTurns = new Set(coach.cues.filter((c) => c.type === "objection" && c.status === "active").map((c) => c.triggerTurn));
+  const shown = coachMode === "coached" ? nextMoveCue(coach.cues) : undefined;
+  const lastBuyer = turns.map((t) => t.role).lastIndexOf("assistant");
   const isVoice = !!voice;
 
   useEffect(() => {
@@ -90,44 +98,26 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [turns, text?.typing]);
 
-  // Esc closes the coach sheet when it is open, else asks before ending; Space toggles mute in voice mode (when not typing).
+  // Esc asks before ending; Space toggles mute in voice mode (unless focus is on something Space already operates).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && sheet) { setSheet(false); return; }
       if (e.key === "Escape" && !grading) setConfirmEnd(true);
-      if (e.key === " " && voice && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLButtonElement)) { e.preventDefault(); voice.onToggleMute(); }
+      const owner = e.target instanceof Element && e.target.closest(SPACE_OWNERS);
+      if (e.key === " " && voice && !owner) { e.preventDefault(); voice.onToggleMute(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [grading, voice, sheet]);
+  }, [grading, voice]);
 
-  // The phone coach sheet is a real modal: focus moves in on open and goes back out on close.
-  const sheetWasOpen = useRef(false);
-  useEffect(() => {
-    if (sheet) sheetClose.current?.focus();
-    else if (sheetWasOpen.current) (afterSheet.current === "composer" && replyRef.current ? replyRef.current : sheetOpener.current)?.focus();
-    sheetWasOpen.current = sheet;
-    afterSheet.current = "opener";
-  }, [sheet]);
-
-  function trapSheet(e: React.KeyboardEvent) {
-    if (e.key !== "Tab") return;
-    const items = sheetRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE);
-    if (!items?.length) return;
-    const first = items[0], last = items[items.length - 1];
-    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-  }
-
-  // A new cue card is not announced on its own, so read it out through one region that is always on the page.
+  // A new cue is read out once through one polite region that is always on the page. Focus never moves for a cue.
   const newest = coach.cues[0];
   useEffect(() => {
     if (!newest || newest.id === announced.current) return;
     announced.current = newest.id;
-    if (newest.status === "active" && coachMode === "coached") setAnnounce(`${CUE_LABELS[newest.type]}: ${newest.title.replace(/[.!?]$/, "")}.${newest.suggestedLine ? ` ${newest.suggestedLine}` : ""}`);
+    if (newest.status === "active" && coachMode === "coached") setAnnounce(`Next move: ${newest.title.replace(/[.!?]$/, "")}.${newest.suggestedLine ? ` ${newest.suggestedLine}` : ""}`);
   }, [newest, coachMode]);
 
-  /** "Use line" removes the card that had focus, so focus goes to the composer that now holds the line. */
+  /** "Use line" removes the card that had focus, so focus goes to the composer that now holds the line. Rep-initiated only. */
   function insertLine(cue: LiveCue) {
     onInsert(cue);
     if (text) requestAnimationFrame(() => replyRef.current?.focus());
@@ -138,174 +128,179 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
     else onEnd();
   }
 
-  const chipsFor = (i: number): RubricChip[] => coach.chips[i] ?? [];
-  const source = voice ? (voice.engine === "openai" ? "Voice · OpenAI Realtime" : "Voice · ElevenLabs") : text?.caller ?? "Text simulation";
-  const toneClass = { ok: "lamp-ok", signal: "lamp-signal", caution: "lamp-caution" }[status.tone];
+  const endButton = (compact: boolean) => (
+    <button type="button" className="btn-danger min-h-[48px] min-w-[48px] shrink-0 px-3 text-sm sm:px-5 sm:text-base" onClick={endClicked} disabled={grading}>
+      <PhoneOff size={18} strokeWidth={1.75} className={compact ? "sm:hidden" : "hidden sm:block"} aria-hidden />
+      <span className={compact ? "sr-only sm:not-sr-only" : ""}>End and grade</span>
+    </button>
+  );
 
   return (
-    <div className="deck fixed inset-0 z-50 flex flex-col pt-[env(safe-area-inset-top)]">
-      {/* Top bar */}
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface px-3 sm:px-4">
-        <CallOrb state={orbState} getInputVolume={voice?.getInputVolume} getOutputVolume={voice?.getOutputVolume}
-          manual={voice ? undefined : { input: orbState === "listening" ? 0.25 : 0, output: orbState === "talking" ? 0.6 : 0 }} className="h-9 w-9 shrink-0" />
-        <div className="min-w-0">
-          <p className="truncate font-heading text-sm font-bold sm:text-[15px]">{persona.name}</p>
-          <p className="hidden truncate text-xs text-ink-muted sm:block">{scenario.title}</p>
-          <p className="flex items-center gap-1.5 truncate text-xs text-ink-soft sm:hidden" aria-hidden><span className={`lamp ${toneClass} !h-1.5 !w-1.5`} />{status.label}</p>
-        </div>
-        {/* Phones show the status under the name; the pill stays in the accessibility tree at every width so changes are announced. */}
-        <span className="sr-only ml-1 items-center gap-2 rounded-full border border-line bg-sunken px-3 py-1 text-xs font-semibold sm:not-sr-only sm:inline-flex" role="status">
-          <span className={`lamp ${toneClass} ${status.tone === "signal" ? "motion-safe:animate-lamp-pulse" : ""}`} aria-hidden />{status.label}
-        </span>
-        <span className="mono ml-auto text-lg font-semibold tabular-nums sm:text-xl" aria-label={`Elapsed ${formatDuration(elapsed)}`}>{formatDuration(elapsed)}</span>
-        <span className="chip-model hidden md:inline-flex">{source}</span>
-        {voice && (
-          <button className={`btn-ghost !min-h-[38px] !px-3 ${voice.muted ? "!border-alert/60 !text-alert" : ""}`} onClick={voice.onToggleMute} disabled={grading}
-            aria-label={voice.muted ? "Unmute microphone" : "Mute microphone"}>
-            {voice.muted ? <MicOff size={16} aria-hidden /> : <Mic size={16} aria-hidden />}<span className="hidden sm:inline" aria-hidden>{voice.muted ? "Unmute" : "Mute"}</span><span className="kbd hidden lg:inline-flex" aria-hidden>Space</span>
-          </button>
-        )}
-        <button className="btn-danger !min-h-[38px] !px-3 sm:!px-4" onClick={endClicked} disabled={grading} aria-label={text?.hungUp ? "Grade this call" : "End and grade call"}>
-          <PhoneOff size={16} aria-hidden /><span className="hidden sm:inline">{text?.hungUp ? "Grade call" : "End & grade"}</span><span className="kbd hidden !border-alert-on/30 !bg-transparent !text-alert-on lg:inline-flex">Esc</span>
-        </button>
-      </header>
-
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_380px]">
-        {/* Transcript column */}
-        <section className="flex min-h-0 flex-col" aria-label="Call">
-          <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2.5 text-[13px] sm:px-6">
-            <Target size={14} className="shrink-0 text-primary" aria-hidden />
-            <p className="min-w-0 flex-1 truncate"><span className="font-semibold">Goal:</span> <span className="text-ink-soft">{scenario.traineeGoal}</span></p>
-            <span className="mono shrink-0 text-[11px] text-ink-muted">{turns.length} turns<span className="md:hidden"> · {source}</span></span>
+    <div className="focus-strong fixed inset-0 z-50 flex flex-col bg-background pt-[env(safe-area-inset-top)] text-ink">
+      <header className="shrink-0 border-b border-line">
+        <div className="site-wrap flex flex-wrap items-end justify-between gap-x-8 gap-y-2 py-3 lg:py-5">
+          <div className="min-w-0 max-w-full">
+            <p className="hidden text-sm text-ink-soft sm:block">Practice call</p>
+            <h1 className="truncate text-2xl font-bold leading-tight lg:text-[32px]">{persona.name}</h1>
+            <p className="hidden text-sm text-ink-soft sm:block">{scenario.title}</p>
           </div>
-
-          <ol ref={logRef} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}
-            className="scroll-thin min-h-0 flex-1 space-y-1 overflow-y-auto px-2 py-4 sm:px-4" aria-live="polite" aria-label="Live transcript">
-            {turns.length === 0 && !text?.typing && <li className="py-10 text-center text-sm text-ink-muted">{isVoice ? "Connecting the call. Say hello when you hear them." : "The transcript appears here as you talk."}</li>}
-            {turns.map((t, i) => {
-              const me = t.role === "user";
-              const objection = objectionTurns.has(i + 1);
-              return (
-                <li key={i} className={`grid grid-cols-[48px_minmax(0,1fr)] gap-3 rounded-lg px-2 py-2.5 sm:grid-cols-[64px_minmax(0,1fr)] ${objection ? "bg-alert-soft/60 ring-1 ring-alert/40" : ""}`}>
-                  <div className="pt-0.5 font-mono text-[11px] leading-tight text-ink-muted">T{i + 1}<br />{clock(t.timestamp, startedAt)}</div>
-                  <div className="min-w-0">
-                    <p className={`font-mono text-[11px] font-medium uppercase tracking-wide ${me ? "text-primary" : "text-ink-muted"}`}>{me ? "You" : persona.name}</p>
-                    <p className={`mt-0.5 text-[15px] leading-relaxed ${me ? "text-ink" : "text-ink-soft"}`}>{t.text}</p>
-                    {objection && <p className="mt-1.5 text-xs font-semibold text-alert">Objection detected · cue in the coach rail</p>}
-                    {me && chipsFor(i).length > 0 && (
-                      <div className="mt-1.5 flex flex-wrap gap-1.5">
-                        {chipsFor(i).map((c) => <span key={c.id} className="inline-flex items-center gap-1 rounded-md bg-ok-soft px-1.5 py-0.5 font-mono text-[11px] text-ok">▲ {c.name} +{c.delta}</span>)}
-                      </div>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-            {text?.typing && (
-              <li className="grid grid-cols-[48px_minmax(0,1fr)] gap-3 px-2 py-2.5 sm:grid-cols-[64px_minmax(0,1fr)]">
-                <span />
-                <p className="flex items-center gap-1.5 text-sm text-ink-muted" aria-label={`${persona.name} is typing`}>
-                  {[0, 150, 300].map((d) => <span key={d} className="h-1.5 w-1.5 rounded-full bg-ink-muted motion-safe:animate-bounce" style={{ animationDelay: `${d}ms` }} />)}
-                </p>
-              </li>
-            )}
-          </ol>
-
-          {/* Phone: latest cue docks above the composer, and the rail opens as a sheet. */}
-          <div className="shrink-0 space-y-2 px-3 lg:hidden">
-            {activeCue && coachMode === "coached" && (
-              <CueCard cue={activeCue} voice={isVoice} compact onUse={() => insertLine(activeCue)} onDismiss={() => coach.dismiss(activeCue.id)} />
-            )}
-            {coachMode !== "blind" && (
-              <button ref={sheetOpener} type="button" className="flex w-full items-center gap-3 rounded-panel border border-line bg-surface px-3 py-2 text-left" onClick={() => setSheet(true)} aria-label="Open the coach rail" aria-haspopup="dialog">
-                <div className="min-w-0 flex-1"><Instruments result={coach.result} steps={steps} compact /></div>
-                <ChevronUp size={18} className="shrink-0 text-ink-muted" aria-hidden />
-              </button>
-            )}
-          </div>
-
-          <div className="shrink-0 border-t border-line bg-surface px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 sm:px-6">
-            {error && <CallError message={error} className="mb-3" canUpgrade={canUpgrade} />}
-            {text?.hungUp && (
-              <div className="mb-3 flex flex-col items-center gap-2 rounded-panel bg-caution-soft p-3 text-center text-sm sm:flex-row sm:justify-between sm:text-left" role="status">
-                <span><strong>{persona.name} hung up.</strong> The call is over.</span>
-                <button className="btn-primary btn-sm" onClick={onEnd} disabled={grading}>Grade this call</button>
+          <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm lg:justify-end">
+            {/* Status changes are announced politely; the clock beside it is not a live region. */}
+            <p role="status" aria-live="polite" aria-atomic="true" className="flex items-center gap-2 font-semibold text-ink">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${DOT[status.tone]}`} aria-hidden />{status.label}
+            </p>
+            <p className="mono text-ink-soft"><span className="sr-only">Call time </span>{formatDuration(elapsed)}</p>
+            {/* Static for the whole call: the voice never changes mid-call. Neutral tier names only. */}
+            {voice?.tier && <span className="badge-tag">{voiceLabel(voice.tier)}</span>}
+            {text && <span className="badge-tag">{text.caller ?? "Text practice"}</span>}
+            {usage && (!voice || usage.remaining > 0) && (
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-1 text-ink-soft">
+                {voice && <span>At call start:</span>}
+                <MinutesLeft usage={usage} mode={voice ? "voice" : "text"} canUpgrade={canUpgrade} />
               </div>
             )}
-            {text && !text.hungUp && (
-              <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); text.onSend(); }}>
-                {inserted && <p className="font-mono text-[11px] text-ink-muted">↳ Line inserted from the coach. Edit it or send it. Nothing is auto-sent.</p>}
-                <div className="flex items-end gap-2">
+          </div>
+        </div>
+        {/* The Premium cutoff or trial notice, announced once, politely. */}
+        <p aria-live="polite" className="site-wrap text-sm text-ink-soft [&:not(:empty)]:pb-3">{liveVoiceNotice(voice)}</p>
+      </header>
+
+      {/*
+        Phones: one column with one height budget between the header and the controls. The open brief scrolls inside a
+        small cap, the docked cue shrinks to one line while the brief is open, and the transcript keeps a minimum height.
+        If a very short screen (or 200% zoom) still runs out of room, this column scrolls as a whole; nothing in it can
+        spill over the controls, which sit outside it. Wide screens: two columns that scroll on their own.
+      */}
+      <div data-call-body="" className="site-wrap flex min-h-0 flex-1 flex-col overflow-y-auto lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:overflow-visible">
+        <section aria-labelledby="call-headline" className="flex flex-1 flex-col pt-3 lg:min-h-0 lg:py-6 lg:pr-10">
+          <h2 id="call-headline" className="text-lg font-bold lg:text-xl">{CALL_HEADLINE}</h2>
+
+          {/* Phones: the brief and the coach history live in one titled disclosure. */}
+          <details data-phone-brief="" className="mt-2 shrink-0 rounded-panel border border-line lg:hidden" onToggle={(e) => setBriefOpen(e.currentTarget.open)}>
+            <summary className="min-h-[48px] cursor-pointer px-3 py-3 text-[15px] font-semibold">Buyer brief and coach settings</summary>
+            <div className="scroll-thin max-h-[min(30dvh,16rem)] space-y-5 overflow-y-auto border-t border-line p-3">
+              <BuyerBrief scenario={scenario} idPrefix="phone" titleHidden />
+              {coachMode === "blind" ? <BlindNote /> : <TalkTrackPanel steps={steps} result={coach.result} open={coachMode === "guided"} />}
+              {coachMode === "coached" && <EarlierCues cues={coach.cues} shownId={shown?.id} />}
+              <CoachSettings mode={coachMode} onModeChange={onCoachModeChange} coachLabel={coachLabel} />
+            </div>
+          </details>
+
+          {/* Every turn stays in this scroller, so earlier turns are always reachable by scrolling or keyboard. */}
+          <div ref={logRef} role="region" aria-label="Conversation" tabIndex={0}
+            onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}
+            className="scroll-thin mt-2 min-h-[6rem] flex-1 overflow-y-auto py-2 lg:mt-4">
+            <ol aria-live="polite" className="space-y-1">
+              {turns.length === 0 && !text?.typing && (
+                <li className="py-10 text-center text-base text-ink-soft">{isVoice ? "Connecting the call. Say hello when you hear them." : "The transcript appears here as you talk."}</li>
+              )}
+              {turns.map((t, i) => {
+                const me = t.role === "user";
+                return (
+                  <li key={i} data-turn="" className={`grid grid-cols-[3.5rem_minmax(0,1fr)] gap-3 rounded-panel px-3 py-3 sm:grid-cols-[4.5rem_minmax(0,1fr)] sm:gap-5 sm:px-4 ${i === lastBuyer ? "bg-sunken" : ""}`}>
+                    <div className="min-w-0 text-sm leading-5">
+                      <p className="break-words font-semibold text-ink">{me ? "You" : firstName}</p>
+                      {t.timestamp && <p className="mono text-ink-soft">{clock(t.timestamp, startedAt)}</p>}
+                    </div>
+                    <p className="min-w-0 whitespace-pre-wrap break-words text-[18px] leading-7 text-ink lg:text-[20px] lg:leading-[31px]">{t.text}</p>
+                  </li>
+                );
+              })}
+              {text?.typing && (
+                // The header status already says who is typing; the dots are decoration.
+                <li className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-3 px-3 py-3 sm:grid-cols-[4.5rem_minmax(0,1fr)] sm:gap-5 sm:px-4" aria-hidden>
+                  <span />
+                  <span className="flex items-center gap-1.5 py-2">
+                    {[0, 150, 300].map((d) => <span key={d} className="h-1.5 w-1.5 rounded-full bg-ink-soft motion-safe:animate-bounce" style={{ animationDelay: `${d}ms` }} />)}
+                  </span>
+                </li>
+              )}
+            </ol>
+          </div>
+        </section>
+
+        {/* Wide screens: the rail. Phones: only the one next move, docked above the controls. */}
+        <aside aria-label="Buyer brief and coaching" className="scroll-thin -mx-2 max-h-[min(35dvh,14rem)] shrink-0 overflow-y-auto px-2 pb-3 lg:mx-0 lg:max-h-none lg:space-y-6 lg:border-l lg:border-line lg:py-6 lg:pl-8 lg:pr-2">
+          <div className="hidden lg:block"><BuyerBrief scenario={scenario} idPrefix="rail" /></div>
+          {coachMode === "coached" && (
+            <NextMove cue={shown} voice={isVoice} compact={briefOpen} onUse={() => shown && insertLine(shown)} onDismiss={() => shown && coach.dismiss(shown.id)} />
+          )}
+          {coach.error && coachMode !== "blind" && <p role="status" className="mt-2 text-sm text-ink-soft lg:mt-0">{coach.error}</p>}
+          <div className="hidden space-y-6 lg:block">
+            {coachMode === "blind" ? <BlindNote /> : <TalkTrackPanel steps={steps} result={coach.result} open={coachMode === "guided"} />}
+            {coachMode === "coached" && <EarlierCues cues={coach.cues} shownId={shown?.id} />}
+            <CoachSettings mode={coachMode} onModeChange={onCoachModeChange} coachLabel={coachLabel} />
+          </div>
+        </aside>
+      </div>
+
+      {/* Call controls: a bar in the page flow (never over the transcript), 48 px targets, clear of the home indicator. */}
+      <section aria-label="Call controls" className="shrink-0 border-t border-line bg-background">
+        <div className="site-wrap pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">
+          {error && <CallError message={callErrorText(error)} className="mb-3" canUpgrade={canUpgrade} />}
+          {text?.hungUp && (
+            <div role="status" className="flex flex-col gap-3 rounded-panel border border-line bg-caution-soft p-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm"><strong>{persona.name} hung up.</strong> The call is over.</p>
+              <button type="button" className="btn-primary btn-lg" onClick={onEnd} disabled={grading}>Grade this call</button>
+            </div>
+          )}
+          {text && !text.hungUp && (
+            <div className="space-y-2">
+              {inserted && <p className="text-sm text-ink-soft">Line inserted from the coach. Edit it or send it. Nothing is sent on its own.</p>}
+              <div className="flex items-end gap-2 sm:gap-3">
+                <form className="flex min-w-0 flex-1 items-end gap-2 sm:gap-3" onSubmit={(e) => { e.preventDefault(); text.onSend(); }}>
                   <textarea
                     ref={replyRef}
-                    className="input min-h-[46px] resize-none !rounded-xl !py-3 leading-snug"
+                    className="input min-h-[48px] min-w-0 resize-none py-3 text-base leading-snug"
                     rows={inserted ? 3 : 1}
                     value={grading ? "" : text.value}
                     onChange={(e) => text.onChange(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); text.onSend(); } }}
-                    placeholder={grading ? "Grading…" : "Type what you would say…"}
+                    placeholder={grading ? "Grading" : "Type what you would say"}
                     aria-label="Your reply"
                     autoFocus
                     disabled={grading}
                   />
-                  <button className="btn-primary !h-[46px] !min-w-[46px] !rounded-xl !px-3.5" disabled={grading || !text.value.trim()} aria-label="Send"><Send size={17} aria-hidden /></button>
-                </div>
-                <p className="hidden font-mono text-[10px] text-ink-muted sm:block"><span className="kbd">Enter</span> send · <span className="kbd">Shift</span>+<span className="kbd">Enter</span> new line · <span className="kbd">Esc</span> end call</p>
-              </form>
-            )}
-            {voice && (
-              <p className="flex items-center justify-center gap-2 py-1 text-sm text-ink-soft">
-                <span className={`lamp ${voice.muted ? "lamp-alert" : "lamp-ok"}`} aria-hidden />
-                {voice.muted ? "Your mic is muted." : "Mic is live. Just talk; the transcript and coach follow along."}
-              </p>
-            )}
-            {/* Static for the whole call: the voice never changes mid-call. The notice is announced once, politely. */}
-            {voice?.tier && (
-              <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-xs text-ink-muted">
-                <span className="chip">{voiceLabel(voice.tier)}</span>
-                <p aria-live="polite" className="min-w-0 text-center">{liveVoiceNotice(voice)}</p>
+                  <button type="submit" className="btn-primary min-h-[48px] min-w-[48px] shrink-0 px-3" disabled={grading || !text.value.trim()} aria-label="Send">
+                    <Send size={18} strokeWidth={1.75} aria-hidden />
+                  </button>
+                </form>
+                {endButton(true)}
               </div>
-            )}
-          </div>
-        </section>
-
-        <div className="hidden min-h-0 lg:flex lg:flex-col">
-          <CopilotRail scenario={scenario} result={coach.result} cues={coach.cues} mode={coachMode} onModeChange={onCoachModeChange} voice={isVoice}
-            onUseLine={insertLine} onDismiss={coach.dismiss} coachLabel={coachLabel} error={coach.error} />
-        </div>
-      </div>
-
-      {sheet && (
-        <div className="fixed inset-0 z-[60] flex items-end bg-[rgb(var(--shadow)/0.5)] lg:hidden" onMouseDown={(e) => { if (e.target === e.currentTarget) setSheet(false); }}>
-          <div ref={sheetRef} onKeyDown={trapSheet} className="flex max-h-[85dvh] w-full flex-col overflow-hidden rounded-t-sheet border border-line bg-surface animate-cue-in" role="dialog" aria-modal="true" aria-label="Coach">
-            <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
-              <p className="font-heading text-sm font-bold">Coach</p>
-              <button ref={sheetClose} type="button" className="btn-quiet !min-h-[36px] !px-2" onClick={() => setSheet(false)} aria-label="Close coach"><X size={18} aria-hidden /></button>
+              <p className="hidden text-xs text-ink-soft sm:block"><span className="kbd">Enter</span> sends · <span className="kbd">Shift</span>+<span className="kbd">Enter</span> adds a line · <span className="kbd">Esc</span> ends the call</p>
             </div>
-            <div className="flex min-h-0 flex-1 flex-col pb-[env(safe-area-inset-bottom)]">
-              <CopilotRail scenario={scenario} result={coach.result} cues={coach.cues} mode={coachMode} onModeChange={onCoachModeChange} voice={isVoice}
-                onUseLine={(c) => { onInsert(c); afterSheet.current = "composer"; setSheet(false); }} onDismiss={coach.dismiss} coachLabel={coachLabel} error={coach.error} />
+          )}
+          {voice && (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="hidden text-xs text-ink-soft lg:block"><span className="kbd">Space</span> mutes · <span className="kbd">Esc</span> ends the call</p>
+              <div className="grid w-full grid-cols-2 gap-3 sm:ml-auto sm:flex sm:w-auto">
+                <button type="button" className={`btn-ghost min-h-[48px] px-3 text-sm sm:px-5 sm:text-base ${voice.muted ? "!border-alert !text-alert" : ""}`} onClick={voice.onToggleMute} disabled={grading}>
+                  {voice.muted ? <MicOff size={18} strokeWidth={1.75} aria-hidden /> : <Mic size={18} strokeWidth={1.75} aria-hidden />}
+                  <span>{voice.muted ? "Unmute" : "Mute"}<span className="hidden sm:inline"> microphone</span></span>
+                </button>
+                {endButton(false)}
+              </div>
             </div>
-          </div>
+          )}
         </div>
-      )}
+      </section>
 
-      <p className="sr-only" aria-live="assertive" aria-atomic="true">{announce}</p>
+      <p className="sr-only" aria-live="polite" aria-atomic="true">{announce}</p>
 
       {grading && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-background/80 backdrop-blur-sm" role="status">
-          <div className="panel flex items-center gap-3 px-5 py-4">
-            <Loader2 size={18} className="animate-spin text-primary" aria-hidden />
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-background/90 p-4">
+          <div role="status" className="panel flex items-center gap-3 px-5 py-4">
+            <Loader2 size={20} strokeWidth={1.75} className="shrink-0 text-primary motion-safe:animate-spin" aria-hidden />
             <div>
-              <p className="text-sm font-semibold">Grading the full call</p>
-              <p className="font-mono text-[11px] text-ink-muted">{gradingLabel}</p>
+              <p className="text-base font-semibold">Grading the full call</p>
+              <p className="text-sm text-ink-soft">{gradingLabel}</p>
             </div>
           </div>
         </div>
       )}
 
       {confirmEnd && (
-        <ConfirmDialog title="End the call and grade it?" message="You'll get a full debrief with scores, evidence and a retry point." confirmLabel="End & grade"
+        <ConfirmDialog title="End the call and grade it?" message="You'll get a full debrief with scores, evidence and a retry point." confirmLabel="End and grade"
           onConfirm={() => { setConfirmEnd(false); onEnd(); }} onCancel={() => setConfirmEnd(false)} />
       )}
     </div>

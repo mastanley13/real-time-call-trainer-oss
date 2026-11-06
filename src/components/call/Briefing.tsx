@@ -17,8 +17,8 @@ import { ModeDial, radioKeys } from "./CopilotRail";
 
 const MODE_HELP: Record<CoachMode, string> = {
   blind: "No live help. Pure practice, full debrief at the end.",
-  guided: "Live estimate and talk-track progress, no cues.",
-  coached: "Everything, plus cues when an objection lands or a step is due.",
+  guided: "Talk-track progress, no cues. Your score comes in the debrief.",
+  coached: "Talk-track progress, plus one next move when an objection lands or a step is due.",
 };
 
 function Lamp({ state, label, detail }: { state: "ok" | "caution" | "off"; label: string; detail: string }) {

@@ -1,19 +1,19 @@
 "use client";
 
-import { Check, CircleHelp, CornerDownLeft, Ear, Flag, ShieldAlert, X } from "lucide-react";
+import { Check, CircleHelp, Ear, Flag, ShieldAlert } from "lucide-react";
 import { COACH_MODES, COACH_MODE_LABELS, CUE_LABELS, type CoachMode, type CoachResult, type CueType } from "@/lib/coach-types";
-import { talkTrackSteps, type Scenario } from "@/lib/scenarios";
+import type { Scenario } from "@/lib/scenarios";
+import { CUE_NOTE } from "./callCopy";
 import type { LiveCue } from "./useCoach";
 
-export const CUE_ICON: Record<CueType, typeof ShieldAlert> = { objection: ShieldAlert, next_question: CircleHelp, whisper: Ear, guardrail: Flag };
-export const CUE_TONE: Record<CueType, string> = {
-  objection: "text-alert border-alert/60",
-  next_question: "text-signal border-signal/60",
-  whisper: "text-ok border-ok/60",
-  guardrail: "text-caution border-caution/60",
-};
+/**
+ * The coach side of the call screen ("Buyer and brief"): the buyer brief, exactly one next move, talk-track progress,
+ * earlier cues and the coach mode. No live score: the overall estimate and the rubric meters are not drawn during a
+ * call, so nothing competes with the buyer. The final, evidence-backed grade is on the debrief.
+ */
 
-const scoreTone = (n: number) => (n >= 75 ? "text-ok" : n >= 45 ? "text-signal" : "text-caution");
+/** Cue type icons for the debrief's moment strip. The live call draws no cue icons. */
+export const CUE_ICON: Record<CueType, typeof ShieldAlert> = { objection: ShieldAlert, next_question: CircleHelp, whisper: Ear, guardrail: Flag };
 
 /**
  * Keyboard model for a role="radiogroup" of buttons (WAI-ARIA radio pattern), also used for a
@@ -37,57 +37,6 @@ export function radioKeys<T>(options: readonly T[], value: T, onChange: (v: T) =
   };
 }
 
-/** Live estimate, talk track and talk ratio: the three instruments at the top of the rail. */
-export function Instruments({ result, steps, compact = false }: { result: CoachResult | null; steps: string[]; compact?: boolean }) {
-  const overall = result?.estimate.overall ?? 0;
-  const done = result?.steps.filter(Boolean).length ?? 0;
-  const ratio = Math.round((result?.talkRatio ?? 0) * 100);
-  const ratioOk = ratio >= 35 && ratio <= 65;
-  return (
-    <div className={`grid grid-cols-3 ${compact ? "gap-3" : "gap-4"}`}>
-      <div>
-        <p className="label !mb-1">Live estimate</p>
-        <p className={`mono font-semibold leading-none ${compact ? "text-2xl" : "text-[34px]"} ${result ? scoreTone(overall) : "text-ink-muted"}`}>{result ? overall : "--"}<span className="text-xs text-ink-muted">/100</span></p>
-        <p className="mt-1 font-mono text-[10px] uppercase tracking-wide text-ink-muted">not final</p>
-      </div>
-      <div>
-        <p className="label !mb-1">Talk track</p>
-        <p className={`mono font-semibold leading-none text-ink ${compact ? "text-2xl" : "text-[34px]"}`}>{done}<span className="text-xs text-ink-muted">/{steps.length}</span></p>
-        <div className="mt-2 flex gap-0.5" aria-hidden>{steps.map((_, i) => <span key={i} className={`h-1 flex-1 rounded-full ${result?.steps[i] ? "bg-ok" : "bg-line"}`} />)}</div>
-      </div>
-      <div>
-        <p className="label !mb-1">You talk</p>
-        <p className={`mono font-semibold leading-none ${compact ? "text-2xl" : "text-[34px]"} ${!result ? "text-ink-muted" : ratioOk ? "text-ink" : "text-caution"}`}>{result ? ratio : "--"}<span className="text-xs text-ink-muted">%</span></p>
-        <div className="relative mt-2 h-1 rounded-full bg-line" aria-hidden>
-          <span className="absolute inset-y-0 rounded-full bg-ok/40" style={{ left: "35%", width: "30%" }} />
-          {result && <span className="absolute -top-1 h-3 w-0.5 rounded bg-ink" style={{ left: `${ratio}%` }} />}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Rubric tapes: hatched while provisional, solid once a transcript quote confirms the criterion. */
-export function CriteriaTapes({ scenario, result }: { scenario: Scenario; result: CoachResult | null }) {
-  const total = scenario.rubric.reduce((a, c) => a + c.weight, 0) || 1;
-  const rows = result?.estimate.criteria ?? scenario.rubric.map((c) => ({ id: c.id, name: c.name, weight: (c.weight / total) * 100, score: 0, confirmed: false }));
-  return (
-    <ul className="space-y-2.5">
-      {rows.map((c) => (
-        <li key={c.id}>
-          <div className="mb-1 flex items-baseline justify-between gap-2 text-[13px]">
-            <span className="min-w-0 truncate">{c.name}</span>
-            <span className="mono shrink-0 text-[11px] text-ink-muted">{Math.round(c.weight)}% · <span className={c.confirmed ? scoreTone(c.score) : ""}>{Math.round(c.score)}</span></span>
-          </div>
-          <div className="tape" role="meter" aria-label={`${c.name}: ${Math.round(c.score)} of 100, ${c.confirmed ? "confirmed by a quote" : "provisional"}`} aria-valuenow={Math.round(c.score)} aria-valuemin={0} aria-valuemax={100}>
-            <span className={`${scoreTone(c.score)} ${c.confirmed ? "bg-current" : "hatched"}`} style={{ width: `${Math.max(2, c.score)}%` }} />
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 export function TalkTrack({ steps, result }: { steps: string[]; result: CoachResult | null }) {
   const current = result ? result.steps.findIndex((d) => !d) : 0;
   return (
@@ -96,46 +45,17 @@ export function TalkTrack({ steps, result }: { steps: string[]; result: CoachRes
         const done = !!result?.steps[i];
         const now = i === current;
         return (
-          <li key={i} className={`flex items-start gap-2.5 rounded-md px-1.5 py-1 text-[13px] ${now ? "bg-primary-soft/60" : ""}`}>
-            <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${done ? "border-ok bg-ok text-background" : now ? "border-signal" : "border-line"}`} aria-hidden>
+          <li key={i} className={`flex items-start gap-2.5 rounded-control px-1.5 py-1 text-sm ${now ? "bg-primary-soft/60" : ""}`}>
+            <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${done ? "border-ok bg-ok text-background" : now ? "border-primary" : "border-line"}`} aria-hidden>
               {done && <Check size={11} strokeWidth={3} />}
             </span>
-            <span className={`${done ? "text-ink-muted line-through decoration-line" : now ? "font-medium text-ink" : "text-ink-soft"}`}>{now && <span className="sr-only">Now: </span>}{s}</span>
+            <span className={`${done ? "text-ink-soft line-through decoration-line" : now ? "font-medium text-ink" : "text-ink-soft"}`}>
+              {done && <span className="sr-only">Done: </span>}{now && <span className="sr-only">Now: </span>}{s}
+            </span>
           </li>
         );
       })}
     </ol>
-  );
-}
-
-export function CueCard({ cue, voice, onUse, onDismiss, compact = false }: { cue: LiveCue; voice: boolean; onUse: () => void; onDismiss: () => void; compact?: boolean }) {
-  const Icon = CUE_ICON[cue.type];
-  return (
-    // Not a live region: a region mounted with its text already in it is usually not announced. Deck announces new cues.
-    <article className={`animate-cue-in rounded-panel border-l-2 bg-sunken p-3 ${CUE_TONE[cue.type]} ${compact ? "" : "shadow-inner-top"}`}>
-      <div className="flex items-start gap-2">
-        <Icon size={18} strokeWidth={1.75} className="mt-0.5 shrink-0" aria-hidden />
-        <div className="min-w-0 flex-1">
-          <p className="font-mono text-[10px] font-medium uppercase tracking-[0.1em]">{CUE_LABELS[cue.type]} · turn {cue.triggerTurn}</p>
-          <p className="mt-0.5 text-sm font-semibold text-ink">{cue.title}</p>
-        </div>
-        <button className="rounded p-1 text-ink-muted hover:bg-surface hover:text-ink" onClick={onDismiss} aria-label={`Dismiss cue: ${cue.title}`}><X size={14} aria-hidden /></button>
-      </div>
-      {cue.heard && <p className="mt-2 border-l border-line pl-2 text-[12.5px] italic text-ink-soft"><span className="not-italic font-mono text-[10px] uppercase text-ink-muted">Heard </span>&ldquo;{cue.heard}&rdquo;</p>}
-      {cue.message && <p className="mt-2 text-[13px] text-ink-soft">{cue.message}</p>}
-      {cue.suggestedLine && (
-        <div className="mt-2 rounded-md border border-dashed border-line bg-surface p-2.5">
-          <p className="font-mono text-[10px] uppercase tracking-wide text-ink-muted">{voice ? "Say something like" : "Suggested line"}</p>
-          <p className="mt-0.5 text-[13px] font-medium text-ink">&ldquo;{cue.suggestedLine}&rdquo;</p>
-        </div>
-      )}
-      {cue.suggestedLine && !voice && (
-        <div className="mt-2.5 flex gap-2">
-          <button type="button" className="btn-primary btn-sm" onClick={onUse}><CornerDownLeft size={13} aria-hidden /> Use line</button>
-          <button className="btn-quiet btn-sm" onClick={onDismiss}>Dismiss</button>
-        </div>
-      )}
-    </article>
   );
 }
 
@@ -152,72 +72,124 @@ export function ModeDial({ mode, onChange, disabled = false }: { mode: CoachMode
   );
 }
 
-/** The full copilot rail beside the transcript. */
-export default function CopilotRail({ scenario, result, cues, mode, onModeChange, voice, onUseLine, onDismiss, coachLabel, error }: {
-  scenario: Scenario;
-  result: CoachResult | null;
-  cues: LiveCue[];
-  mode: CoachMode;
-  onModeChange: (m: CoachMode) => void;
-  voice: boolean;
-  onUseLine: (cue: LiveCue) => void;
-  onDismiss: (id: string) => void;
-  coachLabel: string;
-  error?: string;
-}) {
-  const steps = talkTrackSteps(scenario.callScript);
-  const active = cues.filter((c) => c.status === "active");
-  const earlier = cues.filter((c) => c.status !== "active").slice(0, 4);
+/** Goal and expected objections. Prep answers stay on the briefing: during the call, help comes as one next move. */
+export function BuyerBrief({ scenario, idPrefix, titleHidden = false }: { scenario: Scenario; idPrefix: string; titleHidden?: boolean }) {
+  const id = `${idPrefix}-brief`;
   return (
-    <aside className="flex min-h-0 flex-col border-line bg-surface lg:border-l" aria-label="Coach">
-      <div className="scroll-thin min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
-        {mode === "blind" ? (
-          <div className="rounded-panel border border-dashed border-line p-4 text-sm text-ink-soft">
-            <p className="font-semibold text-ink">Blind mode</p>
-            <p className="mt-1">No live help this call. You get the full debrief when you end it. Switch to Guided or Coached below at any time.</p>
-          </div>
-        ) : (
-          <>
-            <section aria-label="Live instruments"><Instruments result={result} steps={steps} /></section>
-            <section aria-labelledby="rail-rubric">
-              <h2 id="rail-rubric" className="label">Rubric <span className="normal-case tracking-normal">· same weights as your final grade</span></h2>
-              <CriteriaTapes scenario={scenario} result={result} />
-            </section>
-            <section aria-labelledby="rail-track">
-              <h2 id="rail-track" className="label">Talk track</h2>
-              <TalkTrack steps={steps} result={result} />
-            </section>
-            {mode === "coached" && (
-              <section aria-labelledby="rail-cues">
-                <h2 id="rail-cues" className="label">Coach cues <span className="normal-case tracking-normal">· only you see these</span></h2>
-                {active.length ? (
-                  <div className="space-y-2.5">{active.map((c) => <CueCard key={c.id} cue={c} voice={voice} onUse={() => onUseLine(c)} onDismiss={() => onDismiss(c.id)} />)}</div>
-                ) : (
-                  <p className="rounded-panel border border-dashed border-line p-3 text-[13px] text-ink-muted">Cues appear here when an objection lands, a talk-track step is due, or you drift. The caller never hears them.</p>
-                )}
-                {earlier.length > 0 && (
-                  <ul className="mt-3 space-y-1 border-t border-line pt-3">
-                    {earlier.map((c) => (
-                      <li key={c.id} className="flex items-center justify-between gap-2 text-[12px] text-ink-muted">
-                        <span className="min-w-0 truncate">{CUE_LABELS[c.type]} · {c.title}</span>
-                        <span className={`mono shrink-0 ${c.status === "used" ? "text-ok" : ""}`}>{c.status === "used" ? "Used" : "Dismissed"}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-            )}
-          </>
-        )}
-        {error && <p className="rounded-md bg-caution-soft p-2 text-[12px] text-ink" role="status">{error}</p>}
-      </div>
-      <div className="space-y-2.5 border-t border-line p-4">
-        <div className="flex items-center justify-between gap-2">
-          <span className="chip-model"><span className={`lamp ${mode === "blind" ? "lamp-off" : "lamp-ok"} !h-1.5 !w-1.5`} aria-hidden />{coachLabel}</span>
-          <span className="font-mono text-[10px] uppercase text-ink-muted">Coach mode</span>
+    <section aria-labelledby={id}>
+      <h2 id={id} className={titleHidden ? "sr-only" : "text-xl font-bold"}>Buyer brief</h2>
+      <p className={`${titleHidden ? "" : "mt-1"} text-sm text-ink-soft`}>{scenario.aiPersona.role}</p>
+      <dl className="mt-3 divide-y divide-line border-t border-line text-sm">
+        <div className="py-3">
+          <dt className="text-ink-soft">Your goal</dt>
+          <dd className="mt-1 font-semibold text-ink">{scenario.traineeGoal}</dd>
         </div>
-        <ModeDial mode={mode} onChange={onModeChange} />
+        {scenario.objections.length > 0 && (
+          <div className="py-3">
+            <dt className="text-ink-soft">Expect these objections</dt>
+            <dd className="mt-1">
+              <ul className="space-y-1.5">
+                {scenario.objections.map((o, i) => <li key={i} className="break-words font-medium text-ink">&ldquo;{o.line}&rdquo;</li>)}
+              </ul>
+            </dd>
+          </div>
+        )}
+      </dl>
+    </section>
+  );
+}
+
+/**
+ * Exactly one next move. In Coached mode it holds the newest active cue, or a quiet empty state on wide screens (on
+ * phones the empty state is hidden so the transcript keeps the room). It is not a live region and never takes focus;
+ * the Deck announces new cues through one polite region.
+ * `compact`: the phone brief is open, so below 1024 px the cue shrinks to its heading and title on one line (the
+ * full card, with Use line and Hide cue, comes back when the brief closes). Wide screens always show the full card.
+ */
+export function NextMove({ cue, voice, onUse, onDismiss, compact = false }: { cue: LiveCue | undefined; voice: boolean; onUse: () => void; onDismiss: () => void; compact?: boolean }) {
+  const slim = compact && !!cue;
+  return (
+    <section aria-labelledby="next-move-h" data-next-move="" className={`rounded-r-panel border-l-4 border-primary bg-sunken ${slim ? "px-3 py-2 lg:p-4" : "p-4"} ${cue ? "motion-safe:animate-cue-in" : "hidden lg:block"}`}>
+      <h2 id="next-move-h" className="text-sm font-semibold text-ink">
+        Next move{slim && <span className="font-normal text-ink-soft lg:hidden">. Close the brief to see it.</span>}
+      </h2>
+      {slim && cue && <p data-cue-compact="" className="truncate text-sm text-ink lg:hidden">{cue.title}</p>}
+      <div className={slim ? "hidden lg:block" : ""}>
+      {cue ? (
+        <>
+          <p className="mt-0.5 text-xs text-ink-soft">{CUE_LABELS[cue.type]}, turn {cue.triggerTurn}</p>
+          <h3 className="mt-2 break-words text-lg font-bold leading-snug">{cue.title}</h3>
+          {cue.message && <p className="mt-1 break-words text-[15px] leading-6 text-ink">{cue.message}</p>}
+          {cue.suggestedLine && (
+            <p className="mt-3 break-words rounded-control border border-line bg-surface p-3 text-[15px] leading-6 text-ink">
+              <span className="block text-xs text-ink-soft">{voice ? "Say something like" : "Suggested line"}</span>
+              &ldquo;{cue.suggestedLine}&rdquo;
+            </p>
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {cue.suggestedLine && !voice && <button type="button" className="btn-primary min-h-[44px]" onClick={onUse}>Use line</button>}
+            <button type="button" className="btn-ghost min-h-[44px]" onClick={onDismiss}>Hide cue</button>
+          </div>
+        </>
+      ) : (
+        <p className="mt-2 text-sm text-ink-soft">No cue right now. One shows here when an objection lands or a step is due.</p>
+      )}
+      <p className="mt-3 text-xs text-ink-soft">{CUE_NOTE}</p>
       </div>
-    </aside>
+    </section>
+  );
+}
+
+/** Talk-track progress as a disclosure, so the rail stays compact. Progress only, never a score. */
+export function TalkTrackPanel({ steps, result, open = false }: { steps: string[]; result: CoachResult | null; open?: boolean }) {
+  const done = result?.steps.filter(Boolean).length ?? 0;
+  return (
+    <details open={open || undefined}>
+      <summary className="min-h-[44px] cursor-pointer py-2.5 text-sm font-semibold text-ink">
+        Talk track <span className="font-normal text-ink-soft">{done} of {steps.length} steps done</span>
+      </summary>
+      <div className="pt-1"><TalkTrack steps={steps} result={result} /></div>
+    </details>
+  );
+}
+
+/** Cues before the one on screen, newest first: the history of what the coach said. */
+export function EarlierCues({ cues, shownId }: { cues: LiveCue[]; shownId?: string }) {
+  const earlier = cues.filter((c) => c.id !== shownId).slice(0, 4);
+  if (!earlier.length) return null;
+  return (
+    <section aria-label="Earlier cues">
+      <h2 className="text-sm font-semibold text-ink">Earlier cues</h2>
+      <ul className="mt-2 space-y-1.5 text-sm">
+        {earlier.map((c) => (
+          <li key={c.id} className="flex items-baseline justify-between gap-3">
+            <span className="min-w-0 break-words text-ink-soft">{c.title}</span>
+            <span className="shrink-0 text-xs text-ink-soft">{c.status === "used" ? "Used" : "Not used"}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+export function BlindNote() {
+  return (
+    <div className="rounded-panel border border-dashed border-line p-4 text-sm text-ink-soft">
+      <p className="font-semibold text-ink">Blind mode</p>
+      <p className="mt-1">No live help this call. You get the full debrief when you end it. Switch to Guided or Coached at any time.</p>
+    </div>
+  );
+}
+
+/** Which coach is running (the existing label: AI or rules-based, never a model) and the mode dial. */
+export function CoachSettings({ mode, onModeChange, coachLabel }: { mode: CoachMode; onModeChange: (m: CoachMode) => void; coachLabel: string }) {
+  return (
+    <div className="space-y-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="chip-model"><span className={`h-1.5 w-1.5 shrink-0 rounded-full ${mode === "blind" ? "bg-ink-muted" : "bg-ok"}`} aria-hidden />{coachLabel}</span>
+        <span className="text-xs text-ink-soft">Coach mode</span>
+      </div>
+      <ModeDial mode={mode} onChange={onModeChange} />
+    </div>
   );
 }

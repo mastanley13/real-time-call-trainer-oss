@@ -16,6 +16,7 @@ import Deck from "@/components/call/Deck";
 import { CallMeter } from "@/lib/callMeter";
 import RealtimeVoiceSession, { voiceInfoFrom, type VoiceInfo, type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
+import { CALL_STATUS, hungUpStatus, speakingStatus, typingStatus } from "@/components/call/callCopy";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
 import { VOICE_CHOICE_KEY, canUpgradeFromUsage, premiumChoiceAvailable, premiumSnapshotFromUsage, readVoiceChoice, usageSnapshotFromUsage, type PremiumSnapshot, type UsageSnapshot, type VoiceChoice } from "@/lib/billingUi";
 
@@ -104,10 +105,10 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
   const orbState: AgentState = grading || !connected ? "thinking" : isSpeaking ? "talking" : "listening";
   const name = scenario.aiPersona.name.split(" ")[0];
   const statusLabel = !connected
-    ? { label: "Connecting… allow the mic", tone: "caution" as const }
-    : isMuted ? { label: "Muted", tone: "caution" as const }
-    : isSpeaking ? { label: `${name} is speaking`, tone: "signal" as const }
-    : { label: "Your turn", tone: "ok" as const };
+    ? { label: CALL_STATUS.connectingAllowMic, tone: "caution" as const }
+    : isMuted ? { label: CALL_STATUS.muted, tone: "caution" as const }
+    : isSpeaking ? { label: speakingStatus(name), tone: "signal" as const }
+    : { label: CALL_STATUS.listening, tone: "ok" as const };
   return <>{render({ orbState, status: statusLabel, muted: isMuted, toggleMute: () => setMuted(!isMuted), end: () => endSession(), getInputVolume, getOutputVolume })}</>;
 }
 
@@ -150,14 +151,10 @@ export default function TrainerClient() {
   /** The OpenAI Realtime call the server minted (sessionId, receipt, metering callId); saved with the call. Never shown. */
   const mintedCallRef = useRef<MintedCall | null>(null);
   const turnsRef = useRef<StoredTurn[]>([]);
-  const [replyTalking, setReplyTalking] = useState(false);
-  const talkTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const live = phase === "live";
   const grading = phase === "grading";
   const coach = useCoach(scenario ?? undefined, turns, { mode: coachMode, live });
-
-  useEffect(() => () => clearTimeout(talkTimer.current), []);
 
   // Pick the scenario: ?retry=<session>&turn=<n>, else ?scenario=<id>, else the last one practised, else the first reviewed one.
   // Re-runs when the query changes, so the command palette can switch persona without a full page load.
@@ -224,10 +221,12 @@ export default function TrainerClient() {
     if (!isLoading && capabilities && !isAuthenticated) router.replace("/login");
   }, [isLoading, capabilities, isAuthenticated, router]);
 
-  // Read the minutes left each time the briefing shows, so it is right after a call and after an upgrade.
+  // Read the minutes left each time the briefing shows, so it is right after a call and after an upgrade. During a call
+  // the last read is kept (the call header shows it as the count at call start); it is never reset to a guess.
   const stored = !!capabilities?.database && !capabilities?.demoMode;
   useEffect(() => {
-    if (phase !== "idle" || !isAuthenticated || !stored) { setUsage(null); setPremium(null); setUsageUnavailable(false); return; }
+    if (phase !== "idle") return;
+    if (!isAuthenticated || !stored) { setUsage(null); setPremium(null); setUsageUnavailable(false); return; }
     let live = true;
     // Any failed lookup on a stored account blocks voice (fail closed); text practice stays open.
     fetch("/api/usage", { credentials: "include" })
@@ -345,7 +344,6 @@ export default function TrainerClient() {
     setVoiceInfo(null);
     // Sent only when the setup offered the choice; otherwise the server decides alone, as before.
     setCallTier(premiumChoiceAvailable(premium) ? voiceChoice : undefined);
-    setReplyTalking(false);
     setHungUp(false);
     setCallerSource(null);
     setBusy(false);
@@ -387,9 +385,6 @@ export default function TrainerClient() {
         setTurns(turnsRef.current);
         if (inserted) coachRef.current.shift(at);
         if (data.source === "llm" || data.source === "scripted") setCallerSource(data.source);
-        setReplyTalking(true);
-        clearTimeout(talkTimer.current);
-        talkTimer.current = setTimeout(() => setReplyTalking(false), Math.min(4000, 900 + data.reply.length * 25));
         if (data.ended) { setHungUp(true); break; }
       }
     } catch (e) {
@@ -435,7 +430,9 @@ export default function TrainerClient() {
   }
 
   const gradingLabel = capabilities.llm ? "Graded by AI after the call" : "Rules-based estimate (no AI key)";
-  const shared = { scenario, turns, startedAt: startedAt.current, elapsed, grading, gradingLabel, coach, coachMode, onCoachModeChange: setCoachMode, coachLabel, inserted, onInsert: insertCue, error, canUpgrade };
+  // usage is the read from the briefing, shown in the call header as the count at call start.
+  const shared = { scenario, turns, startedAt: startedAt.current, elapsed, grading, gradingLabel, coach, coachMode, onCoachModeChange: setCoachMode, coachLabel, inserted, onInsert: insertCue, usage, error, canUpgrade };
+  const gradingStatus = { label: CALL_STATUS.grading, tone: "signal" as const };
 
   if (mode === "voice" && engine) {
     const voiceProps = {
@@ -444,8 +441,8 @@ export default function TrainerClient() {
       onError: (m: string) => { setError(m); if (!turnsRef.current.some((t) => t.role === "user" && t.text.trim())) setPhase("idle"); },
       registerEnd: (fn: () => void) => { endVoice.current = fn; },
       render: (v: VoiceRender) => (
-        <Deck {...shared} orbState={v.orbState} status={grading ? { label: "Grading…", tone: "signal" } : v.status} onEnd={v.end}
-          voice={{ engine, muted: v.muted, onToggleMute: v.toggleMute, getInputVolume: v.getInputVolume, getOutputVolume: v.getOutputVolume, tier: voiceInfo?.tier, nextCallStandard: voiceInfo?.nextCallStandard, trial: voiceInfo?.trial, maxSeconds: voiceInfo?.maxSeconds }} />
+        <Deck {...shared} status={grading ? gradingStatus : v.status} onEnd={v.end}
+          voice={{ muted: v.muted, onToggleMute: v.toggleMute, tier: voiceInfo?.tier, nextCallStandard: voiceInfo?.nextCallStandard, trial: voiceInfo?.trial, maxSeconds: voiceInfo?.maxSeconds }} />
       ),
     };
     // Coach cues stay on the trainee's screen: neither engine is ever sent coach output.
@@ -458,15 +455,14 @@ export default function TrainerClient() {
   }
 
   const name = scenario.aiPersona.name.split(" ")[0];
-  const textOrb: AgentState = grading || busy ? "thinking" : replyTalking ? "talking" : "listening";
-  const status = grading ? { label: "Grading…", tone: "signal" as const }
-    : hungUp ? { label: `${name} hung up`, tone: "caution" as const }
-    : busy ? { label: `${name} is typing…`, tone: "signal" as const }
-    : { label: "Your turn", tone: "ok" as const };
+  const status = grading ? gradingStatus
+    : hungUp ? { label: hungUpStatus(name), tone: "caution" as const }
+    : busy ? { label: typingStatus(name), tone: "signal" as const }
+    : { label: CALL_STATUS.yourTurn, tone: "ok" as const };
   // Name what is playing the persona: AI, or the scripted fallback (no key, or the model call failed). Never a model id.
   const caller = (callerSource ?? (capabilities.llm ? "llm" : "scripted")) === "llm" ? "Text · AI" : "Text · scripted";
   return (
-    <Deck {...shared} orbState={textOrb} status={status} onEnd={hangUp}
+    <Deck {...shared} status={status} onEnd={hangUp}
       text={{ value: input, onChange: (v) => { setInput(v); if (!v) setInserted(false); }, onSend: sendText, hungUp, typing: busy && !hungUp, caller }} />
   );
 }
