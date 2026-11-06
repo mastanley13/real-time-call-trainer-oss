@@ -29,7 +29,7 @@ export async function accessToken(code: string): Promise<string> {
   return hmacHex(key, `trainer-access:${code}`);
 }
 
-/** True when the request carries the access cookie for `code`. Same check the middleware gate uses. */
+/** True when the request carries the access cookie for `code`. Same check the proxy gate (src/proxy.ts) uses. */
 export async function hasValidAccessCookie(req: { cookies: { get(name: string): { value: string } | undefined } }, code: string): Promise<boolean> {
   const cookie = req.cookies.get(ACCESS_COOKIE)?.value ?? "";
   return !!cookie && safeEqual(cookie, await accessToken(code));

@@ -23,6 +23,11 @@ describe("resolveRealtimeKey", () => {
     expect(resolveRealtimeKey({ LLM_API_KEY: "llm", LLM_BASE_URL: "https://openrouter.ai/api/v1" })).toBeUndefined();
     expect(resolveRealtimeKey({ LLM_API_KEY: "llm", LLM_BASE_URL: "http://localhost:11434/v1" })).toBeUndefined();
   });
+  it("uses the exact OpenAI host check, so a look-alike suffix host is custom", () => {
+    expect(resolveRealtimeKey({ LLM_API_KEY: "llm", LLM_BASE_URL: "https://api.openai.com.attacker.example/v1" })).toBeUndefined();
+    expect(resolveRealtimeKey({ LLM_API_KEY: "llm", LLM_BASE_URL: "https://api.openai.com.attacker.example" })).toBeUndefined();
+    expect(resolveRealtimeKey({ LLM_API_KEY: "llm", LLM_BASE_URL: "https://api.openai.com:443/v1" })).toBe("llm");
+  });
   it("treats blank values as missing", () => {
     expect(resolveRealtimeKey({ OPENAI_REALTIME_API_KEY: "  ", OPENAI_API_KEY: "" })).toBeUndefined();
     expect(resolveRealtimeKey({})).toBeUndefined();
@@ -171,7 +176,7 @@ describe("small helpers", () => {
     expect(micErrorMessage(new Error("x"))).toMatch(/Could not open/);
   });
   it("maps upstream failures to friendly messages without echoing a body", () => {
-    expect(realtimeUpstreamMessage(401)).toBe("OpenAI rejected the API key. Check OPENAI_API_KEY.");
+    expect(realtimeUpstreamMessage(401)).toBe("OpenAI rejected the API key. Check OPENAI_API_KEY and any OPENAI_API_KEY_BACKUP_* keys.");
     // Names every env var that can set the tier's model, never the configured model id.
     for (const status of [400, 404]) {
       expect(realtimeUpstreamMessage(status)).toMatch(/REALTIME_MODEL_STANDARD/);
@@ -242,7 +247,7 @@ describe("POST /api/realtime/session", () => {
     const res = await sessionPOST(req({ scenario }));
     const text = await res.text();
     expect(res.status).toBe(502);
-    expect(JSON.parse(text)).toEqual({ error: "realtime_upstream_error", message: "OpenAI rejected the API key. Check OPENAI_API_KEY." });
+    expect(JSON.parse(text)).toEqual({ error: "realtime_upstream_error", message: "OpenAI rejected the API key. Check OPENAI_API_KEY and any OPENAI_API_KEY_BACKUP_* keys." });
     expect(text).not.toContain("sk-bad");
   });
 

@@ -1,6 +1,8 @@
 import "server-only";
 import { safeEqual } from "./access";
-import { orderVoiceEngines, realtimeKey } from "./realtime";
+import { OPENAI_DEFAULT_BASE_URL, isOpenAiBaseUrl } from "./openaiHost";
+import { chatKeyPlan, voiceKeyPlan } from "./openaiKeys";
+import { orderVoiceEngines } from "./realtime";
 import { stripeReady, stripeStatus } from "./stripe";
 import { isPremiumOnSale } from "./pricing";
 import { isTrialSampleOn } from "./premiumTrial";
@@ -67,7 +69,8 @@ export function elevenLabsAgentFor(engine: "premium" | "standard", env: Env = pr
  */
 export function getCapabilities() {
   const elevenlabs = Boolean(process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_AGENT_ID);
-  const realtime = Boolean(realtimeKey());
+  // OPENAI_REALTIME_API_KEY, else any OpenAI key slot, else LLM_API_KEY on an OpenAI base (voiceKeyPlan in openaiKeys.ts).
+  const realtime = voiceKeyPlan(process.env).kind !== "none";
   return {
     /** Fails closed: false whenever the production guard blocks demo mode, so requireAuth never yields DEMO_USER. */
     demoMode: process.env.DEMO_MODE === "true" && !productionGuard(process.env).problems.includes("demo_in_production"),
@@ -89,17 +92,17 @@ export function getCapabilities() {
   };
 }
 
-/** Exact host match: \b alone would also accept api.openai.com.attacker.example. */
-const isOpenAiBaseUrl = (url: string) => /^https:\/\/api\.openai\.com(?::443)?(?:\/|$)/i.test(url.trim());
-
 /**
- * LLM_API_KEY, else OPENAI_API_KEY only while LLM_BASE_URL points at OpenAI. An OpenAI key
- * set for voice must never go out as the bearer token to a third-party base URL.
+ * LLM_API_KEY, else the first OpenAI key slot (OPENAI_API_KEY, then OPENAI_API_KEY_BACKUP_1 and _2) only while
+ * LLM_BASE_URL points at OpenAI (exact host, isOpenAiBaseUrl in openaiHost.ts). An OpenAI key set for voice must
+ * never go out as the bearer token to a third-party base URL. This answers "is chat configured"; each request picks
+ * its key through chatKeyPlan and withOpenAiKeyFailover in openaiKeys.ts.
  */
 export function resolveLlmKey(env: Env): string | undefined {
-  const own = env.LLM_API_KEY?.trim();
-  if (own) return own;
-  return isOpenAiBaseUrl(env.LLM_BASE_URL || "https://api.openai.com/v1") ? env.OPENAI_API_KEY?.trim() || undefined : undefined;
+  const plan = chatKeyPlan(env);
+  if (plan.kind === "single") return plan.key;
+  if (plan.kind === "ladder") return plan.slots[0].key;
+  return undefined;
 }
 
 /**
@@ -150,7 +153,7 @@ export function llmModel(): string {
 }
 
 export function llmBaseUrl(): string {
-  return (process.env.LLM_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
+  return (process.env.LLM_BASE_URL || OPENAI_DEFAULT_BASE_URL).replace(/\/$/, "");
 }
 
 export const DEMO_USER = {
