@@ -26,7 +26,7 @@ CI runs the first five on every pull request.
 
 ### Persona packs (delete if not relevant)
 
-- [ ] Entry is in `src/lib/personas/<role>.ts`, its id starts with `<role>-`, and `status` is `"draft"`
+- [ ] Entry is in `src/lib/personas/<family>.ts`, its id starts with `<role>-`, and `status` is `"draft"`
 - [ ] `npm run validate:personas` shows 0 warnings for it
 - [ ] Practised once in text mode without a key: each objection comes up and the coach cues it
 - [ ] Passes the bias and regulated-industry checks in [docs/PERSONA_PACKS.md](https://github.com/mastanley13/real-time-call-trainer-oss/blob/main/docs/PERSONA_PACKS.md#draft-to-reviewed-checklist)

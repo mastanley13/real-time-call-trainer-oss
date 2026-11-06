@@ -162,7 +162,7 @@ To fix an existing persona, open it in the library, press **Pack file** to see i
 ## Pull request flow
 
 1. Fork the repo and create a branch such as `persona/insurance-renewal-premium-jump`.
-2. Add your entry to the end of the array in `src/lib/personas/<role>.ts` (the JSON from the wizard is a valid TypeScript object literal).
+2. Add your entry to the end of the array in `src/lib/personas/<family>.ts` (the JSON from the wizard is a valid TypeScript object literal).
 3. Run `npm run validate:personas`, `npm run typecheck` and `npm test`.
 4. Run `DEMO_MODE=true npm run dev`, open the persona from `/library`, and practise it once in text mode with no key. Check the opening line, that each objection comes up, and that the coach cues it.
 5. Open a pull request. Fill in the template, including the checklist above. If you are asking for a persona rather than writing one, use the **Persona request** issue form instead.
