@@ -10,6 +10,7 @@ import PublicFooter from "@/components/landing/PublicFooter";
 import { CONTACT_LINK } from "@/lib/legalLinks";
 import { AI_CHIP_LABEL, showModelChip } from "@/lib/modelChip";
 import { PRICE } from "@/lib/pricing";
+import { planHeads } from "@/lib/pricingWorkbook";
 import { getCapabilities } from "@/lib/serverConfig";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -29,14 +30,16 @@ describe("compare table price row follows the billing period", () => {
     expect(html).not.toContain("$290/yr");
   });
 
-  it("the page carries the annual prices from pricing.ts and keeps the monthly ones", () => {
-    const src = readFileSync("src/app/pricing/page.tsx", "utf8");
-    expect(src).toContain("year: `$${PRICE.pro.year}/yr`");
-    expect(src).toContain("year: `$${PRICE.team.year}/seat/yr");
+  it("the workbook takes its annual prices from pricing.ts and renders the monthly ones by default", () => {
     expect(PRICE.pro.year).toBe(290);
+    expect(PRICE.team.year).toBe(590);
+    const year = planHeads("year");
+    expect([year.pro.price, year.pro.unit, year.team.price, year.team.unit]).toEqual(["$290", "per year", "$590", "per seat, per year"]);
     const html = renderToStaticMarkup(createElement(PricingPage));
-    expect(html).toContain("$29/mo");
-    expect(html).toContain("$59/seat/mo, 3-seat min");
+    expect(html).toContain(">$29</span>");
+    expect(html).toContain(">$59</span>");
+    expect(html).toContain("per seat, per month");
+    expect(html).toContain("$177 a month minimum");
   });
 });
 

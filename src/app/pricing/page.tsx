@@ -1,11 +1,11 @@
-import Link from "next/link";
 import { BillingProvider } from "@/components/landing/BillingContext";
-import ComparePlans, { type CompareRow } from "@/components/landing/ComparePlans";
 import PricingCards from "@/components/landing/PricingCards";
 import PublicFooter from "@/components/landing/PublicFooter";
 import {
-  FREE_SUMMARY, FREE_VOICE_MIN, MINUTES_ROUNDED_NOTE, PREMIUM_COMING_SOON, PREMIUM_FAQ, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT, registerHref,
+  FREE_SUMMARY, MINUTES_ROUNDED_NOTE, PREMIUM_CALL_LENGTH_NOTE, PREMIUM_COMING_SOON, PREMIUM_DISCLOSURE_PRO, PREMIUM_DISCLOSURE_TEAM, PREMIUM_MINUTES, PRICE,
+  TEAM_VOICE_MIN_PER_SEAT,
 } from "@/lib/pricing";
+import { TEAM_POOL_LINE, TEXT_NO_VOICE_NOTE, WORKBOOK_HEADLINE } from "@/lib/pricingWorkbook";
 import { GITHUB_URL, pageMetadata } from "@/lib/seo";
 import { billingOn, premiumOnSale } from "@/lib/serverConfig";
 
@@ -18,40 +18,29 @@ export const metadata = pageMetadata({
   path: "/pricing",
 });
 
-/** Premium AI voice row: Free No, Pro Add-on, Team Add-on. Off sale, the paid cells carry the coming-soon label. */
-const premiumCompareRow = (onSale: boolean): CompareRow => ({
-  feature: "Premium AI voice", self: "Your keys", free: "No", pro: onSale ? "Add-on" : PREMIUM_COMING_SOON, team: onSale ? "Add-on" : PREMIUM_COMING_SOON,
-});
-
-/** The Premium FAQ answer. Off sale it leads with the coming-soon label, then the same terms. */
-const premiumFaqAnswer = (onSale: boolean): string => (onSale ? PREMIUM_FAQ : `${PREMIUM_COMING_SOON}. ${PREMIUM_FAQ}`);
-
-const COMPARE_BASE: CompareRow[] = [
-  { feature: "Price", self: "$0, you pay your own API bill", free: "$0",
-    pro: { month: `$${PRICE.pro.month}/mo`, year: `$${PRICE.pro.year}/yr` },
-    team: { month: `$${PRICE.team.month}/seat/mo, ${TEAM_MIN_SEATS}-seat min`, year: `$${PRICE.team.year}/seat/yr, ${TEAM_MIN_SEATS}-seat min` } },
-  { feature: "Voice minutes", self: "Unlimited (your keys)", free: `${FREE_VOICE_MIN} a month`, pro: `${PRO_VOICE_MIN} a month. ${MINUTES_ROUNDED_NOTE}`, team: `${TEAM_VOICE_MIN_PER_SEAT} per seat, pooled. ${MINUTES_ROUNDED_NOTE}` },
-  { feature: "Text sim", self: "Yes", free: "Unlimited", pro: "Unlimited", team: "Unlimited" },
-  { feature: "Bring your own OpenAI or ElevenLabs keys", self: "Required", free: "Not needed", pro: "Not needed", team: "Not needed" },
-  { feature: "Postgres database", self: "You run it", free: "Managed", pro: "Managed", team: "Managed" },
-  { feature: "Live coach channel", self: "Yes", free: "Yes", pro: "Yes", team: "Yes" },
-  { feature: "Graded debriefs with transcript quotes", self: "Yes", free: "Yes", pro: "Yes", team: "Yes" },
-  { feature: "Persona library", self: "Yes", free: "Core set", pro: "Full", team: "Full" },
-  { feature: "Reviewed persona packs (Insurance, Solar)", self: "Community", free: "No", pro: "Coming soon", team: "Coming soon" },
-  { feature: "Persona wizard", self: "Yes", free: "No", pro: "Yes", team: "Yes" },
-  { feature: "Team view for managers", self: "You host it", free: "No", pro: "No", team: "Managed" },
-  { feature: "Assignments", self: "You host it", free: "No", pro: "No", team: "Yes" },
-  { feature: "MFA", self: "You configure it", free: "Yes", pro: "Yes", team: "Enforced for team" },
-  { feature: "Updates and backups", self: "You handle them", free: "Automatic", pro: "Automatic", team: "Automatic" },
-  { feature: "Support", self: "GitHub community", free: "Community", pro: "Email", team: "Priority email" },
-  { feature: "Overage charges", self: "None", free: "None", pro: "None", team: "None" },
+/** On sale, the allowance and limits the plan cards used to show, without the add-on price. Pro is per account, Team is pooled. */
+const PREMIUM_ON_SALE_TERMS = [
+  `On Pro: ${PREMIUM_DISCLOSURE_PRO}`,
+  `On Team: ${PREMIUM_DISCLOSURE_TEAM}`,
+  PREMIUM_CALL_LENGTH_NOTE,
 ];
 
-/** The table with the Premium row in its old place (after MFA, before Updates and backups). */
-function compareRows(onSale: boolean): CompareRow[] {
-  const at = COMPARE_BASE.findIndex((r) => r.feature === "Updates and backups");
-  return [...COMPARE_BASE.slice(0, at), premiumCompareRow(onSale), ...COMPARE_BASE.slice(at)];
-}
+/**
+ * The Premium add-on is a status note: no price and no button on this page, on sale or not. On sale (billing on and
+ * PREMIUM_VOICE_ON_SALE=true, see serverConfig.premiumOnSale) it keeps the allowance, Team pooling and call-cap terms.
+ */
+const premiumNote = (onSale: boolean): { badge: string; body: string; terms: string[] } => onSale
+  ? {
+    badge: "Add-on for Pro and Team",
+    body: "A more lifelike, expressive voice for your buyers. Add it at checkout or in billing settings. Premium minutes come out of your plan minutes, not on top. Standard voice is included in your plan.",
+    terms: PREMIUM_ON_SALE_TERMS,
+  }
+  : { badge: PREMIUM_COMING_SOON, body: "This add-on is not available to purchase. Standard voice is included in your plan.", terms: [] };
+
+/** The Premium FAQ answer, without a price. On sale it states the allowance, pooling and call cap. */
+const premiumFaqAnswer = (onSale: boolean): string => (onSale
+  ? `Premium AI voice is a paid add-on for Pro and Team, chosen at checkout or in billing settings. Pro includes ${PREMIUM_MINUTES} Premium minutes a month. Team includes ${PREMIUM_MINUTES} Premium minutes per seat a month, pooled across the team. Those minutes come out of your plan minutes, not on top. After they are used, your next call uses Standard. A Premium call is capped at the Premium minutes left, and we tell you before it starts. No overages.`
+  : `${PREMIUM_COMING_SOON}. Premium AI voice is not available to purchase. Standard voice is included in every plan.`);
 
 const FAQ_BASE: { q: string; a: string }[] = [
   { q: "What do I get on Free?", a: FREE_SUMMARY },
@@ -72,60 +61,76 @@ const FAQ_BASE: { q: string; a: string }[] = [
   { q: "What happens to my data?", a: "Transcripts are kept until an admin sets a retention window. No call audio is stored on our servers." },
 ];
 
+/**
+ * Pricing, "Comparison workbook": the headline, then one plan workbook (table on wide screens, a definition list per
+ * plan on narrow ones), the Team pool and metering notes, the Premium status note, questions and self-hosting.
+ * Every named section has its own heading, so landmark names stay unique and headings go h1, h2, h3 in order.
+ */
 export default function PricingPage() {
   const onSale = premiumOnSale();
-  const COMPARE = compareRows(onSale);
+  const premium = premiumNote(onSale);
   const FAQ = FAQ_BASE.map((f) => (f.q === "What does Premium AI voice add?" ? { ...f, a: premiumFaqAnswer(onSale) } : f));
   return (
-    <div>
-      <section className="border-b border-line">
-        <div className="page py-14 sm:py-20">
-          <p className="eyebrow">Pricing</p>
-          <h1 className="mt-4 max-w-3xl text-4xl font-bold leading-[1.05] sm:text-5xl">Practice the call before it costs you the deal</h1>
-          <p className="mt-5 max-w-2xl text-lg leading-relaxed text-ink-soft">
-            Talk to AI buyers who push back, get coached live, and get a graded debrief that quotes your own transcript. Hosted for you: no API keys, no database, no setup.
-          </p>
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-            <Link href={registerHref({ src: "pricing" })} className="btn-primary btn-xl">Start free, no card</Link>
-            <a href="#plans" className="btn-ghost btn-xl">Compare plans</a>
+    <div className="focus-strong text-base leading-6">
+      <div className="site-wrap">
+        <div className="flex flex-col gap-4 py-10 md:flex-row md:items-end md:justify-between md:gap-10 md:py-16">
+          <div className="flex min-w-0 flex-col gap-3">
+            <h1 className="max-w-[16ch] text-[36px] font-bold leading-[1.1] sm:text-[42px] lg:text-[48px] lg:leading-[1.08]">{WORKBOOK_HEADLINE}</h1>
+            <p className="max-w-[60ch] text-lg leading-7 text-ink-soft">Choose your practice time. Know the monthly bill.</p>
           </div>
-          <p className="mt-5 text-sm text-ink-muted">Self-hosting stays free forever under the MIT license.</p>
+          <p className="text-sm leading-5 text-ink-soft md:text-right">Hosted for you.<br />No API keys, no database, no setup.</p>
         </div>
-      </section>
+      </div>
 
       <BillingProvider>
-        <section id="plans" className="page py-12 sm:py-14" aria-label="Plans">
+        <section id="plans" aria-labelledby="plans-h" className="site-wrap">
           <PricingCards billingEnabled={billingOn()} premiumOnSale={onSale} />
-          <p className="mt-4 text-sm text-ink-muted">No overage charges on any plan. Free has no card and resets monthly from your signup date, with no rollover.</p>
-        </section>
-
-        <section className="border-y border-line bg-surface" aria-labelledby="compare-h">
-          <div className="page py-12">
-            <h2 id="compare-h" className="text-2xl font-bold">Compare plans</h2>
-            <ComparePlans rows={COMPARE} />
-          </div>
         </section>
       </BillingProvider>
 
-      <section className="page py-12 sm:py-14" aria-labelledby="faq-h">
-        <h2 id="faq-h" className="text-2xl font-bold">Questions</h2>
-        <div className="mt-6 max-w-3xl divide-y divide-line rounded-panel border border-line bg-surface">
-          {FAQ.map((f) => (
-            <details key={f.q} className="group px-5 py-4">
-              <summary className="cursor-pointer list-none font-medium text-ink marker:content-none">{f.q}</summary>
-              <p className="mt-2 text-sm leading-relaxed text-ink-soft">{f.a}</p>
-            </details>
-          ))}
+      <div className="site-wrap">
+        <div className="grid gap-8 pb-10 lg:grid-cols-2 lg:gap-10">
+          <section aria-labelledby="pool-h" className="flex min-w-0 flex-col gap-3">
+            <h2 id="pool-h" className="text-2xl font-bold leading-8">One pool for the team.</h2>
+            <p className="max-w-[60ch] text-ink-soft">{TEAM_POOL_LINE}</p>
+            <p className="max-w-[60ch] text-sm leading-5 text-ink-soft">
+              {`${MINUTES_ROUNDED_NOTE} ${TEXT_NO_VOICE_NOTE} No overage charges on any plan. Free resets monthly from your signup date, with no rollover.`}
+            </p>
+          </section>
+          <section aria-labelledby="premium-h" className="flex min-w-0 flex-col items-start gap-3 rounded-panel bg-sunken p-5 sm:p-6">
+            <p><span className="badge-tag border border-line">{premium.badge}</span></p>
+            <h2 id="premium-h" className="text-2xl font-bold leading-8">Premium AI voice</h2>
+            <p className="max-w-[60ch] text-ink-soft">{premium.body}</p>
+            {premium.terms.length > 0 && (
+              <ul data-premium-terms className="max-w-[60ch] list-disc space-y-2 pl-5 text-sm leading-5 text-ink-soft">
+                {premium.terms.map((t) => <li key={t}>{t}</li>)}
+              </ul>
+            )}
+          </section>
+        </div>
+      </div>
+
+      <section aria-labelledby="faq-h" className="site-wrap">
+        <div className="border-t border-line py-10">
+          <h2 id="faq-h" className="text-2xl font-bold leading-8">Questions</h2>
+          <div className="mt-6 max-w-3xl divide-y divide-line rounded-panel border border-line bg-surface">
+            {FAQ.map((f) => (
+              <details key={f.q} className="group px-5 py-2">
+                <summary className="flex min-h-[44px] cursor-pointer list-none items-center rounded-control font-medium text-ink marker:content-none">{f.q}</summary>
+                <p className="pb-2 text-sm leading-relaxed text-ink-soft">{f.a}</p>
+              </details>
+            ))}
+          </div>
         </div>
       </section>
 
-      <section className="deck" aria-labelledby="self-h">
-        <div className="page py-12">
-          <h2 id="self-h" className="text-2xl font-bold">Prefer to run it yourself?</h2>
-          <p className="mt-3 max-w-2xl text-ink-soft">
-            Real-Time Call Trainer is open source under the MIT license. Self-hosting is free forever, with every core feature: voice roleplay, live coaching, graded debriefs and the persona wizard. You bring your own OpenAI or ElevenLabs keys and your own Postgres. Hosted plans exist for people who would rather practice than run servers.
+      <section aria-labelledby="self-h" className="site-wrap">
+        <div className="border-t border-line pb-16 pt-10">
+          <h2 id="self-h" className="text-2xl font-bold leading-8">Prefer to run it yourself?</h2>
+          <p className="mt-3 max-w-[60ch] text-ink-soft">
+            Self-hosting stays free under the MIT license. You bring your own keys and database. Hosted plans are for people who would rather practice than run servers.
           </p>
-          <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="btn-ghost mt-5">View on GitHub</a>
+          <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="btn-ghost btn-lg mt-5">View on GitHub</a>
         </div>
       </section>
 

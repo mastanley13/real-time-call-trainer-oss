@@ -2,112 +2,138 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
-import { Check } from "lucide-react";
 import { useBilling } from "@/components/landing/BillingContext";
-import {
-  FREE_SUMMARY, OPEN_SOON_LINE, PREMIUM_COMING_SOON, PREMIUM_DISCLOSURE_PRO, PREMIUM_DISCLOSURE_TEAM, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT,
-  premiumPriceLine, registerHref, type Billing,
-} from "@/lib/pricing";
+import { OPEN_SOON_LINE, registerHref, type Billing } from "@/lib/pricing";
+import { PAID_CTA_BILLING_OFF, PLAN_CTA, PLAN_IDS, planHeads, workbookCaption, workbookRows, type PlanId } from "@/lib/pricingWorkbook";
 import { trackPremiumUpsell } from "@/lib/premiumEventTypes";
 
-const TIERS = [
-  {
-    id: "free", name: "Free", blurb: "Try it solo, no card.", cta: "Start free, no card",
-    features: [FREE_SUMMARY, "Unlimited text sim", "Live coach channel", "Graded debriefs with transcript quotes", "Core persona library"],
-  },
-  {
-    id: "pro", name: "Pro", blurb: "For individual reps who practice weekly.", cta: "Start Pro",
-    features: [`${PRO_VOICE_MIN} voice minutes per month`, "Standard voice included", "Everything in Free", "Full persona library across every sales role", "Reviewed persona packs (coming soon)", "Persona wizard for your own buyers", "Call history and score trends", "MFA"],
-  },
-  {
-    id: "team", name: "Team", blurb: `Built for a manager plus reps: ${TEAM_MIN_SEATS}-seat minimum.`, cta: "Start with Team",
-    features: [`${TEAM_VOICE_MIN_PER_SEAT} voice minutes per seat, pooled across the team`, "Standard voice included", "Everything in Pro", "Managed Team view: every rep's calls, scores and trends", "Assignments: give reps a persona and a due date", "Enforced MFA for the whole team", "Priority email support"],
-  },
-] as const;
-
-function price(id: string, b: Billing) {
-  if (id === "free") return { main: "$0", unit: "" };
-  const p = id === "pro" ? PRICE.pro : PRICE.team;
-  const seat = id === "team" ? " /seat" : "";
-  return { main: `$${p[b]}`, unit: `${seat} /${b === "month" ? "month" : "year"}` };
-}
-
-/** The sign-up link and label for a tier. Billing off sells nothing, so Pro and Team read "Start free". */
+/**
+ * The sign-up link and label for a plan. Free keeps its plain sign-up link. Pro and Team always link to sign-up with the
+ * plan and the selected period. With billing off nothing is sold, so the paid label is "Create account" with the
+ * open-soon note; a paid button never reads "Start free".
+ */
 export function tierAction(id: string, cta: string, billingEnabled: boolean, interval: Billing) {
   if (id === "free") return { cta, href: registerHref({ src: "pricing" }), soon: false };
   const plan = id === "pro" ? "pro" : "team";
-  // The link carries the selected period in both states, so sign-up stores it either way.
   const href = registerHref({ plan, interval, src: "pricing" });
-  return billingEnabled ? { cta, href, soon: false } : { cta: "Start free", href, soon: true };
+  return billingEnabled ? { cta, href, soon: false } : { cta: PAID_CTA_BILLING_OFF, href, soon: true };
 }
 
+const OPEN_SOON_ID = "plans-open-soon";
+const ctaClass = (id: PlanId) => `${id === "pro" ? "btn-primary" : "btn-ghost"} btn-lg text-center`;
+const proFill = (id: PlanId) => (id === "pro" ? " bg-sunken" : "");
+
 /**
- * Billing toggle, tier cards and the Premium AI voice add-on row under them (one row, never a fourth card).
- * `billingEnabled` and `premiumOnSale` come from the server. The add-on row has no button: Premium is chosen at checkout
- * or added in billing settings, and off sale it carries the coming-soon label.
+ * Comparison workbook: a billing period toggle, then one table (wide screens) or one definition list per plan (narrow
+ * screens) from the same data. Pro carries the only emphasis: a subtle column fill on the table and a primary border on
+ * its card. `billingEnabled` and `premiumOnSale` come from the server.
  */
 export default function PricingCards({ billingEnabled, premiumOnSale = false }: { billingEnabled: boolean; premiumOnSale?: boolean }) {
   const { billing, setBilling } = useBilling();
   useEffect(() => { if (premiumOnSale) trackPremiumUpsell("pricing"); }, [premiumOnSale]);
+  const heads = planHeads(billing);
+  const rows = workbookRows(billing);
+  const actions = Object.fromEntries(PLAN_IDS.map((id) => [id, tierAction(id, PLAN_CTA[id], billingEnabled, billing)])) as Record<PlanId, ReturnType<typeof tierAction>>;
+  const described = (id: PlanId) => (actions[id].soon ? OPEN_SOON_ID : undefined);
+
   return (
-    <div>
-      <div role="group" aria-label="Billing period" className="inline-flex rounded-lg border border-line bg-sunken p-1">
-        {(["month", "year"] as const).map((b) => (
-          <button key={b} type="button" aria-pressed={billing === b} onClick={() => setBilling(b)}
-            className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${billing === b ? "bg-surface text-ink shadow-card" : "text-ink-muted hover:text-ink"}`}>
-            {b === "month" ? "Monthly" : "Annual (2 months free)"}
-          </button>
-        ))}
+    <div className="pb-10">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <h2 id="plans-h" className="text-2xl font-bold leading-8">Plans and prices</h2>
+        <div role="group" aria-label="Billing period" className="inline-flex flex-wrap gap-1 rounded-control border border-line bg-sunken p-1">
+          {(["month", "year"] as const).map((b) => (
+            <button key={b} type="button" aria-pressed={billing === b} onClick={() => setBilling(b)}
+              className={`min-h-[44px] rounded-control border px-4 text-sm font-semibold ${billing === b ? "border-line bg-surface text-ink" : "border-transparent text-ink-soft hover:text-ink"}`}>
+              {b === "month" ? "Monthly" : "Annual (2 months free)"}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="mt-6 grid gap-4 md:grid-cols-3 md:gap-y-0">
-        {TIERS.map((t) => {
-          const p = price(t.id, billing);
-          const a = tierAction(t.id, t.cta, billingEnabled, billing);
-          return (
-            <section key={t.id} className="card flex flex-col md:row-span-6 md:grid md:grid-rows-[subgrid]" aria-labelledby={`tier-${t.id}`}>
-              <h3 id={`tier-${t.id}`} className="text-lg font-bold">{t.name}</h3>
-              <p className="mt-3 flex items-baseline gap-1">
-                <span className="font-heading text-4xl font-bold">{p.main}</span>
-                <span className="text-sm text-ink-muted">{p.unit}</span>
-              </p>
-              <p className="mt-1 min-h-[1.25rem] font-mono text-xs text-ink-muted">
-                {t.id !== "free" && billing === "year" ? "2 months free" : ""}
-              </p>
-              <p className="mt-2 text-sm text-ink-soft">{t.blurb}</p>
-              <ul className="mt-4 flex-1 space-y-2 text-sm text-ink-soft">
-                {t.features.map((f) => f.endsWith("(coming soon)") ? (
-                  <li key={f} className="flex gap-2 text-ink-muted"><span className="w-4 shrink-0" aria-hidden />{f}</li>
-                ) : (
-                  <li key={f} className="flex gap-2"><Check size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-ok" aria-hidden />{f}</li>
+      {/* Wide screens: one aligned table. */}
+      <div data-layout="table" className="mt-6 hidden rounded-panel border border-line bg-surface lg:block">
+        <table className="w-full table-fixed border-collapse text-left">
+          <caption className="sr-only">{workbookCaption(billing)}</caption>
+          <colgroup>
+            <col className="w-[28%]" />
+            <col />
+            <col />
+            <col />
+          </colgroup>
+          <thead>
+            <tr>
+              <th scope="col" className="px-4 pb-4 pt-6 align-bottom text-sm font-semibold text-ink-soft xl:px-6">
+                {billing === "month" ? "Monthly plans" : "Annual plans"}
+              </th>
+              {PLAN_IDS.map((id) => (
+                <th key={id} scope="col" className={`px-4 pb-4 pt-6 align-bottom xl:px-6${proFill(id)}`}>
+                  <span className="block font-heading text-xl font-bold text-ink">{heads[id].name}</span>
+                  <span className="mt-1 block text-sm font-normal text-ink-soft">{heads[id].note}</span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-t border-line">
+              <th scope="row" className="px-4 py-4 align-top font-semibold text-ink xl:px-6">Price</th>
+              {PLAN_IDS.map((id) => (
+                <td key={id} className={`px-4 py-4 align-top xl:px-6${proFill(id)}`}>
+                  <span className="block font-heading text-[32px] font-bold leading-10 text-ink">{heads[id].price}</span>
+                  <span className="block text-sm text-ink-soft">{heads[id].unit}</span>
+                  {heads[id].minimum && <span className="mt-1 block text-sm font-semibold text-ink">{heads[id].minimum}</span>}
+                  {heads[id].saving && <span className="mt-1 block font-mono text-xs text-ink-soft">{heads[id].saving}</span>}
+                </td>
+              ))}
+            </tr>
+            {rows.map((r) => (
+              <tr key={r.id} className="border-t border-line">
+                <th scope="row" className="px-4 py-4 align-top font-semibold text-ink xl:px-6">{r.label}</th>
+                {PLAN_IDS.map((id) => (
+                  <td key={id} className={`px-4 py-4 align-top text-ink xl:px-6${proFill(id)}`}>{r.cells[id]}</td>
                 ))}
-              </ul>
-              <div className="mt-6 flex flex-col gap-2">
-                <Link href={a.href} className={t.id === "free" ? "btn-ghost" : "btn-primary"}>{a.cta}</Link>
-                {a.soon && <p className="text-center text-xs text-ink-muted">{OPEN_SOON_LINE}</p>}
-              </div>
-            </section>
+              </tr>
+            ))}
+            <tr className="border-t border-line">
+              <th scope="row" className="px-4 py-5 align-top font-semibold text-ink xl:px-6">Choose your plan</th>
+              {PLAN_IDS.map((id) => (
+                <td key={id} className={`px-4 py-5 align-top xl:px-6${proFill(id)}`}>
+                  <Link href={actions[id].href} aria-describedby={described(id)} className={ctaClass(id)}>{actions[id].cta}</Link>
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* Narrow screens and high zoom: one definition list per plan, Free first. */}
+      <div data-layout="lists" className="mt-6 grid gap-4 lg:hidden">
+        {PLAN_IDS.map((id) => {
+          const h = heads[id];
+          return (
+            <div key={id} className={`min-w-0 rounded-panel border bg-surface p-5 sm:p-6 ${id === "pro" ? "border-primary" : "border-line"}`}>
+              <h3 id={`tier-${id}`} className="text-2xl font-bold leading-8">{h.name}</h3>
+              <p className="mt-3 flex flex-wrap items-baseline gap-x-2">
+                <span className="font-heading text-[32px] font-bold leading-10 text-ink">{h.price}</span>
+                <span className="text-sm text-ink-soft">{h.unit}</span>
+              </p>
+              {h.minimum && <p className="mt-1 text-sm font-semibold text-ink">{h.minimum}</p>}
+              {h.saving && <p className="mt-1 font-mono text-xs text-ink-soft">{h.saving}</p>}
+              <p className="mt-2 text-sm text-ink-soft">{h.note}</p>
+              <dl className="mt-5 divide-y divide-line border-y border-line text-sm leading-5">
+                {rows.map((r) => (
+                  <div key={r.id} className="flex flex-wrap justify-between gap-x-4 gap-y-1 py-3">
+                    <dt className="text-ink-soft">{r.label}</dt>
+                    <dd className="min-w-0 max-w-full break-words text-right font-semibold text-ink">{r.cells[id]}</dd>
+                  </div>
+                ))}
+              </dl>
+              <Link href={actions[id].href} aria-describedby={described(id)} className={`${ctaClass(id)} mt-5 w-full`}>{actions[id].cta}</Link>
+            </div>
           );
         })}
       </div>
 
-      <div className="panel mt-4 p-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <h3 className="text-base font-bold">Add-on: Premium AI voice</h3>
-          <span className="chip">{premiumOnSale ? "Pro and Team" : PREMIUM_COMING_SOON}</span>
-        </div>
-        <p className="mt-2 flex flex-wrap items-baseline gap-1">
-          <span className="font-heading text-2xl font-bold">+${PRICE.premium[billing]}</span>
-          <span className="text-sm text-ink-muted">/{billing === "month" ? "month" : "year"} on Pro, /seat /{billing === "month" ? "month" : "year"} on Team</span>
-        </p>
-        <ul className="mt-2 max-w-2xl space-y-1 text-sm text-ink-soft">
-          <li>{premiumPriceLine("pro", billing)}</li>
-          <li>{premiumPriceLine("team", billing)}</li>
-        </ul>
-        <p className="mt-2 max-w-2xl text-sm text-ink-muted">
-          A more lifelike, expressive voice for your buyers. Premium minutes come out of your plan minutes, not on top. {PREMIUM_DISCLOSURE_PRO} On Team: {PREMIUM_DISCLOSURE_TEAM.charAt(0).toLowerCase() + PREMIUM_DISCLOSURE_TEAM.slice(1)}
-        </p>
-      </div>
+      {!billingEnabled && <p id={OPEN_SOON_ID} className="mt-4 text-sm text-ink-soft">{OPEN_SOON_LINE}</p>}
     </div>
   );
 }
