@@ -14,7 +14,7 @@ import { GET } from "@/app/api/cron/openai-keys/route";
 import { signSessionToken } from "@/lib/auth";
 import { chatFull } from "@/lib/llm";
 import { OPENAI_KEY_SLOT_VARS, openAiKeyHealth, resetOpenAiKeyState } from "@/lib/openaiKeys";
-import { middleware } from "@/middleware";
+import { proxy } from "@/proxy";
 
 const hex = (n: number) => randomBytes(n).toString("hex");
 const KEYS = [0, 1, 2].map((i) => `${hex(8)}fixturekeyslot${i}${hex(8)}`);
@@ -118,7 +118,7 @@ describe("GET /api/cron/openai-keys authorization", () => {
 
   it("is exempt from the access-code gate under /api/cron/, unlike a /api/health subpath", async () => {
     vi.stubEnv("TRAINER_ACCESS_CODE", "fixture-access-code");
-    const gated = (path: string) => middleware(new NextRequest(`http://localhost${path}`));
+    const gated = (path: string) => proxy(new NextRequest(`http://localhost${path}`));
     expect((await gated("/api/cron/openai-keys")).status).toBe(200);
     expect((await gated("/api/health/openai-keys")).status).toBe(401);
   });

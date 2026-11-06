@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 import { isPublicPath, VERTICAL_SLUGS } from "@/lib/publicPaths";
-import { middleware } from "@/middleware";
+import { proxy } from "@/proxy";
 
 describe("isPublicPath", () => {
   it.each([
@@ -23,7 +23,7 @@ describe("isPublicPath", () => {
   it("covers every vertical slug", () => expect(VERTICAL_SLUGS).toHaveLength(6));
 });
 
-describe("middleware with TRAINER_ACCESS_CODE set", () => {
+describe("proxy with TRAINER_ACCESS_CODE set", () => {
   const prev = process.env.TRAINER_ACCESS_CODE;
   afterEach(() => {
     if (prev === undefined) delete process.env.TRAINER_ACCESS_CODE;
@@ -31,7 +31,7 @@ describe("middleware with TRAINER_ACCESS_CODE set", () => {
   });
   const run = (path: string) => {
     process.env.TRAINER_ACCESS_CODE = "letmein";
-    return middleware(new NextRequest(`http://localhost:3000${path}`));
+    return proxy(new NextRequest(`http://localhost:3000${path}`));
   };
 
   it("lets public pages through without a cookie", async () => {

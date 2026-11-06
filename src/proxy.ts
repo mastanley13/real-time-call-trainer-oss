@@ -6,7 +6,7 @@ import { isPublicPath } from "@/lib/publicPaths";
 const PUBLIC_PAGES = new Set(["/", "/privacy", "/terms"]);
 
 /** Optional site-wide (cron routes authenticate with CRON_SECRET, the Stripe webhook with its signature) access gate, active only when TRAINER_ACCESS_CODE is set. */
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const code = accessCode();
   if (!code) return NextResponse.next();
 
