@@ -34,6 +34,14 @@ describe("resolveLlmKey", () => {
     expect(resolveLlmKey({})).toBeUndefined();
     expect(resolveLlmKey({ LLM_API_KEY: "  " })).toBeUndefined();
   });
+
+  it("counts a backup OpenAI key slot as configured, on the OpenAI base only", () => {
+    expect(resolveLlmKey({ OPENAI_API_KEY_BACKUP_1: "backup-one" })).toBe("backup-one");
+    expect(resolveLlmKey({ OPENAI_API_KEY: " ", OPENAI_API_KEY_BACKUP_2: "backup-two" })).toBe("backup-two");
+    expect(resolveLlmKey({ OPENAI_API_KEY_BACKUP_1: "backup-one", LLM_BASE_URL: "https://openrouter.ai/api/v1" })).toBeUndefined();
+    expect(resolveLlmKey({ OPENAI_API_KEY_BACKUP_1: "backup-one", LLM_BASE_URL: "https://api.openai.com.evil.example/v1" })).toBeUndefined();
+    expect(resolveLlmKey({ LLM_API_KEY: "llm", OPENAI_API_KEY_BACKUP_1: "backup-one" })).toBe("llm");
+  });
 });
 
 describe("cronAuthorized", () => {
