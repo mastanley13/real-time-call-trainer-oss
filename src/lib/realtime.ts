@@ -17,6 +17,8 @@
  * - Reference app: https://github.com/openai/openai-realtime-agents (beta event names, kept as fallbacks)
  */
 
+import { OPENAI_DEFAULT_BASE_URL, isOpenAiBaseUrl } from "./openaiHost";
+
 export type VoiceEngine = "openai" | "elevenlabs";
 
 export const VOICE_ENGINE_LABELS: Record<VoiceEngine, string> = { openai: "OpenAI Realtime", elevenlabs: "ElevenLabs" };
@@ -31,9 +33,14 @@ export const DEFAULT_TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe";
 
 type Env = Record<string, string | undefined>;
 
-const isOpenAiBase = (url: string | undefined) => /^https:\/\/api\.openai\.com\b/.test((url || "https://api.openai.com/v1").trim());
+/** Same exact-host check as the chat path; a \b match would also accept api.openai.com.attacker.example. */
+const isOpenAiBase = (url: string | undefined) => isOpenAiBaseUrl(url || OPENAI_DEFAULT_BASE_URL);
 
-/** OPENAI_REALTIME_API_KEY, else OPENAI_API_KEY, else LLM_API_KEY only when LLM_BASE_URL points at OpenAI. */
+/**
+ * OPENAI_REALTIME_API_KEY, else OPENAI_API_KEY, else LLM_API_KEY only when LLM_BASE_URL points at OpenAI.
+ * Kept for compatibility. The session route and getCapabilities use voiceKeyPlan in src/lib/openaiKeys.ts (server-only),
+ * which adds the OPENAI_API_KEY_BACKUP_* failover slots; no new secret readers belong in this isomorphic module.
+ */
 export function resolveRealtimeKey(env: Env): string | undefined {
   const k = (v: string | undefined) => (v && v.trim()) || undefined;
   return k(env.OPENAI_REALTIME_API_KEY) || k(env.OPENAI_API_KEY) || (isOpenAiBase(env.LLM_BASE_URL) ? k(env.LLM_API_KEY) : undefined);
@@ -229,7 +236,7 @@ export function applyRealtimeEvent(asm: TurnAssembler, ev: RealtimeServerEvent, 
  * includes the upstream body or the configured model id; it names the env vars to check instead.
  */
 export function realtimeUpstreamMessage(status: number): string {
-  if (status === 401) return "OpenAI rejected the API key. Check OPENAI_API_KEY.";
+  if (status === 401) return "OpenAI rejected the API key. Check OPENAI_API_KEY and any OPENAI_API_KEY_BACKUP_* keys.";
   if (status === 403) return "This OpenAI key cannot use the Realtime API. Check the project's model access in the OpenAI dashboard.";
   // The voice tier picks the model (src/lib/voiceModels.ts), so name every variable that can set it, never its value.
   if (status === 404 || status === 400) return "OpenAI did not accept the voice session settings. Check that REALTIME_MODEL_STANDARD, REALTIME_MODEL, REALTIME_MODEL_PREMIUM and REALTIME_VOICE are valid.";

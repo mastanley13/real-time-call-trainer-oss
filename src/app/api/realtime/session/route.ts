@@ -7,7 +7,8 @@ import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { meteringEnabled } from "@/lib/serverConfig";
 import { beginCall, endCall } from "@/lib/usage";
 import { capReached, dailySessionLimit, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
-import { realtimeKey, realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
+import { realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
+import { classifyOpenAiResponse, voiceKeyPlan, withOpenAiKeyFailover } from "@/lib/openaiKeys";
 import { orgVoiceTierForUser, voiceModelFor } from "@/lib/voiceTierServer";
 import { sealMintReceipt } from "@/lib/mintReceipt";
 
@@ -15,6 +16,8 @@ const Body = z.object({ scenario: ScenarioSchema });
 
 /** The secret only has to outlive the SDP exchange; 600s is the documented default. */
 const SECRET_TTL_SEC = 600;
+/** Hard-coded: every key on this path, slot or explicit, only ever goes to OpenAI. */
+const CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets";
 
 /**
  * Mints a short-lived OpenAI Realtime client secret (ek_...) for one practice call.
@@ -33,8 +36,9 @@ export async function POST(req: NextRequest) {
   const ipLimited = ipLimitResponse(req, "realtime");
   if (ipLimited) return ipLimited;
 
-  const apiKey = realtimeKey();
-  if (!apiKey) {
+  // OPENAI_REALTIME_API_KEY alone, else the OpenAI key ladder, else LLM_API_KEY on an OpenAI base (openaiKeys.ts).
+  const keys = voiceKeyPlan(process.env);
+  if (keys.kind === "none") {
     return NextResponse.json(
       { error: "realtime_not_configured", message: "Voice with OpenAI Realtime needs an OpenAI key. Set OPENAI_API_KEY on the server, or switch to Text." },
       { status: 503 },
@@ -102,8 +106,10 @@ export async function POST(req: NextRequest) {
     },
   };
 
-  try {
-    const res = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
+  // Each attempt keeps its own 15 s timeout. A timeout or network error throws and never fails over, so the worst
+  // case stays one timeout. `pinned` (the key ladder) also refuses redirects, so a slot key only reaches this URL.
+  const mint = (apiKey: string, pinned: boolean) =>
+    fetch(CLIENT_SECRETS_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       // The secret never outlives the call's reserved minutes. OpenAI only checks it while the session is
@@ -111,7 +117,30 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({ expires_after: { anchor: "created_at", seconds: Math.max(10, Math.min(SECRET_TTL_SEC, maxSeconds)) }, session }),
       cache: "no-store",
       signal: AbortSignal.timeout(15_000),
+      ...(pinned ? { redirect: "error" as const } : {}),
     });
+
+  try {
+    let res: Response;
+    if (keys.kind === "ladder") {
+      // Failover happens inside this one request, after beginCall: callId, sessionId, maxSeconds and the receipt
+      // binding stay the same. Media and billing follow the project of whichever slot minted the secret.
+      const r = await withOpenAiKeyFailover("realtime", async (key) => {
+        const attempt = await mint(key, true);
+        if (attempt.ok) return { outcome: "ok", value: attempt };
+        return { outcome: await classifyOpenAiResponse(CLIENT_SECRETS_URL, attempt), status: attempt.status, value: attempt };
+      });
+      if (r.kind === "exhausted") {
+        if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
+        return NextResponse.json(
+          { error: "realtime_unavailable", message: "Voice is unavailable right now. Switch to Text to keep practising." },
+          { status: 503, headers: { "Retry-After": "300" } },
+        );
+      }
+      res = r.value;
+    } else {
+      res = await mint(keys.key, false);
+    }
     if (!res.ok) {
       // Status only: the upstream body can echo request details and is never forwarded or logged.
       console.error("[realtime/session] upstream status", res.status);

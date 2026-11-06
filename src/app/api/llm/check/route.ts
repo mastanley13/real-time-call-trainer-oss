@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/apiAuth";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
-import { llmBaseUrl, llmKey, llmModel } from "@/lib/serverConfig";
+import { chatKeyPlan, classifyOpenAiResponse, withOpenAiKeyFailover } from "@/lib/openaiKeys";
+import { llmBaseUrl, llmModel } from "@/lib/serverConfig";
 import { CHECK_TIMEOUT_MS, checkHint, type CheckFailure, type LlmCheckResult } from "../hints";
 
 const CHECK_LIMIT = 6;
@@ -28,7 +29,12 @@ function result(r: Omit<LlmCheckResult, "hint">, failure?: CheckFailure) {
 /**
  * Makes one minimal chat completion (max_tokens 1) with the configured key and
  * model and reports what happened in plain language. The provider's error body
- * is never read or echoed, and neither the key, the endpoint URL nor the model id is returned.
+ * is never echoed, and neither the key, the endpoint URL nor the model id is returned.
+ *
+ * With the OpenAI key ladder (LLM_API_KEY unset, OpenAI base) it goes through withOpenAiKeyFailover like a real
+ * request: a quota answer moves to the next key slot, reading at most 8 KiB of that body for error.code and
+ * error.type only. At most one billable 1-token call is made; refused quota calls cost nothing. The response never
+ * says which slot answered: slot health is for platform admins and cron (/api/cron/openai-keys).
  */
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
@@ -40,19 +46,40 @@ export async function POST(req: NextRequest) {
   if (!userLimit.allowed) return limited(userLimit.retryAfterMs, `${USER_CHECK_LIMIT} times in the last hour`);
 
   const model = llmModel();
-  const key = llmKey();
-  if (!key) return result({ ok: false, latencyMs: null, status: null }, "no_key");
+  const plan = chatKeyPlan(process.env);
+  if (plan.kind === "none") return result({ ok: false, latencyMs: null, status: null }, "no_key");
 
-  const started = Date.now();
-  try {
-    const res = await fetch(`${llmBaseUrl()}/chat/completions`, {
+  const url = `${llmBaseUrl()}/chat/completions`;
+  const send = async (key: string, pinned: boolean) => {
+    const started = Date.now();
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify({ model, messages: [{ role: "user", content: "Reply with OK." }], max_tokens: 1 }),
       signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
       cache: "no-store",
+      ...(pinned ? { redirect: "error" as const } : {}),
     });
-    const latencyMs = Date.now() - started;
+    return { res, latencyMs: Date.now() - started };
+  };
+
+  try {
+    let sent: Awaited<ReturnType<typeof send>>;
+    if (plan.kind === "single") {
+      sent = await send(plan.key, false);
+    } else {
+      const r = await withOpenAiKeyFailover("check", async (key) => {
+        const s = await send(key, true);
+        if (s.res.ok) return { outcome: "ok", value: s };
+        return { outcome: await classifyOpenAiResponse(url, s.res), status: s.res.status, value: s };
+      });
+      if (r.kind === "exhausted") {
+        console.warn("[llm/check] all OpenAI key slots out of quota");
+        return result({ ok: false, latencyMs: r.last?.latencyMs ?? null, status: r.status }, "quota_exhausted");
+      }
+      sent = r.value;
+    }
+    const { res, latencyMs } = sent;
     if (!res.ok) {
       await res.body?.cancel().catch(() => {});
       console.warn("[llm/check] provider status", res.status);
