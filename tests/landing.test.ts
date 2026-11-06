@@ -47,12 +47,11 @@ describe("pricing copy", () => {
     expect(FREE_SUMMARY).toBe("Free: 10 voice minutes a month, enough for a full graded call, plus unlimited text practice. No card.");
   });
 
-  it("says calls are rounded up on Pro and Team only", () => {
+  it("says calls round up to whole minutes and text uses no voice minutes, once under the workbook", () => {
     const src = readFileSync("src/app/pricing/page.tsx", "utf8");
     expect(MINUTES_ROUNDED_NOTE).toBe("Calls are counted in whole minutes, rounded up.");
-    expect(src).toContain("pro: `${PRO_VOICE_MIN} a month. ${MINUTES_ROUNDED_NOTE}`");
-    expect(src).toContain("team: `${TEAM_VOICE_MIN_PER_SEAT} per seat, pooled. ${MINUTES_ROUNDED_NOTE}`");
-    expect(src).not.toMatch(/free: `[^`]*MINUTES_ROUNDED_NOTE/);
+    expect(src).toContain("${MINUTES_ROUNDED_NOTE} ${TEXT_NO_VOICE_NOTE}");
+    expect(src.split("MINUTES_ROUNDED_NOTE").length - 1).toBe(2); // the import and the one use
   });
 
   it("links Pricing from the header", () => {
