@@ -7,13 +7,77 @@ import { CUE_NOTE } from "./callCopy";
 import type { LiveCue } from "./useCoach";
 
 /**
- * The coach side of the call screen ("Buyer and brief"): the buyer brief, exactly one next move, talk-track progress,
- * earlier cues and the coach mode. No live score: the overall estimate and the rubric meters are not drawn during a
- * call, so nothing competes with the buyer. The final, evidence-backed grade is on the debrief.
+ * The coach side of the call screen ("Buyer and brief"): the live scoreboard (overall estimate, labelled not final,
+ * and the rubric meters), the buyer brief, exactly one next move, talk-track progress, earlier cues and the coach mode.
+ * The live estimate is provisional; the final, evidence-backed grade is on the debrief.
  */
 
 /** Cue type icons for the debrief's moment strip. The live call draws no cue icons. */
 export const CUE_ICON: Record<CueType, typeof ShieldAlert> = { objection: ShieldAlert, next_question: CircleHelp, whisper: Ear, guardrail: Flag };
+
+const scoreTone = (n: number) => (n >= 75 ? "text-ok" : n >= 45 ? "text-signal" : "text-caution");
+
+/** Live estimate, talk track and talk ratio: the three instruments of the live scoreboard. */
+export function Instruments({ result, steps, compact = false }: { result: CoachResult | null; steps: string[]; compact?: boolean }) {
+  const overall = result?.estimate.overall ?? 0;
+  const done = result?.steps.filter(Boolean).length ?? 0;
+  const ratio = Math.round((result?.talkRatio ?? 0) * 100);
+  const ratioOk = ratio >= 35 && ratio <= 65;
+  return (
+    <div className={`grid grid-cols-3 ${compact ? "gap-3" : "gap-4"}`}>
+      <div>
+        <p className="label !mb-1">Live estimate</p>
+        <p className={`mono font-semibold leading-none ${compact ? "text-2xl" : "text-[34px]"} ${result ? scoreTone(overall) : "text-ink-muted"}`}>{result ? overall : "--"}<span className="text-xs text-ink-muted">/100</span></p>
+        <p className="mt-1 font-mono text-[10px] uppercase tracking-wide text-ink-muted">not final</p>
+      </div>
+      <div>
+        <p className="label !mb-1">Talk track</p>
+        <p className={`mono font-semibold leading-none text-ink ${compact ? "text-2xl" : "text-[34px]"}`}>{done}<span className="text-xs text-ink-muted">/{steps.length}</span></p>
+        <div className="mt-2 flex gap-0.5" aria-hidden>{steps.map((_, i) => <span key={i} className={`h-1 flex-1 rounded-full ${result?.steps[i] ? "bg-ok" : "bg-line"}`} />)}</div>
+      </div>
+      <div>
+        <p className="label !mb-1">You talk</p>
+        <p className={`mono font-semibold leading-none ${compact ? "text-2xl" : "text-[34px]"} ${!result ? "text-ink-muted" : ratioOk ? "text-ink" : "text-caution"}`}>{result ? ratio : "--"}<span className="text-xs text-ink-muted">%</span></p>
+        <div className="relative mt-2 h-1 rounded-full bg-line" aria-hidden>
+          <span className="absolute inset-y-0 rounded-full bg-ok/40" style={{ left: "35%", width: "30%" }} />
+          {result && <span className="absolute -top-1 h-3 w-0.5 rounded bg-ink" style={{ left: `${ratio}%` }} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Rubric tapes: hatched while provisional, solid once a transcript quote confirms the criterion. */
+export function CriteriaTapes({ scenario, result }: { scenario: Scenario; result: CoachResult | null }) {
+  const total = scenario.rubric.reduce((a, c) => a + c.weight, 0) || 1;
+  const rows = result?.estimate.criteria ?? scenario.rubric.map((c) => ({ id: c.id, name: c.name, weight: (c.weight / total) * 100, score: 0, confirmed: false }));
+  return (
+    <ul className="space-y-2.5">
+      {rows.map((c) => (
+        <li key={c.id}>
+          <div className="mb-1 flex items-baseline justify-between gap-2 text-[13px]">
+            <span className="min-w-0 truncate">{c.name}</span>
+            <span className="mono shrink-0 text-[11px] text-ink-muted">{Math.round(c.weight)}% · <span className={c.confirmed ? scoreTone(c.score) : ""}>{Math.round(c.score)}</span></span>
+          </div>
+          <div className="tape" role="meter" aria-label={`${c.name}: ${Math.round(c.score)} of 100, ${c.confirmed ? "confirmed by a quote" : "provisional"}`} aria-valuenow={Math.round(c.score)} aria-valuemin={0} aria-valuemax={100}>
+            <span className={`${scoreTone(c.score)} ${c.confirmed ? "bg-current" : "hatched"}`} style={{ width: `${Math.max(2, c.score)}%` }} />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** The rubric meters under their heading. Same weights as the final grade; each meter says provisional or confirmed. */
+export function RubricMeters({ scenario, result, idPrefix }: { scenario: Scenario; result: CoachResult | null; idPrefix: string }) {
+  const id = `${idPrefix}-rubric`;
+  return (
+    <section aria-labelledby={id}>
+      <h2 id={id} className="label">Rubric <span className="normal-case tracking-normal">· same weights as your final grade</span></h2>
+      <CriteriaTapes scenario={scenario} result={result} />
+    </section>
+  );
+}
 
 /**
  * Keyboard model for a role="radiogroup" of buttons (WAI-ARIA radio pattern), also used for a

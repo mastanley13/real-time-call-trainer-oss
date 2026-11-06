@@ -24,7 +24,8 @@ const scenario = BUILT_IN_SCENARIOS[0];
 const turns = (n: number) => Array.from({ length: n }, (_, i) => ({ role: (i % 2 ? "user" : "assistant") as "user" | "assistant", text: `Turn number ${i + 1} of the call.`, timestamp: new Date(1_900_000_000_000 + i * 5000).toISOString() }));
 const cue = (id: string, over: Partial<LiveCue> = {}): LiveCue => ({ id, type: "objection", title: `Cue title ${id}`, message: `Cue message ${id}.`, suggestedLine: `Suggested line ${id}.`, triggerTurn: 1, status: "active", ...over });
 const result: CoachResult = {
-  estimate: { overall: 87, criteria: scenario.rubric.map((c) => ({ id: c.id, name: c.name, weight: c.weight, score: 61, confirmed: true, evidenceLine: 2 })) },
+  // The first criterion is still provisional (no quote yet); the rest are confirmed by a quote.
+  estimate: { overall: 87, criteria: scenario.rubric.map((c, i) => ({ id: c.id, name: c.name, weight: c.weight, score: 61, confirmed: i > 0, ...(i > 0 ? { evidenceLine: 2 } : {}) })) },
   steps: [true, false, false], cue: null, talkRatio: 0.5, source: "llm", latencyMs: 300,
 };
 const coach = (cues: LiveCue[] = [], error = "") => ({
@@ -102,21 +103,93 @@ describe("call screen layout", () => {
   });
 });
 
-describe("no live scoreboard in the call", () => {
-  it.each(VARIANTS)("%s: no overall /100, rubric meter, talk ratio or score chips", (_name, over) => {
+describe("live scoreboard in the call (owner override: visible for the whole call)", () => {
+  const SCORED = VARIANTS.filter(([name]) => name !== "blind");
+
+  it.each(SCORED)("%s: overall /100 in its tone, labelled not final, and every rubric meter", (_name, over) => {
     const html = render(over);
-    expect(html).not.toContain("/100");
-    expect(html).not.toContain('role="meter"');
-    expect(html).not.toMatch(/Live estimate|not final|You talk|Rubric/);
-    expect(html).not.toContain(">87<");
-    expect(html).not.toContain("Rubric chip");
-    expect(html).not.toContain("+12");
+    // 87 is in the ok tone (scoreTone: 75 and up), in the rail and in the phone strip.
+    expect(html.match(/text-ok">87<span class="text-xs text-ink-muted">\/100<\/span>/g)).toHaveLength(2);
+    expect(html).toContain("Live estimate");
+    expect(html).toContain("not final");
+    expect(html).not.toMatch(/final grade<\/p>|Final score/);
+    // One meter per criterion in the rail and again in the phone disclosure, provisional and confirmed told apart.
+    expect(html.match(/role="meter"/g)).toHaveLength(scenario.rubric.length * 2);
+    expect(html).toMatch(/role="meter" aria-label="[^"]+: 61 of 100, provisional"/);
+    expect(html).toMatch(/role="meter" aria-label="[^"]+: 61 of 100, confirmed by a quote"/);
+    expect(html).toContain("· same weights as your final grade");
   });
 
-  it("the rail module no longer exports the score instruments", () => {
+  it("keeps the overall score visible on phones: in the header, outside the brief disclosure and the scrolling body", () => {
+    const html = render({ voice: voice() });
+    const strip = html.indexOf('<section aria-label="Live score" data-score-strip="" class="site-wrap pb-3 lg:hidden">');
+    expect(strip).toBeGreaterThan(-1);
+    expect(strip).toBeLessThan(html.indexOf("</header>"));
+    expect(strip).toBeLessThan(html.indexOf("data-call-body"));
+    const stripHtml = html.slice(strip, html.indexOf("</section>", strip));
+    expect(stripHtml).toContain("/100</span>");
+    expect(stripHtml).toContain("not final");
+    // The disclosure holds the meters, not the overall score.
+    const details = html.slice(html.indexOf("<details data-phone-brief"), html.indexOf("</details>"));
+    expect(details).not.toContain("/100");
+    expect(details).toContain('role="meter"');
+    // Wide screens: the scoreboard tops the rail, above the brief, with still exactly one next move.
+    const rail = html.slice(html.indexOf('<aside aria-label="Buyer brief and coaching"'));
+    expect(rail.indexOf('aria-label="Live instruments"')).toBeGreaterThan(-1);
+    expect(rail.indexOf('aria-label="Live instruments"')).toBeLessThan(rail.indexOf('id="rail-brief"'));
+    expect(html.match(/data-next-move=""/g)).toHaveLength(1);
+  });
+
+  it("pins the overall estimate on wide screens outside the rail's scroller, so scrolling the rail never hides it", () => {
+    const html = render({ voice: voice() });
+    const rail = html.slice(html.indexOf('<aside aria-label="Buyer brief and coaching"'), html.indexOf("</aside>"));
+    // On wide screens the rail itself does not scroll: it is a flex column whose inner scroller holds the rest.
+    const asideClass = rail.match(/^<aside[^>]*class="([^"]*)"/)![1].split(" ");
+    expect(asideClass).toEqual(expect.arrayContaining(["lg:flex", "lg:flex-col", "lg:min-h-0", "lg:overflow-visible"]));
+    expect(asideClass).not.toContain("lg:overflow-y-auto");
+    const pinned = rail.indexOf("data-score-pinned");
+    const scroller = rail.indexOf("data-rail-scroll");
+    expect(pinned).toBeGreaterThan(-1);
+    expect(scroller).toBeGreaterThan(pinned);
+    // The pinned block is a sibling before the scroller (closed before it opens), does not shrink, and holds the score.
+    const pinnedHtml = rail.slice(pinned, scroller);
+    expect(pinnedHtml).toContain("</section>");
+    expect(pinnedHtml).toMatch(/text-ok">87<span class="text-xs text-ink-muted">\/100<\/span>/);
+    expect(pinnedHtml).toContain("not final");
+    expect(rail.match(/<section aria-label="Live instruments" data-score-pinned="" class="([^"]*)"/)![1].split(" ")).toEqual(expect.arrayContaining(["shrink-0", "lg:block"]));
+    // The scroller scrolls on wide screens and carries the meters, brief and next move, but not the overall score.
+    const scrollerClass = rail.match(/<div data-rail-scroll="" class="([^"]*)"/)![1].split(" ");
+    expect(scrollerClass).toEqual(expect.arrayContaining(["lg:min-h-0", "lg:flex-1", "lg:overflow-y-auto"]));
+    const scrolled = rail.slice(scroller);
+    expect(scrolled).not.toContain("/100");
+    expect(scrolled).toContain('role="meter"');
+    expect(scrolled).toContain("data-next-move");
+  });
+
+  it("draws the per-line score chips on the rep's lines", () => {
+    const html = render({ text: text() });
+    expect(html.match(/data-score-chips=""/g)).toHaveLength(1);
+    expect(html).toContain("▲ Rubric chip +12");
+    // Chip index 1 is the second turn, the rep's line.
+    const chip = html.indexOf("▲ Rubric chip");
+    expect(chip).toBeGreaterThan(html.indexOf("Turn number 2 of the call."));
+    expect(chip).toBeLessThan(html.indexOf("Turn number 3 of the call."));
+  });
+
+  it("Blind mode keeps its meaning from before: no live help, so no scoreboard", () => {
+    const html = render({ voice: voice(), coachMode: "blind" });
+    expect(html).not.toContain("/100");
+    expect(html).not.toContain('role="meter"');
+    expect(html).not.toContain("data-score-strip");
+  });
+
+  it("uses the existing scoreboard components and tone, not a new scoring system", () => {
     const rail = read("src/components/call/CopilotRail.tsx");
-    expect(rail).not.toMatch(/export function (Instruments|CriteriaTapes)/);
-    expect(code("src/components/call/Deck.tsx")).not.toMatch(/estimate\.overall|CriteriaTapes|Instruments|coach\.chips/);
+    expect(rail).toMatch(/export function Instruments\(/);
+    expect(rail).toMatch(/export function CriteriaTapes\(/);
+    expect(rail).toContain('const scoreTone = (n: number) => (n >= 75 ? "text-ok" : n >= 45 ? "text-signal" : "text-caution");');
+    expect(rail).toContain("result?.estimate.criteria ?? scenario.rubric.map(");
+    expect(read("src/components/call/Deck.tsx")).toContain("coach.chips[i] ?? []");
   });
 });
 
@@ -215,9 +288,9 @@ describe("focus and motion", () => {
 });
 
 describe("phone layout and controls", () => {
-  it("puts the brief and coach history in a titled disclosure", () => {
+  it("puts the brief, rubric meters and coach history in a titled disclosure", () => {
     const html = render({ voice: voice() });
-    expect(html).toMatch(/<details data-phone-brief=""[^>]*><summary[^>]*>Buyer brief and coach settings<\/summary>/);
+    expect(html).toMatch(/<details data-phone-brief=""[^>]*><summary[^>]*>Buyer brief, rubric and coach settings<\/summary>/);
   });
 
   it("fits the open brief, the docked cue and the transcript in one height budget that never reaches the controls", () => {
@@ -232,16 +305,19 @@ describe("phone layout and controls", () => {
     expect(section).toContain("lg:min-h-0");
     // The transcript keeps a minimum height.
     expect(html).toContain("min-h-[6rem] flex-1 overflow-y-auto");
-    // Exactly two capped panels (brief body, cue dock), each capped by viewport and by rem, together well under the
-    // screen; no bare viewport-only caps like the old 45dvh + 40dvh.
+    // Exactly two capped panels (brief body, cue dock), each capped by viewport and by rem. The caps were tightened
+    // when the always-visible score strip joined the header, so the three still leave room for the transcript minimum;
+    // no bare viewport-only caps like the old 45dvh + 40dvh.
     const caps = [...html.matchAll(/max-h-\[min\((\d+)dvh,(\d+)rem\)\]/g)];
     expect(caps).toHaveLength(2);
-    expect(caps.reduce((a, m) => a + Number(m[1]), 0)).toBeLessThanOrEqual(65);
-    expect(caps.reduce((a, m) => a + Number(m[2]), 0)).toBeLessThanOrEqual(30);
+    expect(caps.reduce((a, m) => a + Number(m[1]), 0)).toBeLessThanOrEqual(55);
+    expect(caps.reduce((a, m) => a + Number(m[2]), 0)).toBeLessThanOrEqual(26);
     expect(html).not.toMatch(/max-h-\[\d+dvh\]/);
     // Both capped panels scroll inside their caps.
-    expect(html).toMatch(/max-h-\[min\(30dvh,16rem\)\][^"]*overflow-y-auto/);
-    expect(html).toMatch(/max-h-\[min\(35dvh,14rem\)\][^"]*overflow-y-auto/);
+    expect(html).toMatch(/max-h-\[min\(25dvh,14rem\)\][^"]*overflow-y-auto/);
+    expect(html).toMatch(/max-h-\[min\(30dvh,12rem\)\][^"]*overflow-y-auto/);
+    // The score strip is in the header, not in this column, so scrolling the column never hides the score.
+    expect(html.indexOf("data-score-strip")).toBeLessThan(html.indexOf("data-call-body"));
   });
 
   it("shrinks the docked cue to one line while the phone brief is open; wide screens keep the full card", () => {

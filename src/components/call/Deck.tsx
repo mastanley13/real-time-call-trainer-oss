@@ -10,9 +10,9 @@ import { NEXT_CALL_STANDARD_NOTICE, TRIAL_CALL_NOTICE, liveCallLimitNotice, voic
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import CallError from "./CallError";
 import MinutesLeft from "./MinutesLeft";
-import { BlindNote, BuyerBrief, CoachSettings, EarlierCues, NextMove, TalkTrackPanel } from "./CopilotRail";
+import { BlindNote, BuyerBrief, CoachSettings, EarlierCues, Instruments, NextMove, RubricMeters, TalkTrackPanel } from "./CopilotRail";
 import { CALL_HEADLINE, callErrorText, nextMoveCue } from "./callCopy";
-import type { LiveCue, useCoach } from "./useCoach";
+import type { LiveCue, RubricChip, useCoach } from "./useCoach";
 
 export interface DeckText {
   value: string; onChange: (v: string) => void; onSend: () => void; hungUp: boolean; typing: boolean;
@@ -50,10 +50,12 @@ const SPACE_OWNERS = "input, textarea, select, button, a, summary, [role='radio'
 
 /**
  * The live call screen, "Buyer and brief". The transcript is the primary pane (about two thirds on wide screens) under
- * the heading "Stay with the buyer."; a compact rail holds the buyer brief and exactly one next move. There is no live
- * score here. On phones the brief, talk track, earlier cues and coach mode sit in one titled disclosure, the transcript
- * keeps every turn (scroll back for earlier ones), and the next move docks above the controls. The controls sit in a
- * bar that never overlays the transcript and clears the home indicator.
+ * the heading "Stay with the buyer."; the rail holds the live scoreboard (overall estimate, labelled not final, and the
+ * rubric meters), the buyer brief and exactly one next move. Rep lines carry their score chips. On phones the overall
+ * score sits in a strip in the header, always visible; the brief, rubric meters, talk track, earlier cues and coach mode
+ * sit in one titled disclosure, the transcript keeps every turn (scroll back for earlier ones), and the next move docks
+ * above the controls. The controls sit in a bar that never overlays the transcript and clears the home indicator.
+ * Blind mode keeps its meaning from before: no live help, so no scoreboard.
  */
 export default function Deck({ scenario, turns, startedAt, elapsed, status, grading, gradingLabel, onEnd, coach, coachMode, onCoachModeChange, coachLabel, text, voice, inserted, onInsert, usage = null, error, canUpgrade = true }: {
   /** Minutes left when this call started (from the briefing's /api/usage read). Null when minutes are not metered. */
@@ -92,6 +94,8 @@ export default function Deck({ scenario, turns, startedAt, elapsed, status, grad
   const shown = coachMode === "coached" ? nextMoveCue(coach.cues) : undefined;
   const lastBuyer = turns.map((t) => t.role).lastIndexOf("assistant");
   const isVoice = !!voice;
+  const scored = coachMode !== "blind";
+  const chipsFor = (i: number): RubricChip[] => coach.chips[i] ?? [];
 
   useEffect(() => {
     const el = logRef.current;
@@ -161,6 +165,12 @@ export default function Deck({ scenario, turns, startedAt, elapsed, status, grad
             )}
           </div>
         </div>
+        {/* Phones: the live score strip, outside the scrolling body so it stays visible for the whole call. */}
+        {scored && (
+          <section aria-label="Live score" data-score-strip="" className="site-wrap pb-3 lg:hidden">
+            <Instruments result={coach.result} steps={steps} compact />
+          </section>
+        )}
         {/* The Premium cutoff or trial notice, announced once, politely. */}
         <p aria-live="polite" className="site-wrap text-sm text-ink-soft [&:not(:empty)]:pb-3">{liveVoiceNotice(voice)}</p>
       </header>
@@ -177,9 +187,10 @@ export default function Deck({ scenario, turns, startedAt, elapsed, status, grad
 
           {/* Phones: the brief and the coach history live in one titled disclosure. */}
           <details data-phone-brief="" className="mt-2 shrink-0 rounded-panel border border-line lg:hidden" onToggle={(e) => setBriefOpen(e.currentTarget.open)}>
-            <summary className="min-h-[48px] cursor-pointer px-3 py-3 text-[15px] font-semibold">Buyer brief and coach settings</summary>
-            <div className="scroll-thin max-h-[min(30dvh,16rem)] space-y-5 overflow-y-auto border-t border-line p-3">
+            <summary className="min-h-[48px] cursor-pointer px-3 py-3 text-[15px] font-semibold">Buyer brief, rubric and coach settings</summary>
+            <div className="scroll-thin max-h-[min(25dvh,14rem)] space-y-5 overflow-y-auto border-t border-line p-3">
               <BuyerBrief scenario={scenario} idPrefix="phone" titleHidden />
+              {scored && <RubricMeters scenario={scenario} result={coach.result} idPrefix="phone" />}
               {coachMode === "blind" ? <BlindNote /> : <TalkTrackPanel steps={steps} result={coach.result} open={coachMode === "guided"} />}
               {coachMode === "coached" && <EarlierCues cues={coach.cues} shownId={shown?.id} />}
               <CoachSettings mode={coachMode} onModeChange={onCoachModeChange} coachLabel={coachLabel} />
@@ -202,7 +213,14 @@ export default function Deck({ scenario, turns, startedAt, elapsed, status, grad
                       <p className="break-words font-semibold text-ink">{me ? "You" : firstName}</p>
                       {t.timestamp && <p className="mono text-ink-soft">{clock(t.timestamp, startedAt)}</p>}
                     </div>
-                    <p className="min-w-0 whitespace-pre-wrap break-words text-[18px] leading-7 text-ink lg:text-[20px] lg:leading-[31px]">{t.text}</p>
+                    <div className="min-w-0">
+                      <p className="whitespace-pre-wrap break-words text-[18px] leading-7 text-ink lg:text-[20px] lg:leading-[31px]">{t.text}</p>
+                      {me && chipsFor(i).length > 0 && (
+                        <div data-score-chips="" className="mt-1.5 flex flex-wrap gap-1.5">
+                          {chipsFor(i).map((c) => <span key={c.id} className="inline-flex items-center gap-1 rounded-md bg-ok-soft px-1.5 py-0.5 font-mono text-[11px] text-ok">▲ {c.name} +{c.delta}</span>)}
+                        </div>
+                      )}
+                    </div>
                   </li>
                 );
               })}
@@ -219,9 +237,22 @@ export default function Deck({ scenario, turns, startedAt, elapsed, status, grad
           </div>
         </section>
 
-        {/* Wide screens: the rail. Phones: only the one next move, docked above the controls. */}
-        <aside aria-label="Buyer brief and coaching" className="scroll-thin -mx-2 max-h-[min(35dvh,14rem)] shrink-0 overflow-y-auto px-2 pb-3 lg:mx-0 lg:max-h-none lg:space-y-6 lg:border-l lg:border-line lg:py-6 lg:pl-8 lg:pr-2">
-          <div className="hidden lg:block"><BuyerBrief scenario={scenario} idPrefix="rail" /></div>
+        {/*
+          Wide screens: the rail. The overall estimate is pinned at the top, outside the rail's scroller, so it stays
+          visible while the meters, brief, next move and settings scroll beneath it. Phones: only the one next move,
+          docked above the controls (the phone score strip is in the header).
+        */}
+        <aside aria-label="Buyer brief and coaching" className="scroll-thin -mx-2 max-h-[min(30dvh,12rem)] shrink-0 overflow-y-auto px-2 pb-3 lg:mx-0 lg:flex lg:min-h-0 lg:max-h-none lg:flex-col lg:overflow-visible lg:border-l lg:border-line lg:py-6 lg:pl-8 lg:pr-2">
+          {scored && (
+            <section aria-label="Live instruments" data-score-pinned="" className="hidden shrink-0 border-b border-line pb-5 lg:block">
+              <Instruments result={coach.result} steps={steps} />
+            </section>
+          )}
+          <div data-rail-scroll="" className="scroll-thin lg:-mx-2 lg:min-h-0 lg:flex-1 lg:space-y-6 lg:overflow-y-auto lg:px-2 lg:pt-5">
+          <div className="hidden space-y-6 lg:block">
+            {scored && <RubricMeters scenario={scenario} result={coach.result} idPrefix="rail" />}
+            <BuyerBrief scenario={scenario} idPrefix="rail" />
+          </div>
           {coachMode === "coached" && (
             <NextMove cue={shown} voice={isVoice} compact={briefOpen} onUse={() => shown && insertLine(shown)} onDismiss={() => shown && coach.dismiss(shown.id)} />
           )}
@@ -230,6 +261,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, status, grad
             {coachMode === "blind" ? <BlindNote /> : <TalkTrackPanel steps={steps} result={coach.result} open={coachMode === "guided"} />}
             {coachMode === "coached" && <EarlierCues cues={coach.cues} shownId={shown?.id} />}
             <CoachSettings mode={coachMode} onModeChange={onCoachModeChange} coachLabel={coachLabel} />
+          </div>
           </div>
         </aside>
       </div>
