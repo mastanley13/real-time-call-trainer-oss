@@ -14,6 +14,7 @@ vi.mock("@/lib/rateLimit", async (importOriginal) => ({ ...(await importOriginal
 
 import { POST } from "@/app/api/auth/register/route";
 import { ACCESS_COOKIE, accessToken } from "@/lib/access";
+import { mapServerError, PASSWORD_MIN, validateRegister } from "@/lib/registerForm";
 
 const CODE = "let-me-in";
 const body = {
@@ -80,6 +81,54 @@ describe("POST /api/auth/register database failures", () => {
     const res = await post();
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: "Registration failed. Please try again." });
+  });
+});
+
+describe("POST /api/auth/register answers the sign-up page can map", () => {
+  const send = (b: Record<string, unknown>) =>
+    POST(new NextRequest("http://localhost/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify(b),
+      headers: { "content-type": "application/json" },
+    }));
+  const { newOrgName: _omit, ...noTeam } = body;
+
+  it("uses the same password minimum as the page", async () => {
+    const short = "x".repeat(PASSWORD_MIN - 1);
+    const res = await send({ ...body, password: short });
+    expect(res.status).toBe(400);
+    const { error } = await res.json();
+    expect(mapServerError(error, "create").field).toBe("password");
+    expect(validateRegister({ firstName: "Mia", lastName: "Chen", email: body.email, password: short, orgName: "Example Team", orgCode: "" }, "create").password).toBeDefined();
+    expect(mocks.prisma.user.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("maps an invalid email, a missing team name, a taken email and the access gate", async () => {
+    const bad = await send({ ...body, email: "not-an-email" });
+    expect(bad.status).toBe(400);
+    expect(mapServerError((await bad.json()).error, "create").field).toBe("email");
+
+    const missing = await send(noTeam);
+    expect(missing.status).toBe(400);
+    expect(mapServerError((await missing.json()).error, "create").field).toBe("orgName");
+
+    const taken = await send(body);
+    expect(taken.status).toBe(409);
+    expect(mapServerError((await taken.json()).error, "create").field).toBe("email");
+
+    vi.stubEnv("TRAINER_ACCESS_CODE", CODE);
+    const gated = await send(body);
+    expect(gated.status).toBe(403);
+    expect(mapServerError((await gated.json()).error, "create").accessLink).toBe(true);
+  });
+
+  it("maps an unknown team code to the team code field", async () => {
+    mocks.prisma.user.findUnique.mockResolvedValue(null);
+    mocks.prisma.$transaction.mockReset().mockImplementation(async (fn: (tx: unknown) => unknown) =>
+      fn({ organization: { findUnique: vi.fn().mockResolvedValue(null) }, user: { create: vi.fn() }, auditEvent: { create: vi.fn() } }));
+    const res = await send({ ...noTeam, joinOrgCode: "999999" });
+    expect(res.status).toBe(400);
+    expect(mapServerError((await res.json()).error, "join").field).toBe("orgCode");
   });
 });
 
