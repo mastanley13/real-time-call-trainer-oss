@@ -61,6 +61,18 @@ npm run dev               # http://localhost:3000
 ```
 Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login, keeps sessions, assignments and supervisor notes in your browser, and shows a sample team on `/team`. See [TESTING.md](TESTING.md).
 
+Add `OPENAI_API_KEY` to `.env` for the AI coach and voice. The home page links here ("Self-hosting guide for developers"); setup, model and environment details live in this README, not on the public landing page.
+
+### What runs each job
+Coaching, grades, wizard drafts and text-call replies say whether AI produced them or a rules-based fallback did. Point `LLM_BASE_URL` at any OpenAI-compatible API, with its own `LLM_API_KEY`, and set `LLM_MODEL` to swap models. Operators pick models on the server (`LLM_MODEL`, `REALTIME_MODEL_STANDARD`, `REALTIME_MODEL_PREMIUM`).
+
+| Job | Engine | What it does |
+|---|---|---|
+| Live coach | Your chat model | Per-turn cues and rubric estimate, as validated JSON |
+| Grading | Your chat model | Full-transcript rubric grade with verbatim evidence checks |
+| Persona wizard | Your chat model | Builds a persona, objections and rubric from your context |
+| Voice | OpenAI Realtime | Over WebRTC, the default when an OpenAI key is set. ElevenLabs Agents also supported |
+
 ### Environment variables
 | Variable | Required | Purpose |
 |---|---|---|

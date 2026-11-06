@@ -120,12 +120,23 @@ describe("no model ids in user-facing source", () => {
 });
 
 describe("landing page", () => {
-  it("renders without model ids and keeps the provider names", () => {
+  it("renders without model ids, provider model chips or env names", () => {
     const html = renderToStaticMarkup(createElement(Home));
     expect(html.match(new RegExp(MODEL_ID_RE.source, "g")) ?? []).toEqual([]);
-    expect(html).toContain("OpenAI Realtime");
-    expect(html).toContain("ElevenLabs");
-    expect(html).toContain("Your chat model");
+    // The "What runs each job" chips moved to the README for developers.
+    expect(html).not.toContain("Your chat model");
+    expect(html).not.toMatch(/\b(?:LLM|REALTIME|OPENAI|ELEVENLABS)_[A-Z_]+/);
+  });
+
+  it("keeps the provider names in the developer docs instead", () => {
+    const readme = readFileSync(join(ROOT, "README.md"), "utf8");
+    const start = readme.indexOf("### What runs each job");
+    expect(start).toBeGreaterThan(-1);
+    const jobs = readme.slice(start, readme.indexOf("\n### ", start + 1));
+    expect(jobs).toContain("OpenAI Realtime");
+    expect(jobs).toContain("ElevenLabs");
+    expect(jobs).toContain("Your chat model");
+    expect(jobs.match(new RegExp(MODEL_ID_RE.source, "g")) ?? []).toEqual([]);
   });
 });
 
