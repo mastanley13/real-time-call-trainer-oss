@@ -1,5 +1,9 @@
 import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
+import Home from "@/app/page";
+import { FREE_LINE, HERO_HEADLINE } from "@/lib/homeCopy";
 import { LANDINGS } from "@/lib/landing";
 import { LIBRARY } from "@/lib/personas";
 import { PRICING_NAV } from "@/components/SiteHeader";
@@ -61,10 +65,94 @@ describe("pricing copy", () => {
 describe("copy rules", () => {
   const files = [
     "src/lib/landing.ts", "src/lib/pricing.ts", "src/app/pricing/page.tsx",    "src/components/landing/LandingPage.tsx", "src/components/landing/PricingCards.tsx", "src/components/landing/PricingSummary.tsx",
-    "src/components/landing/PublicFooter.tsx",
+    "src/components/landing/PublicFooter.tsx", "src/app/page.tsx", "src/components/landing/HeroDeck.tsx", "src/lib/homeCopy.ts",
   ];
   it.each(files)("%s has no em or en dashes", (f) => {
     expect(readFileSync(f, "utf8")).not.toMatch(/[–—]/);
+  });
+});
+
+describe("home page (Practice Desk)", () => {
+  const html = renderToStaticMarkup(createElement(Home));
+  const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  const pageSrc = readFileSync("src/app/page.tsx", "utf8");
+  const deckSrc = readFileSync("src/components/landing/HeroDeck.tsx", "utf8");
+  const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1].replaceAll("&amp;", "&"));
+
+  it("shows the exact headline as the only h1", () => {
+    expect(HERO_HEADLINE).toBe("Practice the price objection before your next call.");
+    expect(html.match(/<h1[^>]*>([^<]*)<\/h1>/g)).toEqual([expect.stringContaining(`>${HERO_HEADLINE}</h1>`)]);
+  });
+
+  it("keeps the hosted sign-up path and the pricing link", () => {
+    expect(hrefs).toContain(registerHref({ src: "home_hero" }));
+    expect(hrefs).toContain("/register?src=home_hero");
+    expect(hrefs).toContain("/pricing");
+    expect(html).toContain(">Start free, no card<");
+  });
+
+  it("states the Free line from the locked plan numbers", () => {
+    expect(FREE_VOICE_MIN).toBe(10);
+    expect(FREE_LINE).toBe("Ten voice minutes monthly, unlimited text.");
+    expect(html).toContain(FREE_LINE);
+  });
+
+  it("labels the transcript as an example session with speakers, one cue and no score", () => {
+    expect(text).toContain("Example session");
+    expect(text).toContain("Dana Whitfield");
+    expect(text).toContain("What does a visit cost? Nobody mentioned a fee.");
+    expect(html.match(/<li class="grid/g)).toHaveLength(3);
+    for (const who of ["Dana", "You"]) expect(html).toContain(`>${who}</span>`);
+    expect(html.match(/role="note"/g)).toHaveLength(1);
+    expect(text).toContain("Name the fee before you offer a time slot.");
+    // No final or provisional score, and no fabricated metrics.
+    expect(text).not.toMatch(/\d+\s*\/\s*100|\b58\b|%|score ring/i);
+    expect(deckSrc).not.toMatch(/overall|CoachResult|CriteriaTapes/);
+  });
+
+  it("follows with a real ordered Brief, Call, Debrief list", () => {
+    const steps = html.slice(html.indexOf('id="how-h"'));
+    const ol = steps.slice(steps.indexOf("<ol"), steps.indexOf("</ol>"));
+    expect(ol).not.toBe("");
+    expect(ol.match(/<li/g)).toHaveLength(3);
+    expect(ol.replace(/<[^>]+>/g, "")).toMatch(/Brief.*Call.*Debrief/);
+  });
+
+  it("has no env var names, model chips, setup commands or raw keys", () => {
+    for (const src of [pageSrc, deckSrc, html]) {
+      expect(src).not.toMatch(/\bLLM_[A-Z_]+|\bOPENAI_[A-Z_]+|\bELEVENLABS_[A-Z_]+|\bREALTIME_[A-Z_]+/);
+      expect(src).not.toMatch(/chip-model|Your chat model|npm (run|install)|git clone|\bsk-[A-Za-z0-9]/);
+    }
+    expect(html).not.toMatch(/<pre\b/);
+  });
+
+  it("makes every scroll region focusable and named", () => {
+    const tags = [...html.matchAll(/<[a-z]+\b[^>]*class="[^"]*\boverflow-(?:[xy]-)?(?:auto|scroll)\b[^"]*"[^>]*>/g)].map((m) => m[0]);
+    for (const tag of tags) {
+      expect(tag, tag).toContain('tabindex="0"');
+      expect(tag, tag).toMatch(/aria-label="[^"]+"/);
+    }
+  });
+
+  it("is static: no client code, no microphone, no remote fonts", () => {
+    for (const src of [pageSrc, deckSrc]) {
+      expect(src).not.toMatch(/["']use client["']|getUserMedia|mediaDevices/);
+    }
+    expect(readFileSync("src/app/layout.tsx", "utf8")).not.toContain("next/font");
+    expect(html).not.toMatch(/gradient|fonts\.googleapis/);
+  });
+
+  it("defines the shared semantic tokens once, in globals.css and the Tailwind config", () => {
+    const css = readFileSync("src/app/globals.css", "utf8");
+    const root = css.match(/:root \{([^}]*)\}/)?.[1] ?? "";
+    for (const t of ["--bg: 255 255 255;", "--ink: 24 43 52;", "--ink-soft: 70 92 100;", "--primary: 18 104 93;", "--sunken: 237 244 243;", "--line: 203 216 217;", "--alert: 165 38 48;",
+      "--radius-control: 7px;", "--radius-group: 10px;", "--radius-badge: 4px;", "--focus-ring-width: 3px;", "--focus-ring-offset: 4px;", "--content-max: 1240px;"]) {
+      expect(root).toContain(t);
+    }
+    const tw = readFileSync("tailwind.config.ts", "utf8");
+    expect(tw).toContain('control: "var(--radius-control)"');
+    expect(tw).toContain('badge: "var(--radius-badge)"');
+    for (const src of [pageSrc, deckSrc]) expect(src).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgb\(\d|\b(?:slate|gray|red|teal|emerald)-\d/);
   });
 });
 
