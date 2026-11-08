@@ -255,7 +255,7 @@ export default function DebriefReport({ sessionId, view, drill, focusLine = null
                 <div className="mt-6 grid gap-8 md:grid-cols-2">
                   <div className="min-w-0">
                     <h3 className="text-lg font-bold leading-7">Strengths</h3>
-                    <ul className="mt-2 list-disc space-y-1.5 pl-5 text-ink-soft">{ev.strengths.length ? ev.strengths.map((x, i) => <li key={i}>{x}</li>) : <li>Nothing stood out this time. Keep practising and your strengths will show up here.</li>}</ul>
+                    <ul className="mt-2 list-disc space-y-1.5 pl-5 text-ink-soft">{ev.strengths.length ? ev.strengths.map((x, i) => <li key={i}>{x}</li>) : <li>Nothing stood out this time. Keep practicing and your strengths will show up here.</li>}</ul>
                   </div>
                   <div className="min-w-0">
                     <h3 className="text-lg font-bold leading-7">To improve</h3>

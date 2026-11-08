@@ -33,7 +33,7 @@ export const STATE_COPY = {
   forbidden: { title: "You can't open this session", body: "Only the rep who made the call and their team's managers can open it.", action: "Back to progress" },
   notLocal: { title: "This session isn't in this browser", body: "Practice calls on this server are saved in the browser that made them. Open the debrief there, or start a new call.", action: "Start a new call" },
   loadFailed: { title: "This session couldn't be loaded", body: "Check your connection and reload the page.", action: "Back to progress" },
-  noTranscript: { title: "No transcript was saved for this call", body: "There is nothing to review or grade. Start a new call to practise.", action: "Practice again" },
+  noTranscript: { title: "No transcript was saved for this call", body: "There is nothing to review or grade. Start a new call to practice.", action: "Practice again" },
   nothingSaid: { title: "Nothing to grade yet", body: "You didn't say anything on this call, so there's no score. Start a new call and try your opening line.", action: "Practice again" },
   notGraded: "This call wasn't graded. Your transcript is saved below.",
   insufficientEvidence: "Not enough evidence: no quote in this grade matches the transcript word for word, so no rubric score is backed by verified evidence. Treat the scores as a rough guide, read the transcript below, then retry the call.",
