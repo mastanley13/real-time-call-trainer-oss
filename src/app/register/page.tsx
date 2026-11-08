@@ -217,6 +217,7 @@ function RegisterForm() {
               <div
                 ref={summaryRef}
                 tabIndex={-1}
+                role="alert"
                 aria-labelledby="reg-summary-h"
                 className="rounded-panel border-2 border-alert bg-surface p-4"
               >
