@@ -181,6 +181,7 @@ describe("register page, Account first", () => {
       mocks.query = `error=${code}`;
       const h = html();
       expect(h).toContain('id="reg-summary-h"');
+      expect(/<div[^>]*aria-labelledby="reg-summary-h"[^>]*>/.exec(h)?.[0]).toContain('role="alert"');
       expect(textOf(h)).toContain(expected);
       // The raw code is never shown.
       expect(textOf(h)).not.toContain(code);

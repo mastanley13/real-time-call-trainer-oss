@@ -53,7 +53,7 @@ export default function LoginPage() {
   }
 
   return (
-    <AuthShell title="Welcome back" subtitle="Sign in to continue practising.">
+    <AuthShell title="Welcome back" subtitle="Sign in to continue practicing.">
       {capabilities && !capabilities.database && !capabilities.demoMode && (
         <div className="banner-warn mb-4">
           No database is configured, so accounts are unavailable. Set <code>DATABASE_URL</code>, or run with <code>DEMO_MODE=true</code> to skip login (see TESTING.md).
