@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, ipLimitResponse, readJsonLimited, MAX_TURNS, MAX_TRANSCRIPT_CHARS } from "@/lib/rateLimit";
 import { ScenarioSchema } from "@/lib/scenarios";
+import { LIBRARY } from "@/lib/personas";
 import { CoachTurnSchema } from "@/lib/coach-types";
 import { coachTurn, trailingWindow } from "@/lib/coach";
 
@@ -40,10 +41,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Library personas are coached on the server's own copy, so a client cannot loosen the rubric
+  // (same rule as POST /api/evaluate-call).
+  const scenario = LIBRARY.find((s) => s.id === body.scenario.id) ?? body.scenario;
   // Over the limits, coach on the most recent turns instead of rejecting the call: a 400 here froze the rail for the rest of a long call.
   const win = trailingWindow(body.transcript, MAX_TURNS, MAX_TRANSCRIPT_CHARS);
   try {
-    const result = await coachTurn(body.scenario, win.turns, { allowCue: body.allowCue, recentCueKeys: body.recentCueKeys, lineOffset: body.lineOffset + win.dropped });
+    const result = await coachTurn(scenario, win.turns, { allowCue: body.allowCue, recentCueKeys: body.recentCueKeys, lineOffset: body.lineOffset + win.dropped });
     return NextResponse.json(result);
   } catch (error) {
     console.error("[/api/coach/turn] error:", error);
