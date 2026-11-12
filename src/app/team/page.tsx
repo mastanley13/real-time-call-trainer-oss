@@ -13,6 +13,7 @@ import RosterTable from "@/components/team/RosterTable";
 import AssignmentsPanel from "@/components/team/AssignmentsPanel";
 import AssignSheet from "@/components/team/AssignSheet";
 import VoicePanel from "@/components/team/VoicePanel";
+import InvitePanel from "@/components/team/InvitePanel";
 import { localTeamViews } from "@/components/team/localAssignments";
 import { useAuth } from "@/contexts/AuthContext";
 import { archiveLocalAssignment, ASSIGNMENTS_CHANGED, localNoteIds } from "@/lib/assignmentStore";
@@ -211,6 +212,8 @@ export default function TeamPage() {
 
       {/* Renders nothing unless the viewer can change it: the owner of a comped team, or a platform admin. */}
       {!data.sample && !local && capabilities?.realtime && <VoicePanel />}
+
+      {!data.sample && !local && <InvitePanel />}
 
       <TeamKpis kpis={data.kpis} days={data.days} />
 

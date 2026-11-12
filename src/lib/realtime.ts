@@ -243,3 +243,13 @@ export function realtimeUpstreamMessage(status: number): string {
   if (status === 429) return "OpenAI rate-limited this key or it is out of quota. Check your plan and billing, then try again.";
   return "OpenAI's Realtime API had a problem starting the call. Try again in a minute, or switch to Text.";
 }
+
+/**
+ * A same-origin 401 is an app sign-in/access failure, not a voice-provider
+ * failure (provider failures are mapped to 502 by the routes). A full page
+ * navigation resets stale client auth state without weakening server checks.
+ */
+export function realtimeAuthRedirect(status: number, error: unknown): "/login" | "/access" | null {
+  if (status !== 401) return null;
+  return error === "access_code_required" ? "/access" : "/login";
+}
