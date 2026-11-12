@@ -26,7 +26,10 @@ function RegisterForm() {
   const configKnown = capabilities !== null || capabilitiesFailed;
   const router = useRouter();
   // The link's plan, period, src and seg, whitelisted. Anything else in the query is dropped.
-  const intent = intentFromQuery(useSearchParams());
+  const params = useSearchParams();
+  const intent = intentFromQuery(params);
+  // An invite link (/register?code=123456) opens on "Join a team" with the code filled in. Digits only.
+  const inviteCode = /^[0-9]{3,8}$/.test(params.get("code") ?? "") ? (params.get("code") as string) : "";
   const summary = planSummary(intent);
   const billingEnabled = capabilities?.billing === true;
 
@@ -36,8 +39,8 @@ function RegisterForm() {
     if (next.notice) rememberNotice(next.notice);
     router.replace(next.path);
   }
-  const [mode, setMode] = useState<"create" | "join">("create");
-  const [f, setF] = useState({ firstName: "", lastName: "", email: "", password: "", orgName: "", orgCode: "" });
+  const [mode, setMode] = useState<"create" | "join">(inviteCode ? "join" : "create");
+  const [f, setF] = useState({ firstName: "", lastName: "", email: "", password: "", orgName: "", orgCode: inviteCode });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -85,7 +88,12 @@ function RegisterForm() {
           {summary.seats && <p className="text-sm text-ink-muted">{summary.seats}</p>}
         </div>
       )}
-      <GoogleButton carryIntent />
+      {/* Google sign-up always starts a new team, so joining one goes through the email form. */}
+      {mode === "join" ? (
+        <p className="mb-4 text-sm text-ink-soft">Joining a team: sign up with your email below. Google sign-up starts a separate team.</p>
+      ) : (
+        <GoogleButton carryIntent />
+      )}
       <form onSubmit={onSubmit} className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div><label htmlFor="fn" className="label">First name</label><input id="fn" className="input" value={f.firstName} onChange={set("firstName")} required /></div>

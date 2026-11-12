@@ -17,6 +17,7 @@ import { CallMeter } from "@/lib/callMeter";
 import RealtimeVoiceSession, { voiceInfoFrom, type VoiceInfo, type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
+import { isTokenFresh } from "@/lib/clientSession";
 import { VOICE_CHOICE_KEY, canUpgradeFromUsage, premiumChoiceAvailable, premiumSnapshotFromUsage, readVoiceChoice, usageSnapshotFromUsage, type PremiumSnapshot, type UsageSnapshot, type VoiceChoice } from "@/lib/billingUi";
 
 type Mode = "voice" | "text";
@@ -335,6 +336,14 @@ export default function TrainerClient() {
   function begin() {
     if (!scenario) return;
     try { localStorage.setItem(LAST_SCENARIO, scenario.id); } catch { /* ignore */ }
+    // A long-lived tab can still look signed in after its cookie/token expires.
+    // Reload the sign-in page before opening the mic or starting either call mode.
+    // Reloading also resets AuthContext, which otherwise redirects back here.
+    if (!capabilities?.demoMode) {
+      let fresh = false;
+      try { fresh = isTokenFresh(localStorage.getItem("authToken")); } catch { /* storage unavailable */ }
+      if (!fresh) { window.location.assign("/login"); return; }
+    }
     setError("");
     coach.reset();
     const seed = retry?.seed.map((t) => ({ ...t, timestamp: new Date().toISOString() })) ?? [];

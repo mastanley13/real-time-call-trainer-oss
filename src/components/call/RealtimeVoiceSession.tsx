@@ -5,7 +5,7 @@ import type { Scenario } from "@/lib/scenarios";
 import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
 import { CallMeter, type MeterEndReason } from "@/lib/callMeter";
-import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
+import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, realtimeAuthRedirect, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
 
 /** Same render-prop contract as the ElevenLabs VoiceSession in TrainerClient. */
 export interface VoiceRender {
@@ -56,7 +56,7 @@ const END_GRACE_MS = 1500;
  * Kept outside React so StrictMode remounts and re-renders never touch the live connection;
  * each mount owns exactly one call and closes it exactly once.
  */
-class RealtimeCall {
+export class RealtimeCall {
   private view: CallView = { phase: "mic", speaking: false, muted: false };
   private closed = false;
   private ending = false;
@@ -100,11 +100,14 @@ class RealtimeCall {
     mic.getAudioTracks().forEach((t) => (t.enabled = !this.view.muted));
     this.set({ phase: "connecting" });
 
-    let secret: { clientSecret?: string; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown; maxSeconds?: unknown };
+    let secret: { clientSecret?: string; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown; maxSeconds?: unknown; error?: unknown };
     try {
       // The rep's Standard or Premium pick is a request; the server rechecks entitlement and decides.
       const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario, ...(this.voiceTier ? { voiceTier: this.voiceTier } : {}) }) });
       secret = await res.json().catch(() => ({}));
+      if (this.closed) return;
+      const redirect = realtimeAuthRedirect(res.status, secret.error);
+      if (redirect) return this.signInAgain(redirect);
       if (!res.ok || !secret.clientSecret) return this.fail(secret.message || "Could not start the voice call. Try again, or switch to Text.");
     } catch {
       return this.fail("Could not reach the server to start the voice call. Check your connection, then try again.");
@@ -162,6 +165,8 @@ class RealtimeCall {
       const res = await fetch("/api/realtime/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientSecret: secret.clientSecret, sdp: offer.sdp }) });
       const data = await res.json().catch(() => ({}));
       if (this.closed) return;
+      const redirect = realtimeAuthRedirect(res.status, data.error);
+      if (redirect) return this.signInAgain(redirect);
       if (!res.ok || typeof data.sdp !== "string") return this.fail(data.error === "realtime_secret_expired" ? EXPIRED : data.message || "OpenAI could not connect the voice call. Try again, or switch to Text.", "failed_connect");
       await pc.setRemoteDescription({ type: "answer", sdp: data.sdp });
     } catch {
@@ -278,6 +283,24 @@ class RealtimeCall {
     this.h.onError(msg);
     // Once the rep has spoken the call still gets graded; before that, the trainer goes back to the briefing and keeps this error.
     this.close(repSpoke);
+  }
+
+  private signInAgain(path: "/login" | "/access") {
+    // No call has connected yet. Stop the microphone and release peer resources
+    // before leaving; do not submit an empty practice session for grading.
+    // A minted call that never connected is settled as a failed connect, not a hang-up.
+    this.meter?.end("failed_connect");
+    this.close(false);
+    if (path === "/login") {
+      // The server may reject a cookie while the cached token still looks fresh
+      // (for example, after a signing-key change or a removed cookie). Otherwise
+      // LoginPage restores that cached state and immediately returns to /trainer.
+      try {
+        localStorage.removeItem("authToken");
+        localStorage.removeItem("userData");
+      } catch { /* AuthContext also treats unavailable storage as signed out. */ }
+    }
+    window.location.assign(path);
   }
 
   /** Releases everything exactly once. notify=false is for unmounts, which must not trigger grading. */
