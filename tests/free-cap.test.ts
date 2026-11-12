@@ -74,6 +74,11 @@ beforeEach(() => {
   // No model keys: grading and the text caller use their rules-based fallbacks, with no network.
   vi.stubEnv("LLM_API_KEY", "");
   vi.stubEnv("OPENAI_API_KEY", "");
+  // Routes such as /api/realtime/session and /api/usage/credit call new Date() themselves. Freeze Date at T0
+  // (inside the seeded October period) so a real calendar rollover on the 10th cannot open a new allowance.
+  // Only Date is faked: timers and promises keep running. (Same fix as draft #78.)
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(T0);
 });
 afterEach(() => {
   vi.useRealTimers();

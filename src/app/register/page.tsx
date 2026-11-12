@@ -26,10 +26,10 @@ function RegisterForm() {
   const configKnown = capabilities !== null || capabilitiesFailed;
   const router = useRouter();
   // The link's plan, period, src and seg, whitelisted. Anything else in the query is dropped.
-  const params = useSearchParams();
-  const intent = intentFromQuery(params);
+  const intent = intentFromQuery(useSearchParams());
   // An invite link (/register?code=123456) opens on "Join a team" with the code filled in. Digits only.
-  const inviteCode = /^[0-9]{3,8}$/.test(params.get("code") ?? "") ? (params.get("code") as string) : "";
+  const codeParam = useSearchParams().get("code") ?? "";
+  const inviteCode = /^[0-9]{3,8}$/.test(codeParam) ? codeParam : "";
   const summary = planSummary(intent);
   const billingEnabled = capabilities?.billing === true;
 
