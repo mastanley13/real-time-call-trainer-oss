@@ -59,3 +59,34 @@ describe("register page before /api/config answers", () => {
     }
   });
 });
+
+describe("register page team invite link", () => {
+  it("opens on Join a team with the code filled in, and tells the rep to use email", () => {
+    mocks.query = "code=123456";
+    const h = html();
+    expect(h).toContain("Joining a team: sign up with your email below. Google sign-up starts a separate team.");
+    expect(h).toMatch(/aria-pressed="true"[^>]*>Join a team<|>Join a team<\/button>/);
+    expect(h).toContain('id="code"');
+    expect(h).toContain('value="123456"');
+    expect(h).not.toContain('id="org"');
+    expect(h).not.toContain("/api/auth/google/start");
+  });
+
+  it("keeps a plan summary when the invite link also carries a whitelisted plan", () => {
+    mocks.query = "code=482917&plan=pro&interval=year&src=pricing";
+    const h = html();
+    expect(h).toContain("Pro, Annual");
+    expect(h).toContain('value="482917"');
+    expect(h).toContain("Joining a team: sign up with your email below. Google sign-up starts a separate team.");
+  });
+
+  it("ignores a code that is not 3 to 8 digits, so nothing else can ride in the query", () => {
+    for (const q of ["code=12", "code=123456789", "code=abc123", "code=12345a", "code=1234-56", "code=1234%3Cx%3E"]) {
+      mocks.query = q;
+      const h = html();
+      expect(h, q).not.toContain("Joining a team:");
+      expect(h, q).toContain('id="org"');
+      expect(h, q).not.toContain('id="code"');
+    }
+  });
+});
