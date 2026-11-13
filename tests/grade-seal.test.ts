@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sealEvaluation, stableStringify, verifySeal, type SealInput } from "@/lib/gradeSeal";
 
 const KEY = "test-jwt-secret-that-is-long-enough-123";
@@ -10,6 +10,13 @@ const input: SealInput = {
 };
 
 describe("grade seal", () => {
+  beforeEach(() => {
+    vi.stubEnv("JWT_SECRET", "");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("verifies its own seal, also after a JSON round trip that reorders keys", () => {
     const seal = sealEvaluation(input, KEY)!;
     expect(seal).toMatch(/^[0-9a-f]{64}$/);
