@@ -72,7 +72,8 @@ describe("paletteFromCss", () => {
     const css = readFileSync("src/app/globals.css", "utf8");
     const p = paletteFromCss(css);
     for (const v of Object.values(p)) expect(v).toMatch(/^rgb\(\d+, \d+, \d+\)$/);
-    expect(p.bg).toBe("rgb(10, 15, 26)");
+    // The share card uses the dark desk (Stage and Desk): night ink and teal on near-black.
+    expect(p.bg).toBe("rgb(14, 16, 20)");
   });
 
   it("throws when the block or a token is missing", () => {

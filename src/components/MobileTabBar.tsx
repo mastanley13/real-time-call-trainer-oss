@@ -16,7 +16,7 @@ export default function MobileTabBar() {
   // Managers and owners get a fourth tab for the team view.
   const links = navFor(user);
   return (
-    <nav data-site-chrome aria-label="Main" className={`glass fixed inset-x-0 bottom-0 z-40 border-x-0 border-b-0 pb-[env(safe-area-inset-bottom)] md:hidden print:hidden ${pathname.startsWith("/trainer/debrief") ? "deck !bg-surface/90" : ""}`}>
+    <nav data-site-chrome aria-label="Main" className={`glass fixed inset-x-0 bottom-0 z-40 border-x-0 border-b-0 pb-[env(safe-area-inset-bottom)] md:hidden print:hidden`}>
       <div className={`mx-auto grid max-w-md ${links.length > 3 ? "grid-cols-4" : "grid-cols-3"}`}>
         {links.map((l) => {
           const on = l.match(pathname);

@@ -52,7 +52,7 @@ export default function SiteHeader() {
   }, []);
 
   return (
-    <header ref={headerRef} data-site-chrome className={`glass sticky top-0 z-40 border-x-0 border-t-0 pt-[env(safe-area-inset-top)] print:hidden ${pathname.startsWith("/trainer/debrief") ? "deck !bg-surface/90" : ""}`}>
+    <header ref={headerRef} data-site-chrome className={`glass sticky top-0 z-40 border-x-0 border-t-0 pt-[env(safe-area-inset-top)] print:hidden `}>
       {demo && (
         <div className="border-b border-line bg-primary-soft/60 px-4 py-1 text-center font-mono text-[11px] text-ink-soft">
           Demo mode · login skipped · sessions stay in this browser
