@@ -1,15 +1,10 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono, Sora } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/contexts/AuthContext";
 import SiteHeader from "@/components/SiteHeader";
 import MobileTabBar from "@/components/MobileTabBar";
 import CommandPalette from "@/components/CommandPalette";
 import { shareImages, siteUrl } from "@/lib/seo";
-
-const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-inter" });
-const sora = Sora({ subsets: ["latin"], display: "swap", variable: "--font-sora" });
-const mono = JetBrains_Mono({ subsets: ["latin"], display: "swap", variable: "--font-mono" });
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl()),
@@ -36,7 +31,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#F5F7FB" },
+    { media: "(prefers-color-scheme: light)", color: "#FFFFFF" },
     { media: "(prefers-color-scheme: dark)", color: "#0A0F1A" },
   ],
 };
@@ -46,7 +41,7 @@ const themeScript = `try{var t=localStorage.getItem("rtct.theme");if(t==="light"
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${sora.variable} ${mono.variable}`} suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>

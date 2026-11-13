@@ -196,13 +196,13 @@ describe("landing hero line", () => {
   const html = renderToStaticMarkup(createElement(Home));
   const hero = html.slice(0, html.indexOf("how-h"));
 
-  it("leads with the hosted pitch and the two CTAs", () => {
-    expect(hero).toContain("Sales call practice, <span");
+  it("leads with the price-objection promise and the two CTAs", () => {
+    expect(hero).toContain(">Practice the price objection before your next call.</h1>");
     expect(hero.replace(/<[^>]+>/g, "")).toContain("Sales call practice, no setup required");
-    expect(hero).toContain("Practice real sales calls against 54 AI buyer personas. No API keys, no database, just sign up and start talking.");
     expect(hrefs(hero)).toEqual(expect.arrayContaining(["/register?src=home_hero", "/pricing"]));
-    expect(hero).toContain(">Start free <");
-    expect(hero).toContain(">See pricing<");
+    expect(hero).toContain(">Start free, no card<");
+    expect(hero).toMatch(/>\s*See pricing\s*</);
+    expect(hero).toContain("Ten voice minutes monthly, unlimited text.");
   });
 
   it("keeps demo mode and bring your own key out of the hero", () => {
@@ -210,10 +210,10 @@ describe("landing hero line", () => {
     expect(html).not.toContain("DEMO_MODE");
   });
 
-  it("puts the open source message in the self-host section with a setup that has no demo mode", () => {
-    const oss = html.slice(html.indexOf("oss-h"));
-    expect(oss).toContain("bring your own key");
-    expect(oss).toContain("npm run dev");
+  it("moves self-host setup off the page and links developers to the guide", () => {
+    expect(html).not.toContain("oss-h");
+    expect(html).not.toMatch(/npm (run|install)|git clone|\.env/);
+    expect(hrefs(html)).toContain("https://github.com/mastanley13/real-time-call-trainer-oss#setup");
   });
 
   it("uses no em dashes", () => {
