@@ -362,7 +362,7 @@ describe("GET /api/auth/google/callback", () => {
     expect(mocks.prisma.user.update).not.toHaveBeenCalled();
     expect(res.headers.get("set-cookie")).not.toContain("authToken=");
     const challenge = new URLSearchParams(new URL(res.headers.get("location")!, "http://localhost").hash.slice(1)).get("mfa")!;
-    expect(verifyMfaChallenge(challenge)).toEqual({ id: "u-1", linkGoogleSub: "g-sub-1" });
+    expect(verifyMfaChallenge(challenge)).toMatchObject({ id: "u-1", linkGoogleSub: "g-sub-1" });
   });
 
   it("refuses the sign-in when the atomic link loses a race (Google id set or account locked meanwhile)", async () => {

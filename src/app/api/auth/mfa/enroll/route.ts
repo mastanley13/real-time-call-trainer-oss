@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
 
   await prisma.user.update({
     where: { id: user.id },
-    data: { mfaSecret: secret, mfaEnabled: false, mfaEnrolledAt: null },
+    data: { mfaSecret: secret, mfaEnabled: false, mfaEnrolledAt: null, mfaLastTotpStep: null },
   });
 
   return NextResponse.json({

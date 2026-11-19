@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 
@@ -57,18 +58,30 @@ export function signMfaChallengeToken(userId: string, linkGoogleSub?: string): s
   return jwt.sign(
     { id: userId, purpose: "mfa-challenge", ...(linkGoogleSub ? { linkGoogleSub } : {}) },
     getJwtSecret(),
-    { expiresIn: "5m" },
+    { expiresIn: "5m", jwtid: randomUUID() },
   );
 }
 
-export function verifyMfaChallenge(token: string): { id: string; linkGoogleSub?: string } | null {
+export function verifyMfaChallenge(
+  token: string,
+): { id: string; jti: string; exp: number; linkGoogleSub?: string } | null {
   try {
     const payload = jwt.verify(token, getJwtSecret()) as jwt.JwtPayload;
-    if (!payload || payload.purpose !== "mfa-challenge" || !payload.id) {
+    const jti = payload?.jti;
+    const exp = payload?.exp;
+    if (
+      !payload ||
+      payload.purpose !== "mfa-challenge" ||
+      !payload.id ||
+      typeof jti !== "string" ||
+      jti.length < 8 ||
+      jti.length > 80 ||
+      typeof exp !== "number"
+    ) {
       return null;
     }
     const sub = typeof payload.linkGoogleSub === "string" && payload.linkGoogleSub.length <= 255 ? payload.linkGoogleSub : undefined;
-    return { id: String(payload.id), linkGoogleSub: sub };
+    return { id: String(payload.id), jti, exp, linkGoogleSub: sub };
   } catch {
     return null;
   }

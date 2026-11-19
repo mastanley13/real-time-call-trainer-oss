@@ -115,6 +115,9 @@ model User {
   mfaSecret        String?
   mfaEnabled       Boolean  @default(false)
   mfaEnrolledAt    DateTime?
+  /// Last TOTP time-step (floor(unixMs / 1000 / 30)) accepted for this user.
+  /// A later code must use a strictly greater step.
+  mfaLastTotpStep  Int?
   /// Individual plan: free | pro. Team members draw from their organization's pool instead.
   planTier         String   @default("free")
   premiumVoice     Boolean  @default(false)
@@ -378,4 +381,14 @@ model AuditEvent {
   @@index([userId])
   @@index([action])
   @@index([createdAt])
+}
+
+/// JWT ids (`jti`) of MFA challenge tokens that have already been exchanged.
+/// Rows are kept until `expiresAt` (the token's own expiry) and deleted by the
+/// nightly purge cron.
+model ConsumedMfaChallenge {
+  id        String   @id
+  expiresAt DateTime
+
+  @@index([expiresAt])
 }

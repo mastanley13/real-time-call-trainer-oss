@@ -16,12 +16,14 @@ const UNIQUE: Record<string, string[][]> = {
   trainerSession: [["id"]],
   stripeEvent: [["id"]],
   auditEvent: [["id"]],
+  consumedMfaChallenge: [["id"]],
 };
 
 const NO_CHECKOUT = { stripeCheckoutSessionId: null, stripeCheckoutFingerprint: null, stripeCheckoutUrl: null, stripeCheckoutExpiresAt: null };
 
 const DEFAULTS: Record<string, () => Record<string, unknown>> = {
-  user: () => ({ voiceBlockedUntil: null, planTier: "free", premiumVoice: false, premiumVoiceQuantity: 0, subscriptionPeriodEnd: null, premiumVoiceRemoveAt: null, premiumSuspendedAt: null, premiumSuspendedInvoiceId: null, premiumScheduleRef: null, stripeCustomerId: null, stripeSubscriptionId: null, subscriptionStatus: null, pastDueSince: null, ...NO_CHECKOUT, organizationId: null, role: "trainee", isPlatformAdmin: false, createdAt: new Date(), usageAnchorAt: new Date() }),
+  user: () => ({ voiceBlockedUntil: null, planTier: "free", premiumVoice: false, premiumVoiceQuantity: 0, subscriptionPeriodEnd: null, premiumVoiceRemoveAt: null, premiumSuspendedAt: null, premiumSuspendedInvoiceId: null, premiumScheduleRef: null, stripeCustomerId: null, stripeSubscriptionId: null, subscriptionStatus: null, pastDueSince: null, ...NO_CHECKOUT, organizationId: null, role: "trainee", isPlatformAdmin: false, createdAt: new Date(), usageAnchorAt: new Date(), mfaEnabled: false, mfaSecret: null, mfaLastTotpStep: null }),
+  consumedMfaChallenge: () => ({}),
   organization: () => ({ planTier: "free", seatCount: 1, premiumVoice: false, premiumVoiceQuantity: 0, subscriptionPeriodEnd: null, premiumVoiceRemoveAt: null, seatCountAtRenewal: null, premiumSuspendedAt: null, premiumSuspendedInvoiceId: null, premiumScheduleRef: null, premiumTrialCallUsedAt: null, premiumTrialCallSessionId: null, voiceModelTier: null, voiceModelComped: null, stripeCustomerId: null, stripeSubscriptionId: null, subscriptionStatus: null, pastDueSince: null, ...NO_CHECKOUT, createdAt: new Date() }),
   usageAllowance: () => ({ userId: null, organizationId: null, minutesUsed: 0, minutesReserved: 0, premiumMinutesCap: 0, premiumMinutesUsed: 0, premiumMinutesReserved: 0, version: 0 }),
   usageEntry: () => ({ trainerSessionId: null, ranFrom: null, ranTo: null, createdAt: new Date() }),
@@ -34,15 +36,26 @@ const isDate = (v: unknown): v is Date => v instanceof Date;
 
 function matches(row: Row, where: Where): boolean {
   return Object.entries(where).every(([k, v]) => {
+    if (k === "OR" && Array.isArray(v)) return (v as Where[]).some((clause) => matches(row, clause));
+    if (k === "AND" && Array.isArray(v)) return (v as Where[]).every((clause) => matches(row, clause));
     const have = row[k] ?? null;
     if (isDate(v)) return isDate(have) && have.getTime() === v.getTime();
     if (v && typeof v === "object") {
-      const o = v as { lt?: Date; gte?: Date; gt?: number; in?: unknown[]; not?: unknown };
+      const o = v as { lt?: Date | number; lte?: Date | number; gte?: Date; gt?: number; in?: unknown[]; not?: unknown };
       // { not: null } is "set", { not: x } is "anything but x" (scalar values only).
       if ("not" in o && (o.not === null || typeof o.not !== "object")) return have !== (o.not ?? null);
       if (o.in) return o.in.includes(have);
       if (o.gt !== undefined) return typeof have === "number" && have > o.gt;
-      if (o.lt) return isDate(have) && have.getTime() < o.lt.getTime();
+      if (o.lt !== undefined) {
+        if (isDate(o.lt) && isDate(have)) return have.getTime() < o.lt.getTime();
+        if (typeof o.lt === "number" && typeof have === "number") return have < o.lt;
+        return false;
+      }
+      if (o.lte !== undefined) {
+        if (isDate(o.lte) && isDate(have)) return have.getTime() <= o.lte.getTime();
+        if (typeof o.lte === "number" && typeof have === "number") return have <= o.lte;
+        return false;
+      }
       if (o.gte) return isDate(have) && have.getTime() >= o.gte.getTime();
       return true; // NOT / JSON filters are not modelled
     }
@@ -161,6 +174,7 @@ export function createFakePrisma() {
     trainerSession: table("trainerSession"),
     stripeEvent: table("stripeEvent"),
     auditEvent: table("auditEvent"),
+    consumedMfaChallenge: table("consumedMfaChallenge"),
     /** Records raw queries (row locks); the fake has no concurrent transactions to block. */
     $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
       rawQueries.push({ sql: strings.join("?"), values });

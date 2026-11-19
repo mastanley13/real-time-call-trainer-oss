@@ -5,7 +5,7 @@ import { cronAuthorized } from "@/lib/serverConfig";
 
 /**
  * Nightly purge of TrainerSession rows older than each organization's
- * configured retention window.
+ * configured retention window, plus expired MFA challenge jtis.
  *
  * Auth: Authorization: Bearer ${CRON_SECRET} only (constant-time compare). Vercel
  * Cron sends that header itself when CRON_SECRET is set. The x-vercel-cron header
@@ -52,17 +52,22 @@ async function runPurge() {
     totalDeleted += result.count;
   }
 
+  const consumed = await prisma.consumedMfaChallenge.deleteMany({
+    where: { expiresAt: { lt: new Date() } },
+  });
+
   await prisma.auditEvent.create({
     data: {
       action: "system.retention_purge",
       metadata: {
         totalDeleted,
+        consumedChallengesDeleted: consumed.count,
         orgs: summary,
       } satisfies Prisma.InputJsonValue,
     },
   });
 
-  return { totalDeleted, orgs: summary };
+  return { totalDeleted, consumedChallengesDeleted: consumed.count, orgs: summary };
 }
 
 export async function GET(req: NextRequest) {

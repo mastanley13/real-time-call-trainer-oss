@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
   signSessionToken,
@@ -6,7 +7,7 @@ import {
   type SessionRole,
 } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { verifyTotp } from "@/lib/mfa";
+import { claimTotpStep, verifyTotp } from "@/lib/mfa";
 import { linkGoogleAtomically } from "@/lib/googleAuth";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 
@@ -14,6 +15,17 @@ const BodySchema = z.object({
   challengeToken: z.string().min(10),
   code: z.string().regex(/^[0-9]{6}$/),
 });
+
+class MfaReplayError extends Error {
+  constructor() {
+    super("mfa_replay");
+    this.name = "MfaReplayError";
+  }
+}
+
+const isReplay = (e: unknown) =>
+  (e instanceof Error && e.name === "MfaReplayError") ||
+  (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002");
 
 /**
  * Exchange an MFA challenge token (issued by /api/auth/login when MFA is
@@ -60,7 +72,29 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (!verifyTotp(user.mfaSecret, body.code)) {
+  const step = verifyTotp(user.mfaSecret, body.code);
+  if (step === null) {
+    await prisma.auditEvent.create({
+      data: {
+        userId: user.id,
+        action: "user.mfa_challenge_failed",
+        ip,
+      },
+    });
+    return NextResponse.json({ error: "Invalid code" }, { status: 401 });
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.consumedMfaChallenge.create({
+        data: { id: challenge.jti, expiresAt: new Date(challenge.exp * 1000) },
+      });
+      if (!(await claimTotpStep(tx, user.id, step, { mfaEnabled: true }))) {
+        throw new MfaReplayError();
+      }
+    });
+  } catch (e) {
+    if (!isReplay(e)) throw e;
     await prisma.auditEvent.create({
       data: {
         userId: user.id,

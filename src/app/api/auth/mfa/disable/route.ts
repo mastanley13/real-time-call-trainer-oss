@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
-import { verifyTotp } from "@/lib/mfa";
+import { claimTotpStep, verifyTotp } from "@/lib/mfa";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 
 const BodySchema = z.object({ code: z.string().regex(/^[0-9]{6}$/) });
@@ -39,7 +39,8 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  if (!verifyTotp(dbUser.mfaSecret, body.code)) {
+  const step = verifyTotp(dbUser.mfaSecret, body.code);
+  if (step === null || !(await claimTotpStep(prisma, dbUser.id, step))) {
     await prisma.auditEvent.create({
       data: {
         userId: dbUser.id,
@@ -52,7 +53,7 @@ export async function POST(req: NextRequest) {
 
   await prisma.user.update({
     where: { id: user.id },
-    data: { mfaEnabled: false, mfaSecret: null, mfaEnrolledAt: null },
+    data: { mfaEnabled: false, mfaSecret: null, mfaEnrolledAt: null, mfaLastTotpStep: null },
   });
   await prisma.auditEvent.create({
     data: {
