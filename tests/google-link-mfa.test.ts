@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   prisma: {
     user: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     auditEvent: { create: vi.fn() },
-    consumedMfaChallenge: { create: vi.fn() },
+    consumedMfaChallenge: { create: vi.fn(), findUnique: vi.fn() },
     $transaction: vi.fn(),
   },
   verifyTotp: vi.fn(),
@@ -38,6 +38,9 @@ function fakeDb(initial: Row) {
   const usedJtis = new Set<string>();
   mocks.prisma.user.findUnique.mockImplementation(async () => user({ ...state }));
   mocks.prisma.user.update.mockImplementation(async () => user({ ...state }));
+  mocks.prisma.consumedMfaChallenge.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+    usedJtis.has(where.id) ? { id: where.id } : null,
+  );
   mocks.prisma.consumedMfaChallenge.create.mockImplementation(async ({ data }: { data: { id: string; expiresAt: Date } }) => {
     if (usedJtis.has(data.id)) {
       throw new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" });
@@ -71,6 +74,7 @@ describe("deferred Google link on MFA", () => {
       mocks.prisma.user.updateMany,
       mocks.prisma.auditEvent.create,
       mocks.prisma.consumedMfaChallenge.create,
+      mocks.prisma.consumedMfaChallenge.findUnique,
       mocks.prisma.$transaction,
       mocks.verifyTotp,
     ]) m.mockReset();

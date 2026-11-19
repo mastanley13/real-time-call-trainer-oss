@@ -8,8 +8,11 @@ const mocks = vi.hoisted(() => ({ fake: null as unknown as ReturnType<typeof cre
 vi.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get: (_t, k) => (mocks.fake.db as Record<string | symbol, unknown>)[k] }) }));
 
 import { POST as challengeRoute } from "@/app/api/auth/mfa/challenge/route";
+import { POST as activateRoute } from "@/app/api/auth/mfa/activate/route";
+import { POST as disableRoute } from "@/app/api/auth/mfa/disable/route";
 import { GET as purge } from "@/app/api/cron/purge-expired/route";
-import { signMfaChallengeToken, verifyMfaChallenge } from "@/lib/auth";
+import { CHALLENGE_EXPIRED, CODE_USED_ERROR, CODE_USED_MESSAGE } from "@/lib/authCopy";
+import { signMfaChallengeToken, signSessionToken, verifyMfaChallenge } from "@/lib/auth";
 import { claimTotpStep, TOTP_PERIOD_SEC, verifyTotp } from "@/lib/mfa";
 
 const JWT = "test-only-not-a-secret-0123456789abcdef";
@@ -69,7 +72,7 @@ describe("MFA challenge replay", () => {
     vi.unstubAllEnvs();
   });
 
-  it("the same challenge token plus the same code twice: first 200, then 401 with no cookie", async () => {
+  it("the same challenge token plus the same code twice: first 200, then expired-challenge copy", async () => {
     seedUser();
     const token = signMfaChallengeToken("u-1");
     const code = totpAt();
@@ -79,12 +82,13 @@ describe("MFA challenge replay", () => {
     const second = await post(token, code);
     expect(second.status).toBe(401);
     expect(second.headers.get("set-cookie")).toBeNull();
-    expect(await second.json()).toEqual({ error: "Invalid code" });
-    expect(mocks.fake.rows("auditEvent").filter((e) => e.action === "user.mfa_challenge_failed")).toHaveLength(1);
+    const body = await second.json();
+    expect(body).toEqual({ error: CHALLENGE_EXPIRED });
+    expect(JSON.stringify(body)).not.toContain("Invalid code");
     expect(mocks.fake.rows("auditEvent").filter((e) => e.action === "user.mfa_challenge_success")).toHaveLength(1);
   });
 
-  it("the same challenge token with a fresh valid code after a success: 401", async () => {
+  it("the same challenge token with a fresh valid code after a success: expired-challenge copy", async () => {
     seedUser();
     const token = signMfaChallengeToken("u-1");
     const firstCode = totpAt();
@@ -96,19 +100,50 @@ describe("MFA challenge replay", () => {
     const res = await post(token, fresh);
     expect(res.status).toBe(401);
     expect(res.headers.get("set-cookie")).toBeNull();
-    expect(await res.json()).toEqual({ error: "Invalid code" });
-    expect(mocks.fake.rows("auditEvent").filter((e) => e.action === "user.mfa_challenge_failed")).toHaveLength(1);
+    const body = await res.json();
+    expect(body).toEqual({ error: CHALLENGE_EXPIRED });
+    expect(JSON.stringify(body)).not.toContain("Invalid code");
   });
 
-  it("a new challenge token with the already-used TOTP step: 401", async () => {
+  it("a new challenge token with the already-used TOTP step: code_used", async () => {
     seedUser();
     const code = totpAt();
     expect((await post(signMfaChallengeToken("u-1"), code)).status).toBe(200);
     const res = await post(signMfaChallengeToken("u-1"), code);
     expect(res.status).toBe(401);
     expect(res.headers.get("set-cookie")).toBeNull();
-    expect(await res.json()).toEqual({ error: "Invalid code" });
+    expect(await res.json()).toEqual({ error: CODE_USED_ERROR, message: CODE_USED_MESSAGE });
     expect(mocks.fake.rows("auditEvent").filter((e) => e.action === "user.mfa_challenge_failed")).toHaveLength(1);
+  });
+
+  it("a challenge JWT with no jti gets the expired-challenge copy, never Invalid code", async () => {
+    seedUser();
+    const token = jwt.sign({ id: "u-1", purpose: "mfa-challenge" }, JWT, { expiresIn: "5m" });
+    const res = await post(token, totpAt());
+    expect(res.status).toBe(401);
+    expect(res.headers.get("set-cookie")).toBeNull();
+    const body = await res.json();
+    expect(body).toEqual({ error: CHALLENGE_EXPIRED });
+    expect(JSON.stringify(body)).not.toContain("Invalid code");
+  });
+
+  it("a wrong code on a fresh challenge is still Invalid code", async () => {
+    seedUser();
+    const res = await post(signMfaChallengeToken("u-1"), "000000");
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Invalid code" });
+    expect(mocks.fake.rows("auditEvent").some((e) => e.action === "user.mfa_challenge_failed")).toBe(true);
+  });
+
+  it("a consumed jti with a wrong code still gets the expired-challenge copy", async () => {
+    seedUser();
+    const token = signMfaChallengeToken("u-1");
+    expect((await post(token, totpAt())).status).toBe(200);
+    const res = await post(token, "000000");
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body).toEqual({ error: CHALLENGE_EXPIRED });
+    expect(JSON.stringify(body)).not.toContain("Invalid code");
   });
 
   it("MFA turned off since issue", async () => {
@@ -129,6 +164,49 @@ describe("MFA challenge replay", () => {
     const res = await post(signMfaChallengeToken("u-1"), totpAt());
     expect(res.status).toBe(200);
     expect(res.headers.get("set-cookie")).toContain("authToken=");
+  });
+});
+
+function sessionReq(path: string, code: string) {
+  const token = signSessionToken({ id: "u-1", email: "rep@example.test" });
+  return new NextRequest(`http://localhost${path}`, {
+    method: "POST",
+    body: JSON.stringify({ code }),
+    headers: { "content-type": "application/json", cookie: `authToken=${token}` },
+  });
+}
+
+describe("MFA activate and disable TOTP reuse", () => {
+  beforeEach(() => {
+    mocks.fake = createFakePrisma();
+    ipSeq = 0;
+    vi.stubEnv("JWT_SECRET", JWT);
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("DEMO_MODE", "");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  it("activate returns code_used when the TOTP step was already accepted", async () => {
+    seedUser({ mfaEnabled: false, mfaLastTotpStep: Math.floor(NOW / 1000 / TOTP_PERIOD_SEC) });
+    const res = await activateRoute(sessionReq("/api/auth/mfa/activate", totpAt()));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: CODE_USED_ERROR, message: CODE_USED_MESSAGE });
+    expect(mocks.fake.rows("user")[0].mfaEnabled).toBe(false);
+    expect(mocks.fake.rows("auditEvent").some((e) => e.action === "user.mfa_activation_failed")).toBe(true);
+  });
+
+  it("disable returns code_used when the TOTP step was already accepted", async () => {
+    seedUser({ mfaEnabled: true, mfaLastTotpStep: Math.floor(NOW / 1000 / TOTP_PERIOD_SEC) });
+    const res = await disableRoute(sessionReq("/api/auth/mfa/disable", totpAt()));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: CODE_USED_ERROR, message: CODE_USED_MESSAGE });
+    expect(mocks.fake.rows("user")[0].mfaEnabled).toBe(true);
+    expect(mocks.fake.rows("auditEvent").some((e) => e.action === "user.mfa_disable_failed")).toBe(true);
   });
 });
 

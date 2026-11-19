@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { createContext, useContext, useState, useEffect } from "react";
+import { apiErrorText } from "@/lib/authCopy";
 import { isTokenFresh } from "@/lib/clientSession";
 
 export interface LoginCredentials {
@@ -157,7 +158,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       });
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || "Login failed");
+        throw new Error(apiErrorText(err, "Login failed"));
       }
       const data = await response.json();
       if (data.mfaRequired && data.challengeToken) {
@@ -187,7 +188,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       });
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || "MFA challenge failed");
+        throw new Error(apiErrorText(err, "MFA challenge failed"));
       }
       const { user: sessionUser, token } = await response.json();
       persistSession(sessionUser, token);
@@ -210,7 +211,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       });
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || "Registration failed");
+        throw new Error(apiErrorText(err, "Registration failed"));
       }
       const { user: sessionUser, token } = await response.json();
       persistSession(sessionUser, token);

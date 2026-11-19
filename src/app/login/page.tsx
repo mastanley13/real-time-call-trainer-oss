@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { shouldRestartLogin } from "@/lib/authCopy";
 import AuthShell from "@/components/AuthShell";
 import GoogleButton, { GOOGLE_ERRORS } from "@/components/GoogleButton";
 import LegalLinks from "@/components/LegalLinks";
@@ -46,7 +47,12 @@ export default function LoginPage() {
       }
       router.push("/trainer");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Sign-in failed");
+      const text = err instanceof Error ? err.message : "Sign-in failed";
+      setError(text);
+      if (shouldRestartLogin(text)) {
+        setChallenge(null);
+        setCode("");
+      }
     } finally {
       setBusy(false);
     }
@@ -80,6 +86,19 @@ export default function LoginPage() {
         )}
         {error && <p role="alert" className="text-sm text-alert">{error}</p>}
         <button className="btn-primary w-full" disabled={busy}>{busy ? "Signing in…" : challenge ? "Verify" : "Sign in"}</button>
+        {challenge && (
+          <button
+            type="button"
+            className="block w-full text-center text-sm font-semibold text-primary"
+            onClick={() => {
+              setChallenge(null);
+              setCode("");
+              setError("");
+            }}
+          >
+            Start over
+          </button>
+        )}
       </form>
       <p className="mt-5 text-center text-sm text-ink-muted">
         New here? <Link href="/register" className="font-semibold text-primary">Create an account</Link>

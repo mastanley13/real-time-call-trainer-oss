@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import QRCode from "qrcode";
 import { ShieldCheck, ShieldOff, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { useAuth } from "../../../contexts/AuthContext";
+import { apiErrorText } from "@/lib/authCopy";
 import SettingsNav from "@/components/settings/SettingsNav";
 
 type MeResponse = {
@@ -74,7 +75,7 @@ export default function SecuritySettingsPage() {
         method: "POST",
         credentials: "include",
       });
-      if (!r.ok) throw new Error((await r.json()).error || "Failed");
+      if (!r.ok) throw new Error(apiErrorText(await r.json().catch(() => ({})), "Failed"));
       setEnroll(await r.json());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start enrollment");
@@ -93,7 +94,7 @@ export default function SecuritySettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
       });
-      if (!r.ok) throw new Error((await r.json()).error || "Invalid code");
+      if (!r.ok) throw new Error(apiErrorText(await r.json().catch(() => ({})), "Invalid code"));
       setEnroll(null);
       setCode("");
       setNotice("MFA is now enabled on this account.");
@@ -115,7 +116,7 @@ export default function SecuritySettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
       });
-      if (!r.ok) throw new Error((await r.json()).error || "Invalid code");
+      if (!r.ok) throw new Error(apiErrorText(await r.json().catch(() => ({})), "Invalid code"));
       setCode("");
       setNotice("MFA disabled.");
       await loadMe();

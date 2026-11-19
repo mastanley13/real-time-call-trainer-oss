@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
+import { CODE_USED_ERROR, CODE_USED_MESSAGE } from "@/lib/authCopy";
 import { claimTotpStep, verifyTotp } from "@/lib/mfa";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 
@@ -40,7 +41,7 @@ export async function POST(req: NextRequest) {
     );
   }
   const step = verifyTotp(dbUser.mfaSecret, body.code);
-  if (step === null || !(await claimTotpStep(prisma, dbUser.id, step))) {
+  if (step === null) {
     await prisma.auditEvent.create({
       data: {
         userId: dbUser.id,
@@ -49,6 +50,16 @@ export async function POST(req: NextRequest) {
       },
     });
     return NextResponse.json({ error: "Invalid code" }, { status: 401 });
+  }
+  if (!(await claimTotpStep(prisma, dbUser.id, step))) {
+    await prisma.auditEvent.create({
+      data: {
+        userId: dbUser.id,
+        action: "user.mfa_disable_failed",
+        ip: clientIp(req),
+      },
+    });
+    return NextResponse.json({ error: CODE_USED_ERROR, message: CODE_USED_MESSAGE }, { status: 401 });
   }
 
   await prisma.user.update({

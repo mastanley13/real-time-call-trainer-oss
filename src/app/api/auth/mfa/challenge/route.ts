@@ -7,6 +7,7 @@ import {
   type SessionRole,
 } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { CHALLENGE_EXPIRED, CODE_USED_ERROR, CODE_USED_MESSAGE } from "@/lib/authCopy";
 import { claimTotpStep, verifyTotp } from "@/lib/mfa";
 import { linkGoogleAtomically } from "@/lib/googleAuth";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
@@ -23,9 +24,11 @@ class MfaReplayError extends Error {
   }
 }
 
-const isReplay = (e: unknown) =>
-  (e instanceof Error && e.name === "MfaReplayError") ||
-  (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002");
+const expiredChallenge = () =>
+  NextResponse.json({ error: CHALLENGE_EXPIRED }, { status: 401 });
+
+const codeUsed = () =>
+  NextResponse.json({ error: CODE_USED_ERROR, message: CODE_USED_MESSAGE }, { status: 401 });
 
 /**
  * Exchange an MFA challenge token (issued by /api/auth/login when MFA is
@@ -55,10 +58,7 @@ export async function POST(req: NextRequest) {
   const challenge = verifyMfaChallenge(body.challengeToken);
   const userId = challenge?.id;
   if (!challenge || !userId) {
-    return NextResponse.json(
-      { error: "Expired or invalid challenge. Sign in again." },
-      { status: 401 },
-    );
+    return expiredChallenge();
   }
 
   const user = await prisma.user.findUnique({
@@ -70,6 +70,11 @@ export async function POST(req: NextRequest) {
       { error: "MFA is not enabled on this account." },
       { status: 400 },
     );
+  }
+
+  const consumed = await prisma.consumedMfaChallenge.findUnique({ where: { id: challenge.jti } });
+  if (consumed) {
+    return expiredChallenge();
   }
 
   const step = verifyTotp(user.mfaSecret, body.code);
@@ -94,15 +99,19 @@ export async function POST(req: NextRequest) {
       }
     });
   } catch (e) {
-    if (!isReplay(e)) throw e;
-    await prisma.auditEvent.create({
-      data: {
-        userId: user.id,
-        action: "user.mfa_challenge_failed",
-        ip,
-      },
-    });
-    return NextResponse.json({ error: "Invalid code" }, { status: 401 });
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      await prisma.auditEvent.create({
+        data: { userId: user.id, action: "user.mfa_challenge_failed", ip },
+      });
+      return expiredChallenge();
+    }
+    if (e instanceof Error && e.name === "MfaReplayError") {
+      await prisma.auditEvent.create({
+        data: { userId: user.id, action: "user.mfa_challenge_failed", ip },
+      });
+      return codeUsed();
+    }
+    throw e;
   }
 
   // A Google link waiting on this challenge is written only now, after the code was accepted. The write is atomic
