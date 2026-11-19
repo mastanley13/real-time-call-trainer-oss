@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { Prisma } from "@prisma/client";
 import jwt from "jsonwebtoken";
 import * as OTPAuth from "otpauth";
 
@@ -12,8 +13,10 @@ import * as OTPAuth from "otpauth";
 
 const mocks = vi.hoisted(() => ({
   prisma: {
-    user: { findUnique: vi.fn(), update: vi.fn() },
+    user: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     auditEvent: { create: vi.fn() },
+    consumedMfaChallenge: { findUnique: vi.fn(), create: vi.fn() },
+    $transaction: vi.fn(),
   },
 }));
 vi.mock("@/lib/db", () => ({ prisma: mocks.prisma }));
@@ -34,12 +37,14 @@ type Row = {
   role: "owner";
   mfaEnabled: boolean;
   mfaSecret: string | null;
+  mfaLastTotpStep: number | null;
   lastLoginAt: Date | null;
   isPlatformAdmin: boolean;
   organization: { id: string; name: string; code: string } | null;
 };
 
 let row: Row;
+let usedJtis = new Set<string>();
 let n = 0;
 const ip = () => `198.51.90.${(++n % 250) + 1}`;
 
@@ -77,6 +82,7 @@ function setCookie(res: Response): string {
 beforeEach(() => {
   hostedOff();
   n = 0;
+  usedJtis = new Set();
   row = {
     id: "u-mfa",
     email: "rep@example.test",
@@ -85,6 +91,7 @@ beforeEach(() => {
     role: "owner",
     mfaEnabled: true,
     mfaSecret: SECRET,
+    mfaLastTotpStep: null,
     lastLoginAt: null,
     isPlatformAdmin: false,
     organization: { id: "org-1", name: "Harbor Point", code: "329927" },
@@ -95,6 +102,37 @@ beforeEach(() => {
     if (where.id !== row.id) throw new Error("Record to update not found.");
     Object.assign(row, data);
     return { ...row };
+  });
+  mocks.prisma.user.updateMany.mockReset().mockImplementation(async ({ where, data }: {
+    where: { id: string; mfaEnabled?: boolean };
+    data: { mfaLastTotpStep?: number };
+  }) => {
+    if (where.id !== row.id) return { count: 0 };
+    if (where.mfaEnabled !== undefined && where.mfaEnabled !== row.mfaEnabled) return { count: 0 };
+    if (typeof data.mfaLastTotpStep !== "number") return { count: 0 };
+    if (row.mfaLastTotpStep != null && row.mfaLastTotpStep >= data.mfaLastTotpStep) return { count: 0 };
+    row.mfaLastTotpStep = data.mfaLastTotpStep;
+    return { count: 1 };
+  });
+  mocks.prisma.consumedMfaChallenge.findUnique.mockReset().mockImplementation(async ({ where }: { where: { id: string } }) =>
+    usedJtis.has(where.id) ? { id: where.id } : null);
+  mocks.prisma.consumedMfaChallenge.create.mockReset().mockImplementation(async ({ data }: { data: { id: string; expiresAt: Date } }) => {
+    if (usedJtis.has(data.id)) {
+      throw new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" });
+    }
+    usedJtis.add(data.id);
+    return data;
+  });
+  mocks.prisma.$transaction.mockReset().mockImplementation(async (fn: (tx: typeof mocks.prisma) => unknown) => {
+    const jtis = new Set(usedJtis);
+    const lastStep = row.mfaLastTotpStep;
+    try {
+      return await fn(mocks.prisma);
+    } catch (e) {
+      usedJtis = jtis;
+      row.mfaLastTotpStep = lastStep;
+      throw e;
+    }
   });
   mocks.prisma.auditEvent.create.mockReset().mockResolvedValue({});
   vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({
@@ -168,6 +206,8 @@ describe("POST /api/auth/mfa/challenge token kinds", () => {
     const session = verifySessionToken(body.token);
     expect(session).toMatchObject({ id: row.id, email: row.email, role: "owner" });
     expect(row.lastLoginAt).toBeInstanceOf(Date);
+    expect(row.mfaLastTotpStep).toEqual(expect.any(Number));
+    expect(usedJtis.size).toBe(1);
     expect(JSON.stringify(body)).not.toContain(SECRET);
   });
 });

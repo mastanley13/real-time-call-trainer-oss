@@ -10,6 +10,7 @@ vi.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get: (_t, k) => (mocks.fake
 import { POST as challengeRoute } from "@/app/api/auth/mfa/challenge/route";
 import { POST as activateRoute } from "@/app/api/auth/mfa/activate/route";
 import { POST as disableRoute } from "@/app/api/auth/mfa/disable/route";
+import { POST as enrollRoute } from "@/app/api/auth/mfa/enroll/route";
 import { GET as purge } from "@/app/api/cron/purge-expired/route";
 import { CHALLENGE_EXPIRED, CODE_USED_ERROR, CODE_USED_MESSAGE } from "@/lib/authCopy";
 import { signMfaChallengeToken, signSessionToken, verifyMfaChallenge } from "@/lib/auth";
@@ -165,21 +166,42 @@ describe("MFA challenge replay", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("set-cookie")).toContain("authToken=");
   });
+
+  it("the challenge claim requires mfaEnabled, so turning MFA off before the write does not mint a session", async () => {
+    seedUser();
+    mocks.fake.interleave("user", "updateMany", async () => {
+      mocks.fake.rows("user")[0].mfaEnabled = false;
+    }, (args) => typeof args.data.mfaLastTotpStep === "number");
+    const res = await post(signMfaChallengeToken("u-1"), totpAt());
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: CODE_USED_ERROR, message: CODE_USED_MESSAGE });
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(mocks.fake.rows("user")[0].mfaLastTotpStep).toBeNull();
+  });
 });
 
+function sessionToken() {
+  return signSessionToken({ id: "u-1", email: "rep@example.test" });
+}
+
 function sessionReq(path: string, code: string) {
-  const token = signSessionToken({ id: "u-1", email: "rep@example.test" });
   return new NextRequest(`http://localhost${path}`, {
     method: "POST",
     body: JSON.stringify({ code }),
-    headers: { "content-type": "application/json", cookie: `authToken=${token}` },
+    headers: { "content-type": "application/json", cookie: `authToken=${sessionToken()}` },
+  });
+}
+
+function sessionPost(path: string) {
+  return new NextRequest(`http://localhost${path}`, {
+    method: "POST",
+    headers: { cookie: `authToken=${sessionToken()}` },
   });
 }
 
 describe("MFA activate and disable TOTP reuse", () => {
   beforeEach(() => {
     mocks.fake = createFakePrisma();
-    ipSeq = 0;
     vi.stubEnv("JWT_SECRET", JWT);
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("DEMO_MODE", "");
@@ -207,6 +229,49 @@ describe("MFA activate and disable TOTP reuse", () => {
     expect(await res.json()).toEqual({ error: CODE_USED_ERROR, message: CODE_USED_MESSAGE });
     expect(mocks.fake.rows("user")[0].mfaEnabled).toBe(true);
     expect(mocks.fake.rows("auditEvent").some((e) => e.action === "user.mfa_disable_failed")).toBe(true);
+  });
+
+  it("a TOTP step already used at login is rejected on disable with code_used", async () => {
+    seedUser();
+    const code = totpAt();
+    expect((await post(signMfaChallengeToken("u-1"), code)).status).toBe(200);
+    const res = await disableRoute(sessionReq("/api/auth/mfa/disable", code));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: CODE_USED_ERROR, message: CODE_USED_MESSAGE });
+    expect(mocks.fake.rows("user")[0].mfaEnabled).toBe(true);
+    expect(mocks.fake.rows("user")[0].mfaSecret).toBe(SECRET);
+    expect(mocks.fake.rows("auditEvent").some((e) => e.action === "user.mfa_disable_failed")).toBe(true);
+  });
+
+  it("a TOTP step already used at login is rejected on activate with code_used", async () => {
+    seedUser();
+    const code = totpAt();
+    expect((await post(signMfaChallengeToken("u-1"), code)).status).toBe(200);
+    const res = await activateRoute(sessionReq("/api/auth/mfa/activate", code));
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: CODE_USED_ERROR, message: CODE_USED_MESSAGE });
+    expect(mocks.fake.rows("auditEvent").some((e) => e.action === "user.mfa_activation_failed")).toBe(true);
+  });
+
+  it("enroll resets mfaLastTotpStep", async () => {
+    seedUser({ mfaEnabled: false, mfaLastTotpStep: 42 });
+    const res = await enrollRoute(sessionPost("/api/auth/mfa/enroll"));
+    expect(res.status).toBe(200);
+    expect(mocks.fake.rows("user")[0].mfaLastTotpStep).toBeNull();
+    expect(mocks.fake.rows("user")[0].mfaEnabled).toBe(false);
+  });
+
+  it("a later TOTP disables MFA and clears mfaLastTotpStep", async () => {
+    seedUser();
+    expect((await post(signMfaChallengeToken("u-1"), totpAt())).status).toBe(200);
+    expect(mocks.fake.rows("user")[0].mfaLastTotpStep).toEqual(expect.any(Number));
+    vi.setSystemTime(NOW + TOTP_PERIOD_SEC * 1000);
+    const res = await disableRoute(sessionReq("/api/auth/mfa/disable", totpAt()));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ mfaEnabled: false });
+    expect(mocks.fake.rows("user")[0].mfaEnabled).toBe(false);
+    expect(mocks.fake.rows("user")[0].mfaSecret).toBeNull();
+    expect(mocks.fake.rows("user")[0].mfaLastTotpStep).toBeNull();
   });
 });
 
@@ -244,6 +309,15 @@ describe("MFA challenge JWT and TOTP helpers", () => {
     expect(await claimTotpStep(mocks.fake.db, "u-1", 99)).toBe(false);
     expect(await claimTotpStep(mocks.fake.db, "u-1", 101)).toBe(true);
     expect(mocks.fake.rows("user")[0].mfaLastTotpStep).toBe(101);
+  });
+
+  it("claimTotpStep extraWhere mfaEnabled refuses a user whose MFA is off", async () => {
+    mocks.fake.seed("user", { id: "u-1", email: "rep@example.test", mfaEnabled: false, mfaLastTotpStep: null });
+    expect(await claimTotpStep(mocks.fake.db, "u-1", 100, { mfaEnabled: true })).toBe(false);
+    expect(mocks.fake.rows("user")[0].mfaLastTotpStep).toBeNull();
+    mocks.fake.rows("user")[0].mfaEnabled = true;
+    expect(await claimTotpStep(mocks.fake.db, "u-1", 100, { mfaEnabled: true })).toBe(true);
+    expect(mocks.fake.rows("user")[0].mfaLastTotpStep).toBe(100);
   });
 });
 
