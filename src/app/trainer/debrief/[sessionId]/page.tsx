@@ -3,14 +3,14 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, CheckCircle2, Loader2, Printer, Quote, RefreshCw, RotateCcw, TrendingUp } from "lucide-react";
+import { ArrowRight, CalendarDays, CheckCircle2, Loader2, Printer, Quote, RefreshCw, RotateCcw, TrendingUp } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getLocalSession, updateLocalEvaluation, type CoachLog } from "@/lib/sessionStore";
+import { getLocalSession, readLocalSessionsStrict, updateLocalEvaluation, type CoachLog } from "@/lib/sessionStore";
 import { listScenarios } from "@/lib/scenarioStore";
 import type { Scenario } from "@/lib/scenarios";
 import type { Evaluation } from "@/lib/grader-types";
 import { goalStatusOf, graderLabel, isLegacyGrader, scoreLabel, stripGraderNote } from "@/lib/grader-types";
-import { nextDrill, retryPoint } from "@/lib/debrief";
+import { LOCAL_SESSION_CAP, TRANSCRIPT_LIST_CAP, nextDrill, retryPoint, showFirstGradedDemo, viewerOwnsSession } from "@/lib/debrief";
 import { canRegrade, isAiGrade, wasCapped } from "@/lib/gradable";
 import { canManageTeam } from "@/lib/team";
 import { CUE_LABELS } from "@/lib/coach-types";
@@ -115,6 +115,33 @@ export default function DebriefPage() {
   }, [sessionId, capabilities, isLoading, isAuthenticated, router]);
 
   const ev = view?.evaluation ?? null;
+
+  // First graded debrief: offer a team demo. Only the other sessions matter, so this runs once per loaded call.
+  // A failed list lookup (storage or network) leaves the button hidden, and so does a list cut off at its cap.
+  // Only the session's owner sees it: a manager's own list says nothing about a trainee's call, so it is not fetched.
+  const viewLocal = view ? view.local : null;
+  const ownsView = view ? viewerOwnsSession(view, user?.id) : false;
+  const [sessionGrades, setSessionGrades] = useState<{ sessions: { id: string; graded: boolean }[]; cap: number } | null>(null);
+  useEffect(() => {
+    setSessionGrades(null);
+    if (viewLocal === null || !ownsView) return;
+    if (viewLocal) {
+      const local = readLocalSessionsStrict();
+      if (local) setSessionGrades({ sessions: local.map((s) => ({ id: s.id, graded: !!s.evaluation })), cap: LOCAL_SESSION_CAP });
+      return;
+    }
+    let live = true;
+    fetch("/api/transcripts")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { sessions?: { id: string; overallScore: number | null; graderMethod: string | null }[] } | null) => {
+        const list = d?.sessions;
+        if (live && Array.isArray(list)) setSessionGrades({ sessions: list.map((s) => ({ id: s.id, graded: s.overallScore != null || s.graderMethod != null })), cap: TRANSCRIPT_LIST_CAP });
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [viewLocal, ownsView, sessionId]);
+  const firstGraded = ownsView && sessionGrades !== null && showFirstGradedDemo(sessionId, !!ev, sessionGrades.sessions, sessionGrades.cap);
+
   const critColor = useMemo(() => Object.fromEntries((ev?.criteria ?? []).map((c, i) => [c.id, CRIT_COLORS[i % CRIT_COLORS.length]])), [ev]);
   /** For each transcript line, the criteria whose evidence cites it. */
   const lineCriteria = useMemo(() => {
@@ -200,6 +227,8 @@ export default function DebriefPage() {
           <div className="flex flex-wrap gap-2 print:hidden">
             <button className="btn-ghost" onClick={() => window.print()}><Printer size={16} aria-hidden /> Print</button>
             <Link href={view.scenarioId ? `/trainer?scenario=${encodeURIComponent(view.scenarioId)}` : "/trainer"} className="btn-ghost"><RotateCcw size={16} aria-hidden /> Practice again</Link>
+            {/* /demo redirects to the booking site, so a plain link. */}
+            {ev && spoke && firstGraded && <a href="/demo" className="btn-ghost"><CalendarDays size={16} strokeWidth={1.75} aria-hidden /> Book a demo for your team</a>}
             {retry && <Link href={retryHref} className="btn-primary"><RotateCcw size={16} aria-hidden /> Retry from turn {retry.turn}</Link>}
           </div>
         </div>

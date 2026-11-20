@@ -18,6 +18,7 @@ import RealtimeVoiceSession, { voiceInfoFrom, type VoiceInfo, type VoiceRender }
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
 import { isTokenFresh } from "@/lib/clientSession";
+import { wantsTextMode } from "@/lib/trainerQuery";
 import { VOICE_CHOICE_KEY, canUpgradeFromUsage, premiumChoiceAvailable, premiumSnapshotFromUsage, readVoiceChoice, usageSnapshotFromUsage, type PremiumSnapshot, type UsageSnapshot, type VoiceChoice } from "@/lib/billingUi";
 
 type Mode = "voice" | "text";
@@ -174,6 +175,8 @@ export default function TrainerClient() {
       const saved = localStorage.getItem(COACH_MODE);
       if (saved === "blind" || saved === "guided" || saved === "coached") setCoachModeState(saved);
     } catch { /* storage unavailable */ }
+    // ?mode=text (exactly) opens on the text call, as after sign-up from /try/[role]. Without it the default stays.
+    if (wantsTextMode(params)) setMode("text");
     const asked = params.get("scenario");
     // Without ?scenario=, use the persona practised last.
     const wanted = () => {

@@ -39,6 +39,34 @@ export function retryPoint(transcript: { role: string; text: string }[], ev: Eva
   return { turn: idx + 1, criterion: weakest.name, score: weakest.score };
 }
 
+/**
+ * Whether the viewer's own session list can decide the first-graded demo button for this debrief. Browser sessions
+ * live in the viewer's own storage, so yes. A server session counts only when the viewer made the call: a manager
+ * opening a trainee's debrief would otherwise be judged on the manager's history, so the button stays hidden.
+ */
+export function viewerOwnsSession(view: { local: boolean; ownerId?: string | null }, viewerId: string | null | undefined): boolean {
+  if (view.local) return true;
+  return !!viewerId && !!view.ownerId && view.ownerId === viewerId;
+}
+
+/** GET /api/transcripts returns at most this many sessions, newest first (`take: 100` in the route). */
+export const TRANSCRIPT_LIST_CAP = 100;
+/** The browser keeps at most this many sessions, newest first (saveLocal in sessionStore.ts). */
+export const LOCAL_SESSION_CAP = 50;
+
+/**
+ * Whether the debrief shows "Book a demo for your team": only when this call has a grade and none of the rep's other
+ * sessions does, so it is their first graded debrief. `sessions` is what the rep has (browser sessions, or the
+ * GET /api/transcripts list); this call may or may not be in it.
+ * `cap` is the most the list can hold. A list at the cap with no other graded session may be cut off before an older
+ * graded one, so it counts as incomplete and the button stays hidden. A shorter list is complete.
+ */
+export function showFirstGradedDemo(currentId: string, currentGraded: boolean, sessions: { id: string; graded: boolean }[], cap?: number): boolean {
+  if (!currentGraded) return false;
+  if (sessions.some((s) => s.id !== currentId && s.graded)) return false;
+  return cap === undefined || sessions.length < cap;
+}
+
 const TOPIC_TO_OBJECTION: [RegExp, ObjectionType][] = [
   [/price|pricing|fee|cost|value|budget/i, "price"],
   [/compet|compar/i, "competitor"],
