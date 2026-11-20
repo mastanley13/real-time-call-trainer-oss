@@ -76,6 +76,12 @@ export const ScenarioSchema = z.object({
     voiceId: z.string().max(80).optional(),
     /** Optional OpenAI Realtime voice name (e.g. "cedar"); unknown names fall back to REALTIME_VOICE. */
     realtimeVoice: z.string().max(40).optional(),
+    /** Optional GPT-Live voice name (e.g. "willow"); used only when OPENAI_VOICE_API=live. Unknown names fall back. */
+    liveVoice: z.string().max(40).optional(),
+    /** Optional GPT-Live "Backchannel policy" text for this persona (src/lib/live.ts). */
+    liveBackchannel: z.string().max(600).optional(),
+    /** Optional GPT-Live "Interruption policy" text for this persona (src/lib/live.ts). */
+    liveInterruption: z.string().max(600).optional(),
   }),
   traineeGoal: z.string().max(1000),
   rubric: z.array(RubricCriterionSchema).min(1).max(12),

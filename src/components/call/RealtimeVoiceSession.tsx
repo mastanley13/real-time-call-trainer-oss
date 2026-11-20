@@ -5,6 +5,7 @@ import type { Scenario } from "@/lib/scenarios";
 import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
 import { CallMeter, type MeterEndReason } from "@/lib/callMeter";
+import { LiveTranscript, applyLiveEvent, type LiveServerEvent } from "@/lib/live";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, realtimeAuthRedirect, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
 
 /** Same render-prop contract as the ElevenLabs VoiceSession in TrainerClient. */
@@ -63,6 +64,13 @@ export class RealtimeCall {
   /** Rep turns emitted so far. The persona's opening line alone is nothing to grade. */
   private emittedUser = 0;
   private asm = new TurnAssembler();
+  /**
+   * Set when the server answered with a GPT-Live ticket (OPENAI_VOICE_API=live) instead of a Realtime client secret.
+   * GPT-Live sends transcript deltas with timeline offsets instead of items, so it has its own assembler.
+   */
+  private live?: LiveTranscript;
+  /** Wall-clock time of the last persona transcript delta (Live has no output-audio start/stop events). */
+  private lastPersonaDelta = 0;
   private ctx?: AudioContext;
   private pc?: RTCPeerConnection;
   private dc?: RTCDataChannel;
@@ -100,7 +108,7 @@ export class RealtimeCall {
     mic.getAudioTracks().forEach((t) => (t.enabled = !this.view.muted));
     this.set({ phase: "connecting" });
 
-    let secret: { clientSecret?: string; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown; maxSeconds?: unknown; error?: unknown };
+    let secret: { clientSecret?: string; liveTicket?: string; voiceApi?: unknown; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown; maxSeconds?: unknown; error?: unknown };
     try {
       // The rep's Standard or Premium pick is a request; the server rechecks entitlement and decides.
       const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario, ...(this.voiceTier ? { voiceTier: this.voiceTier } : {}) }) });
@@ -108,12 +116,13 @@ export class RealtimeCall {
       if (this.closed) return;
       const redirect = realtimeAuthRedirect(res.status, secret.error);
       if (redirect) return this.signInAgain(redirect);
-      if (!res.ok || !secret.clientSecret) return this.fail(secret.message || "Could not start the voice call. Try again, or switch to Text.");
+      if (!res.ok || !(secret.clientSecret || secret.liveTicket)) return this.fail(secret.message || "Could not start the voice call. Try again, or switch to Text.");
     } catch {
       return this.fail("Could not reach the server to start the voice call. Check your connection, then try again.");
     }
     if (this.closed) return;
-    if (typeof secret.sessionId === "string" && secret.clientSecret) {
+    if (secret.voiceApi === "live" && typeof secret.liveTicket === "string") this.live = new LiveTranscript();
+    if (typeof secret.sessionId === "string" && (secret.clientSecret || this.live)) {
       this.h.onMinted({
         sessionId: secret.sessionId,
         ...(typeof secret.receipt === "string" ? { receipt: secret.receipt } : {}),
@@ -161,6 +170,19 @@ export class RealtimeCall {
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      if (this.live) {
+        // GPT-Live: the server starts the session with the full offer (src/app/api/live/sdp/route.ts).
+        await iceGathered(pc);
+        if (this.closed) return;
+        const res = await fetch("/api/live/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ liveTicket: secret.liveTicket, sessionId: secret.sessionId, scenario: this.scenario, sdp: pc.localDescription?.sdp ?? offer.sdp }) });
+        const data = await res.json().catch(() => ({}));
+        if (this.closed) return;
+        const redirect = data.error === "realtime_secret_expired" ? null : realtimeAuthRedirect(res.status, data.error);
+        if (redirect) return this.signInAgain(redirect);
+        if (!res.ok || typeof data.sdp !== "string") return this.fail(data.error === "realtime_secret_expired" ? EXPIRED : data.message || "OpenAI could not connect the voice call. Try again, or switch to Text.", "failed_connect");
+        await pc.setRemoteDescription({ type: "answer", sdp: data.sdp });
+        return;
+      }
       // Same-origin relay of the documented SDP exchange; see src/app/api/realtime/sdp/route.ts.
       const res = await fetch("/api/realtime/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientSecret: secret.clientSecret, sdp: offer.sdp }) });
       const data = await res.json().catch(() => ({}));
@@ -222,6 +244,8 @@ export class RealtimeCall {
     this.set({ phase: "connected" });
     this.meter?.open();
     this.flushTimer = setInterval(() => this.release(), 1000);
+    // GPT-Live: the opening line was given at startup (session.input) and the persona decides when to speak.
+    if (this.live) return;
     // response.create with per-response instructions is the documented way to steer one reply;
     // it lands in the default conversation, so the persona remembers saying it.
     const line = this.scenario.aiPersona.openingLine.trim();
@@ -230,6 +254,7 @@ export class RealtimeCall {
 
   private message(raw: unknown) {
     if (this.closed || typeof raw !== "string") return;
+    if (this.live) return this.liveMessage(raw, this.live);
     let ev: RealtimeServerEvent;
     try { ev = JSON.parse(raw); } catch { return; }
     switch (ev.type) {
@@ -245,8 +270,31 @@ export class RealtimeCall {
     if (applyRealtimeEvent(this.asm, ev)) this.release();
   }
 
+  /** GPT-Live events (https://developers.openai.com/api/docs/guides/live-conversations). */
+  private liveMessage(raw: string, live: LiveTranscript) {
+    let ev: LiveServerEvent;
+    try { ev = JSON.parse(raw); } catch { return; }
+    switch (ev.type) {
+      case "session.output_transcript.delta":
+        this.lastPersonaDelta = Date.now();
+        if (!this.view.speaking) this.set({ speaking: true });
+        break;
+      case "session.closed":
+        // Connection loss, safety termination or a server limit. A hang-up we started is already closing.
+        if (!this.ending) return this.fail("The voice session ended. Your transcript so far is kept.", ev.reason === "close_requested" ? "user_hangup" : "provider_error");
+        return;
+      case "error":
+        // Errors on a running Live session are per command or a moderation cut-off of one reply; the session continues.
+        console.warn("[live]", ev.error?.code ?? ev.error?.type ?? "error");
+        return;
+    }
+    if (applyLiveEvent(live, ev)) this.release();
+  }
+
   private release(force = false) {
-    for (const t of this.asm.flush(Date.now(), force)) {
+    // Live has no speaking-stopped event: the persona counts as speaking until its transcript pauses briefly.
+    if (this.live && this.view.speaking && Date.now() - this.lastPersonaDelta > 900) this.set({ speaking: false });
+    for (const t of (this.live ?? this.asm).flush(Date.now(), force)) {
       if (t.role === "user" && t.text.trim()) this.emittedUser += 1;
       this.h.onTurn(t);
     }
@@ -269,7 +317,7 @@ export class RealtimeCall {
     const until = Date.now() + END_GRACE_MS;
     const wait = () => {
       if (this.closed) return;
-      if (this.asm.pending === 0 || Date.now() >= until) this.close(true);
+      if ((this.live ?? this.asm).pending === 0 || Date.now() >= until) this.close(true);
       else this.endTimer = setTimeout(wait, 100);
     };
     wait();
@@ -313,6 +361,8 @@ export class RealtimeCall {
     clearInterval(this.flushTimer);
     clearInterval(this.audioTimer);
     clearTimeout(this.endTimer);
+    // GPT-Live: ask for a graceful close so usage is finalized; closing the connection below also ends billing.
+    if (this.live) { try { this.send({ type: "session.close" }); } catch { /* channel already gone */ } }
     try { this.dc?.close(); } catch { /* already closed */ }
     try { this.pc?.close(); } catch { /* already closed */ }
     this.mic?.getTracks().forEach((t) => t.stop());
@@ -324,7 +374,18 @@ export class RealtimeCall {
   }
 }
 
-/** Voice session on the OpenAI Realtime API. Drop-in for the ElevenLabs VoiceSession. */
+/** Resolves once ICE gathering finishes (GPT-Live gets the whole offer in one request), or after 3 s with what it has. */
+function iceGathered(pc: RTCPeerConnection, timeoutMs = 3000): Promise<void> {
+  if (pc.iceGatheringState === "complete") return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => { clearTimeout(timer); pc.removeEventListener("icegatheringstatechange", check); resolve(); };
+    const check = () => { if (pc.iceGatheringState === "complete") done(); };
+    const timer = setTimeout(done, timeoutMs);
+    pc.addEventListener("icegatheringstatechange", check);
+  });
+}
+
+/** Voice session on the OpenAI Realtime API, or GPT-Live when the server sets OPENAI_VOICE_API=live. Drop-in for the ElevenLabs VoiceSession. */
 export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onMinted, onVoiceInfo, registerEnd, render, voiceTier }: {
   scenario: Scenario;
   /** The setup's Standard or Premium pick for this call, sent as a request. Read when the call starts. */
