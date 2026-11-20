@@ -497,6 +497,33 @@ describe("POST /api/realtime/session", () => {
     expect(mocks.endCall).toHaveBeenCalledTimes(1);
   });
 
+  it("a 200 with an empty client secret is 502, one fetch, endCall once, no secret in the body", async () => {
+    metered();
+    slots(0, 1, 2);
+    const calls = stubFetch(() => Response.json({ value: "", expires_at: 1_900_000_000 }));
+    const res = await mint();
+    const body = await text(res);
+    expect(res.status).toBe(502);
+    expect(JSON.parse(body).error).toBe("realtime_upstream_error");
+    expect(body).not.toContain("clientSecret");
+    expect(JSON.parse(body)).not.toHaveProperty("clientSecret");
+    expect(calls).toHaveLength(1);
+    expect(mocks.endCall).toHaveBeenCalledTimes(1);
+    expect(mocks.endCall.mock.calls[0]).toEqual([mocks.user.id, CALL_ID, "failed_connect", expect.any(Date), { serverMintFailure: true }]);
+    expect(mocks.prisma.trainerSession.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a 200 with a missing value is 502 and releases the reservation", async () => {
+    metered();
+    slots(0);
+    stubFetch(() => Response.json({ expires_at: 1_900_000_000 }));
+    const res = await mint();
+    expect(res.status).toBe(502);
+    expect(JSON.parse(await text(res)).error).toBe("realtime_upstream_error");
+    expect(mocks.endCall).toHaveBeenCalledTimes(1);
+    expect(mocks.prisma.trainerSession.updateMany).not.toHaveBeenCalled();
+  });
+
   it("an explicit OPENAI_REALTIME_API_KEY is used alone, even on a quota answer", async () => {
     vi.stubEnv("DEMO_MODE", "true");
     vi.stubEnv("OPENAI_REALTIME_API_KEY", REALTIME_KEY);

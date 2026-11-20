@@ -280,6 +280,40 @@ describe("POST /api/realtime/session", () => {
     const res = await sessionPOST(req({ scenario: { id: "x" } }));
     expect(res.status).toBe(400);
   });
+
+  it("maps a mint timeout to 502 without leaking the API key", async () => {
+    setup();
+    vi.stubEnv("OPENAI_API_KEY", "sk-secret-test");
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await sessionPOST(req({ scenario }));
+    const text = await res.text();
+    expect(res.status).toBe(502);
+    expect(JSON.parse(text)).toEqual({
+      error: "realtime_upstream_error",
+      message: "Could not reach OpenAI to start the voice call. Check the server's network, then try again.",
+    });
+    expect(text).not.toContain("sk-secret-test");
+    expect(text).not.toContain("clientSecret");
+    expect(timeoutSpy).toHaveBeenCalledWith(15_000);
+  });
+
+  it("maps a 200 with an empty client secret to 502, with no secret in the body", async () => {
+    setup();
+    vi.stubEnv("OPENAI_API_KEY", "sk-secret-test");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ value: "", expires_at: 1_900_000_000 })));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await sessionPOST(req({ scenario }));
+    const text = await res.text();
+    expect(res.status).toBe(502);
+    expect(JSON.parse(text).error).toBe("realtime_upstream_error");
+    expect(text).not.toContain("sk-secret-test");
+    expect(text).not.toContain("clientSecret");
+    expect(JSON.parse(text)).not.toHaveProperty("clientSecret");
+  });
 });
 
 describe("POST /api/realtime/sdp", () => {
