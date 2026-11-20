@@ -69,6 +69,44 @@ describe("voice startup session recovery", () => {
     expect(h.onEnded).not.toHaveBeenCalled();
   });
 
+  it("settles a minted call that 401s at SDP as failed_connect, not a hang-up, and does not grade it", async () => {
+    const h = handlers();
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = String(url);
+      if (path.includes("/api/realtime/session")) {
+        return Response.json({ clientSecret: "ek_fictional_test_only", callId: "call-sdp-401", sessionId: "sess-sdp-401" });
+      }
+      if (path.includes("/api/realtime/sdp")) {
+        return Response.json({ error: "Invalid or expired session" }, { status: 401 });
+      }
+      if (path.includes("/api/usage/end")) {
+        expect(JSON.parse(String(init?.body))).toEqual({ callId: "call-sdp-401", reason: "failed_connect" });
+        return Response.json({ ok: true });
+      }
+      throw new Error(path);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await new RealtimeCall(scenario, h).start();
+    expect(assign).toHaveBeenCalledWith("/login");
+    await vi.waitFor(() => {
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/usage/end"))).toBe(true);
+    });
+    const endBodies = fetchMock.mock.calls
+      .filter(([url]) => String(url).includes("/api/usage/end"))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+    expect(endBodies).toEqual([{ callId: "call-sdp-401", reason: "failed_connect" }]);
+    expect(h.onEnded).not.toHaveBeenCalled();
+    expect(h.onError).not.toHaveBeenCalled();
+    expect(h.onMinted).toHaveBeenCalledWith({ sessionId: "sess-sdp-401", callId: "call-sdp-401" });
+  });
+
+  it("does not post a usage end when mint itself 401s, because no call was reserved", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "Invalid or expired session" }, { status: 401 })));
+    await new RealtimeCall(scenario, handlers()).start();
+    expect(assign).toHaveBeenCalledWith("/login");
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it("does not redirect a call that was already cancelled while the request was pending", async () => {
     let reply!: (response: Response) => void;
     const response = new Promise<Response>((resolve) => { reply = resolve; });

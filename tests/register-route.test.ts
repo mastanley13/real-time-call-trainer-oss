@@ -160,3 +160,98 @@ describe("POST /api/auth/register sign-up intent", () => {
     expect(stored()).toMatchObject({ role: "trainee", signupPlanIntent: "pro", signupSrc: "pricing" });
   });
 });
+
+describe("POST /api/auth/register team-code join", () => {
+  const created = vi.fn();
+  const joinOrg = vi.fn();
+  const createOrg = vi.fn();
+  const { newOrgName: _omit, ...joinBase } = body;
+
+  beforeEach(() => {
+    created.mockReset().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: `u-${String(data.email)}`,
+      email: data.email,
+      firstName: data.firstName,
+      lastName: data.lastName,
+      role: data.role,
+      isPlatformAdmin: false,
+      organization: { id: data.organizationId, name: "Harbor Point", code: "654321" },
+    }));
+    joinOrg.mockReset().mockResolvedValue({ id: "org-9", code: "654321", createdAt: new Date("2019-03-01T00:00:00.000Z") });
+    createOrg.mockReset().mockResolvedValue({ id: "org-new", code: "111222" });
+    mocks.prisma.user.findUnique.mockResolvedValue(null);
+    (mocks.prisma as Record<string, unknown>).organization = { findUnique: vi.fn().mockResolvedValue(null) };
+    mocks.prisma.$transaction.mockReset().mockImplementation(async (fn: (tx: unknown) => unknown) =>
+      fn({
+        organization: { create: createOrg, findUnique: joinOrg },
+        user: { create: created },
+        auditEvent: { create: vi.fn() },
+      }));
+  });
+
+  const register = (extra: Record<string, unknown>, base: Record<string, unknown> = joinBase) =>
+    POST(new NextRequest("http://localhost/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ ...base, ...extra }),
+      headers: { "content-type": "application/json" },
+    }));
+  const stored = (n = 0) => (created.mock.calls[n][0] as { data: Record<string, unknown> }).data;
+
+  it("looks the team up by code only, so an old standing code still works (codes do not expire)", async () => {
+    const res = await register({ joinOrgCode: "654321" });
+    expect(res.status).toBe(200);
+    expect(joinOrg).toHaveBeenCalledWith({ where: { code: "654321" } });
+    expect(createOrg).not.toHaveBeenCalled();
+    expect(stored()).toMatchObject({ role: "trainee", organizationId: "org-9" });
+  });
+
+  it("lets a second person reuse the same team code, each as a trainee", async () => {
+    const first = await register({ joinOrgCode: "654321" }, { ...joinBase, email: "ravi@example.test" });
+    const second = await register({ joinOrgCode: "654321" }, { ...joinBase, email: "ana@example.test" });
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(created).toHaveBeenCalledTimes(2);
+    expect(stored(0)).toMatchObject({ email: "ravi@example.test", role: "trainee", organizationId: "org-9" });
+    expect(stored(1)).toMatchObject({ email: "ana@example.test", role: "trainee", organizationId: "org-9" });
+    expect(createOrg).not.toHaveBeenCalled();
+  });
+
+  it("a join is always a trainee: a body that also sends owner or admin flags cannot mint an admin", async () => {
+    const res = await register({ joinOrgCode: "654321", role: "owner", isPlatformAdmin: true });
+    expect(res.status).toBe(200);
+    expect(stored()).toMatchObject({ role: "trainee", organizationId: "org-9" });
+    expect(stored()).not.toHaveProperty("isPlatformAdmin");
+    const json = await res.json() as { user: { role: string; isPlatformAdmin: boolean } };
+    expect(json.user).toMatchObject({ role: "trainee", isPlatformAdmin: false });
+  });
+
+  it("creating a team is an owner; joining never creates a team", async () => {
+    const createdTeam = await POST(new NextRequest("http://localhost/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+    }));
+    expect(createdTeam.status).toBe(200);
+    expect(stored()).toMatchObject({ role: "owner" });
+    expect(createOrg).toHaveBeenCalledOnce();
+
+    created.mockClear();
+    createOrg.mockClear();
+    joinOrg.mockClear();
+    const joined = await register({ joinOrgCode: "654321" });
+    expect(joined.status).toBe(200);
+    expect(stored()).toMatchObject({ role: "trainee" });
+    expect(createOrg).not.toHaveBeenCalled();
+  });
+
+  it("rejects a code that is not 3 to 8 digits before touching the database", async () => {
+    for (const joinOrgCode of ["12", "123456789", "abc", "12345a", "1234-56"]) {
+      created.mockClear();
+      joinOrg.mockClear();
+      const res = await register({ joinOrgCode });
+      expect(res.status, joinOrgCode).toBe(400);
+      expect(created).not.toHaveBeenCalled();
+      expect(joinOrg).not.toHaveBeenCalled();
+    }
+  });
+});
