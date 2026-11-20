@@ -440,7 +440,14 @@ describe("checkout route", () => {
 
   it("creates a Team session with the requested seats and no Premium line item", async () => {
     const spy = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_1", url: "https://checkout.example/test" });
-    const res = await post({ plan: "team", interval: "year", seats: 6, premium: false });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let res: Response;
+    try {
+      vi.setSystemTime(NOW);
+      res = await post({ plan: "team", interval: "year", seats: 6, premium: false });
+    } finally {
+      vi.useRealTimers();
+    }
     expect(res.status).toBe(200);
     expect((await res.json()).url).toBe("https://checkout.example/test");
     const params = spy.mock.calls[0][0];
