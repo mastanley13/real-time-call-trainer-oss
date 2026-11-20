@@ -439,6 +439,9 @@ describe("checkout route", () => {
   });
 
   it("creates a Team session with the requested seats and no Premium line item", async () => {
+    // Pin "now" before the Nov 20 anchor day: on the anchor day itself there is no future anchor to send (usagePlan.ts),
+    // so an unpinned clock made this test fail every 20th of the month.
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-10T12:00:00Z") });
     const spy = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_1", url: "https://checkout.example/test" });
     const res = await post({ plan: "team", interval: "year", seats: 6, premium: false });
     expect(res.status).toBe(200);
@@ -447,6 +450,7 @@ describe("checkout route", () => {
     expect(params.line_items).toEqual([{ price: "price_test_team_y", quantity: 6 }]);
     // Team anchors to the organization's creation date (Feb 20), not the user's.
     expect((params.subscription_data as { billing_cycle_anchor: number }).billing_cycle_anchor).toBe(Math.floor(new Date("2026-11-20T00:00:00Z").getTime() / 1000));
+    vi.useRealTimers();
   });
 
   it("premium:true is a 400 premium_not_available while Premium is off sale, with billing on", async () => {
