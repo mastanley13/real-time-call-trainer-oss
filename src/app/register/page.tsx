@@ -6,7 +6,8 @@ import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
 import GoogleButton from "@/components/GoogleButton";
-import { afterSignin, intentFromQuery, rememberNotice } from "@/lib/checkoutStart";
+import { afterSigninTo, intentFromQuery, rememberNotice } from "@/lib/checkoutStart";
+import { validNextPath } from "@/lib/safeNext";
 import { planSummary } from "@/lib/pricing";
 import LegalLinks from "@/components/LegalLinks";
 
@@ -30,12 +31,15 @@ function RegisterForm() {
   // An invite link (/register?code=123456) opens on "Join a team" with the code filled in. Digits only.
   const codeParam = useSearchParams().get("code") ?? "";
   const inviteCode = /^[0-9]{3,8}$/.test(codeParam) ? codeParam : "";
+  // A same-site ?next= path (for example from /try/[role]); anything unsafe is dropped here and again in afterSigninTo.
+  const rawNext = useSearchParams().get("next");
+  const nextPath = validNextPath(rawNext);
   const summary = planSummary(intent);
   const billingEnabled = capabilities?.billing === true;
 
-  /** Billing on with a plan goes to checkout; otherwise /trainer, with a one-time notice when a plan was asked for. */
+  /** Billing on with a plan goes to checkout; else a safe ?next=; else /trainer, with a one-time notice when a plan was asked for. */
   function goAfterSignin() {
-    const next = afterSignin(billingEnabled, intent);
+    const next = afterSigninTo(billingEnabled, intent, rawNext);
     if (next.notice) rememberNotice(next.notice);
     router.replace(next.path);
   }
@@ -92,7 +96,7 @@ function RegisterForm() {
       {mode === "join" ? (
         <p className="mb-4 text-sm text-ink-soft">Joining a team: sign up with your email below. Google sign-up starts a separate team.</p>
       ) : (
-        <GoogleButton carryIntent />
+        <GoogleButton carryIntent next={nextPath ?? undefined} />
       )}
       <form onSubmit={onSubmit} className="space-y-4">
         <div className="grid grid-cols-2 gap-3">

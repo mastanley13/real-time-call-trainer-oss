@@ -6,7 +6,11 @@ const EXACT = new Set([
   "/pricing", "/register", "/login", "/auth/complete", "/robots.txt", "/sitemap.xml",
   ...VERTICAL_SLUGS.map((s) => `/for/${s}`),
 ]);
-const PREFIXES = ["/api/auth/"];
+/**
+ * "/try/" is a prefix on purpose: the four /try/[role] pages are public, and an unknown role still reaches the App
+ * Router and gets its 404 (dynamicParams = false) instead of bouncing to /access.
+ */
+const PREFIXES = ["/api/auth/", "/try/"];
 /** Root share images, with or without the content hash Next appends. */
 const ROOT_IMAGE = /^\/(opengraph|twitter)-image(-[A-Za-z0-9]+)?$/;
 /** Per-vertical share images, with or without the content hash Next appends. */

@@ -16,3 +16,8 @@ export function safeNextPath(raw: string | null | undefined, fallback = "/traine
   }
   return raw;
 }
+
+/** The next path when it passes safeNextPath, else null, so a caller can keep its own default destination. */
+export function validNextPath(raw: string | null | undefined): string | null {
+  return safeNextPath(raw, "") || null;
+}
