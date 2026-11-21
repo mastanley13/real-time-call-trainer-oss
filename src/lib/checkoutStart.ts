@@ -1,6 +1,7 @@
 import { checkoutFailure } from "./billingUi";
 import { checkoutStartHref, sanitizeSignupIntent, type Billing, type PlanIntent, type SignupIntent } from "./pricing";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS } from "./usagePlan";
+import { validNextPath } from "./safeNext";
 
 /**
  * The checkout step behind the pricing buttons when billing is on, and where each sign-up or checkout answer lands.
@@ -71,6 +72,18 @@ export function intentFromQuery(q: { get(name: string): string | null }): Signup
 export function afterSignin(billingEnabled: boolean, intent: SignupIntent): { path: string; notice: NoticeKind | null } {
   if (intent.plan && billingEnabled) return { path: checkoutStartHref(intent.plan, intent.interval ?? "month"), notice: null };
   return { path: "/trainer", notice: intent.plan ? "plans_soon" : null };
+}
+
+/**
+ * afterSignin, plus a ?next= path from the link. A paid plan with billing on still goes to checkout, so a next cannot
+ * take over a pricing button. Otherwise a next that passes safeNextPath wins; a missing or unsafe one changes nothing.
+ * The open-soon notice is kept either way.
+ */
+export function afterSigninTo(billingEnabled: boolean, intent: SignupIntent, rawNext: string | null | undefined): { path: string; notice: NoticeKind | null } {
+  const base = afterSignin(billingEnabled, intent);
+  if (intent.plan && billingEnabled) return base;
+  const next = validNextPath(rawNext);
+  return next ? { ...base, path: next } : base;
 }
 
 export interface CheckoutStartInput {

@@ -443,7 +443,14 @@ describe("checkout route", () => {
     // so an unpinned clock made this test fail every 20th of the month.
     vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-10T12:00:00Z") });
     const spy = vi.spyOn(stripeApi, "createCheckoutSession").mockResolvedValue({ id: "cs_test_1", url: "https://checkout.example/test" });
-    const res = await post({ plan: "team", interval: "year", seats: 6, premium: false });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let res: Response;
+    try {
+      vi.setSystemTime(NOW);
+      res = await post({ plan: "team", interval: "year", seats: 6, premium: false });
+    } finally {
+      vi.useRealTimers();
+    }
     expect(res.status).toBe(200);
     expect((await res.json()).url).toBe("https://checkout.example/test");
     const params = spy.mock.calls[0][0];

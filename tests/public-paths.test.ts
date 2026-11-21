@@ -21,6 +21,21 @@ describe("isPublicPath", () => {
   ])("keeps %s gated", (p) => expect(isPublicPath(p)).toBe(false));
 
   it("covers every vertical slug", () => expect(VERTICAL_SLUGS).toHaveLength(6));
+
+  it.each([
+    "/try/dealership", "/try/real-estate", "/try/staffing", "/try/insurance",
+    "/try/dealership/", "/try/real-estate?utm_source=email", "/try/staffing/?utm_campaign=q4#top", "/try/insurance#x",
+  ])("allows the try page %s", (p) => expect(isPublicPath(p)).toBe(true));
+
+  it("treats /try/ as a prefix, so an unknown role reaches the App Router 404 instead of the access gate", () => {
+    expect(isPublicPath("/try/unknown")).toBe(true);
+    expect(isPublicPath("/try/unknown?utm_source=x")).toBe(true);
+  });
+
+  it.each(["/try", "/try/", "/tryx", "/trying", "/trainer?next=/try/dealership", "/dashboard#/try/dealership", "/x/try/dealership"])(
+    "keeps %s gated",
+    (p) => expect(isPublicPath(p)).toBe(false),
+  );
 });
 
 describe("proxy with TRAINER_ACCESS_CODE set", () => {
@@ -40,6 +55,15 @@ describe("proxy with TRAINER_ACCESS_CODE set", () => {
       expect(res.headers.get("location"), p).toBeNull();
       expect(res.status, p).toBe(200);
     }
+  });
+
+  it("lets the /try pages through without a cookie, unknown roles too (they 404 in the App Router)", async () => {
+    for (const p of ["/try/dealership", "/try/real-estate", "/try/staffing", "/try/insurance", "/try/dealership?utm_source=email&utm_campaign=q4", "/try/unknown"]) {
+      const res = await run(p);
+      expect(res.headers.get("location"), p).toBeNull();
+      expect(res.status, p).toBe(200);
+    }
+    expect((await run("/try")).status).toBe(307);
   });
 
   it("keeps Google sign-in reachable for existing users without an access cookie, like password login", async () => {

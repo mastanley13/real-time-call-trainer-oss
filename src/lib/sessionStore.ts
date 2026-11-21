@@ -67,6 +67,23 @@ export function listLocalSessions(): StoredSession[] {
   return readLocal().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+/**
+ * Like listLocalSessions, but says when the read failed: null when storage is unavailable or throws, the stored value
+ * is not valid JSON, or it is not an array. Nothing stored yet is a genuine empty list ([]). For callers that must not
+ * treat a failed read as "no sessions" (the debrief's first-graded check). Entries are not validated beyond being objects.
+ */
+export function readLocalSessionsStrict(store?: Pick<Storage, "getItem"> | null): StoredSession[] | null {
+  try {
+    const raw = (store ?? localStorage).getItem(KEY);
+    if (raw === null) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed) || !parsed.every((s) => typeof s === "object" && s !== null)) return null;
+    return parsed as StoredSession[];
+  } catch {
+    return null;
+  }
+}
+
 export function getLocalSession(id: string): StoredSession | undefined {
   return readLocal().find((s) => s.id === id);
 }
