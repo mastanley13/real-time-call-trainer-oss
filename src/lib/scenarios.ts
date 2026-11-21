@@ -82,6 +82,18 @@ export const ScenarioSchema = z.object({
     liveBackchannel: z.string().max(600).optional(),
     /** Optional GPT-Live "Interruption policy" text for this persona (src/lib/live.ts). */
     liveInterruption: z.string().max(600).optional(),
+    /**
+     * Optional GPT-Live delivery notes (pace, expressiveness, maturity, emotional tone) added to session.instructions
+     * (src/lib/liveCasting.ts). The API has no age or style field, so this is natural-language direction. Optional, so
+     * saved and wizard-made scenarios without it parse and run as before.
+     */
+    liveDelivery: z.string().max(400).optional(),
+    /** The persona's gender, only when its own text states it (never inferred from a name). Used for GPT-Live casting. */
+    gender: z.enum(["female", "male"]).optional(),
+    /** The persona's age, only when its own text states it. */
+    age: z.number().int().min(1).max(120).optional(),
+    /** The persona's emotion at the start of the call ("worried", "guarded"...), for GPT-Live delivery. */
+    emotion: z.string().max(20).optional(),
   }),
   traineeGoal: z.string().max(1000),
   rubric: z.array(RubricCriterionSchema).min(1).max(12),

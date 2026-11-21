@@ -23,6 +23,7 @@
  */
 
 import { buildAgentPrompt, type Scenario } from "./scenarios";
+import { liveCastingSection } from "./liveCasting";
 
 export type OpenAiVoiceApi = "realtime" | "live";
 
@@ -71,6 +72,7 @@ export function pickLiveVoice(persona: { liveVoice?: string; realtimeVoice?: str
  */
 export function buildLiveInstructions(s: Scenario): string {
   const p = s.aiPersona;
+  const casting = liveCastingSection(p);
   const backchannel = p.liveBackchannel?.trim()
     || "Use occasional short, natural listening sounds such as \"mm-hm\", \"yeah\" or \"okay\" while the other person explains something, the way a real caller on the phone would. Keep them brief and never let them compete with what the other person is saying.";
   const interruption = p.liveInterruption?.trim()
@@ -83,6 +85,8 @@ export function buildLiveInstructions(s: Scenario): string {
     "- Keep each turn short and leave the trainee room to lead the call.",
     "- Keep listening while the trainee pauses to think. Do not treat a cough, typing or background noise as a new question.",
     "- If the trainee asks you to repeat or spell a name, address, number or code, say it again clearly and slowly.",
+    // Age, maturity, emotional tone and delivery notes: the Live API has no field for them, so they go in the instructions.
+    ...(casting.length ? ["", ...casting] : []),
     "",
     `Backchannel policy: ${backchannel}`,
     "",

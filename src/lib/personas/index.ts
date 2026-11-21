@@ -4,6 +4,7 @@
  * here); every entry is checked against ScenarioSchema when the app loads.
  */
 import { BUILT_IN_SCENARIOS, ScenarioSchema, type Scenario } from "../scenarios";
+import { withLiveCast } from "../personaLiveCasting";
 import sdr from "./sdr";
 import ae from "./ae";
 import cs from "./cs";
@@ -33,7 +34,8 @@ function validated(list: Scenario[]): Scenario[] {
     const parsed = ScenarioSchema.parse(s);
     if (seen.has(parsed.id)) throw new Error(`Duplicate persona id in library: ${parsed.id}`);
     seen.add(parsed.id);
-    return { ...parsed, builtIn: true };
+    // GPT-Live cast (voice, delivery, stated demographics) from src/lib/personaLiveCasting.ts. Validated again below.
+    return { ...ScenarioSchema.parse(withLiveCast(parsed)), builtIn: true };
   });
 }
 
