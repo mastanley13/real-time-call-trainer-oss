@@ -23,7 +23,7 @@ import Home from "@/app/page";
 
 /** Model id families: OpenAI chat, realtime, transcription and speech, reasoning, Gemini, ElevenLabs and Claude. */
 const MODEL_ID_RE =
-  /\b(?:[Gg][Pp][Tt]-(?:5|4\.1|4o|realtime)[\w.-]*|o[34](?:-[\w-]+)?|whisper-1|tts-1(?:-hd)?|gemini-[\w.-]+|eleven_\w+|claude-[\w.-]+)\b/;
+  /\b(?:[Gg][Pp][Tt]-(?:5|4\.1|4o|realtime|live)[\w.-]*|o[34](?:-[\w-]+)?|whisper-1|tts-1(?:-hd)?|gemini-[\w.-]+|eleven_\w+|claude-[\w.-]+)\b/;
 
 /**
  * Backend defaults that must stay: they are sent to providers, never rendered or returned. Exact files, no globs.

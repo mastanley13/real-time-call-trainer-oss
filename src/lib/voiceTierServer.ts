@@ -2,9 +2,12 @@ import "server-only";
 import { prisma } from "./db";
 import { getCapabilities } from "./serverConfig";
 import { effectiveVoiceTier, type VoiceTier } from "./voiceTier";
-import { resolveTierModel } from "./voiceModels";
+import { liveModel as liveModelFromEnv, resolveTierModel } from "./voiceModels";
 
 export const voiceModelFor = (tier: VoiceTier): string => resolveTierModel(tier, process.env);
+
+/** The GPT-Live model for this server (OPENAI_VOICE_API=live), both tiers. */
+export const liveModel = (): string => liveModelFromEnv(process.env);
 
 /**
  * The voice tier a sealed model id stands for, decided on the server only (the id never leaves it): the configured

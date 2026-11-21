@@ -11,9 +11,11 @@ import { mintVoiceTier } from "@/lib/voiceTier";
 import { capReached, dailySessionLimit, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
 import { realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
 import { classifyOpenAiResponse, voiceKeyPlan, withOpenAiKeyFailover } from "@/lib/openaiKeys";
-import { orgVoiceTierForUser, voiceModelFor } from "@/lib/voiceTierServer";
+import { liveModel, orgVoiceTierForUser, voiceModelFor } from "@/lib/voiceTierServer";
 import { sealMintReceipt } from "@/lib/mintReceipt";
 import { recordMintedVoice } from "@/lib/voiceMintLog";
+import { openAiVoiceApi, pickLiveVoice } from "@/lib/live";
+import { sealLiveTicket } from "@/lib/liveTicket";
 
 /**
  * `voiceTier` is the rep's REQUEST from the call setup (Prism finding 1), never an entitlement: "standard" always runs
@@ -110,13 +112,16 @@ export async function POST(req: NextRequest) {
   // "true"). A stored add-on flag alone, the billing engine, or anything the client sends never reaches Premium.
   // A chosen Standard call is Standard whatever the organization or the entitlement says (comped included).
   const tier = chosenStandard ? "standard" : mintVoiceTier(orgTier, { paidPremium: premium?.source === "paid", trialSample: premium?.source === "trial" });
-  const model = voiceModelFor(tier);
+  // GPT-Live (OPENAI_VOICE_API=live, off by default) has one model for both tiers; tier still drives caps and billing.
+  const live = openAiVoiceApi() === "live";
+  const model = live ? liveModel() : voiceModelFor(tier);
   if (premium?.fallback) {
     await emitPremiumEvent({ name: "premium_fallback_to_standard", subject: "user", subjectId: auth.id, reason: premium.fallback });
   }
   // One id per call, fixed before the secret is minted: the metering call id when metered, else a fresh UUID.
   // The receipt is bound to it and the client saves the call under it, so a receipt can't move to another call.
   const sessionId = callId ?? randomUUID();
+  if (live) return mintLive({ userId: auth.id, callId, sessionId, model, tier, maxSeconds, premium, scenario });
   const voice = realtimeVoice(scenario.aiPersona.realtimeVoice);
   const session = {
     type: "realtime",
@@ -220,4 +225,45 @@ export async function POST(req: NextRequest) {
     if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
     return NextResponse.json({ error: "realtime_upstream_error", message: "Could not reach OpenAI to start the voice call. Check the server's network, then try again." }, { status: 502 });
   }
+}
+
+/**
+ * GPT-Live path (OPENAI_VOICE_API=live). Nothing is minted with OpenAI here: GPT-Live has no ephemeral client
+ * secret, so the session starts in /api/live/sdp, which posts the browser's SDP offer with the server's key. This
+ * keeps every check above (cap, metering, Premium, rate limit) and the same mint log and receipt, then hands the
+ * browser a short-lived sealed ticket (src/lib/liveTicket.ts) in place of a client secret. The answer carries
+ * `voiceApi: "live"` so the browser takes the Live connection path.
+ */
+async function mintLive(a: {
+  userId: string; callId?: string; sessionId: string; model: string; tier: "premium" | "standard"; maxSeconds: number;
+  premium?: PremiumMintInfo; scenario: z.infer<typeof Body>["scenario"];
+}) {
+  const voice = pickLiveVoice(a.scenario.aiPersona, process.env.LIVE_VOICE);
+  const ticket = sealLiveTicket(a.userId, a.sessionId, { model: a.model, voice });
+  if (!ticket) {
+    // No JWT_SECRET: there is no safe way to carry the call to the SDP step.
+    console.error("[realtime/session] live ticket unavailable (JWT_SECRET unset?)");
+    if (a.callId) await endCall(a.userId, a.callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
+    return voiceUnavailable();
+  }
+  if (a.callId) {
+    const logged = await recordMintedVoice(a.userId, a.callId, { model: a.model, tier: a.tier }).catch((e) => {
+      console.error("[realtime/session] mint log failed", e instanceof Error ? e.name : "unknown error");
+      return null;
+    });
+    if (logged !== true) {
+      if (logged === false) console.error("[realtime/session] mint log wrote no row");
+      await endCall(a.userId, a.callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
+      return voiceUnavailable();
+    }
+  }
+  const receipt = sealMintReceipt(a.userId, a.sessionId, a.model);
+  return NextResponse.json(
+    {
+      voiceApi: "live", liveTicket: ticket, voice, sessionId: a.sessionId,
+      ...(a.callId ? { callId: a.callId, maxSeconds: a.maxSeconds, voiceTier: a.tier, nextCallStandard: a.premium?.nextCallStandard ?? false, ...(a.premium?.source === "trial" ? { voiceTrial: true } : {}) } : {}),
+      ...(receipt ? { receipt } : {}),
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
