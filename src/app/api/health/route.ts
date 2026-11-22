@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { getLlmStatus, type LlmOutcome } from "@/lib/llmStatus";
 import { getCapabilities, productionGuard } from "@/lib/serverConfig";
+
+const LLM_CHECK: Record<LlmOutcome | "none", string> = {
+  ok: "ok",
+  auth_failed: "error_auth",
+  quota: "error_quota",
+  error: "error",
+  none: "configured_unverified",
+};
 
 export async function GET() {
   const caps = getCapabilities();
@@ -23,7 +32,12 @@ export async function GET() {
   if (checks.jwtSecret !== "ok" && !caps.demoMode) ok = false;
   checks.elevenlabs = caps.elevenlabs ? "configured" : "not_configured";
   checks.realtime = caps.realtime ? "configured" : "not_configured";
-  checks.llm = caps.llm ? "configured" : "not_configured";
+  // Reflects the last real model call seen by this server instance (no probe here: this route is public and must not
+  // spend tokens). The authenticated POST /api/llm/check runs a live probe. Does not change `ok` or the status code,
+  // which uptime monitors read for database health.
+  const llm = getLlmStatus();
+  checks.llm = caps.llm ? LLM_CHECK[llm.last ?? "none"] : "not_configured";
+  checks.llmLastCallAt = llm.at ?? "none";
   checks.demoMode = caps.demoMode ? "on" : "off";
 
   const guard = productionGuard(process.env);
