@@ -438,7 +438,7 @@ describe("POST /api/realtime/session", () => {
     expect(calls.map((c) => [c.url, c.slot, c.init.redirect])).toEqual([[CLIENT_SECRETS, 0, "error"], [CLIENT_SECRETS, 1, "error"], [CLIENT_SECRETS, 2, "error"]]);
     expect(mocks.beginCall).toHaveBeenCalledTimes(1);
     expect(mocks.endCall).toHaveBeenCalledTimes(1);
-    expect(mocks.endCall.mock.calls[0]).toEqual([mocks.user.id, CALL_ID, "failed_connect", expect.any(Date), { serverMintFailure: true }]);
+    expect(mocks.endCall.mock.calls[0]).toEqual([mocks.user.id, CALL_ID, "failed_connect", expect.any(Date)]);
     expect(events("openai_key_exhausted")).toEqual([{ event: "openai_key_exhausted", surface: "realtime", tried: [0, 1, 2], status: 429 }]);
   });
 

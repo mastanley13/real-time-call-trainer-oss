@@ -261,6 +261,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 };
 
+/** Like useAuth, but null outside an AuthProvider instead of throwing. For public components that also render standalone. */
+export const useOptionalAuth = () => useContext(AuthContext) ?? null;
+
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (context === undefined) {

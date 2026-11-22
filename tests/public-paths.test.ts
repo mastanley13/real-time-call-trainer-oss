@@ -23,6 +23,16 @@ describe("isPublicPath", () => {
   it("covers every vertical slug", () => expect(VERTICAL_SLUGS).toHaveLength(6));
 
   it.each([
+    "/forgot-password", "/reset-password", "/forgot-password/", "/reset-password?token=v1.abc.123.fp.sig",
+    "/api/auth/password-reset/request", "/api/auth/password-reset/confirm", "/api/auth/password-reset/check",
+  ])("allows the password reset path %s", (p) => expect(isPublicPath(p)).toBe(true));
+
+  it.each(["/forgot-password/x", "/reset-password/x", "/forgot-passwordx", "/reset", "/dashboard?next=/reset-password"])(
+    "keeps %s gated",
+    (p) => expect(isPublicPath(p)).toBe(false),
+  );
+
+  it.each([
     "/try/dealership", "/try/real-estate", "/try/staffing", "/try/insurance",
     "/try/dealership/", "/try/real-estate?utm_source=email", "/try/staffing/?utm_campaign=q4#top", "/try/insurance#x",
   ])("allows the try page %s", (p) => expect(isPublicPath(p)).toBe(true));

@@ -92,6 +92,7 @@ src/lib/
   apiAuth.ts, auth.ts, mfa.ts     requireAuth, JWT sessions, bcrypt, TOTP, mfaUnavailableResponse (503 in demo or no database)
   loginLockout.ts                 Account lockout (8 failures, 15 min) shared by password login, the MFA challenge and recovery code regeneration
   mfaRecovery.ts (+ -types.ts)    Recovery codes (server-only): generate, normalize, SHA-256 hash, atomic consume; labels and .txt file are client-safe
+  passwordReset.ts, mailer.ts     Stateless HMAC reset tokens (server-only); Resend email or console log. passwordRules.ts is shared
   rateLimit.ts                    clientIp (TRUSTED_PROXY_HOPS), IP_LIMITS, USER_LIMITS, body and transcript caps
   access.ts + src/proxy.ts        Optional TRAINER_ACCESS_CODE gate
   realtime.ts                     OpenAI Realtime helpers shared by server and client (see Secrets below)
