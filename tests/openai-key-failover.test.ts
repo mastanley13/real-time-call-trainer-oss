@@ -60,7 +60,7 @@ const MODEL_ID_RE =
   /\b(?:[Gg][Pp][Tt]-(?:5|4\.1|4o|realtime)[\w.-]*|o[34](?:-[\w-]+)?|whisper-1|tts-1(?:-hd)?|gemini-[\w.-]+|eleven_\w+|claude-[\w.-]+)\b/;
 
 const ENV = [
-  "LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL", "OPENAI_REALTIME_API_KEY", ...OPENAI_KEY_SLOT_VARS, "DEMO_MODE", "DATABASE_URL",
+  "LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL", "LLM_MODEL_GRADING", "OPENAI_REALTIME_API_KEY", ...OPENAI_KEY_SLOT_VARS, "DEMO_MODE", "DATABASE_URL",
   "USAGE_CAPS", "STRIPE_SECRET_KEY", "JWT_SECRET", "CRON_SECRET", "REALTIME_MODEL", "REALTIME_MODEL_STANDARD", "REALTIME_MODEL_PREMIUM",
   "REALTIME_VOICE", "RATE_LIMIT_GRADING_MAX", "RATE_LIMIT_CALLER_MAX", "RATE_LIMIT_REALTIME_MAX",
 ] as const;
@@ -438,7 +438,7 @@ describe("POST /api/realtime/session", () => {
     expect(calls.map((c) => [c.url, c.slot, c.init.redirect])).toEqual([[CLIENT_SECRETS, 0, "error"], [CLIENT_SECRETS, 1, "error"], [CLIENT_SECRETS, 2, "error"]]);
     expect(mocks.beginCall).toHaveBeenCalledTimes(1);
     expect(mocks.endCall).toHaveBeenCalledTimes(1);
-    expect(mocks.endCall.mock.calls[0]).toEqual([mocks.user.id, CALL_ID, "failed_connect", expect.any(Date), { serverMintFailure: true }]);
+    expect(mocks.endCall.mock.calls[0]).toEqual([mocks.user.id, CALL_ID, "failed_connect", expect.any(Date)]);
     expect(events("openai_key_exhausted")).toEqual([{ event: "openai_key_exhausted", surface: "realtime", tried: [0, 1, 2], status: 429 }]);
   });
 
@@ -607,6 +607,33 @@ describe("compatibility boundaries", () => {
   });
 });
 
+/* ---------- Per-route chat models ---------- */
+
+describe("chatFull model selection", () => {
+  it("sends LLM_MODEL by default and opts.model when provided, with max_completion_tokens on OpenAI", async () => {
+    slots(0);
+    vi.stubEnv("LLM_MODEL", "gpt-6-luna");
+    const calls = bySlot({ 0: chatOk });
+    expect((await ask()).text).toBe("Fixture reply.");
+    expect(JSON.parse(String(calls[0].init.body))).toMatchObject({ model: "gpt-6-luna", max_completion_tokens: 1800 });
+    expect(JSON.parse(String(calls[0].init.body)).max_tokens).toBeUndefined();
+
+    vi.stubEnv("LLM_MODEL_GRADING", "gpt-6.2-sol");
+    expect((await chatFull([{ role: "user", content: "Hello" }], { model: "gpt-6.2-sol", maxTokens: 1800 })).text).toBe("Fixture reply.");
+    expect(JSON.parse(String(calls[1].init.body))).toMatchObject({ model: "gpt-6.2-sol", max_completion_tokens: 1800 });
+  });
+
+  it("keeps max_tokens on a non-OpenAI host", async () => {
+    vi.stubEnv("LLM_API_KEY", LLM_KEY);
+    vi.stubEnv("LLM_BASE_URL", CUSTOM_BASE);
+    vi.stubEnv("LLM_MODEL", "acme-private-chat-9");
+    const calls = stubFetch(() => chatOk());
+    expect((await ask()).text).toBe("Fixture reply.");
+    expect(JSON.parse(String(calls[0].init.body))).toMatchObject({ model: "acme-private-chat-9", max_tokens: 1800 });
+    expect(JSON.parse(String(calls[0].init.body)).max_completion_tokens).toBeUndefined();
+  });
+});
+
 /* ---------- Connection check ---------- */
 
 describe("POST /api/llm/check with the key ladder", () => {
@@ -622,7 +649,7 @@ describe("POST /api/llm/check with the key ladder", () => {
     expect(res.status).toBe(200);
     expect(Object.keys(body).sort()).toEqual(["hint", "latencyMs", "ok", "status"]);
     expect(body).toMatchObject({ ok: true, status: 200 });
-    expect(calls.map((c) => [c.slot, JSON.parse(String(c.init.body)).max_tokens])).toEqual([[0, 1], [1, 1]]);
+    expect(calls.map((c) => [c.slot, JSON.parse(String(c.init.body)).max_completion_tokens, JSON.parse(String(c.init.body)).max_tokens])).toEqual([[0, 256, undefined], [1, 256, undefined]]);
     expect(events("openai_key_served")).toEqual([{ event: "openai_key_served", surface: "check", slot: 1 }]);
   });
 

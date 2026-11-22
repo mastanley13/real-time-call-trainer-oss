@@ -6,7 +6,7 @@ vi.mock("@/lib/db", () => ({
   prisma: new Proxy({}, { get: () => { throw new Error("database touched by an unauthorized request"); } }),
 }));
 
-import { cronAuthorized, resolveLlmKey } from "@/lib/serverConfig";
+import { cronAuthorized, llmGradingModel, llmModel, resolveLlmKey } from "@/lib/serverConfig";
 import { GET as purge } from "@/app/api/cron/purge-expired/route";
 
 afterEach(() => {
@@ -41,6 +41,29 @@ describe("resolveLlmKey", () => {
     expect(resolveLlmKey({ OPENAI_API_KEY_BACKUP_1: "backup-one", LLM_BASE_URL: "https://openrouter.ai/api/v1" })).toBeUndefined();
     expect(resolveLlmKey({ OPENAI_API_KEY_BACKUP_1: "backup-one", LLM_BASE_URL: "https://api.openai.com.evil.example/v1" })).toBeUndefined();
     expect(resolveLlmKey({ LLM_API_KEY: "llm", OPENAI_API_KEY_BACKUP_1: "backup-one" })).toBe("llm");
+  });
+});
+
+describe("llmModel and llmGradingModel", () => {
+  it("defaults live turns to gpt-6-luna and grading to the same when unset", () => {
+    vi.stubEnv("LLM_MODEL", "");
+    vi.stubEnv("LLM_MODEL_GRADING", "");
+    expect(llmModel()).toBe("gpt-6-luna");
+    expect(llmGradingModel()).toBe("gpt-6-luna");
+  });
+
+  it("uses LLM_MODEL for turns and falls grading back to it", () => {
+    vi.stubEnv("LLM_MODEL", "gpt-6-luna");
+    vi.stubEnv("LLM_MODEL_GRADING", "");
+    expect(llmModel()).toBe("gpt-6-luna");
+    expect(llmGradingModel()).toBe("gpt-6-luna");
+  });
+
+  it("lets LLM_MODEL_GRADING override only the grading model", () => {
+    vi.stubEnv("LLM_MODEL", "gpt-6-luna");
+    vi.stubEnv("LLM_MODEL_GRADING", "gpt-6.2-sol");
+    expect(llmModel()).toBe("gpt-6-luna");
+    expect(llmGradingModel()).toBe("gpt-6.2-sol");
   });
 });
 

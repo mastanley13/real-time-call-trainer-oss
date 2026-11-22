@@ -165,8 +165,13 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
             {voice.muted ? <MicOff size={16} aria-hidden /> : <Mic size={16} aria-hidden />}<span className="hidden sm:inline" aria-hidden>{voice.muted ? "Unmute" : "Mute"}</span><span className="kbd hidden lg:inline-flex" aria-hidden>Space</span>
           </button>
         )}
-        <button className="btn-danger !min-h-[38px] !px-3 sm:!px-4" onClick={endClicked} disabled={grading} aria-label={text?.hungUp ? "Grade this call" : "End and grade call"}>
-          <PhoneOff size={16} aria-hidden /><span className="hidden sm:inline">{text?.hungUp ? "Grade call" : "End & grade"}</span><span className="kbd hidden !border-alert-on/30 !bg-transparent !text-alert-on lg:inline-flex">Esc</span>
+        {/* shrink-0 on the button and the icon, nowrap on the text: a crowded header must never squeeze the icon over the label.
+            Phones get a short visible label; the accessible name is the full action at every width. */}
+        <button className="btn-danger !min-h-[38px] shrink-0 whitespace-nowrap !px-3 sm:!px-4" onClick={endClicked} disabled={grading} aria-label={text?.hungUp ? "Grade call" : "End and grade call"}>
+          <PhoneOff size={16} className="shrink-0" aria-hidden />
+          <span className="sm:hidden">{text?.hungUp ? "Grade" : "End"}</span>
+          <span className="hidden sm:inline">{text?.hungUp ? "Grade call" : "End & grade"}</span>
+          <span className="kbd hidden shrink-0 !border-alert-on/30 !bg-transparent !text-alert-on lg:inline-flex">Esc</span>
         </button>
       </header>
 

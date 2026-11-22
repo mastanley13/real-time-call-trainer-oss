@@ -7,7 +7,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
 import GoogleButton from "@/components/GoogleButton";
 import { afterSigninTo, intentFromQuery, rememberNotice } from "@/lib/checkoutStart";
-import { validNextPath } from "@/lib/safeNext";
+import { signInHref, validNextPath } from "@/lib/safeNext";
+import { registerOrgFields } from "@/lib/registerForm";
 import { planSummary } from "@/lib/pricing";
 import LegalLinks from "@/components/LegalLinks";
 
@@ -68,7 +69,8 @@ function RegisterForm() {
         lastName: f.lastName,
         email: f.email,
         password: f.password,
-        ...(mode === "create" ? { newOrgName: f.orgName } : { joinOrgCode: f.orgCode }),
+        // Only the active mode's field. A blank team name is left out; the server then names the workspace after the rep.
+        ...registerOrgFields(mode, f.orgName, f.orgCode),
         ...intent,
       });
       goAfterSignin();
@@ -80,7 +82,7 @@ function RegisterForm() {
   }
 
   return (
-    <AuthShell title="Create your account" subtitle="Start a team workspace or join one with a code.">
+    <AuthShell title="Create your account" subtitle="Practice on your own, start a team, or join one with a code.">
       {capabilities && !capabilities.database && !capabilities.demoMode && (
         <div className="banner-warn mb-4">Registration needs a database. Set <code>DATABASE_URL</code> or use <code>DEMO_MODE=true</code>.</div>
       )}
@@ -92,9 +94,9 @@ function RegisterForm() {
           {summary.seats && <p className="text-sm text-ink-muted">{summary.seats}</p>}
         </div>
       )}
-      {/* Google sign-up always starts a new team, so joining one goes through the email form. */}
+      {/* Google sign-up always starts a new workspace, so joining a team goes through the email form. */}
       {mode === "join" ? (
-        <p className="mb-4 text-sm text-ink-soft">Joining a team: sign up with your email below. Google sign-up starts a separate team.</p>
+        <p className="mb-4 text-sm text-ink-soft">Joining a team: sign up with your email below. Google sign-up starts your own workspace.</p>
       ) : (
         <GoogleButton carryIntent next={nextPath ?? undefined} />
       )}
@@ -114,14 +116,14 @@ function RegisterForm() {
           ))}
         </div>
         {mode === "create" ? (
-          <div><label htmlFor="org" className="label">Team name</label><input id="org" className="input" value={f.orgName} onChange={set("orgName")} required minLength={2} /></div>
+          <div><label htmlFor="org" className="label">Team name (optional)</label><input id="org" className="input" value={f.orgName} onChange={set("orgName")} minLength={2} /></div>
         ) : (
           <div><label htmlFor="code" className="label">Team code</label><input id="code" className="input" inputMode="numeric" pattern="[0-9]{3,8}" value={f.orgCode} onChange={set("orgCode")} required /></div>
         )}
         {error && <p role="alert" className="text-sm text-alert">{error}</p>}
         <button className="btn-primary w-full" disabled={busy || !configKnown}>{busy ? "Creating…" : "Create account"}</button>
       </form>
-      <p className="mt-5 text-center text-sm text-ink-muted">Already registered? <Link href="/login" className="font-semibold text-primary">Sign in</Link></p>
+      <p className="mt-5 text-center text-sm text-ink-muted">Already registered? <Link href={signInHref(nextPath)} className="font-semibold text-primary">Sign in</Link></p>
       <LegalLinks />
     </AuthShell>
   );

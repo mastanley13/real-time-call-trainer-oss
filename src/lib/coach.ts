@@ -613,8 +613,9 @@ async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptio
   const rubric = normalizeWeights(scenario.rubric);
   const steps = talkTrackSteps(scenario.callScript);
   const { system, user } = buildPrompt(scenario, spoken, steps, rubric, opts);
+  // 1000 leaves headroom for reasoning tokens from current chat models plus the JSON cue payload.
   const text = await withTimeout(
-    chat([{ role: "system", content: system }, { role: "user", content: user }], { json: true, maxTokens: 700, temperature: 0.2 }),
+    chat([{ role: "system", content: system }, { role: "user", content: user }], { json: true, maxTokens: 1000, temperature: 0.2 }),
     LLM_TIMEOUT_MS,
   );
   const out = LlmCoachOutput.parse(extractJson(text));

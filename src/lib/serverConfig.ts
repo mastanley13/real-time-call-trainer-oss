@@ -63,9 +63,9 @@ export function elevenLabsAgentFor(engine: "premium" | "standard", env: Env = pr
 
 /**
  * Runtime capability flags. Everything is optional; the UI degrades gracefully. /api/config returns this object
- * unauthenticated, so it carries booleans and provider names only. Model ids (LLM_MODEL and the REALTIME_MODEL
- * variables) stay on the server: read them with llmModel() and voiceModelFor() (src/lib/voiceTierServer.ts) where a
- * provider request needs them.
+ * unauthenticated, so it carries booleans and provider names only. Model ids (LLM_MODEL, LLM_MODEL_GRADING and the
+ * REALTIME_MODEL variables) stay on the server: read them with llmModel(), llmGradingModel() and voiceModelFor()
+ * (src/lib/voiceTierServer.ts) where a provider request needs them.
  */
 export function getCapabilities() {
   const elevenlabs = Boolean(process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_AGENT_ID);
@@ -148,8 +148,14 @@ export function cronAuthorized(authorization: string | null | undefined, secret:
   return safeEqual(auth.slice(7).trim(), want);
 }
 
+/** Live coach, text simulation and other per-turn chat. Default gpt-6-luna. */
 export function llmModel(): string {
-  return process.env.LLM_MODEL || "gpt-4.1-mini";
+  return process.env.LLM_MODEL || "gpt-6-luna";
+}
+
+/** Final grading and scoring. LLM_MODEL_GRADING, or LLM_MODEL when that is unset. */
+export function llmGradingModel(): string {
+  return process.env.LLM_MODEL_GRADING || llmModel();
 }
 
 export function llmBaseUrl(): string {

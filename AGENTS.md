@@ -84,11 +84,12 @@ src/lib/
   gradable.ts                     Grader turn/char caps, cap note, and who may re-grade (pure, client-safe)
   debrief.ts                      retryPoint and nextDrill (pure)
   scriptedCaller.ts               No-key caller replies driven by a pack's sampleReplies
-  llm.ts                          OpenAI-compatible chat client (LLM_API_KEY, LLM_BASE_URL, LLM_MODEL)
+  llm.ts                          OpenAI-compatible chat client (LLM_API_KEY, LLM_BASE_URL, LLM_MODEL; opts.model for grading via LLM_MODEL_GRADING)
   openaiKeys.ts                   OpenAI key slots and quota failover (server-only); openaiHost.ts has the exact-host check
   sessionStore.ts, scenarioStore.ts    Client-side persistence (API when signed in, localStorage in demo)
   serverConfig.ts                 Capability flags; the only place that reads provider env vars for the UI
   apiAuth.ts, auth.ts, mfa.ts     requireAuth, JWT sessions, bcrypt, TOTP
+  passwordReset.ts, mailer.ts     Stateless HMAC reset tokens (server-only); Resend email or console log. passwordRules.ts is shared
   rateLimit.ts                    clientIp (TRUSTED_PROXY_HOPS), IP_LIMITS, USER_LIMITS, body and transcript caps
   access.ts + src/proxy.ts        Optional TRAINER_ACCESS_CODE gate
   realtime.ts                     OpenAI Realtime helpers shared by server and client (see Secrets below)
