@@ -10,6 +10,7 @@ import {
 } from "./openaiKeys";
 import { llmOutcomeFromStatus, recordLlmOutcome, refineLlmOutcome, type LlmOutcome } from "./llmStatus";
 import { llmBaseUrl, llmModel } from "./serverConfig";
+import { isOpenAiBaseUrl } from "./openaiHost";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -54,7 +55,8 @@ export async function chatFull(
           model: llmModel(),
           messages,
           ...(withTemperature ? { temperature: opts.temperature ?? 0.4 } : {}),
-          max_tokens: opts.maxTokens ?? 1800,
+          // OpenAI GPT-5+/6 models reject max_tokens and need max_completion_tokens; other hosts keep max_tokens.
+          ...(isOpenAiBaseUrl(base) ? { max_completion_tokens: opts.maxTokens ?? 1800 } : { max_tokens: opts.maxTokens ?? 1800 }),
           ...(sendJsonFormat ? { response_format: { type: "json_object" } } : {}),
         }),
         signal: AbortSignal.timeout(60_000),
