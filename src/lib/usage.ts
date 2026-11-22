@@ -495,11 +495,22 @@ type OpenSession = TrainerSession;
 
 /**
  * When billing starts: the client's "connected" heartbeat, but never later than the mint time plus
- * MAX_CONNECT_LAG_SECONDS. A client that withholds "connected" is billed from the cutoff instead of for nothing.
+ * MAX_CONNECT_LAG_SECONDS. A client that heartbeats without ever saying "connected" is billed from the cutoff.
+ * Only applies to a call that proved it connected (provedConnected); the cutoff is never proof on its own.
  */
 function billingStart(s: Pick<OpenSession, "createdAt" | "connectedAt">): Date {
   const cutoff = s.createdAt.getTime() + MAX_CONNECT_LAG_SECONDS * 1000;
   return new Date(s.connectedAt ? Math.min(s.connectedAt.getTime(), cutoff) : cutoff);
+}
+
+/**
+ * A metered voice call connected only when the server recorded it: the client's "connected" heartbeat (connectedAt) or
+ * any heartbeat at all (the client sends heartbeats only once the call is connected, see src/lib/callMeter.ts).
+ * A call's age is never proof: a session that merely outlived the connect cutoff did not connect. A row without an
+ * allowance (a text or unmetered save) is never a metered call, whatever its timestamps say.
+ */
+export function provedConnected(s: Pick<OpenSession, "allowanceId" | "connectedAt" | "lastHeartbeatAt">): boolean {
+  return !!s.allowanceId && (!!s.connectedAt || !!s.lastHeartbeatAt);
 }
 
 /**
@@ -616,12 +627,13 @@ function endedAtFor(s: OpenSession, reason: CallEndReasonId, now: Date, start: D
   return new Date(Math.max(end, start.getTime()));
 }
 
-/** The allowance a call is charged to, and whether it is still the period the call started in. */
+/**
+ * The allowance a call is charged to, and whether it is still the period the call started in. Only the allowance the
+ * call reserved against at mint: a row with no allowanceId (a text or unmetered save) is never charged to anything,
+ * least of all to whatever allowance the user resolves to today.
+ */
 async function chargeTarget(tx: Tx, s: OpenSession, now: Date): Promise<{ allowance: UsageAllowance; samePeriod: boolean; remaining: number; call: OpenSession } | null> {
-  if (!s.allowanceId) {
-    const r = await resolveAllowance(tx, s.userId, now);
-    return r ? { allowance: r.allowance, samePeriod: true, remaining: r.remaining, call: s } : null;
-  }
+  if (!s.allowanceId) return null;
   const allowance = await ensureAllowanceById(tx, s.allowanceId, now);
   if (!allowance) return null;
   const samePeriod = !s.allowancePeriodStart || s.allowancePeriodStart.getTime() === allowance.periodStart.getTime();
@@ -653,8 +665,11 @@ const DROP_REASONS: CallEndReasonId[] = ["network_drop", "provider_error", "serv
 /** End reasons that use up the daily free allowance (DAILY_DROP_CREDIT_CAP) when they bill 0 minutes. */
 const UNCHARGED_REASONS: CallEndReasonId[] = [...DROP_REASONS, "failed_connect"];
 
-/** `serverMintFailure`: set only by the mint routes, never from a request body (see /api/usage/end's reason enum). */
-interface SettleOpts { serverMintFailure?: boolean }
+/**
+ * `serverMintFailure`: set only by the mint routes, never from a request body (see /api/usage/end's reason enum).
+ * `staleClose`: set only by settleStale, for a call nobody reported the end of. Neither can come from a client.
+ */
+interface SettleOpts { serverMintFailure?: boolean; staleClose?: boolean }
 
 async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId, now: Date, opts: SettleOpts = {}): Promise<CallResult | null> {
   const target = await chargeTarget(tx, original, now);
@@ -664,9 +679,9 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
 
   const start = billingStart(s);
   const naturalEnd = endedAtFor(s, requested, now, start);
-  // Connected means the client said so, or the call outlived the connect cutoff and so must have run.
-  // A mint the server itself failed never connected, however long the provider took to fail: no 60 s cutoff applies.
-  const connected = !!s.connectedAt || (!opts.serverMintFailure && naturalEnd.getTime() > start.getTime());
+  // Connected means the server recorded it (connectedAt or a heartbeat). How long ago the call was minted proves
+  // nothing: a call that never reported a connection is closed as failed_connect, however old it is.
+  const connected = provedConnected(s);
   const reason: CallEndReasonId = connected ? requested : "failed_connect";
 
   // The reservation limits what a capped call (Pro, Team) is billed. A Free call is billed for every minute it ran.
@@ -685,10 +700,12 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   // Only a call that could still go uncharged needs the 24 hour count. The user row is locked first, so two of this
   // user's calls settle one after the other and the second sees the first one's credit. An uncharged call is a drop
   // reason or a never-connected call (failed_connect) with 0 billed minutes, zero-second calls included: every other
-  // client-reported failure bills at least 1. A mint failure the server itself reports is not the client's doing: it
-  // skips the count, so it is never charged. Nothing stored marks such a row, so later calls still count it.
+  // client-reported failure bills at least 1. A never-connected call the server closes itself (a mint it failed, or a
+  // stale call nobody ended) is not a client report: it skips the count, so it always bills 0. Nothing stored marks
+  // such a row, so later client-reported failed connects still count it toward DAILY_DROP_CREDIT_CAP.
   let recentCreditedDrops = 0;
-  const neverConnected = !connected && !opts.serverMintFailure;
+  const serverClosed = !!opts.serverMintFailure || !!opts.staleClose;
+  const neverConnected = !connected && !serverClosed;
   if (neverConnected || (connected && !heartbeatSeen && DROP_REASONS.includes(reason))) {
     await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${s.userId} FOR UPDATE`;
     recentCreditedDrops = await tx.trainerSession.count({
@@ -835,19 +852,139 @@ export async function endCall(userId: string, callId: string, reason: CallEndRea
 }
 
 /**
- * Settles this user's calls that nobody ended: no heartbeat at all within the 15 minute connect window,
- * or silent for more than 30 seconds after the last one (rule 3). Runs lazily before a cap check or a usage read.
- * These calls are billed as if they ran until now, up to their reservation: the server cannot see the
- * provider connection, so silence is not treated as proof the call stopped.
+ * Settles this user's metered voice calls that nobody ended. Runs lazily before a cap check or a usage read.
+ * Only rows with an allowance are looked at: a text or unmetered save is never selected, closed or billed here.
+ *
+ * - A call that proved it connected (provedConnected) and then went silent for more than 30 seconds after its last
+ *   heartbeat (rule 3) is settled as heartbeat_timeout and billed as if it ran until now, up to its reservation: the
+ *   server cannot see the provider connection, so silence is not treated as proof the call stopped.
+ * - A call that never reported a connection within the 15 minute connect window is closed as failed_connect: 0 seconds,
+ *   0 minutes, and its reservation released. It is never billed for its age.
  */
 export async function settleStale(tx: Tx, userId: string, now: Date): Promise<void> {
-  const open = await tx.trainerSession.findMany({ where: { userId, endedAt: null } });
-  for (const s of open) {
-    const silent = s.lastHeartbeatAt
-      ? now.getTime() - s.lastHeartbeatAt.getTime() > HEARTBEAT_TIMEOUT_SECONDS * 1000
-      : now.getTime() - s.createdAt.getTime() > CONNECT_WINDOW_SECONDS * 1000;
-    if (silent) await settle(tx, s, "heartbeat_timeout", now);
-  }
+  const open = await tx.trainerSession.findMany({ where: { userId, endedAt: null, allowanceId: { not: null } } });
+  for (const s of open) await settleIfStale(tx, s, now);
+}
+
+/** One open metered call: settled when stale (see settleStale), left alone otherwise. The settlement when this closed it. */
+async function settleIfStale(tx: Tx, s: OpenSession, now: Date): Promise<CallResult | null> {
+  if (!s.allowanceId || s.endedAt) return null;
+  const silent = s.lastHeartbeatAt
+    ? now.getTime() - s.lastHeartbeatAt.getTime() > HEARTBEAT_TIMEOUT_SECONDS * 1000
+    : now.getTime() - s.createdAt.getTime() > CONNECT_WINDOW_SECONDS * 1000;
+  if (!silent) return null;
+  return settle(tx, s, provedConnected(s) ? "heartbeat_timeout" : "failed_connect", now, { staleClose: true });
+}
+
+// ---- One-off repairs (scripts/usage-repair-text-billing.ts) -----------------------------------
+
+/** The ticket every repair entry and audit event names. */
+export const TEXT_BILLING_TICKET = "SAL-1018";
+
+export type TextBillingRefundError =
+  | "entry_not_found" | "not_voice_call" | "no_session" | "user_mismatch" | "metered_session" | "already_credited" | "nothing_to_credit" | "allowance_not_found";
+
+export type TextBillingRefundPlan =
+  | { ok: true; entryId: string; userId: string; allowanceId: string; trainerSessionId: string; minutes: number }
+  | { ok: false; entryId: string; error: TextBillingRefundError };
+
+/**
+ * Read only. Whether a voice_call ledger entry was charged to a text (unmetered) session and can be credited back:
+ * the entry exists and is a voice_call, its session still exists with no allowance, and that session has no
+ * credit_manual entry yet. The ledger allows one entry per kind per session (UsageEntry @@unique), so the refund's
+ * credit_manual entry is keyed by the same session and a second run finds it and stops.
+ */
+async function planTextBillingRefundIn(tx: Tx, entryId: string): Promise<TextBillingRefundPlan> {
+  const entry = await tx.usageEntry.findUnique({ where: { id: entryId } });
+  if (!entry) return { ok: false, entryId, error: "entry_not_found" };
+  if (entry.kind !== "voice_call") return { ok: false, entryId, error: "not_voice_call" };
+  if (!entry.trainerSessionId) return { ok: false, entryId, error: "no_session" };
+  const s = await tx.trainerSession.findUnique({ where: { id: entry.trainerSessionId } });
+  if (!s) return { ok: false, entryId, error: "no_session" };
+  if (s.userId !== entry.userId) return { ok: false, entryId, error: "user_mismatch" };
+  if (s.allowanceId) return { ok: false, entryId, error: "metered_session" };
+  const credited = await tx.usageEntry.findMany({ where: { trainerSessionId: s.id, kind: "credit_manual" } });
+  if (credited.length > 0) return { ok: false, entryId, error: "already_credited" };
+  if (!(entry.minutes > 0)) return { ok: false, entryId, error: "nothing_to_credit" };
+  return { ok: true, entryId, userId: entry.userId, allowanceId: entry.allowanceId, trainerSessionId: s.id, minutes: entry.minutes };
+}
+
+export async function planTextBillingRefund(entryId: string): Promise<TextBillingRefundPlan> {
+  return prisma.$transaction((tx) => planTextBillingRefundIn(tx, entryId));
+}
+
+/**
+ * Credits back a voice_call entry that a text session was wrongly billed (SAL-1018). Re-checks the plan inside the
+ * transaction, then writes a credit_manual entry for the same minutes on the allowance that was charged, keyed by the
+ * same session (so it can only happen once), lowers that allowance's minutesUsed by the same amount in the same
+ * transaction, and records an audit event whose note names the original entry and the ticket. Like a support credit,
+ * it lands in the allowance's current period.
+ */
+export async function creditTextBillingRefund(entryId: string, now = new Date()): Promise<TextBillingRefundPlan & { creditEntryId?: string }> {
+  return runMetered(async (tx) => {
+    const plan = await planTextBillingRefundIn(tx, entryId);
+    if (!plan.ok) return plan;
+    const allowance = await ensureAllowanceById(tx, plan.allowanceId, now);
+    if (!allowance) return { ok: false, entryId, error: "allowance_not_found" } as const;
+    const note = `${TEXT_BILLING_TICKET}: credit for text session ${plan.trainerSessionId} wrongly billed as a voice call (original entry ${entryId})`;
+    const credit = await tx.usageEntry.create({
+      data: { userId: plan.userId, allowanceId: allowance.id, trainerSessionId: plan.trainerSessionId, kind: "credit_manual", minutes: -plan.minutes },
+    });
+    const booked = await tx.usageAllowance.updateMany({
+      where: { id: allowance.id, periodStart: allowance.periodStart },
+      data: { minutesUsed: { decrement: plan.minutes }, version: { increment: 1 } },
+    });
+    if (booked.count === 0) throw new StaleAllowanceError();
+    await tx.auditEvent.create({
+      data: {
+        userId: null,
+        action: "usage.credit_manual",
+        resource: credit.id,
+        metadata: { targetUserId: plan.userId, minutes: plan.minutes, reason: note, ticket: TEXT_BILLING_TICKET, originalEntryId: entryId, trainerSessionId: plan.trainerSessionId, allowanceId: allowance.id },
+      },
+    });
+    return { ...plan, allowanceId: allowance.id, creditEntryId: credit.id };
+  });
+}
+
+export type NeverConnectedCloseError = "session_not_found" | "unmetered_session" | "already_ended" | "connected" | "heartbeat_seen" | "still_connecting";
+
+export type NeverConnectedClosePlan =
+  | { ok: true; callId: string; userId: string; allowanceId: string; reservedMinutes: number }
+  | { ok: false; callId: string; error: NeverConnectedCloseError };
+
+/**
+ * Read only. Whether an open voice session can be closed as never connected: it has an allowance, no connectedAt,
+ * no heartbeat, no endedAt, and its connect window is over (so it is not a call connecting right now).
+ */
+async function planNeverConnectedCloseIn(tx: Tx, callId: string, now: Date): Promise<NeverConnectedClosePlan> {
+  const s = await tx.trainerSession.findUnique({ where: { id: callId } });
+  if (!s) return { ok: false, callId, error: "session_not_found" };
+  if (!s.allowanceId) return { ok: false, callId, error: "unmetered_session" };
+  if (s.endedAt) return { ok: false, callId, error: "already_ended" };
+  if (s.connectedAt) return { ok: false, callId, error: "connected" };
+  if (s.lastHeartbeatAt) return { ok: false, callId, error: "heartbeat_seen" };
+  if (now.getTime() - s.createdAt.getTime() <= CONNECT_WINDOW_SECONDS * 1000) return { ok: false, callId, error: "still_connecting" };
+  return { ok: true, callId, userId: s.userId, allowanceId: s.allowanceId, reservedMinutes: s.reservedMinutes };
+}
+
+export async function planNeverConnectedClose(callId: string, now = new Date()): Promise<NeverConnectedClosePlan> {
+  return prisma.$transaction((tx) => planNeverConnectedCloseIn(tx, callId, now));
+}
+
+/**
+ * Closes an open voice session that never connected, through the same path settleStale uses: failed_connect,
+ * 0 seconds, 0 minutes, and its reservation released.
+ */
+export async function closeNeverConnectedCall(callId: string, now = new Date()): Promise<NeverConnectedClosePlan & { settlement?: CallResult }> {
+  return runMetered(async (tx) => {
+    const plan = await planNeverConnectedCloseIn(tx, callId, now);
+    if (!plan.ok) return plan;
+    const s = await tx.trainerSession.findUniqueOrThrow({ where: { id: callId } });
+    const settlement = await settleIfStale(tx, s, now);
+    if (!settlement) return { ok: false, callId, error: "already_ended" } as const;
+    return { ...plan, settlement };
+  });
 }
 
 // ---- Support credits and the usage summary ----------------------------------------------------

@@ -220,9 +220,10 @@ describe("billing a call", () => {
     expect(session(begun.callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0 });
     expect(entries(begun.callId)).toHaveLength(0);
     expect(allowanceOf("u-1").minutesUsed).toBe(0);
-    // The same end reported by a client is a call that ran: the flag is what waives it.
+    // A client-reported failed connect after the server recorded a heartbeat is a call that ran, billed from the cutoff.
     const second = await beginCall("u-1", scn, at(100));
     if (!second.ok) throw new Error(second.error);
+    await heartbeat("u-1", second.callId, "ok", at(130));
     expect((await endCall("u-1", second.callId, "failed_connect", at(161)))!.billedMinutes).toBe(1);
   });
 
@@ -498,7 +499,7 @@ describe("caps", () => {
     expect(again.callId).not.toBe(ok.callId);
   });
 
-  it("a mint nobody ends stays reserved through the connect window, then stale-settles as a heartbeat timeout", async () => {
+  it("a mint nobody ends stays reserved through the connect window, then closes as failed_connect with nothing billed", async () => {
     mocks.authId = "u-stale";
     addUser("u-stale");
     vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
@@ -514,8 +515,9 @@ describe("caps", () => {
     expect(allowanceOf("u-stale").minutesReserved).toBeGreaterThan(0);
 
     await usageSummary("u-stale", new Date(created.getTime() + (CONNECT_WINDOW_SECONDS + 1) * 1000));
-    expect(session(ok.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 10 });
-    expect(allowanceOf("u-stale")).toMatchObject({ minutesReserved: 0, minutesUsed: 10 });
+    expect(session(ok.callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
+    expect(allowanceOf("u-stale")).toMatchObject({ minutesReserved: 0, minutesUsed: 0 });
+    expect(entries(ok.callId)).toHaveLength(0);
   });
 
   it("13: a Pro user with 2 minutes left who talks 5 minutes is stopped at 2m and billed 2", async () => {
