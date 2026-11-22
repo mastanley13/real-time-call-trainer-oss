@@ -136,7 +136,8 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 1. Register a new team and land in the app. Sign out and back in. A wrong password shows an error.
 2. `/settings/security`: enrol TOTP MFA, sign out, and sign in with the code. A wrong code is rejected.
 3. Signed out, `/dashboard` redirects to `/login`. Sessions persist across devices.
-4. Google sign-in (needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL`, `DATABASE_URL`): `/login` and `/register` show Continue with Google. With any of the four unset there is no button and `curl -i localhost:3000/api/auth/google/start` returns 404. A new Google account lands in the app on the Free plan; an account with the same email signs in as that user; an account with MFA asks for the authenticator code. With `TRAINER_ACCESS_CODE` set and no access cookie, a new Google user is sent to `/access`. An unverified Google email shows the unverified error; an email whose account is linked to a different Google account fails; Cancel on Google's screen returns to `/login` with a cancelled message. From `/register?plan=pro&interval=year&src=pricing`, a new Google account lands on `/trainer` with the same query.
+4. Password reset: on `/login` press **Forgot password?**, enter your email and press **Send reset link**. An unknown email shows the same confirmation. Without `RESEND_API_KEY` and `MAIL_FROM` the dev server prints the email with the link to its console. Open the link, set a new password (10+ characters, both fields matching) and land on `/login` with a success notice. Sign in with the new password (an MFA account still asks for its code). Submitting a new password from the same link again shows "This reset link is invalid or has expired". A locked account is unlocked by a reset.
+5. Google sign-in (needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL`, `DATABASE_URL`): `/login` and `/register` show Continue with Google. With any of the four unset there is no button and `curl -i localhost:3000/api/auth/google/start` returns 404. A new Google account lands in the app on the Free plan; an account with the same email signs in as that user; an account with MFA asks for the authenticator code. With `TRAINER_ACCESS_CODE` set and no access cookie, a new Google user is sent to `/access`. An unverified Google email shows the unverified error; an email whose account is linked to a different Google account fails; Cancel on Google's screen returns to `/login` with a cancelled message. From `/register?plan=pro&interval=year&src=pricing`, a new Google account lands on `/trainer` with the same query.
 
 ### 15. API sanity
 1. `GET /api/config` returns capability flags and the provider name only, never a key, model id or base URL.
@@ -175,6 +176,8 @@ Every limit is a fixed window in memory, per server instance, and resets on rest
 | `/api/llm/check` (Models page) | fixed, 6 per 10 min | Press **Check connection** seven times |
 | `/api/access` | fixed, 10 per 15 min | See Access code above |
 | `/api/auth/login`, `/api/auth/register`, `/api/auth/mfa/challenge` | fixed, 10, 5 and 10 per minute | Full mode only. These answer with their own error text |
+| `/api/auth/password-reset/request` | fixed, 5 per 15 min per IP; 3 per hour per email | Full mode only. The sixth request from one IP gets 429 with `Retry-After`. Past the per-email limit the route still answers 200 with the same body but sends nothing |
+| `/api/auth/password-reset/confirm` | fixed, 10 per 15 min | Full mode only. Post eleven bad tokens: the last gets 429 with `Retry-After` |
 
 Each `_MAX` has a matching `_WINDOW_SEC`.
 

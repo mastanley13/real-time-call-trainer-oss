@@ -17,20 +17,24 @@ export default function LoginPage() {
   const [challenge, setChallenge] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [resetDone, setResetDone] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) router.replace("/trainer");
   }, [isAuthenticated, router]);
 
   // Coming back from Google: an error code in the query, or an MFA challenge in the fragment
-  // (fragments never reach a server). Read once, then clear them from the address bar.
+  // (fragments never reach a server). Coming back from a password reset: ?reset=1.
+  // Read once, then clear them from the address bar.
   useEffect(() => {
     const url = new URL(window.location.href);
     const err = url.searchParams.get("error");
     const mfa = new URLSearchParams(url.hash.slice(1)).get("mfa");
+    const reset = url.searchParams.get("reset") === "1";
     if (err) setError(GOOGLE_ERRORS[err] ?? GOOGLE_ERRORS.google_failed);
     if (mfa) setChallenge(mfa);
-    if (err || mfa) window.history.replaceState(null, "", url.pathname);
+    if (reset) setResetDone(true);
+    if (err || mfa || reset) window.history.replaceState(null, "", url.pathname);
   }, []);
 
   async function onSubmit(e: FormEvent) {
@@ -59,6 +63,9 @@ export default function LoginPage() {
           No database is configured, so accounts are unavailable. Set <code>DATABASE_URL</code>, or run with <code>DEMO_MODE=true</code> to skip login (see TESTING.md).
         </div>
       )}
+      {resetDone && !challenge && (
+        <div role="status" className="banner-ok mb-4">Your password was reset. Sign in with your new password.</div>
+      )}
       {!challenge && <GoogleButton />}
       <form onSubmit={onSubmit} className="space-y-4">
         {challenge ? (
@@ -73,7 +80,10 @@ export default function LoginPage() {
               <input id="email" type="email" className="input" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
             </div>
             <div>
-              <label htmlFor="password" className="label">Password</label>
+              <div className="mb-1.5 flex items-baseline justify-between gap-3">
+                <label htmlFor="password" className="label mb-0">Password</label>
+                <Link href="/forgot-password" className="text-xs font-semibold text-primary">Forgot password?</Link>
+              </div>
               <input id="password" type="password" className="input" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
             </div>
           </>
