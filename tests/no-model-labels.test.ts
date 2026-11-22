@@ -23,7 +23,7 @@ import Home from "@/app/page";
 
 /** Model id families: OpenAI chat, realtime, transcription and speech, reasoning, Gemini, ElevenLabs and Claude. */
 const MODEL_ID_RE =
-  /\b(?:[Gg][Pp][Tt]-(?:5|4\.1|4o|realtime|live)[\w.-]*|o[34](?:-[\w-]+)?|whisper-1|tts-1(?:-hd)?|gemini-[\w.-]+|eleven_\w+|claude-[\w.-]+)\b/;
+  /\b(?:[Gg][Pp][Tt]-(?:6|5|4\.1|4o|realtime|live)[\w.-]*|o[34](?:-[\w-]+)?|whisper-1|tts-1(?:-hd)?|gemini-[\w.-]+|eleven_\w+|claude-[\w.-]+)\b/;
 
 /**
  * Backend defaults that must stay: they are sent to providers, never rendered or returned. Exact files, no globs.
@@ -52,7 +52,7 @@ const hitsOf = (re: RegExp, files: string[]) =>
 
 describe("model id pattern", () => {
   it.each([
-    "gpt-5", "gpt-5-mini", "gpt-5.1", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "gpt-4o-mini-transcribe",
+    "gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra", "gpt-5", "gpt-5-mini", "gpt-5.1", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "gpt-4o-mini-transcribe",
     "gpt-realtime", "gpt-realtime-1.5", "gpt-realtime-mini", "GPT-4o", "o3", "o3-mini", "o4-mini", "whisper-1", "tts-1", "tts-1-hd",
     "gemini-2.5-flash", "gemini-pro", "eleven_turbo_v2_5", "eleven_multilingual_v2", "claude-sonnet-4-5", "claude-3-5-haiku",
   ])("catches %s", (id) => {
@@ -60,7 +60,7 @@ describe("model id pattern", () => {
     expect(`"${id}"`).toMatch(MODEL_ID_RE);
   });
 
-  it.each(["OpenAI Realtime", "ElevenLabs voice agent", "AI model", "Your chat model", "LLM_MODEL", "REALTIME_MODEL", "Text · AI", "Coach: AI", "video", "photo3"])(
+  it.each(["OpenAI Realtime", "ElevenLabs voice agent", "AI model", "Your chat model", "LLM_MODEL", "LLM_MODEL_GRADING", "REALTIME_MODEL", "Text · AI", "Coach: AI", "video", "photo3"])(
     "leaves %s alone",
     (text) => expect(text).not.toMatch(MODEL_ID_RE),
   );
@@ -115,7 +115,10 @@ describe("no model ids in user-facing source", () => {
 
   it("reads the configured model only where a provider request or the server-side audit log needs it", () => {
     const users = files.filter((f) => /\bllmModel\(\)/.test(readFileSync(join(ROOT, f), "utf8")));
-    expect(users.sort()).toEqual(["src/app/api/llm/check/route.ts", "src/app/api/transcripts/[id]/route.ts", "src/lib/llm.ts", "src/lib/serverConfig.ts"]);
+    expect(users.sort()).toEqual(["src/app/api/llm/check/route.ts", "src/lib/llm.ts", "src/lib/serverConfig.ts"]);
+    const grading = files.filter((f) => /\bllmGradingModel\(\)/.test(readFileSync(join(ROOT, f), "utf8")));
+    expect(grading.sort()).toEqual(["src/app/api/transcripts/[id]/route.ts", "src/lib/grader.ts", "src/lib/serverConfig.ts"]);
+
   });
 });
 
@@ -132,7 +135,7 @@ describe("landing page", () => {
 const ENV = {
   DEMO_MODE: "", DATABASE_URL: "", STRIPE_SECRET_KEY: "", VOICE_ENGINE: "", OPENAI_REALTIME_API_KEY: "",
   LLM_BASE_URL: "", LLM_API_KEY: "", OPENAI_API_KEY: "", ELEVENLABS_API_KEY: "", ELEVENLABS_AGENT_ID: "",
-  LLM_MODEL: "", REALTIME_MODEL: "", REALTIME_MODEL_STANDARD: "", REALTIME_MODEL_PREMIUM: "", REALTIME_TRANSCRIBE_MODEL: "",
+  LLM_MODEL: "", LLM_MODEL_GRADING: "", REALTIME_MODEL: "", REALTIME_MODEL_STANDARD: "", REALTIME_MODEL_PREMIUM: "", REALTIME_TRANSCRIBE_MODEL: "",
   REALTIME_VOICE: "", JWT_SECRET: "",
 };
 const stubEnv = (env: Partial<Record<keyof typeof ENV, string>>) => {
@@ -160,7 +163,7 @@ describe("GET /api/config (unauthenticated JSON)", () => {
 
   it("reports booleans and provider names, never the chat or realtime model ids", async () => {
     stubEnv({
-      LLM_API_KEY: "sk-llm-test", OPENAI_API_KEY: "sk-openai-test", LLM_MODEL: "gpt-4.1-mini",
+      LLM_API_KEY: "sk-llm-test", OPENAI_API_KEY: "sk-openai-test", LLM_MODEL: "gpt-6-luna", LLM_MODEL_GRADING: "gpt-6.2-sol",
       REALTIME_MODEL: "gpt-realtime-1.5", REALTIME_MODEL_STANDARD: "gpt-realtime-mini", REALTIME_MODEL_PREMIUM: "gpt-realtime-premium-test",
       REALTIME_TRANSCRIBE_MODEL: "gpt-4o-mini-transcribe",
       ELEVENLABS_API_KEY: "el-test", ELEVENLABS_AGENT_ID: "agent-test",
@@ -253,7 +256,7 @@ describe("POST /api/llm/check (response JSON and logs)", () => {
     return fn;
   };
   // A model id from a known family, and a private name the pattern can't know about.
-  const MODELS = ["gpt-4.1-mini", "acme-private-chat-9"];
+  const MODELS = ["gpt-6-luna", "acme-private-chat-9"];
 
   it.each(MODELS)("success with %s: the model goes upstream, the echoed model id does not come back", async (model) => {
     stubEnv({ LLM_API_KEY: "k-test", LLM_MODEL: model });
