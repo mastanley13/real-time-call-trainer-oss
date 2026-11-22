@@ -67,7 +67,7 @@ describe("login page source", () => {
     expect(effect, "Google-return effect not found").toBeTruthy();
     expect(effect).toContain('const keepNext = validNextPath(url.searchParams.get("next"));');
     expect(effect).toContain(
-      'if (err || mfa) window.history.replaceState(null, "", keepNext ? `${url.pathname}?next=${encodeURIComponent(keepNext)}` : url.pathname);',
+      'if (err || mfa || reset) window.history.replaceState(null, "", keepNext ? `${url.pathname}?next=${encodeURIComponent(keepNext)}` : url.pathname);',
     );
     // Only that one replaceState, and nothing else from the old query or the hash is copied into the URL.
     expect(effect!.match(/replaceState\(/g)).toHaveLength(1);
