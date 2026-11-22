@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db";
 import { clientIp, ipLimitResponse, rateLimit, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema } from "@/lib/scenarios";
 import { LIBRARY } from "@/lib/personas";
-import { evaluateCall } from "@/lib/grader";
+import { evaluateCall, gradingFailureCode } from "@/lib/grader";
 import type { Evaluation } from "@/lib/grader-types";
 import { canRegrade, gradable, gradedNote, isAiGrade, withoutModelId } from "@/lib/gradable";
 import { getCapabilities, llmKey, llmModel } from "@/lib/serverConfig";
@@ -125,11 +125,13 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   try {
     evaluation = await evaluateCall(scenario, graded);
   } catch (error) {
-    console.error("[/api/transcripts/[id]] regrade error:", error);
+    console.error("[/api/transcripts/[id]] regrade error:", gradingFailureCode(error));
     return fail(500, "Failed to evaluate call", "Grading failed on the server. Try again in a minute.");
   }
   // evaluateCall falls back to the rules-based grader when the model call fails; never replace a stored grade with that.
   if (evaluation.method !== "llm") {
+    // The failure code is on the "[grader]" line and the provider status, type and code on "[llm] provider error".
+    console.warn("[/api/transcripts/[id]] regrade: AI grading failed; stored grade unchanged");
     return fail(502, "llm_failed", "AI grading didn't work this time, so the grade wasn't changed. Try again in a minute, or run Check connection in Settings, Models.");
   }
 

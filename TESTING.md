@@ -140,7 +140,7 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 
 ### 15. API sanity
 1. `GET /api/config` returns capability flags and the provider name only, never a key, model id or base URL.
-2. `GET /api/health` reports each dependency.
+2. `GET /api/health` reports each dependency. `checks.llm` is `not_configured` with no key, `configured_unverified` until this instance has made a model call, then `ok`, `error_auth`, `error_quota` or `error` from the last real call, with its time in `checks.llmLastCallAt` (`none` before the first). A rejected key (401) shows `error_auth` after the next grade, coach turn or text reply, or after the Models page connection check. `checks.llm` never changes `ok` or the status code.
 3. **Grade seal** (full mode): grade a call with `POST /api/evaluate-call`, then save it with `POST /api/transcripts`, sending the same transcript, the response minus its `seal` as `evaluation`, and the `seal` beside it. That saves with `"graded": true`. Change `overallScore` and save again: it saves with `"graded": false` and no score.
 
 ## Run a scenario end to end

@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/apiAuth";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
-import { chatKeyPlan, classifyOpenAiResponse, withOpenAiKeyFailover } from "@/lib/openaiKeys";
+import { settleFailedResponse } from "@/lib/llm";
+import { chatKeyPlan, classifyOpenAiResponseDetail, withOpenAiKeyFailover } from "@/lib/openaiKeys";
+import { recordLlmOutcome } from "@/lib/llmStatus";
 import { llmBaseUrl, llmModel } from "@/lib/serverConfig";
 import { CHECK_TIMEOUT_MS, checkHint, type CheckFailure, type LlmCheckResult } from "../hints";
 
@@ -64,16 +66,22 @@ export async function POST(req: NextRequest) {
   };
 
   try {
-    let sent: Awaited<ReturnType<typeof send>>;
+    type Sent = Awaited<ReturnType<typeof send>> & { text?: string };
+    let sent: Sent;
+    // Set only when an attempt in this call actually got a quota answer, not when every slot was already cooling down.
+    let sawQuota = false;
     if (plan.kind === "single") {
       sent = await send(plan.key, false);
     } else {
-      const r = await withOpenAiKeyFailover("check", async (key) => {
+      const r = await withOpenAiKeyFailover<Sent>("check", async (key) => {
         const s = await send(key, true);
         if (s.res.ok) return { outcome: "ok", value: s };
-        return { outcome: await classifyOpenAiResponse(url, s.res), status: s.res.status, value: s };
+        const c = await classifyOpenAiResponseDetail(url, s.res);
+        if (c.outcome === "quota") sawQuota = true;
+        return { outcome: c.outcome, status: s.res.status, value: { ...s, text: c.text } };
       });
       if (r.kind === "exhausted") {
+        if (sawQuota) recordLlmOutcome("quota");
         console.warn("[llm/check] all OpenAI key slots out of quota");
         return result({ ok: false, latencyMs: r.last?.latencyMs ?? null, status: r.status }, "quota_exhausted");
       }
@@ -81,17 +89,22 @@ export async function POST(req: NextRequest) {
     }
     const { res, latencyMs } = sent;
     if (!res.ok) {
+      // Never waits on a new read: a 429 body the classifier didn't read is read detached (bounded) to tell quota from a rate limit.
+      settleFailedResponse(res, sent.text, { log: false, readBody: res.status === 429 });
+      // Rejects harmlessly when the detached read already holds the body's reader; that read cancels the body itself.
       await res.body?.cancel().catch(() => {});
       console.warn("[llm/check] provider status", res.status);
       return result({ ok: false, latencyMs, status: res.status }, "http");
     }
     const data = await res.json().catch(() => null);
     const shaped = Array.isArray((data as { choices?: unknown } | null)?.choices);
+    recordLlmOutcome(shaped ? "ok" : "error");
     return result({ ok: shaped, latencyMs, status: res.status }, shaped ? undefined : "bad_response");
   } catch (e) {
     // AbortSignal.timeout rejects with a DOMException named TimeoutError; read the name without relying on instanceof.
     const name = (e as { name?: unknown } | null)?.name;
     const timedOut = name === "TimeoutError" || name === "AbortError";
+    recordLlmOutcome("error");
     console.warn("[llm/check]", timedOut ? "timeout" : "network error");
     return result({ ok: false, latencyMs: null, status: null }, timedOut ? "timeout" : "network");
   }
