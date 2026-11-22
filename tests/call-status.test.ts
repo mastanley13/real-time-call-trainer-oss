@@ -246,25 +246,39 @@ describe("a failed connect on a retry with prior turns (SAL-1039 round 3)", () =
   it("back on the briefing, a connect failure offers Retry voice and Switch to text even with a retry seed", () => {
     const briefing = src("src/components/call/Briefing.tsx");
     // The actions depend on the connect-failure flag and Voice mode, never on retryFrom, the transcript or the message text.
-    expect(briefing).toContain('{error && connectFailed && mode === "voice" && !(outOfMinutes && isCapMessage(error)) && (');
+    expect(briefing).toContain('{error && connectFailed && mode === "voice" && (!isCapMessage(error) || !textSwitchShown) && (');
     expect(briefing).not.toContain("CONNECT_TIMEOUT_MESSAGE");
   });
 
   it("a cap refusal before connect gets only Switch to text, next to the existing Upgrade link or admin note", () => {
     const briefing = src("src/components/call/Briefing.tsx");
     const block = briefing.slice(briefing.indexOf('{error && connectFailed && mode === "voice"'), briefing.indexOf("Minutes near Start"));
-    // Retry voice is the only conditional button, and its condition is "not a cap refusal".
+    // Retry voice is hidden only for a cap refusal.
     expect(block).toMatch(/\{!isCapMessage\(error\) && \(\s*<button[^>]*onClick=\{onStart\}[^>]*>\s*<RotateCcw[^>]*\/>Retry voice\s*<\/button>\s*\)\}/);
-    // Switch to text is unconditional inside the block, so the cap refusal still gets it.
-    expect(block).toMatch(/\)\}\s*<button type="button" className="btn-ghost btn-sm" onClick=\{\(\) => onModeChange\("text"\)\}>/);
+    // Switch to text does not depend on the cap refusal, only on whether another switch button is already showing.
+    expect(block).toMatch(/\{!textSwitchShown && \(\s*<button type="button" className="btn-ghost btn-sm" onClick=\{switchToText\}>/);
     // The Upgrade link and admin note stay in CallError, which still renders for the cap refusal.
     expect(briefing).toContain("{error && !(outOfMinutes && isCapMessage(error)) && <CallError message={error} canUpgrade={canUpgrade} />}");
   });
 
-  it("the error offers Retry voice and Switch to text", () => {
+  it("the error offers Retry voice and Switch to text, through the same switch handler as main's buttons", () => {
     const briefing = src("src/components/call/Briefing.tsx");
     expect(briefing).toMatch(/onClick=\{onStart\}[^>]*>\s*<RotateCcw[^>]*\/>Retry voice/);
-    expect(briefing).toMatch(/onClick=\{\(\) => onModeChange\("text"\)\}>\s*<Keyboard[^>]*\/>Switch to text/);
+    expect(briefing).toMatch(/onClick=\{switchToText\}>\s*<Keyboard[^>]*\/>Switch to text/);
+    expect(briefing).not.toContain('onModeChange("text")}>');
+  });
+
+  it("never shows two Switch to text buttons: ours hides exactly when VoiceUnavailable or the out-of-minutes button shows", () => {
+    const briefing = src("src/components/call/Briefing.tsx");
+    expect(briefing).toContain("const textSwitchShown = voiceLookupFailed || outOfMinutes;");
+    expect(briefing).toContain("{voiceLookupFailed && <VoiceUnavailable onUseText={switchToText} />}");
+    expect(briefing).toMatch(/\{outOfMinutes && !voiceLookupFailed && <button[^>]*onClick=\{switchToText\}>Switch to text practice<\/button>\}/);
+  });
+
+  it("the merge keeps main's chooseMode and onUseText next to connectFailed, with no conflict markers", () => {
+    const trainer = src("src/components/TrainerClient.tsx");
+    expect(trainer).toMatch(/<Briefing [^>]*onModeChange=\{chooseMode\} onUseText=\{\(\) => setMode\("text"\)\}[^>]*connectFailed=\{!!error && error === connectFailedError\}/);
+    for (const p of ["src/components/TrainerClient.tsx", "src/components/call/Briefing.tsx"]) expect(src(p)).not.toMatch(/^(<{7}|={7}|>{7})( |$)/m);
   });
 });
 

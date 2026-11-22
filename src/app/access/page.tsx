@@ -47,7 +47,7 @@ export default function AccessPage() {
   }
 
   return (
-    <AuthShell title="Enter access code" subtitle="This trainer is invite-only. Enter the code you were given.">
+    <AuthShell title="Enter access code" subtitle="Enter your access code to continue.">
       {invited && (
         <div className="banner-warn mb-4">New accounts need the access code. Enter it, then choose Continue with Google again.</div>
       )}

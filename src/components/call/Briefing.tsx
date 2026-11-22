@@ -33,6 +33,13 @@ function Lamp({ state, label, detail }: { state: "ok" | "caution" | "off"; label
   );
 }
 
+/**
+ * Offset and padding for the phone Start call bar. /trainer is signed-in only, so below md the fixed bottom tab bar
+ * (MobileTabBar: 56 px plus the safe-area inset) is always on screen. A bar at bottom: 0 would sit under it, so this one
+ * sticks right above it: 3.5rem plus env(safe-area-inset-bottom). The tab bar already pads the home indicator area.
+ */
+export const STICKY_START_BAR = "bottom-[calc(3.5rem+env(safe-area-inset-bottom))] pb-3";
+
 type MicResult = "ok" | "quiet" | "blocked";
 const CALL_MODES = ["voice", "text"] as const;
 const MIC_TEST_MS = 5000;
@@ -156,7 +163,7 @@ export function VoiceChoiceField({ premium, usage, value, onChange }: { premium:
   );
 }
 
-export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, connectFailed = false, notice, usage, canUpgrade = true, usageUnavailable, premium, voiceChoice = "premium", onVoiceChoiceChange }: {
+export default function Briefing({ scenario, capabilities, mode, onModeChange, onUseText, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, connectFailed = false, notice, usage, canUpgrade = true, usageUnavailable, premium, voiceChoice = "premium", onVoiceChoiceChange }: {
   /** Premium minutes left, or the locked Add Premium voice / Ask your admin state. Null when not metered. */
   premium?: PremiumSnapshot | null;
   /** Standard or Premium for this call, shown only when Premium can run (premiumChoiceAvailable). */
@@ -166,6 +173,8 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
   capabilities: Capabilities;
   mode: "voice" | "text";
   onModeChange: (m: "voice" | "text") => void;
+  /** Switch to Text because voice cannot run now (no minutes, lookup failed). Not a saved preference. Defaults to onModeChange. */
+  onUseText?: () => void;
   /** Chosen voice engine; null when the server has none. */
   engine: VoiceEngine | null;
   onEngineChange: (e: VoiceEngine) => void;
@@ -197,10 +206,22 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
   const voiceReady = !!engine && engines.includes(engine);
   const blocked = mode === "voice" && !voiceReady;
   const voiceLookupFailed = mode === "voice" && !!usageUnavailable;
+  const switchToText = onUseText ?? (() => onModeChange("text"));
   const outOfMinutes = mode === "voice" && !!usage && usage.remaining <= 0;
+  /** VoiceUnavailable or the out-of-minutes button already offers switchToText, so a connect failure adds no second one. */
+  const textSwitchShown = voiceLookupFailed || outOfMinutes;
   const voiceDetail = !voiceReady ? "Voice isn't configured on this server."
     : engine === "openai" ? "OpenAI Realtime over WebRTC. Your browser asks for the mic when the call starts."
     : "ElevenLabs Agents over WebRTC. Your browser asks for the mic when the call starts.";
+  // Rendered once in the card (sm and up) and once in the phone sticky bar; only one is displayed at any width, so the
+  // hidden copy is out of the accessibility tree and the describedby targets stay unique in practice.
+  const startButton = (
+    /* A disabled Start always has a visible reason, and aria-describedby points the button at it. */
+    <button className="btn-primary btn-xl w-full" onClick={onStart} disabled={blocked || voiceLookupFailed || outOfMinutes}
+      aria-describedby={voiceLookupFailed ? VOICE_UNAVAILABLE_ID : outOfMinutes ? "minutes-out" : blocked ? "voice-blocked-reason" : undefined}>
+      <PhoneCall size={18} aria-hidden /> Start call
+    </button>
+  );
 
   return (
     <div className="page enter">
@@ -345,18 +366,20 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
             {/* A cap refusal while the usage panel shows no minutes left is not repeated: the panel has the count, the reset date and the right Upgrade link. */}
             {error && !(outOfMinutes && isCapMessage(error)) && <CallError message={error} canUpgrade={canUpgrade} />}
             {/* The mic or the line never connected: offer the two ways forward right under the error. */}
-            {/* A cap refusal would refuse again, so it gets only Switch to text next to its Upgrade link or admin note
-                (and nothing here once the usage panel shows its own Switch to text practice button). */}
-            {error && connectFailed && mode === "voice" && !(outOfMinutes && isCapMessage(error)) && (
+            {/* A cap refusal would refuse again, so it gets only Switch to text next to its Upgrade link or admin note.
+                Switch to text is left out when a button below already offers it. */}
+            {error && connectFailed && mode === "voice" && (!isCapMessage(error) || !textSwitchShown) && (
               <div className="flex flex-wrap gap-2">
                 {!isCapMessage(error) && (
                   <button type="button" className="btn-primary btn-sm" onClick={onStart} disabled={blocked || voiceLookupFailed || outOfMinutes}>
                     <RotateCcw size={14} strokeWidth={1.75} aria-hidden />Retry voice
                   </button>
                 )}
-                <button type="button" className="btn-ghost btn-sm" onClick={() => onModeChange("text")}>
-                  <Keyboard size={14} strokeWidth={1.75} aria-hidden />Switch to text
-                </button>
+                {!textSwitchShown && (
+                  <button type="button" className="btn-ghost btn-sm" onClick={switchToText}>
+                    <Keyboard size={14} strokeWidth={1.75} aria-hidden />Switch to text
+                  </button>
+                )}
               </div>
             )}
 
@@ -367,18 +390,20 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
               <VoiceChoiceField premium={premium} usage={usage ?? null} value={voiceChoice} onChange={onVoiceChoiceChange} />
             )}
 
-            {voiceLookupFailed && <VoiceUnavailable onUseText={() => onModeChange("text")} />}
-            {outOfMinutes && !voiceLookupFailed && <button type="button" className="btn-ghost btn-sm w-full" onClick={() => onModeChange("text")}>Switch to text practice</button>}
+            {voiceLookupFailed && <VoiceUnavailable onUseText={switchToText} />}
+            {outOfMinutes && !voiceLookupFailed && <button type="button" className="btn-ghost btn-sm w-full" onClick={switchToText}>Switch to text practice</button>}
 
-            {/* A disabled Start always has a visible reason, and aria-describedby points the button at it. */}
-            <button className="btn-primary btn-xl w-full" onClick={onStart} disabled={blocked || voiceLookupFailed || outOfMinutes}
-              aria-describedby={voiceLookupFailed ? VOICE_UNAVAILABLE_ID : outOfMinutes ? "minutes-out" : blocked ? "voice-blocked-reason" : undefined}>
-              <PhoneCall size={18} aria-hidden /> Start call
-            </button>
+            {/* From sm up Start sits here in the card. Below sm the same button lives in the sticky bar at the end of the page. */}
+            <div className="hidden sm:block">{startButton}</div>
             <p className="text-center text-xs text-ink-muted">The coach only talks to you. {p.name} never hears it.</p>
           </div>
           <Link href="/library" className="btn-ghost w-full">Change persona</Link>
         </aside>
+      </div>
+
+      {/* Phones: Start call stays on screen as a sticky bottom action bar (STICKY_START_BAR). */}
+      <div className={`sticky z-30 -mx-4 -mb-8 mt-6 border-t border-line bg-surface px-4 pt-3 sm:hidden ${STICKY_START_BAR}`}>
+        {startButton}
       </div>
     </div>
   );

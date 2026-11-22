@@ -46,6 +46,16 @@ const nextConfig: NextConfig = {
         destination: "https://api.leadconnectorhq.com/widget/bookings/calltrainer-demo",
         permanent: false,
       },
+      {
+        source: "/for/911",
+        destination: "/demo",
+        permanent: false,
+      },
+      {
+        source: "/for/911/",
+        destination: "/demo",
+        permanent: false,
+      },
     ];
   },
   async headers() {

@@ -44,7 +44,7 @@ export default function InvitePanel() {
     <section className="panel p-4 sm:p-5" aria-labelledby="invite-h">
       <h2 id="invite-h" className="text-sm font-bold">Add people to your team</h2>
       <p className="mt-1 text-sm text-ink-soft">
-        Send this link. They sign up with their email and a password, and land on your team. Google sign-up starts a separate team, so they should use email.
+        Send this link. They sign up with their email and a password, and land on your team. Google sign-up starts its own workspace, so they should use email.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <code className="min-w-0 max-w-full break-all rounded-lg bg-sunken px-3 py-2 font-mono text-xs">{link}</code>

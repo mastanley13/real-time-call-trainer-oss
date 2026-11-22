@@ -21,6 +21,9 @@ export const PRICE = {
 
 export type Billing = "month" | "year";
 
+/** Muted line under the plan cards on /pricing. Prices are shown in US dollars and do not include tax. */
+export const PRICES_TAX_NOTE = "Prices in USD, before tax.";
+
 /** Premium voice is held off sale until PREMIUM_VOICE_ON_SALE=true. The label shows on the card, the table and the FAQ. */
 export const PREMIUM_COMING_SOON = "Coming soon (not on sale yet)";
 /** The env var that puts Premium on sale. Only the exact string "true" turns it on; unset or anything else is off. */
@@ -152,4 +155,66 @@ export function registerHref(params: { plan?: PlanIntent; interval?: Billing; se
 /** The checkout step for a plan and period. Team seats are chosen on that page. */
 export function checkoutStartHref(plan: PlanIntent, interval: Billing = "month"): string {
   return `/checkout/start?plan=${plan}&interval=${interval}`;
+}
+
+// ---- Pricing cards for a signed-in viewer ----------------------------------------------------------------
+
+export type PricingTierId = "free" | "pro" | "team";
+const TIER_RANK: Record<PricingTierId, number> = { free: 0, pro: 1, team: 2 };
+const TIER_NAME: Record<PricingTierId, string> = { free: "Free", pro: "Pro", team: "Team" };
+
+/** What /pricing knows about a signed-in viewer. `plan` is null when the plan is unknown (not metered, or the lookup failed). */
+export interface PricingViewer {
+  plan: PricingTierId | null;
+  /** False when this person cannot buy Team (not an owner or manager). Missing means yes. */
+  canBuyTeam?: boolean;
+}
+
+/** The viewer's plan from a /api/usage response. Only a metered answer with a known plan counts; anything else is unknown. */
+export function pricingViewerFromUsage(data: unknown): PricingViewer {
+  const d = data as { metered?: unknown; plan?: unknown; billing?: { canBuyTeam?: unknown } } | null;
+  const plan = d?.metered === true && (d.plan === "free" || d.plan === "pro" || d.plan === "team") ? d.plan : null;
+  return { plan, ...(d?.billing?.canBuyTeam === false ? { canBuyTeam: false } : {}) };
+}
+
+/**
+ * The button on a plan card for a signed-in viewer (anonymous viewers keep tierAction in PricingCards).
+ * - `current`: the plan they are on. Outlined and disabled, never a link.
+ * - `included`: a lower plan than theirs. Muted text, no action.
+ * - `link`: an upgrade through the existing checkout step, or the trainer from the Free card when the plan is unknown.
+ * - `disabled`: an upgrade while checkout is not set up on this server, shown with the open-soon line.
+ * - `note`: Team for someone who cannot buy it; they ask an owner or manager.
+ */
+export type SignedInTierAction =
+  | { kind: "current"; cta: string }
+  | { kind: "included"; cta: string }
+  | { kind: "link"; cta: string; href: string }
+  | { kind: "disabled"; cta: string }
+  | { kind: "note"; cta: string };
+
+export const CURRENT_PLAN_LABEL = "Current plan";
+export const ASK_FOR_TEAM_NOTE = "Ask an owner or manager of your organization to buy Team.";
+
+/** The anonymous call to action at the top of /pricing. Signed-in viewers never see it (signedInHeroCta). */
+export const HERO_SIGNUP_CTA = { label: "Start free, no card", href: registerHref({ src: "pricing" }) } as const;
+
+/**
+ * The top /pricing button for a signed-in viewer, who already has an account, so never sign-up. On Free with checkout
+ * set up it is the Pro upgrade through the existing checkout step (monthly, the toggle's default). Otherwise, including
+ * when the plan is unknown, it opens the trainer.
+ */
+export function signedInHeroCta(viewer: PricingViewer, billingEnabled: boolean): { label: string; href: string } {
+  if (viewer.plan === "free" && billingEnabled) return { label: "Upgrade to Pro", href: checkoutStartHref("pro", "month") };
+  return { label: "Open the trainer", href: "/trainer" };
+}
+
+export function signedInTierAction(id: PricingTierId, viewer: PricingViewer, billingEnabled: boolean, interval: Billing): SignedInTierAction {
+  const { plan } = viewer;
+  if (plan && id === plan) return { kind: "current", cta: CURRENT_PLAN_LABEL };
+  if (plan && TIER_RANK[id] < TIER_RANK[plan]) return { kind: "included", cta: `Included in ${TIER_NAME[plan]}` };
+  // Plan unknown: nothing to buy on Free, and sign-up makes no sense for someone already signed in.
+  if (id === "free") return { kind: "link", cta: "Open the trainer", href: "/trainer" };
+  if (id === "team" && viewer.canBuyTeam === false) return { kind: "note", cta: ASK_FOR_TEAM_NOTE };
+  const cta = `Upgrade to ${TIER_NAME[id]}`;
+  return billingEnabled ? { kind: "link", cta, href: checkoutStartHref(id, interval) } : { kind: "disabled", cta };
 }

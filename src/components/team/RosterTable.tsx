@@ -92,7 +92,7 @@ export default function RosterTable({ rows, days, viewerId, onAssign }: { rows: 
                   {r.lastSessionAt ? (
                     <>
                       <span className="block">{relativeDay(r.lastSessionAt, now)}</span>
-                      <span className="font-mono text-[11px] text-ink-muted">{r.lastScore === null ? "ungraded" : `scored ${r.lastScore}`}</span>
+                      <span className="font-mono text-[11px] text-ink-muted">{r.lastScorePending ? "Grading pending" : r.lastScore === null ? "ungraded" : `scored ${r.lastScore}`}</span>
                     </>
                   ) : <span className="text-xs text-ink-muted">Never practised</span>}
                 </td>
