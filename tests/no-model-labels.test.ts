@@ -12,18 +12,40 @@ import { NextRequest } from "next/server";
  */
 
 // Only the session check is faked, so the config and connection-check routes run for real.
-const mocks = vi.hoisted(() => ({ user: { id: "nml-0", email: "nml@example.test" } }));
+const mocks = vi.hoisted(() => ({ user: { id: "nml-0", email: "nml@example.test" }, pinRandom: false }));
 vi.mock("@/lib/apiAuth", () => ({ requireAuth: () => mocks.user }));
+// Real node:crypto, except randomBytes (the receipt IV) and randomUUID (the session id, bound into the receipt's tag)
+// return fixed values while pinRandom is on. Only the realtime session block turns it on; everything else stays random.
+vi.mock("node:crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:crypto")>();
+  const randomBytes = ((size: number, cb?: (err: Error | null, buf: Buffer) => void) =>
+    mocks.pinRandom && !cb ? Buffer.alloc(size, 0x5a) : cb ? actual.randomBytes(size, cb) : actual.randomBytes(size)) as typeof actual.randomBytes;
+  const randomUUID = (() => (mocks.pinRandom ? "00000000-0000-4000-8000-00000000c0de" : actual.randomUUID())) as typeof actual.randomUUID;
+  return { ...actual, default: { ...actual, randomBytes, randomUUID }, randomBytes, randomUUID };
+});
+// The realtime session block is not about rate limits, and with its clock pinned the in-memory buckets never expire,
+// so a watch-mode rerun in the same worker could get 429. While pinRandom is on, the two limiters the session route
+// calls always allow; with it off they are the real ones, so every other test here is unchanged.
+vi.mock("@/lib/rateLimit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/rateLimit")>();
+  return {
+    ...actual,
+    rateLimit: (opts: Parameters<typeof actual.rateLimit>[0]) =>
+      mocks.pinRandom ? { allowed: true, remaining: opts.limit, retryAfterMs: 0 } : actual.rateLimit(opts),
+    ipLimitResponse: (...args: Parameters<typeof actual.ipLimitResponse>) => (mocks.pinRandom ? null : actual.ipLimitResponse(...args)),
+  };
+});
 
 import { GET as configGET } from "@/app/api/config/route";
 import { POST as checkPOST } from "@/app/api/llm/check/route";
 import { POST as sessionPOST } from "@/app/api/realtime/session/route";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
+import { sealMintReceipt, verifyMintReceipt } from "@/lib/mintReceipt";
 import Home from "@/app/page";
 
 /** Model id families: OpenAI chat, realtime, transcription and speech, reasoning, Gemini, ElevenLabs and Claude. */
 const MODEL_ID_RE =
-  /\b(?:[Gg][Pp][Tt]-(?:5|4\.1|4o|realtime)[\w.-]*|o[34](?:-[\w-]+)?|whisper-1|tts-1(?:-hd)?|gemini-[\w.-]+|eleven_\w+|claude-[\w.-]+)\b/;
+  /\b(?:[Gg][Pp][Tt]-(?:6|5|4\.1|4o|realtime|live)[\w.-]*|o[34](?:-[\w-]+)?|whisper-1|tts-1(?:-hd)?|gemini-[\w.-]+|eleven_\w+|claude-[\w.-]+)\b/;
 
 /**
  * Backend defaults that must stay: they are sent to providers, never rendered or returned. Exact files, no globs.
@@ -52,7 +74,7 @@ const hitsOf = (re: RegExp, files: string[]) =>
 
 describe("model id pattern", () => {
   it.each([
-    "gpt-5", "gpt-5-mini", "gpt-5.1", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "gpt-4o-mini-transcribe",
+    "gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra", "gpt-5", "gpt-5-mini", "gpt-5.1", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-mini", "gpt-4o-mini-transcribe",
     "gpt-realtime", "gpt-realtime-1.5", "gpt-realtime-mini", "GPT-4o", "o3", "o3-mini", "o4-mini", "whisper-1", "tts-1", "tts-1-hd",
     "gemini-2.5-flash", "gemini-pro", "eleven_turbo_v2_5", "eleven_multilingual_v2", "claude-sonnet-4-5", "claude-3-5-haiku",
   ])("catches %s", (id) => {
@@ -60,7 +82,7 @@ describe("model id pattern", () => {
     expect(`"${id}"`).toMatch(MODEL_ID_RE);
   });
 
-  it.each(["OpenAI Realtime", "ElevenLabs voice agent", "AI model", "Your chat model", "LLM_MODEL", "REALTIME_MODEL", "Text · AI", "Coach: AI", "video", "photo3"])(
+  it.each(["OpenAI Realtime", "ElevenLabs voice agent", "AI model", "Your chat model", "LLM_MODEL", "LLM_MODEL_GRADING", "REALTIME_MODEL", "Text · AI", "Coach: AI", "video", "photo3"])(
     "leaves %s alone",
     (text) => expect(text).not.toMatch(MODEL_ID_RE),
   );
@@ -115,7 +137,10 @@ describe("no model ids in user-facing source", () => {
 
   it("reads the configured model only where a provider request or the server-side audit log needs it", () => {
     const users = files.filter((f) => /\bllmModel\(\)/.test(readFileSync(join(ROOT, f), "utf8")));
-    expect(users.sort()).toEqual(["src/app/api/llm/check/route.ts", "src/app/api/transcripts/[id]/route.ts", "src/lib/llm.ts", "src/lib/serverConfig.ts"]);
+    expect(users.sort()).toEqual(["src/app/api/llm/check/route.ts", "src/lib/llm.ts", "src/lib/serverConfig.ts"]);
+    const grading = files.filter((f) => /\bllmGradingModel\(\)/.test(readFileSync(join(ROOT, f), "utf8")));
+    expect(grading.sort()).toEqual(["src/app/api/transcripts/[id]/route.ts", "src/lib/grader.ts", "src/lib/serverConfig.ts"]);
+
   });
 });
 
@@ -132,7 +157,7 @@ describe("landing page", () => {
 const ENV = {
   DEMO_MODE: "", DATABASE_URL: "", STRIPE_SECRET_KEY: "", VOICE_ENGINE: "", OPENAI_REALTIME_API_KEY: "",
   LLM_BASE_URL: "", LLM_API_KEY: "", OPENAI_API_KEY: "", ELEVENLABS_API_KEY: "", ELEVENLABS_AGENT_ID: "",
-  LLM_MODEL: "", REALTIME_MODEL: "", REALTIME_MODEL_STANDARD: "", REALTIME_MODEL_PREMIUM: "", REALTIME_TRANSCRIBE_MODEL: "",
+  LLM_MODEL: "", LLM_MODEL_GRADING: "", REALTIME_MODEL: "", REALTIME_MODEL_STANDARD: "", REALTIME_MODEL_PREMIUM: "", REALTIME_TRANSCRIBE_MODEL: "",
   REALTIME_VOICE: "", JWT_SECRET: "",
 };
 const stubEnv = (env: Partial<Record<keyof typeof ENV, string>>) => {
@@ -160,7 +185,7 @@ describe("GET /api/config (unauthenticated JSON)", () => {
 
   it("reports booleans and provider names, never the chat or realtime model ids", async () => {
     stubEnv({
-      LLM_API_KEY: "sk-llm-test", OPENAI_API_KEY: "sk-openai-test", LLM_MODEL: "gpt-4.1-mini",
+      LLM_API_KEY: "sk-llm-test", OPENAI_API_KEY: "sk-openai-test", LLM_MODEL: "gpt-6-luna", LLM_MODEL_GRADING: "gpt-6.2-sol",
       REALTIME_MODEL: "gpt-realtime-1.5", REALTIME_MODEL_STANDARD: "gpt-realtime-mini", REALTIME_MODEL_PREMIUM: "gpt-realtime-premium-test",
       REALTIME_TRANSCRIBE_MODEL: "gpt-4o-mini-transcribe",
       ELEVENLABS_API_KEY: "el-test", ELEVENLABS_AGENT_ID: "agent-test",
@@ -193,15 +218,37 @@ describe("GET /api/config (unauthenticated JSON)", () => {
 
 describe("POST /api/realtime/session (response JSON)", () => {
   const SESSION_KEYS = ["clientSecret", "expiresAt", "receipt", "sessionId", "voice"];
+  // One fixed account and IP for every test here: the user id is AES-GCM additional data, so it must not change
+  // between runs or the receipt's tag would too. Rate limits are bypassed by the pin flag (see the rateLimit mock).
+  const USER = { id: "nml-0", email: "nml@example.test" };
+  const IP = "198.51.100.251";
+  beforeEach(() => {
+    mocks.user = USER;
+  });
   const mint = async () => {
     const fn = vi.fn(async () => Response.json({ value: "ek_nml_secret_1", expires_at: 1_900_000_000 }));
     vi.stubGlobal("fetch", fn);
     const res = await sessionPOST(new NextRequest("http://localhost/api/realtime/session", {
-      method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": "198.51.100.251" }, body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }),
+      method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": IP }, body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }),
     }));
     const text = await res.text();
     return { res, text, body: JSON.parse(text) as Record<string, unknown>, sent: JSON.parse(String((fn.mock.calls[0] as unknown as [string, RequestInit])[1].body)) };
   };
+  // The receipt is AES-GCM under a key derived from the fixed test JWT_SECRET, but its IV, the session id bound into its
+  // tag, and its issued-at time are random or clock-based. Random ciphertext can by chance spell a short id like "o3" or
+  // "-o4-ab" between non-word chars, which made the scans below flaky. Pinning the IV, the session id and the clock makes
+  // every byte of the response fixed, so the full-text and decoded-receipt scans give the same answer on every run.
+  // Every input to the receipt (key, IV, user id, session id, model, time) is fixed, so the two-mint equality below is
+  // enough to show it is reproducible; no hard-coded expected receipt is needed.
+  beforeEach(() => {
+    mocks.pinRandom = true;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+  });
+  afterEach(() => {
+    mocks.pinRandom = false;
+    vi.useRealTimers();
+  });
 
   it.each([
     ["built-in defaults", {}],
@@ -211,14 +258,37 @@ describe("POST /api/realtime/session (response JSON)", () => {
     const { res, text, body, sent } = await mint();
     expect(res.status).toBe(200);
     expect(Object.keys(body).sort()).toEqual(SESSION_KEYS);
-    expect(typeof sent.session.model).toBe("string");
-    expect(text).not.toContain(sent.session.model);
+    // Every field is a flat primitive, so no nested object can carry a model field.
+    expect(body).toEqual({
+      clientSecret: expect.any(String), expiresAt: expect.any(Number), receipt: expect.any(String), sessionId: expect.any(String), voice: expect.any(String),
+    });
+    const model: string = sent.session.model;
+    expect(typeof model).toBe("string");
+    // Determinism: a second mint under the pinned IV, session id and clock returns the identical receipt and body, so
+    // the scans below are not sampling random bytes.
+    const again = await mint();
+    expect(again.body.receipt).toBe(body.receipt);
+    expect(again.text).toBe(text);
+    const receipt = String(body.receipt);
+    expect(receipt).toMatch(/^mr3\.[A-Za-z0-9_-]+$/);
+    expect(text).not.toContain(model);
     expect(text).not.toMatch(MODEL_ID_RE);
     expect(text).not.toMatch(/acme-voice|sk-openai-test/);
-    // The receipt is opaque: decoding it shows no model either.
-    const decoded = Buffer.from(String(body.receipt).replace(/^mr3\./, ""), "base64url").toString("latin1");
-    expect(decoded).not.toContain(sent.session.model);
+    // The readable fields alone, with the receipt set aside.
+    const readable = text.split(receipt).join("[receipt]");
+    expect(readable).not.toContain(receipt);
+    expect(readable).not.toMatch(MODEL_ID_RE);
+    expect(readable).not.toMatch(/acme-voice|sk-openai-test/);
+    // The receipt is opaque: no model in its text or its decoded bytes, and a fixed length whatever the model.
+    expect(receipt).not.toContain(Buffer.from(model, "utf8").toString("base64url"));
+    const decoded = Buffer.from(receipt.slice("mr3.".length), "base64url").toString("latin1");
+    expect(decoded).not.toContain(model);
     expect(decoded).not.toMatch(MODEL_ID_RE);
+    expect(decoded).not.toMatch(/acme-voice/);
+    expect(receipt.length).toBe(sealMintReceipt(mocks.user.id, String(body.sessionId), "x")?.length);
+    // What it carries, opened with the real key: exactly the model sent upstream, for this user and this call only.
+    expect(verifyMintReceipt(receipt, mocks.user.id, body.sessionId)).toBe(model);
+    expect(verifyMintReceipt(receipt, "nml-other", body.sessionId)).toBeNull();
   });
 });
 
@@ -253,7 +323,7 @@ describe("POST /api/llm/check (response JSON and logs)", () => {
     return fn;
   };
   // A model id from a known family, and a private name the pattern can't know about.
-  const MODELS = ["gpt-4.1-mini", "acme-private-chat-9"];
+  const MODELS = ["gpt-6-luna", "acme-private-chat-9"];
 
   it.each(MODELS)("success with %s: the model goes upstream, the echoed model id does not come back", async (model) => {
     stubEnv({ LLM_API_KEY: "k-test", LLM_MODEL: model });

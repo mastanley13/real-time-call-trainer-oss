@@ -1,10 +1,11 @@
-import Link from "next/link";
 import { BillingProvider } from "@/components/landing/BillingContext";
 import ComparePlans, { type CompareRow } from "@/components/landing/ComparePlans";
 import PricingCards from "@/components/landing/PricingCards";
+import PricingHeroCta from "@/components/landing/PricingHeroCta";
+import { PricingViewerProvider } from "@/components/landing/PricingViewer";
 import PublicFooter from "@/components/landing/PublicFooter";
 import {
-  FREE_SUMMARY, FREE_VOICE_MIN, MINUTES_ROUNDED_NOTE, PREMIUM_COMING_SOON, PREMIUM_FAQ, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT, registerHref,
+  FREE_SUMMARY, FREE_VOICE_MIN, MINUTES_ROUNDED_NOTE, PREMIUM_COMING_SOON, PREMIUM_FAQ, PRICE, PRICES_TAX_NOTE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT,
 } from "@/lib/pricing";
 import { GITHUB_URL, pageMetadata } from "@/lib/seo";
 import { billingOn, premiumOnSale } from "@/lib/serverConfig";
@@ -55,9 +56,9 @@ function compareRows(onSale: boolean): CompareRow[] {
 
 const FAQ_BASE: { q: string; a: string }[] = [
   { q: "What do I get on Free?", a: FREE_SUMMARY },
-  { q: "What happens when I hit my voice minute cap?", a: "Voice calls pause until your next billing cycle. We never charge overages, ever. The text sim stays fully available, so you can keep practicing, get coached and get graded. You can upgrade anytime if you want more voice minutes now." },
+  { q: "What happens when I hit my voice minute cap?", a: "Voice calls pause until your monthly minutes reset. We never charge overages, ever. The text sim stays fully available, so you can keep practicing, get coached and get graded. You can upgrade anytime if you want more voice minutes now." },
   { q: "Will I ever get a surprise bill?", a: "No. There are no overage charges on any plan. Your price is your price, whatever you use." },
-  { q: "Do unused minutes roll over?", a: "No. Paid plans reset at the start of each billing cycle. Free resets monthly from your signup date." },
+  { q: "Do unused minutes roll over?", a: "No. Voice minutes reset every month on every plan, and unused minutes do not carry over. Free resets monthly from your signup date." },
   { q: "Can I buy more minutes mid-month?", a: `Not as an add-on. Upgrade to a higher plan or add Team seats. Each new seat adds ${TEAM_VOICE_MIN_PER_SEAT} minutes to the pool.` },
   { q: "Does the text sim count against my minutes?", a: "No. The text sim is unlimited on every plan." },
   { q: "Do annual plans get more minutes?", a: "Same monthly minutes, reset each month. Annual just costs 2 months less." },
@@ -76,8 +77,12 @@ export default function PricingPage() {
   const onSale = premiumOnSale();
   const COMPARE = compareRows(onSale);
   const FAQ = FAQ_BASE.map((f) => (f.q === "What does Premium AI voice add?" ? { ...f, a: premiumFaqAnswer(onSale) } : f));
+  const billing = billingOn();
+  // Every plan button on this page (the top one and the cards) reads the signed-in viewer from this one provider.
+  // Signed out, they render exactly the anonymous sign-up buttons.
   return (
-    <div>
+    <PricingViewerProvider>
+      <div>
       <section className="border-b border-line">
         <div className="page py-14 sm:py-20">
           <p className="eyebrow">Pricing</p>
@@ -86,7 +91,7 @@ export default function PricingPage() {
             Talk to AI buyers who push back, get coached live, and get a graded debrief that quotes your own transcript. Hosted for you: no API keys, no database, no setup.
           </p>
           <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-            <Link href={registerHref({ src: "pricing" })} className="btn-primary btn-xl">Start free, no card</Link>
+            <PricingHeroCta billingEnabled={billing} />
             <a href="#plans" className="btn-ghost btn-xl">Compare plans</a>
           </div>
           <p className="mt-5 text-sm text-ink-muted">Self-hosting stays free forever under the MIT license.</p>
@@ -95,8 +100,9 @@ export default function PricingPage() {
 
       <BillingProvider>
         <section id="plans" className="page py-12 sm:py-14" aria-label="Plans">
-          <PricingCards billingEnabled={billingOn()} premiumOnSale={onSale} />
-          <p className="mt-4 text-sm text-ink-muted">No overage charges on any plan. Free has no card and resets monthly from your signup date, with no rollover.</p>
+          <PricingCards billingEnabled={billing} premiumOnSale={onSale} />
+          <p className="mt-4 text-sm text-ink-muted">{PRICES_TAX_NOTE}</p>
+          <p className="mt-1 text-sm text-ink-muted">No overage charges on any plan. Free has no card and resets monthly from your signup date, with no rollover.</p>
         </section>
 
         <section className="border-y border-line bg-surface" aria-labelledby="compare-h">
@@ -130,6 +136,7 @@ export default function PricingPage() {
       </section>
 
       <PublicFooter />
-    </div>
+      </div>
+    </PricingViewerProvider>
   );
 }

@@ -17,6 +17,8 @@ import { CallMeter } from "@/lib/callMeter";
 import RealtimeVoiceSession, { voiceInfoFrom, type VoiceInfo, type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
+import { isTokenFresh } from "@/lib/clientSession";
+import { CALL_MODE_KEY, initialCallMode, wantsTextMode } from "@/lib/trainerQuery";
 import { VOICE_CHOICE_KEY, canUpgradeFromUsage, premiumChoiceAvailable, premiumSnapshotFromUsage, readVoiceChoice, usageSnapshotFromUsage, type PremiumSnapshot, type UsageSnapshot, type VoiceChoice } from "@/lib/billingUi";
 
 type Mode = "voice" | "text";
@@ -164,6 +166,8 @@ export default function TrainerClient() {
   const query = useSearchParams()?.toString() ?? "";
   const phaseRef = useRef<Phase>("idle");
   phaseRef.current = phase;
+  /** The starting call mode is decided once per page load, so a persona switch from the palette keeps the rep's pick. */
+  const modeChosen = useRef(false);
   useEffect(() => {
     if (phaseRef.current !== "idle") return;
     const params = new URLSearchParams(query);
@@ -173,6 +177,15 @@ export default function TrainerClient() {
       const saved = localStorage.getItem(COACH_MODE);
       if (saved === "blind" || saved === "guided" || saved === "coached") setCoachModeState(saved);
     } catch { /* storage unavailable */ }
+    // ?mode=text (exactly) opens on the text call, as after sign-up from /try/[role]. Otherwise the first load picks the
+    // mode once: an explicit saved pick, else Voice for a rep who has practiced here before, else Text for a first-timer.
+    if (!modeChosen.current) {
+      modeChosen.current = true;
+      let saved: string | null = null;
+      let hasPracticed = false;
+      try { saved = localStorage.getItem(CALL_MODE_KEY); hasPracticed = !!localStorage.getItem(LAST_SCENARIO); } catch { /* storage unavailable */ }
+      setMode(initialCallMode({ textParam: wantsTextMode(params), saved, hasPracticed }));
+    } else if (wantsTextMode(params)) setMode("text");
     const asked = params.get("scenario");
     // Without ?scenario=, use the persona practised last.
     const wanted = () => {
@@ -266,6 +279,12 @@ export default function TrainerClient() {
     try { localStorage.setItem(VOICE_ENGINE, e); } catch { /* ignore */ }
   };
 
+  /** A Voice or Text pick on the briefing is the rep's own choice, so it is remembered for the next visit. */
+  const chooseMode = (m: Mode) => {
+    setMode(m);
+    try { localStorage.setItem(CALL_MODE_KEY, m); } catch { /* ignore */ }
+  };
+
   const setCoachMode = (m: CoachMode) => {
     setCoachModeState(m);
     try { localStorage.setItem(COACH_MODE, m); } catch { /* ignore */ }
@@ -335,6 +354,14 @@ export default function TrainerClient() {
   function begin() {
     if (!scenario) return;
     try { localStorage.setItem(LAST_SCENARIO, scenario.id); } catch { /* ignore */ }
+    // A long-lived tab can still look signed in after its cookie/token expires.
+    // Reload the sign-in page before opening the mic or starting either call mode.
+    // Reloading also resets AuthContext, which otherwise redirects back here.
+    if (!capabilities?.demoMode) {
+      let fresh = false;
+      try { fresh = isTokenFresh(localStorage.getItem("authToken")); } catch { /* storage unavailable */ }
+      if (!fresh) { window.location.assign("/login"); return; }
+    }
     setError("");
     coach.reset();
     const seed = retry?.seed.map((t) => ({ ...t, timestamp: new Date().toISOString() })) ?? [];
@@ -428,7 +455,7 @@ export default function TrainerClient() {
   if (phase === "idle") {
     return (
       // Keyed by persona: revealed prep answers, "Got it" and the mic test belong to one buyer.
-      <Briefing key={scenario.id} scenario={scenario} capabilities={capabilities} mode={mode} onModeChange={setMode} engine={engine} onEngineChange={setEngine} coachMode={coachMode} onCoachModeChange={setCoachMode}
+      <Briefing key={scenario.id} scenario={scenario} capabilities={capabilities} mode={mode} onModeChange={chooseMode} onUseText={() => setMode("text")} engine={engine} onEngineChange={setEngine} coachMode={coachMode} onCoachModeChange={setCoachMode}
         onStart={begin} retryFrom={retry ? { turn: retry.turn, line: retry.line } : null} error={error} notice={notice} usage={usage} canUpgrade={canUpgrade} usageUnavailable={usageUnavailable} premium={premium}
         voiceChoice={voiceChoice} onVoiceChoiceChange={setVoiceChoice} />
     );

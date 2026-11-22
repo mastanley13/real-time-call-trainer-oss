@@ -4,7 +4,7 @@ import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema } from "@/lib/scenarios";
 import { LIBRARY } from "@/lib/personas";
-import { evaluateCall } from "@/lib/grader";
+import { evaluateCall, gradingFailureCode } from "@/lib/grader";
 import { sealEvaluation } from "@/lib/gradeSeal";
 import { gradable, gradedNote } from "@/lib/gradable";
 
@@ -51,13 +51,16 @@ export async function POST(request: NextRequest) {
 
   try {
     const evaluation = await evaluateCall(scenario, turns);
+    // The failure code is on the "[grader]" line and the provider status, type and code on "[llm] provider error".
+    if (evaluation.llmFailed) console.warn("[/api/evaluate-call] AI grading failed; returned the rules-based estimate");
     const note = gradedNote(evaluation.note, turns.length, body.transcript.length);
     const out = { evaluatedAt: new Date().toISOString(), ...evaluation, ...(note ? { note } : {}) };
-    // The seal lets POST /api/transcripts store this score; a grade the client edits or invents won't verify.
+    // The seal lets POST /api/transcripts store this score; a grade the client edits or invents won't verify. Nothing is
+    // stored here, so the CRM activation event (first graded call) is sent by that save, not by this route.
     const seal = sealEvaluation({ userId: auth.id, scenarioId: scenario.id, transcript: body.transcript, evaluation: out });
     return NextResponse.json({ ...out, ...(seal ? { seal } : {}) });
   } catch (error) {
-    console.error("[/api/evaluate-call] error:", error);
+    console.error("[/api/evaluate-call] error:", gradingFailureCode(error));
     return NextResponse.json({ error: "Failed to evaluate call", message: "Grading failed on the server. Try again in a minute." }, { status: 500 });
   }
 }

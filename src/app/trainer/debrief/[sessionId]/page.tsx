@@ -3,14 +3,14 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, CheckCircle2, Loader2, Printer, Quote, RefreshCw, RotateCcw, TrendingUp } from "lucide-react";
+import { ArrowRight, CalendarDays, CheckCircle2, Clock, Loader2, Printer, Quote, RefreshCw, RotateCcw, TrendingUp } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getLocalSession, updateLocalEvaluation, type CoachLog } from "@/lib/sessionStore";
+import { getLocalSession, readLocalSessionsStrict, updateLocalEvaluation, type CoachLog } from "@/lib/sessionStore";
 import { listScenarios } from "@/lib/scenarioStore";
 import type { Scenario } from "@/lib/scenarios";
 import type { Evaluation } from "@/lib/grader-types";
-import { goalStatusOf, graderLabel, isLegacyGrader, scoreLabel, stripGraderNote } from "@/lib/grader-types";
-import { nextDrill, retryPoint } from "@/lib/debrief";
+import { debriefHeadline, goalStatusOf, graderLabel, isLegacyGrader, isLlmFailedGrade, scoreLabel, stripGraderNote } from "@/lib/grader-types";
+import { LOCAL_SESSION_CAP, TRANSCRIPT_LIST_CAP, nextDrill, retryPoint, showFirstGradedDemo, viewerOwnsSession } from "@/lib/debrief";
 import { canRegrade, isAiGrade, wasCapped } from "@/lib/gradable";
 import { canManageTeam } from "@/lib/team";
 import { CUE_LABELS } from "@/lib/coach-types";
@@ -115,6 +115,34 @@ export default function DebriefPage() {
   }, [sessionId, capabilities, isLoading, isAuthenticated, router]);
 
   const ev = view?.evaluation ?? null;
+
+  // First graded debrief: offer a team demo. Only the other sessions matter, so this runs once per loaded call.
+  // A failed list lookup (storage or network) leaves the button hidden, and so does a list cut off at its cap.
+  // Only the session's owner sees it: a manager's own list says nothing about a trainee's call, so it is not fetched.
+  const viewLocal = view ? view.local : null;
+  const ownsView = view ? viewerOwnsSession(view, user?.id) : false;
+  const [sessionGrades, setSessionGrades] = useState<{ sessions: { id: string; graded: boolean }[]; cap: number } | null>(null);
+  useEffect(() => {
+    setSessionGrades(null);
+    if (viewLocal === null || !ownsView) return;
+    if (viewLocal) {
+      const local = readLocalSessionsStrict();
+      if (local) setSessionGrades({ sessions: local.map((s) => ({ id: s.id, graded: !!s.evaluation })), cap: LOCAL_SESSION_CAP });
+      return;
+    }
+    let live = true;
+    fetch("/api/transcripts")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { sessions?: { id: string; overallScore: number | null; graderMethod: string | null }[] } | null) => {
+        const list = d?.sessions;
+        if (live && Array.isArray(list)) setSessionGrades({ sessions: list.map((s) => ({ id: s.id, graded: s.overallScore != null || s.graderMethod != null })), cap: TRANSCRIPT_LIST_CAP });
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [viewLocal, ownsView, sessionId]);
+  // A rules-based stand-in for a failed AI grade doesn't count as this call's first grade.
+  const firstGraded = ownsView && sessionGrades !== null && showFirstGradedDemo(sessionId, !!ev && !isLlmFailedGrade(ev), sessionGrades.sessions, sessionGrades.cap);
+
   const critColor = useMemo(() => Object.fromEntries((ev?.criteria ?? []).map((c, i) => [c.id, CRIT_COLORS[i % CRIT_COLORS.length]])), [ev]);
   /** For each transcript line, the criteria whose evidence cites it. */
   const lineCriteria = useMemo(() => {
@@ -181,6 +209,15 @@ export default function DebriefPage() {
     <button type="button" className="btn-ghost btn-sm w-full print:hidden" onClick={regrade} aria-disabled={regrading} aria-busy={regrading}>{regrading ? <Loader2 size={13} className="animate-spin" aria-hidden /> : <RefreshCw size={13} aria-hidden />} {regrading ? "Re-grading" : "Re-grade with AI"}</button>
   );
   const regradeStatus = regradeMsg && <p ref={regradeMsgRef} tabIndex={-1} role={regradeMsg.ok ? "status" : "alert"} className={`text-xs outline-none ${regradeMsg.ok ? "text-ok" : "text-alert"}`}>{regradeMsg.text}</p>;
+  // AI grading failed for this call: a retry panel replaces the score and letter grade. Not gated on capabilities.llm,
+  // so the rep can always ask; the server answers with a clear message if grading is still unavailable.
+  const headline = debriefHeadline(ev);
+  const retryGradingButton = mayRegrade && view.scenario && (
+    <button type="button" className="btn-primary w-full print:hidden" onClick={regrade} aria-disabled={regrading} aria-busy={regrading}>
+      {regrading ? <Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden /> : <RefreshCw size={16} strokeWidth={1.75} aria-hidden />}
+      {regrading ? "Grading" : "Retry grading"}
+    </button>
+  );
   // A long call is graded on its opening turns, and ev.note says how many.
   const gradedOn = ev && wasCapped(ev.note) ? "" : " on the full transcript";
   const cues = view.coach?.cues ?? [];
@@ -190,7 +227,8 @@ export default function DebriefPage() {
 
   return (
     <div className="deck min-h-screen">
-      <div className="page enter space-y-6">
+      {/* Below md the fixed bottom tab bar (56 px plus the safe-area inset) overlays the page end, so the content pads past it. */}
+      <div className="page enter space-y-6 pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-10">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="eyebrow">Black-box debrief</p>
@@ -200,6 +238,8 @@ export default function DebriefPage() {
           <div className="flex flex-wrap gap-2 print:hidden">
             <button className="btn-ghost" onClick={() => window.print()}><Printer size={16} aria-hidden /> Print</button>
             <Link href={view.scenarioId ? `/trainer?scenario=${encodeURIComponent(view.scenarioId)}` : "/trainer"} className="btn-ghost"><RotateCcw size={16} aria-hidden /> Practice again</Link>
+            {/* /demo redirects to the booking site, so a plain link. */}
+            {ev && spoke && firstGraded && <a href="/demo" className="btn-ghost"><CalendarDays size={16} strokeWidth={1.75} aria-hidden /> Book a demo for your team</a>}
             {retry && <Link href={retryHref} className="btn-primary"><RotateCcw size={16} aria-hidden /> Retry from turn {retry.turn}</Link>}
           </div>
         </div>
@@ -215,7 +255,23 @@ export default function DebriefPage() {
           <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)_380px]">
             {/* Score column */}
             <aside className="space-y-4 lg:sticky lg:top-[calc(var(--header-h,3.5rem)+1rem)] lg:self-start">
-              {ev ? (
+              {headline.kind === "catching_up" ? (
+                <section className="panel space-y-3 p-5" aria-labelledby="catching-up-h">
+                  <div className="flex items-start gap-3">
+                    <Clock size={20} strokeWidth={1.75} className="mt-0.5 shrink-0 text-signal" aria-hidden />
+                    <div className="min-w-0">
+                      <h2 id="catching-up-h" className="font-heading text-lg font-bold">Grading is catching up</h2>
+                      <p className="mt-1 text-sm text-ink-soft">{"Your transcript is saved. AI grading didn't finish for this call. Retry to grade it now."}</p>
+                    </div>
+                  </div>
+                  {retryGradingButton}
+                  {mayRegrade && !view.scenario && (
+                    <p className="text-xs text-ink-muted print:hidden">To retry, open this debrief in the browser where you created this persona.</p>
+                  )}
+                  {regradeStatus}
+                  <p className="border-t border-line pt-3 font-mono text-[11px] text-ink-muted">{headline.estimate}</p>
+                </section>
+              ) : ev ? (
                 <div className="panel flex flex-col items-center gap-3 p-5 text-center">
                   <ScoreRing score={ev.overallScore} grade={ev.grade} />
                   <p className="font-heading text-lg font-bold">{scoreLabel(ev.overallScore)}</p>

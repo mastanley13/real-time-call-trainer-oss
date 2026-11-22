@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_REALTIME_VOICE, TurnAssembler, applyRealtimeEvent, averageLevel, chooseVoiceEngine,
-  micErrorMessage, openingInstructions, orderVoiceEngines, pickRealtimeVoice, realtimeUpstreamMessage, resolveRealtimeKey,
+  micErrorMessage, openingInstructions, orderVoiceEngines, pickRealtimeVoice, realtimeAuthRedirect, realtimeUpstreamMessage, resolveRealtimeKey,
 } from "@/lib/realtime";
 import { PREMIUM_REALTIME_MODEL, STANDARD_REALTIME_MODEL, resolveTierModel } from "@/lib/voiceModels";
 import { getCapabilities } from "@/lib/serverConfig";
@@ -160,6 +160,15 @@ describe("TurnAssembler", () => {
 });
 
 describe("small helpers", () => {
+  it("recovers app authentication failures without misclassifying provider errors", () => {
+    expect(realtimeAuthRedirect(401, "Invalid or expired session")).toBe("/login");
+    expect(realtimeAuthRedirect(401, "Authentication required")).toBe("/login");
+    expect(realtimeAuthRedirect(401, undefined)).toBe("/login");
+    expect(realtimeAuthRedirect(401, "access_code_required")).toBe("/access");
+    expect(realtimeAuthRedirect(502, "realtime_secret_expired")).toBeNull();
+    expect(realtimeAuthRedirect(502, "realtime_upstream_error")).toBeNull();
+    expect(realtimeAuthRedirect(429, "rate_limited")).toBeNull();
+  });
   it("quotes the opening line verbatim", () => {
     const s = openingInstructions("Dana Whitfield", "  Hi, can someone come out today?  ");
     expect(s).toContain("Dana Whitfield");

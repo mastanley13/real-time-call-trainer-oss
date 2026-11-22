@@ -6,7 +6,9 @@ import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
 import GoogleButton from "@/components/GoogleButton";
-import { afterSignin, intentFromQuery, rememberNotice } from "@/lib/checkoutStart";
+import { afterSigninTo, intentFromQuery, rememberNotice } from "@/lib/checkoutStart";
+import { signInHref, validNextPath } from "@/lib/safeNext";
+import { registerOrgFields } from "@/lib/registerForm";
 import { planSummary } from "@/lib/pricing";
 import LegalLinks from "@/components/LegalLinks";
 
@@ -27,17 +29,23 @@ function RegisterForm() {
   const router = useRouter();
   // The link's plan, period, src and seg, whitelisted. Anything else in the query is dropped.
   const intent = intentFromQuery(useSearchParams());
+  // An invite link (/register?code=123456) opens on "Join a team" with the code filled in. Digits only.
+  const codeParam = useSearchParams().get("code") ?? "";
+  const inviteCode = /^[0-9]{3,8}$/.test(codeParam) ? codeParam : "";
+  // A same-site ?next= path (for example from /try/[role]); anything unsafe is dropped here and again in afterSigninTo.
+  const rawNext = useSearchParams().get("next");
+  const nextPath = validNextPath(rawNext);
   const summary = planSummary(intent);
   const billingEnabled = capabilities?.billing === true;
 
-  /** Billing on with a plan goes to checkout; otherwise /trainer, with a one-time notice when a plan was asked for. */
+  /** Billing on with a plan goes to checkout; else a safe ?next=; else /trainer, with a one-time notice when a plan was asked for. */
   function goAfterSignin() {
-    const next = afterSignin(billingEnabled, intent);
+    const next = afterSigninTo(billingEnabled, intent, rawNext);
     if (next.notice) rememberNotice(next.notice);
     router.replace(next.path);
   }
-  const [mode, setMode] = useState<"create" | "join">("create");
-  const [f, setF] = useState({ firstName: "", lastName: "", email: "", password: "", orgName: "", orgCode: "" });
+  const [mode, setMode] = useState<"create" | "join">(inviteCode ? "join" : "create");
+  const [f, setF] = useState({ firstName: "", lastName: "", email: "", password: "", orgName: "", orgCode: inviteCode });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -61,7 +69,8 @@ function RegisterForm() {
         lastName: f.lastName,
         email: f.email,
         password: f.password,
-        ...(mode === "create" ? { newOrgName: f.orgName } : { joinOrgCode: f.orgCode }),
+        // Only the active mode's field. A blank team name is left out; the server then names the workspace after the rep.
+        ...registerOrgFields(mode, f.orgName, f.orgCode),
         ...intent,
       });
       goAfterSignin();
@@ -73,7 +82,7 @@ function RegisterForm() {
   }
 
   return (
-    <AuthShell title="Create your account" subtitle="Start a team workspace or join one with a code.">
+    <AuthShell title="Create your account" subtitle="Practice on your own, start a team, or join one with a code.">
       {capabilities && !capabilities.database && !capabilities.demoMode && (
         <div className="banner-warn mb-4">Registration needs a database. Set <code>DATABASE_URL</code> or use <code>DEMO_MODE=true</code>.</div>
       )}
@@ -85,7 +94,12 @@ function RegisterForm() {
           {summary.seats && <p className="text-sm text-ink-muted">{summary.seats}</p>}
         </div>
       )}
-      <GoogleButton carryIntent />
+      {/* Google sign-up always starts a new workspace, so joining a team goes through the email form. */}
+      {mode === "join" ? (
+        <p className="mb-4 text-sm text-ink-soft">Joining a team: sign up with your email below. Google sign-up starts your own workspace.</p>
+      ) : (
+        <GoogleButton carryIntent next={nextPath ?? undefined} />
+      )}
       <form onSubmit={onSubmit} className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div><label htmlFor="fn" className="label">First name</label><input id="fn" className="input" value={f.firstName} onChange={set("firstName")} required /></div>
@@ -102,14 +116,14 @@ function RegisterForm() {
           ))}
         </div>
         {mode === "create" ? (
-          <div><label htmlFor="org" className="label">Team name</label><input id="org" className="input" value={f.orgName} onChange={set("orgName")} required minLength={2} /></div>
+          <div><label htmlFor="org" className="label">Team name (optional)</label><input id="org" className="input" value={f.orgName} onChange={set("orgName")} minLength={2} /></div>
         ) : (
           <div><label htmlFor="code" className="label">Team code</label><input id="code" className="input" inputMode="numeric" pattern="[0-9]{3,8}" value={f.orgCode} onChange={set("orgCode")} required /></div>
         )}
         {error && <p role="alert" className="text-sm text-alert">{error}</p>}
         <button className="btn-primary w-full" disabled={busy || !configKnown}>{busy ? "Creating…" : "Create account"}</button>
       </form>
-      <p className="mt-5 text-center text-sm text-ink-muted">Already registered? <Link href="/login" className="font-semibold text-primary">Sign in</Link></p>
+      <p className="mt-5 text-center text-sm text-ink-muted">Already registered? <Link href={signInHref(nextPath)} className="font-semibold text-primary">Sign in</Link></p>
       <LegalLinks />
     </AuthShell>
   );

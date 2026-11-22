@@ -16,3 +16,19 @@ export function safeNextPath(raw: string | null | undefined, fallback = "/traine
   }
   return raw;
 }
+
+/** The next path when it passes safeNextPath, else null, so a caller can keep its own default destination. */
+export function validNextPath(raw: string | null | undefined): string | null {
+  return safeNextPath(raw, "") || null;
+}
+
+/** Where /login sends a signed-in user: a safe ?next= path, else /trainer. */
+export function loginDestination(rawNext: string | null | undefined): string {
+  return safeNextPath(rawNext, "/trainer");
+}
+
+/** The sign-in link: /login?next=<encoded path> for a safe next, else plain /login. */
+export function signInHref(next: string | null | undefined): string {
+  const path = validNextPath(next);
+  return path ? `/login?next=${encodeURIComponent(path)}` : "/login";
+}

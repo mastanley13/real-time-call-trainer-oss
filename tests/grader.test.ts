@@ -59,7 +59,7 @@ const llmReply = (rubric = scenario.rubric) =>
     goalExplanation: "You offered a slot that was not confirmed.",
   });
 
-const ENV_KEYS = ["LLM_API_KEY", "OPENAI_API_KEY", "LLM_MODEL", "LLM_BASE_URL", "DATABASE_URL", "DEMO_MODE", "RATE_LIMIT_GRADING_MAX"] as const;
+const ENV_KEYS = ["LLM_API_KEY", "OPENAI_API_KEY", "LLM_MODEL", "LLM_MODEL_GRADING", "LLM_BASE_URL", "DATABASE_URL", "DEMO_MODE", "RATE_LIMIT_GRADING_MAX"] as const;
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 beforeEach(() => {
   for (const k of ENV_KEYS) delete process.env[k];
@@ -178,8 +178,11 @@ describe("LLM grader", () => {
   it("marks the grade as AI without naming the model, and keeps only quotes found in the transcript", async () => {
     withKey();
     mocks.chat.mockResolvedValue(llmReply());
+    process.env.LLM_MODEL = "gpt-6-luna";
+    process.env.LLM_MODEL_GRADING = "gpt-6.2-sol";
     const ev = await evaluateCall(scenario, CALL);
     expect(mocks.chat).toHaveBeenCalledOnce();
+    expect(mocks.chat.mock.calls[0][1]).toMatchObject({ json: true, model: "gpt-6.2-sol" });
     expect(ev).toMatchObject({ method: "llm", graderVersion: GRADER_VERSIONS.llm });
     expect(ev.model).toBeUndefined();
     expect(JSON.stringify(ev)).not.toContain("gpt-test-mini");
@@ -344,7 +347,7 @@ describe("POST /api/llm/check", () => {
     expect(typeof body.latencyMs).toBe("number");
     // The configured model goes to the provider, never back to the browser.
     const [, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
-    expect(JSON.parse(String(init.body))).toMatchObject({ model: "gpt-test-mini", max_tokens: 1 });
+    expect(JSON.parse(String(init.body))).toMatchObject({ model: "gpt-test-mini", max_completion_tokens: 256 });
     expect(Object.keys(body).sort()).toEqual(["hint", "latencyMs", "ok", "status"]);
     expect(JSON.stringify(body)).not.toContain("gpt-test-mini");
   });

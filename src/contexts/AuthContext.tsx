@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { createContext, useContext, useState, useEffect } from "react";
+import { isTokenFresh } from "@/lib/clientSession";
 
 export interface LoginCredentials {
   email: string;
@@ -77,31 +78,6 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-/**
- * Decode a JWT payload for display/restoration purposes only. The server is
- * the single source of truth for verification — this function must never be
- * used for authorization decisions.
- */
-const decodeJwtPayload = (token: string): Record<string, unknown> | null => {
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const pad = b64.length % 4 === 0 ? "" : "=".repeat(4 - (b64.length % 4));
-    return JSON.parse(atob(b64 + pad));
-  } catch {
-    return null;
-  }
-};
-
-const isTokenFresh = (token: string | null): boolean => {
-  if (!token) return false;
-  const payload = decodeJwtPayload(token);
-  if (!payload || typeof payload !== "object") return false;
-  const exp = (payload as { exp?: number }).exp;
-  return typeof exp === "number" && exp > Math.floor(Date.now() / 1000);
-};
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -281,6 +257,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     </AuthContext.Provider>
   );
 };
+
+/** Like useAuth, but null outside an AuthProvider instead of throwing. For public components that also render standalone. */
+export const useOptionalAuth = () => useContext(AuthContext) ?? null;
 
 export const useAuth = () => {
   const context = useContext(AuthContext);

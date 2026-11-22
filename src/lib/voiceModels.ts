@@ -26,3 +26,10 @@ export function resolveTierModel(tier: VoiceTier, env: Env): string {
   if (tier === "premium") return v(env.REALTIME_MODEL_PREMIUM) ?? PREMIUM_REALTIME_MODEL;
   return v(env.REALTIME_MODEL_STANDARD) ?? v(env.REALTIME_MODEL) ?? STANDARD_REALTIME_MODEL;
 }
+
+/**
+ * GPT-Live model id, used for both tiers when OPENAI_VOICE_API=live (src/lib/live.ts). LIVE_MODEL overrides, for
+ * example gpt-live-1 to compare. https://developers.openai.com/api/docs/models/gpt-live-1.1
+ */
+export const DEFAULT_LIVE_MODEL = "gpt-live-1.1";
+export const liveModel = (env: Env = process.env): string => env.LIVE_MODEL?.trim() || DEFAULT_LIVE_MODEL;

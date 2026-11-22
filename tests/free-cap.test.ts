@@ -74,6 +74,11 @@ beforeEach(() => {
   // No model keys: grading and the text caller use their rules-based fallbacks, with no network.
   vi.stubEnv("LLM_API_KEY", "");
   vi.stubEnv("OPENAI_API_KEY", "");
+  // Routes such as /api/realtime/session and /api/usage/credit call new Date() themselves. Freeze Date at T0
+  // (inside the seeded October period) so a real calendar rollover on the 10th cannot open a new allowance.
+  // Only Date is faked: timers and promises keep running. (Same fix as draft #78.)
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(T0);
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -317,13 +322,23 @@ describe("a Free call that goes silent keeps the time it was confirmed to have u
     expect(allowanceOf("u-1").minutesUsed).toBe(9.5 + 26);
   });
 
-  it("a call that never sent a heartbeat is still bounded by its reservation", async () => {
+  it("a call that only sent its connect heartbeat is still bounded by its reservation", async () => {
+    await freeUserWith(0);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    await usageSummary("u-1", at(3 * 3600));
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 10 });
+    expect(allowanceOf("u-1").minutesUsed).toBe(10);
+  });
+
+  it("a call that never sent a heartbeat is closed as failed_connect and bills nothing", async () => {
     await freeUserWith(0);
     const begun = await beginCall("u-1", scn, at(0));
     if (!begun.ok) throw new Error(begun.error);
     await usageSummary("u-1", at(3 * 3600));
-    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 10 });
-    expect(allowanceOf("u-1").minutesUsed).toBe(10);
+    expect(session(begun.callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
   });
 });
 
