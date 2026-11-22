@@ -39,6 +39,14 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 1. `/` renders the hero, features and example debrief. The mobile tab bar shows on phones.
 2. With `DEMO_MODE=true` a "Demo mode" strip shows, and `/trainer` and `/library/new` load without login.
 
+### 1b. Public try pages (`/try/[role]`)
+Roles and personas: `dealership` (`auto-inbound-used-crossover-lead`), `real-estate` (`real-estate-portal-buyer-inquiry`), `staffing` (`recruiting-active-candidate-support-lead`), `insurance` (`insurance-first-solo-auto-quote`). Each page shows an audience line, a headline, three bullets, the two buttons and a "Free account, no card" note.
+1. Open `/try/dealership?utm_source=test&utm_campaign=launch`. After the page loads, the Start free practice link is `/register?next=...&utm_source=test&utm_campaign=launch`, where `next` decodes to `/trainer?scenario=auto-inbound-used-crossover-lead&mode=text&utm_source=test&utm_campaign=launch`. Book a demo for your team links to `/demo?utm_source=test&utm_campaign=launch`. Without the query, both links are plain (`next` has no utm, `/demo` has no query). The server HTML (view source) always has the plain links; the utm copy happens in the browser.
+2. Non-utm params (for example `?ref=x`) are not copied. Limits: only keys starting with `utm_` (the prefix is case-sensitive, so `utm_Source` is copied and `UTM_source` is not) are copied, up to 8, and only when the key is at most 40 characters and the value at most 120. Others are skipped. The `next` path is capped at 200 characters and stops at the first pair that does not fit, so it can carry fewer pairs than `/register` and `/demo`. Try a long `utm_content` value to see `next` stop early while `/register` and `/demo` keep every pair.
+3. `/try/unknown` returns 404.
+4. Signed out, with `TRAINER_ACCESS_CODE` set, `/try/dealership` still loads without the access code.
+5. Repeat steps 1 to 3 for `/try/real-estate`, `/try/staffing` and `/try/insurance` at 390 px wide: the buttons stack, nothing scrolls sideways, and Start free practice opens `/register` with the matching persona in `next`.
+
 ### 2. Theme toggle and dark mode
 1. The theme toggle cycles "match system", "light" and "dark". Reload: the choice sticks.
 2. Set the OS to dark with "match system" selected: browse pages switch to dark.
