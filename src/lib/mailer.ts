@@ -2,8 +2,9 @@ import "server-only";
 
 /**
  * Outbound email. Sends through the Resend HTTP API when RESEND_API_KEY and MAIL_FROM are both set.
- * Without them it logs the message to the server console outside production (or in demo mode) so local flows can be
- * tested, and in production logs one warning with no recipient or body. Never throws.
+ * Without them it logs the message to the server console outside production so local flows can be tested. In
+ * production it never logs the recipient or body, whatever DEMO_MODE says (the body can carry a bearer link): it logs
+ * one generic warning instead. Never throws.
  */
 
 export interface MailMessage {
@@ -29,7 +30,7 @@ export async function sendMail(msg: MailMessage, env: Env = process.env): Promis
     const apiKey = env.RESEND_API_KEY?.trim();
     const from = env.MAIL_FROM?.trim();
     if (!apiKey || !from) {
-      if (env.DEMO_MODE === "true" || env.NODE_ENV !== "production") {
+      if (env.NODE_ENV !== "production") {
         console.info(`[mailer] Email is not configured, so this message was logged instead of sent.\nTo: ${msg.to}\nSubject: ${msg.subject}\n\n${msg.text}`);
       } else {
         console.warn("[mailer] Email is not configured (set RESEND_API_KEY and MAIL_FROM). A message was not sent.");

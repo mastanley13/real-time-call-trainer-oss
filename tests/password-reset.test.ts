@@ -130,10 +130,24 @@ describe("sendMail", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("logs the message in demo mode even in production", async () => {
+  it("logs the message in demo mode outside production", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
-    await sendMail(msg, { NODE_ENV: "production", DEMO_MODE: "true" });
-    expect(info).toHaveBeenCalledOnce();
+    await sendMail(msg, { NODE_ENV: "development", DEMO_MODE: "true" });
+    expect(info.mock.calls[0][0]).toContain("SECRET-TOKEN");
+  });
+
+  it("never logs the link, token or recipient in production, even with DEMO_MODE=true", async () => {
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    expect(await sendMail(msg, { NODE_ENV: "production", DEMO_MODE: "true" })).toEqual({ ok: false, reason: "not_configured" });
+    const logged = spies.flatMap((s) => s.mock.calls.flat().map(String)).join("\n");
+    expect(logged).not.toContain("SECRET-TOKEN");
+    expect(logged).not.toContain("reset-password");
+    expect(logged).not.toContain("mia@example.test");
+    expect(logged).toContain("not configured");
+    expect(vi.mocked(console.warn)).toHaveBeenCalledOnce();
+    expect(vi.mocked(console.info)).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("warns once in production with no token or address", async () => {

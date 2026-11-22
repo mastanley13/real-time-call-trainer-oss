@@ -197,6 +197,21 @@ describe("POST /api/auth/password-reset/confirm", () => {
     expect(mocks.prisma.user.updateMany).not.toHaveBeenCalled();
   });
 
+  it("still returns success when the audit insert fails after the password changed", async () => {
+    mocks.prisma.user.findUnique.mockResolvedValue({ id: USER.id, passwordHash: HASH });
+    mocks.prisma.auditEvent.create.mockRejectedValue(new Error("audit table down"));
+    const res = await confirm({ token: token(), password: "a-brand-new-password" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(mocks.prisma.user.updateMany).toHaveBeenCalledOnce();
+    const error = vi.mocked(console.error);
+    expect(error).toHaveBeenCalledOnce();
+    const line = String(error.mock.calls[0][0]);
+    expect(line).not.toContain(USER.id);
+    expect(line).not.toContain(USER.email);
+    expect(line).not.toContain("audit table down");
+  }, 20_000);
+
   it("rejects the loser of a race on the same link", async () => {
     mocks.prisma.user.findUnique.mockResolvedValue({ id: USER.id, passwordHash: HASH });
     mocks.prisma.user.updateMany.mockResolvedValue({ count: 0 });

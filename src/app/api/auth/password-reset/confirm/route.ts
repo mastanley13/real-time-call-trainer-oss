@@ -67,14 +67,19 @@ export async function POST(request: NextRequest) {
     });
     if (updated.count !== 1) return invalid();
 
-    await prisma.auditEvent.create({
-      data: {
-        userId: user.id,
-        action: "user.password_reset_completed",
-        ip,
-        userAgent: request.headers.get("user-agent")?.slice(0, 500) ?? undefined,
-      },
-    });
+    // The password has changed and the link is spent, so success stands even if the audit row cannot be written.
+    try {
+      await prisma.auditEvent.create({
+        data: {
+          userId: user.id,
+          action: "user.password_reset_completed",
+          ip,
+          userAgent: request.headers.get("user-agent")?.slice(0, 500) ?? undefined,
+        },
+      });
+    } catch {
+      console.error("[password-reset] Password changed, but the audit event could not be written.");
+    }
     return NextResponse.json({ ok: true });
   } catch {
     console.error("[password-reset] Could not complete the reset.");
