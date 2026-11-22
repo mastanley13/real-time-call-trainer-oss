@@ -87,7 +87,7 @@ export default function ModelsClient() {
               <dt className="text-ink-muted">API key</dt>
               <dd className="flex items-center gap-2"><span className={`lamp ${keySet ? "lamp-ok" : "lamp-off"}`} aria-hidden />{keySet ? "Set on the server" : "Not set"}</dd>
               <dt className="text-ink-muted">Model</dt>
-              <dd>{keySet ? <>Set by <code className="kbd">LLM_MODEL</code> on the server</> : "Not in use"}</dd>
+              <dd>{keySet ? <>Set by <code className="kbd">LLM_MODEL</code> on the server; grading can use <code className="kbd">LLM_MODEL_GRADING</code></> : "Not in use"}</dd>
             </dl>
           </div>
           {/* aria-disabled, not disabled, so keyboard focus stays on the button while the check runs. */}
@@ -97,7 +97,7 @@ export default function ModelsClient() {
           </button>
         </div>
         <div role="status" aria-live="polite"><CheckResult check={check} keySet={keySet} /></div>
-        <p className="mt-4 text-xs text-ink-muted">The check sends one tiny request (a single output token) with the server&rsquo;s key and model. You can run it 6 times every 10 minutes.</p>
+        <p className="mt-4 text-xs text-ink-muted">The check sends one tiny request with the server&rsquo;s key and live-turn model. You can run it 6 times every 10 minutes.</p>
       </section>
 
       <section aria-labelledby="jobs-h" className="space-y-3">
@@ -162,7 +162,7 @@ export default function ModelsClient() {
       <section className="panel p-4 sm:p-5" aria-labelledby="nokey-h">
         <h2 id="nokey-h" className="label">When there&rsquo;s no working key</h2>
         <p className="text-sm text-ink-soft">Practice keeps working. With no key, every job above uses its fallback. With a key that fails, only the failed request falls back, and the next one tries the model again. Rules-based grades show as estimates on the debrief, and you can re-grade them with AI once the key works.</p>
-        <p className="mt-3 text-sm text-ink-soft">To turn AI on, set <code className="kbd">LLM_API_KEY</code> on the server and restart it. <code className="kbd">LLM_MODEL</code> picks the model and <code className="kbd">LLM_BASE_URL</code> points at any OpenAI-compatible endpoint. The README has the details.</p>
+        <p className="mt-3 text-sm text-ink-soft">To turn AI on, set <code className="kbd">LLM_API_KEY</code> on the server and restart it. <code className="kbd">LLM_MODEL</code> picks the live-turn model, <code className="kbd">LLM_MODEL_GRADING</code> can pick a separate grading model, and <code className="kbd">LLM_BASE_URL</code> points at any OpenAI-compatible endpoint. The README has the details.</p>
       </section>
     </div>
   );

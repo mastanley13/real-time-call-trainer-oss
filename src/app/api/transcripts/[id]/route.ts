@@ -9,7 +9,7 @@ import { LIBRARY } from "@/lib/personas";
 import { evaluateCall } from "@/lib/grader";
 import type { Evaluation } from "@/lib/grader-types";
 import { canRegrade, gradable, gradedNote, isAiGrade, withoutModelId } from "@/lib/gradable";
-import { getCapabilities, llmKey, llmModel } from "@/lib/serverConfig";
+import { getCapabilities, llmGradingModel, llmKey } from "@/lib/serverConfig";
 import { SESSION_VIEW_SELECT, sessionView } from "@/lib/sessionView";
 
 type Params = { params: Promise<{ id: string }> };
@@ -165,7 +165,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
             previousModel: previous?.model ?? null,
             overallScore: stored.overallScore,
             // Server-side audit only: the operator can still see which model graded, the browser never does.
-            model: llmModel(),
+            model: llmGradingModel(),
             graderVersion: stored.graderVersion ?? null,
           } satisfies Prisma.InputJsonValue,
         },
