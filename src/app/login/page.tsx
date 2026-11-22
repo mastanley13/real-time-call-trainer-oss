@@ -1,16 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
 import GoogleButton, { GOOGLE_ERRORS } from "@/components/GoogleButton";
 import LegalLinks from "@/components/LegalLinks";
+import { loginDestination, validNextPath } from "@/lib/safeNext";
 
 export default function LoginPage() {
+  // useSearchParams needs a Suspense boundary in the App Router.
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const { login, completeMfaChallenge, isAuthenticated, capabilities } = useAuth();
   const router = useRouter();
+  // The current ?next=, read on every render. The Google return effect below keeps a safe one in the URL.
+  const nextParam = useSearchParams().get("next");
+  const destination = loginDestination(nextParam);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -19,8 +32,8 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (isAuthenticated) router.replace("/trainer");
-  }, [isAuthenticated, router]);
+    if (isAuthenticated) router.replace(destination);
+  }, [isAuthenticated, router, destination]);
 
   // Coming back from Google: an error code in the query, or an MFA challenge in the fragment
   // (fragments never reach a server). Read once, then clear them from the address bar.
@@ -30,7 +43,9 @@ export default function LoginPage() {
     const mfa = new URLSearchParams(url.hash.slice(1)).get("mfa");
     if (err) setError(GOOGLE_ERRORS[err] ?? GOOGLE_ERRORS.google_failed);
     if (mfa) setChallenge(mfa);
-    if (err || mfa) window.history.replaceState(null, "", url.pathname);
+    // Clear error and the fragment, but keep a safe next so the sign-in still lands there.
+    const keepNext = validNextPath(url.searchParams.get("next"));
+    if (err || mfa) window.history.replaceState(null, "", keepNext ? `${url.pathname}?next=${encodeURIComponent(keepNext)}` : url.pathname);
   }, []);
 
   async function onSubmit(e: FormEvent) {
@@ -44,7 +59,7 @@ export default function LoginPage() {
         const mfa = await login({ email, password });
         if (mfa) { setChallenge(mfa.challengeToken); setBusy(false); return; }
       }
-      router.push("/trainer");
+      router.push(destination);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign-in failed");
     } finally {
@@ -59,7 +74,7 @@ export default function LoginPage() {
           No database is configured, so accounts are unavailable. Set <code>DATABASE_URL</code>, or run with <code>DEMO_MODE=true</code> to skip login (see TESTING.md).
         </div>
       )}
-      {!challenge && <GoogleButton />}
+      {!challenge && <GoogleButton next={validNextPath(nextParam) ?? undefined} />}
       <form onSubmit={onSubmit} className="space-y-4">
         {challenge ? (
           <div>
