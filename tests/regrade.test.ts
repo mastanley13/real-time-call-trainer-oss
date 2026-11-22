@@ -47,7 +47,7 @@ const llmReply = () =>
   });
 const promptOf = (call = 0) => mocks.chat.mock.calls[call][0][1].content as string;
 
-const ENV_KEYS = ["LLM_API_KEY", "OPENAI_API_KEY", "LLM_MODEL", "LLM_BASE_URL", "DATABASE_URL", "DEMO_MODE", "JWT_SECRET", "RATE_LIMIT_GRADING_MAX"] as const;
+const ENV_KEYS = ["LLM_API_KEY", "OPENAI_API_KEY", "LLM_MODEL", "LLM_MODEL_GRADING", "LLM_BASE_URL", "DATABASE_URL", "DEMO_MODE", "JWT_SECRET", "RATE_LIMIT_GRADING_MAX"] as const;
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 let n = 0;
 /** Signs in a fresh user per call so the per-user limits never leak between tests. */

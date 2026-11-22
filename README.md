@@ -81,7 +81,8 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `ELEVENLABS_AGENT_ID_STANDARD` | Optional | Agent for the standard tier. Unset means only accounts with Premium Voice (and Premium minutes left) can start an ElevenLabs call; everyone else gets 503 `standard_voice_not_configured` |
 | `LLM_API_KEY` | Optional | Live coach, post-call grading, persona wizard and text simulation (any OpenAI-compatible API). With a custom `LLM_BASE_URL`, this is the only key sent. Without a key: rules-based coach and grader, template wizard, scripted caller |
 | `LLM_BASE_URL` | Optional | Default `https://api.openai.com/v1` |
-| `LLM_MODEL` | Optional | Default `gpt-4.1-mini` |
+| `LLM_MODEL` | Optional | Live coach, text simulation and other per-turn chat. Default `gpt-6-luna` |
+| `LLM_MODEL_GRADING` | Optional | Final grading and scoring (`/api/evaluate-call` and re-grades). Falls back to `LLM_MODEL` when unset. Hosted production uses `gpt-6.2-sol` |
 | `DATABASE_URL` | For accounts | Postgres connection string |
 | `JWT_SECRET` | For accounts | 32+ random bytes (`node generate-jwt-secret.js`). Also keys the grade seal and the access-code cookie |
 | `CRON_SECRET` | Optional | Bearer secret for `/api/cron/purge-expired` and `/api/cron/openai-keys` (OpenAI key slot health, also open to platform admins). The purge route accepts only `Authorization: Bearer $CRON_SECRET` (Vercel Cron sends it when the variable is set) and returns 401 without it |
