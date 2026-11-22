@@ -5,6 +5,7 @@ import { ipLimitResponse, userLimitResponse, readJsonLimited } from "@/lib/rateL
 import { meteringEnabled } from "@/lib/serverConfig";
 import { heartbeat } from "@/lib/usage";
 import { CAP_STOPPED_MESSAGE } from "@/lib/billingUi";
+import { queuePremiumEvent } from "@/lib/billingEvents";
 
 // Only the call id and a state are read. Any times or durations the client adds are dropped by the schema.
 const Body = z.object({
@@ -37,6 +38,12 @@ export async function POST(req: NextRequest) {
   const r = await heartbeat(auth.id, body.callId, body.state);
   if (!r.found) return NextResponse.json({ error: "not_found", message: "That call was not found." }, { status: 404 });
   if (r.stop) {
+    // The allowance ran out during the call. Only the stop itself says cap_reached; every heartbeat after it answers
+    // "ended", so this fires once per call. Free calls never stop on the cap (only on the call length limit), so they
+    // never emit here. Ids only, and never awaited.
+    if (r.reason === "cap_reached") {
+      queuePremiumEvent({ name: "voice_cap_hit", subject: "user", subjectId: auth.id, reason: "cap_reached_in_call" });
+    }
     const message = r.reason === "cap_reached" ? CAP_STOPPED_MESSAGE
       : r.reason === "max_duration" ? "This call reached the maximum call length."
       : undefined;

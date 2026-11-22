@@ -78,3 +78,15 @@ export async function emitPremiumEvent(event: PremiumEvent): Promise<void> {
     console.error("[billing-events] premium sink failed for", event.name);
   }
 }
+
+/**
+ * Schedules a premium event without waiting for the sink, for request paths whose answer must not wait on it
+ * (the 402 at a refused voice start, the heartbeat stop). The sink runs on a later microtask, so neither a slow
+ * sink nor one that throws can delay or change the response.
+ */
+export function queuePremiumEvent(event: PremiumEvent): void {
+  if (!premiumSink) return;
+  void Promise.resolve()
+    .then(() => emitPremiumEvent(event))
+    .catch(() => {});
+}

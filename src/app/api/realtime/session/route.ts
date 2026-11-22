@@ -6,7 +6,7 @@ import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { meteringEnabled } from "@/lib/serverConfig";
 import { beginCall, endCall, type PremiumMintInfo } from "@/lib/usage";
-import { emitPremiumEvent } from "@/lib/billingEvents";
+import { emitPremiumEvent, queuePremiumEvent } from "@/lib/billingEvents";
 import { mintVoiceTier } from "@/lib/voiceTier";
 import { capReached, dailySessionLimit, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
 import { realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
@@ -96,8 +96,8 @@ export async function POST(req: NextRequest) {
     });
     if (!begun) return voiceUnavailable();
     if (!begun.ok && begun.error === "cap_reached") {
-      // TODO(cap-hit): no analytics sink is registered by default; a deployment registers one with setPremiumEventSink().
-      await emitPremiumEvent({ name: "voice_cap_hit", subject: "user", subjectId: auth.id, reason: "cap_reached" });
+      // Ids only, and never awaited: the 402 does not wait on the sink. No sink is registered by default.
+      queuePremiumEvent({ name: "voice_cap_hit", subject: "user", subjectId: auth.id, reason: "cap_reached" });
       return capReached();
     }
     if (!begun.ok && begun.error === "minutes_reserved") return minutesReserved();

@@ -4,7 +4,7 @@ import { rateLimit, ipLimitResponse } from "@/lib/rateLimit";
 import { elevenLabsAgentFor, meteringEnabled } from "@/lib/serverConfig";
 import { beginCall, endCall } from "@/lib/usage";
 import { capReached, dailySessionLimit, minutesReserved, standardVoiceUnavailable, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
-import { emitPremiumEvent } from "@/lib/billingEvents";
+import { emitPremiumEvent, queuePremiumEvent } from "@/lib/billingEvents";
 
 /**
  * Mints a short-lived WebRTC conversation token for the configured
@@ -62,8 +62,8 @@ export async function GET(req: NextRequest) {
     });
     if (!begun) return voiceUnavailable();
     if (!begun.ok && begun.error === "cap_reached") {
-      // TODO(cap-hit): no analytics sink is registered by default; a deployment registers one with setPremiumEventSink().
-      await emitPremiumEvent({ name: "voice_cap_hit", subject: "user", subjectId: auth.id, reason: "cap_reached" });
+      // Ids only, and never awaited: the 402 does not wait on the sink. No sink is registered by default.
+      queuePremiumEvent({ name: "voice_cap_hit", subject: "user", subjectId: auth.id, reason: "cap_reached" });
       return capReached();
     }
     if (!begun.ok && begun.error === "minutes_reserved") return minutesReserved();

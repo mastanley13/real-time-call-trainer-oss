@@ -16,6 +16,9 @@ import { FREE_MINUTES, MAX_CALL_SECONDS, capFor } from "@/lib/usagePlan";
 import { setPremiumEventSink, type PremiumEvent } from "@/lib/billingEvents";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
+import { GET as elevenLabsToken } from "@/app/api/elevenlabs/token/route";
+import { POST as heartbeatRoute } from "@/app/api/usage/heartbeat/route";
+import { capReached } from "@/lib/usageResponses";
 import { POST as saveTranscript } from "@/app/api/transcripts/route";
 import { POST as evaluate } from "@/app/api/evaluate-call/route";
 import { POST as simulate } from "@/app/api/simulate/turn/route";
@@ -333,22 +336,151 @@ describe("a Free call that goes silent keeps the time it was confirmed to have u
   });
 });
 
-describe("a refused voice start emits voice_cap_hit", () => {
-  afterEach(() => setPremiumEventSink(null));
+describe("voice_cap_hit: a used-up allowance is reported with ids only, and never holds up the answer", () => {
+  // Each test below runs as its own user so the per-user mint limits (fixed, on a frozen clock) never carry over.
+  const capHit = (userId: string, reason: string): PremiumEvent => ({ name: "voice_cap_hit", subject: "user", subjectId: userId, reason });
+  /** The sink is scheduled after the response is built: let pending microtasks and one macrotask run first. */
+  const flush = () => new Promise<void>((r) => setImmediate(r));
+  const elToken = () => elevenLabsToken(new NextRequest("http://localhost/api/elevenlabs/token?scenarioId=quote-follow-up"));
+  const beat = (callId: string, state: "connected" | "ok") => heartbeatRoute(post("/api/usage/heartbeat", { callId, state }));
+  let events: PremiumEvent[];
 
-  it("emits one event with ids only when the allowance is used up, and none when a call starts", async () => {
-    const events: PremiumEvent[] = [];
+  async function freeUser(id: string, used: number) {
+    mocks.authId = id;
+    addUser(id);
+    await ensureAllowance(fake.db as never, { userId: id }, at(0));
+    allowanceOf(id).minutesUsed = used;
+  }
+
+  beforeEach(() => {
+    events = [];
     setPremiumEventSink((e) => { events.push(e); });
     vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
+    vi.stubEnv("ELEVENLABS_API_KEY", "el-test-not-real");
+    vi.stubEnv("ELEVENLABS_AGENT_ID", "agent-main");
+    vi.stubEnv("ELEVENLABS_AGENT_ID_STANDARD", "agent-std"); // Free calls run on the Standard engine
+  });
+  afterEach(() => setPremiumEventSink(null));
+
+  it("the realtime route emits one event with ids only when the allowance is used up, and none when a call starts", async () => {
     await freeUserWith(FREE_MINUTES);
     const res = await realtimeSession(post("/api/realtime/session", { scenario }));
     expect(res.status).toBe(402);
-    expect(events).toEqual([{ name: "voice_cap_hit", subject: "user", subjectId: "u-1", reason: "cap_reached" }]);
+    await flush();
+    expect(events).toEqual([capHit("u-1", "cap_reached")]);
 
     events.length = 0;
     allowanceOf("u-1").minutesUsed = 5;
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ value: "ek_test", expires_at: 9999999999 }), { status: 200 })));
     expect((await realtimeSession(post("/api/realtime/session", { scenario }))).status).toBe(200);
+    await flush();
+    expect(events).toEqual([]);
+  });
+
+  it("the ElevenLabs token route emits one event with ids only when the allowance is used up, and none when a call starts", async () => {
+    await freeUser("u-el", FREE_MINUTES);
+    const upstream = vi.fn(async () => new Response(JSON.stringify({ token: "el-conv-token" }), { status: 200 }));
+    vi.stubGlobal("fetch", upstream);
+    const res = await elToken();
+    expect(res.status).toBe(402);
+    expect((await res.json()).error).toBe("cap_reached");
+    expect(upstream).not.toHaveBeenCalled();
+    await flush();
+    expect(events).toEqual([capHit("u-el", "cap_reached")]);
+    // Nothing else rides along: no email, plan, model, agent or call id.
+    expect(Object.keys(events[0]).sort()).toEqual(["name", "reason", "subject", "subjectId"]);
+
+    events.length = 0;
+    allowanceOf("u-el").minutesUsed = 5;
+    expect((await elToken()).status).toBe(200);
+    await flush();
+    expect(events).toEqual([]);
+  });
+
+  it("a sink that never settles does not delay the 402 or change it", async () => {
+    let called = 0;
+    setPremiumEventSink(() => { called++; return new Promise<void>(() => {}); });
+    await freeUser("u-slow-rt", FREE_MINUTES);
+    let t = performance.now();
+    const rt = await realtimeSession(post("/api/realtime/session", { scenario }));
+    expect(performance.now() - t).toBeLessThan(1000);
+    expect(rt.status).toBe(402);
+    expect((await rt.json()).error).toBe("cap_reached");
+
+    await freeUser("u-slow-el", FREE_MINUTES);
+    t = performance.now();
+    const el = await elToken();
+    expect(performance.now() - t).toBeLessThan(1000);
+    expect(el.status).toBe(402);
+    expect((await el.json()).error).toBe("cap_reached");
+    await flush();
+    expect(called).toBe(2); // the sink was still told, just not waited for
+  });
+
+  it("a sink that throws, or rejects, does not change the 402", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const expected = await capReached().json();
+    for (const [id, sink] of [
+      ["u-throw", () => { throw new Error("sink down"); }],
+      ["u-reject", async () => { throw new Error("sink down"); }],
+    ] as const) {
+      setPremiumEventSink(sink);
+      await freeUser(id, FREE_MINUTES);
+      const res = await elToken();
+      expect(res.status).toBe(402);
+      expect(await res.json()).toEqual(expected);
+      await flush();
+    }
+    // The failure is logged by event name only.
+    expect(errors).toHaveBeenCalledWith("[billing-events] premium sink failed for", "voice_cap_hit");
+    errors.mockRestore();
+  });
+
+  it("the heartbeat that stops a call at its cap emits cap_reached_in_call once, and the heartbeats before and after emit nothing", async () => {
+    mocks.authId = "u-pro";
+    addUser("u-pro", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-pro" }, at(0));
+    allowanceOf("u-pro").minutesUsed = 199.5;
+    const begun = await beginCall("u-pro", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    expect(begun.maxSeconds).toBe(60);
+
+    expect(await (await beat(begun.callId, "connected")).json()).toMatchObject({ stop: false });
+    vi.setSystemTime(at(30));
+    expect(await (await beat(begun.callId, "ok")).json()).toMatchObject({ stop: false });
+    await flush();
+    expect(events).toEqual([]);
+
+    vi.setSystemTime(at(70));
+    expect(await (await beat(begun.callId, "ok")).json()).toMatchObject({ stop: true, reason: "cap_reached" });
+    vi.setSystemTime(at(80));
+    expect(await (await beat(begun.callId, "ok")).json()).toMatchObject({ stop: true, reason: "ended" });
+    vi.setSystemTime(at(90));
+    await beat(begun.callId, "ok");
+    await flush();
+    expect(events).toEqual([capHit("u-pro", "cap_reached_in_call")]);
+  });
+
+  it("a Free call stopped by the call length limit is not a cap hit", async () => {
+    await freeUser("u-long", 0);
+    const begun = await beginCall("u-long", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await beat(begun.callId, "connected");
+    vi.setSystemTime(at(MAX_CALL_SECONDS + 5));
+    expect(await (await beat(begun.callId, "ok")).json()).toMatchObject({ stop: true, reason: "max_duration" });
+    await flush();
+    expect(events).toEqual([]);
+  });
+
+  it("no event when metering is off: the mint is not capped and the heartbeat is not served", async () => {
+    vi.stubEnv("DATABASE_URL", "");
+    await freeUser("u-off", 12);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ value: "ek_test", expires_at: 9999999999 }), { status: 200 })));
+    expect((await realtimeSession(post("/api/realtime/session", { scenario }))).status).toBe(200);
+    const hb = await beat("any-call", "ok");
+    expect(hb.status).toBe(404);
+    expect((await hb.json()).error).toBe("metering_off");
+    await flush();
     expect(events).toEqual([]);
   });
 });

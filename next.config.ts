@@ -36,8 +36,6 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   async redirects() {
     return [
-      { source: "/contact", destination: "/demo", permanent: false },
-      { source: "/contact/", destination: "/demo", permanent: false },
       {
         source: "/demo",
         destination: "https://api.leadconnectorhq.com/widget/bookings/calltrainer-demo",
@@ -46,6 +44,17 @@ const nextConfig: NextConfig = {
       {
         source: "/demo/",
         destination: "https://api.leadconnectorhq.com/widget/bookings/calltrainer-demo",
+        permanent: false,
+      },
+      // Temporary: /contact sends people to the demo booking until a contact page exists.
+      {
+        source: "/contact",
+        destination: "/demo",
+        permanent: false,
+      },
+      {
+        source: "/contact/",
+        destination: "/demo",
         permanent: false,
       },
     ];
