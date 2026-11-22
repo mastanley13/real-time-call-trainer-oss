@@ -16,6 +16,7 @@ type Outcome =
   | { kind: "ok"; remaining?: number }
   | { kind: "invalid" }
   | { kind: "locked" }
+  | { kind: "mfa_changed" }
   | { kind: "link_refused" };
 
 /** Thrown inside the success transaction to roll it back and report why. */
@@ -91,6 +92,7 @@ export async function POST(req: NextRequest) {
   const viaRecovery = body.recoveryCode !== undefined;
   const method = viaRecovery ? "recovery_code" : "totp";
   const recoveryCode = body.recoveryCode;
+  const verifiedSecret = user.mfaSecret;
 
   // TOTP needs no database, so a wrong one is refused here without opening a transaction.
   let outcome: Outcome =
@@ -106,6 +108,12 @@ export async function POST(req: NextRequest) {
     outcome = await prisma
       .$transaction(async (tx): Promise<Outcome> => {
         if (!(await clearAuthFailures(user.id, { lastLoginAt: new Date() }, tx))) return { kind: "locked" };
+        // We now hold the user row lock, so this read is the current committed state, and nobody can change it
+        // before we commit. The TOTP was verified against the secret read before the transaction: MFA must still be
+        // on with exactly that secret, or a disable and re-enroll in between would let a code for the old secret
+        // in. Checked for both methods, so neither can sign in to an enrollment it was not checked against.
+        const current = await tx.user.findUnique({ where: { id: user.id }, select: { mfaEnabled: true, mfaSecret: true } });
+        if (!current?.mfaEnabled || current.mfaSecret !== verifiedSecret) throw new Abort({ kind: "mfa_changed" });
         let remaining: number | undefined;
         if (recoveryCode !== undefined) {
           const spent = await consumeRecoveryCode(user.id, recoveryCode, tx);
@@ -124,6 +132,17 @@ export async function POST(req: NextRequest) {
   }
 
   if (outcome.kind === "locked") return lockedResponse();
+
+  if (outcome.kind === "mfa_changed") {
+    // MFA was turned off or re-enrolled after the code was checked. Everything was rolled back; no session.
+    await prisma.auditEvent.create({
+      data: { userId: user.id, action: "user.mfa_challenge_failed", ip, metadata: { method, reason: "mfa_changed" } },
+    });
+    return NextResponse.json(
+      { error: "Your MFA settings changed during sign-in. Sign in again." },
+      { status: 409 },
+    );
+  }
 
   if (outcome.kind === "invalid") {
     // Both methods feed the account's failedLoginCount, shared with the password step, so guesses spread across

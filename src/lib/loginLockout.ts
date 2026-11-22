@@ -24,22 +24,31 @@ export function lockedResponse(): NextResponse {
 }
 
 /**
- * Count one failed secret. The increment is atomic, so concurrent failures from different IPs are all counted. The
- * request that reaches MAX_FAILED_LOGINS arms the lock and resets the count to 0, the same end state the login route
- * has always written. Returns whether this failure locked the account.
+ * Count one failed secret, and arm the lock when this failure reaches MAX_FAILED_LOGINS, as one atomic transition.
+ *
+ * The increment is the transaction's first statement, so it takes the user row lock and holds it until commit; the
+ * arming update (count back to 0, the end state the login route has always written, plus lockedUntil) runs under
+ * that same lock. The success transition (clearAuthFailures) is an UPDATE of the same row, so it needs the same lock:
+ * - If it runs first, this increment waits for it and counts from 0.
+ * - If this runs first, it waits for the commit and then re-checks its where clause against the locked row, matches
+ *   nothing, and the success is refused.
+ * Nobody ever sees a count at the threshold without its lock. Concurrent failures from different IPs serialize on
+ * the row and are all counted. Returns whether this failure locked the account.
  */
 export async function recordAuthFailure(userId: string): Promise<{ locked: boolean }> {
-  const { failedLoginCount } = await prisma.user.update({
-    where: { id: userId },
-    data: { failedLoginCount: { increment: 1 } },
-    select: { failedLoginCount: true },
+  return prisma.$transaction(async (tx) => {
+    const { failedLoginCount } = await tx.user.update({
+      where: { id: userId },
+      data: { failedLoginCount: { increment: 1 } },
+      select: { failedLoginCount: true },
+    });
+    if (failedLoginCount < MAX_FAILED_LOGINS) return { locked: false };
+    await tx.user.update({
+      where: { id: userId },
+      data: { failedLoginCount: 0, lockedUntil: new Date(Date.now() + LOCKOUT_MINUTES * 60_000) },
+    });
+    return { locked: true };
   });
-  if (failedLoginCount < MAX_FAILED_LOGINS) return { locked: false };
-  const armed = await prisma.user.updateMany({
-    where: { id: userId, failedLoginCount: { gte: MAX_FAILED_LOGINS } },
-    data: { failedLoginCount: 0, lockedUntil: new Date(Date.now() + LOCKOUT_MINUTES * 60_000) },
-  });
-  return { locked: armed.count > 0 };
 }
 
 /**

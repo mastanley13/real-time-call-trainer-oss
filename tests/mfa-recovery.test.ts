@@ -22,8 +22,8 @@ const state = vi.hoisted(() => ({
   /** Runs once just before the row-lock read, as if another request committed a change at that moment. */
   beforeLock: null as null | (() => void),
   /**
-   * One-shot hooks, the interleave pattern from tests/fakePrisma.ts: just before the next matching user.updateMany,
-   * `run` executes as if another connection did that work and committed at that moment.
+   * One-shot hooks, the interleave pattern from tests/fakePrisma.ts: just before the next matching user.update or
+   * user.updateMany, `run` executes as if another connection did that work at that moment.
    */
   hooks: [] as { when: (args: { where: Where; data: Record<string, unknown> }) => boolean; run: () => Promise<void> }[],
 }));
@@ -111,13 +111,16 @@ const fakeDb = vi.hoisted(() => {
           const u = where.id !== undefined ? state.users.get(where.id) : [...state.users.values()].find((x) => x.email === where.email);
           return u ? { ...u, firstName: null, lastName: null, isPlatformAdmin: false, organization: null } : null;
         },
-        update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) =>
-          locked(ctx, () => {
+        update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+          const i = state.hooks.findIndex((h) => h.when({ where, data }));
+          if (i >= 0) await state.hooks.splice(i, 1)[0].run();
+          return locked(ctx, () => {
             const u = state.users.get(where.id);
             if (!u) throw new Error("user not found");
             applyUser(u, data);
             return { ...u };
-          }),
+          });
+        },
         updateMany: async ({ where, data }: { where: Where; data: Record<string, unknown> }) => {
           const i = state.hooks.findIndex((h) => h.when({ where, data }));
           if (i >= 0) await state.hooks.splice(i, 1)[0].run();
@@ -815,6 +818,133 @@ describe("a lock armed while a correct secret is being checked is never erased",
     expect(res.headers.get("set-cookie")).toBeNull();
     expect(state.codes.every((c) => c.usedAt === null)).toBe(true);
     expect(state.users.get(user.id)).toMatchObject({ googleSub: "someone-else", failedLoginCount: 3 });
+  });
+});
+
+describe("the threshold failure and a concurrent success serialize on the user row", () => {
+  const isArm = ({ data }: { data: Record<string, unknown> }) => data.lockedUntil instanceof Date;
+  const isReset = ({ where, data }: { where: Where; data: Record<string, unknown> }) => "OR" in where && !("googleSub" in data);
+
+  /**
+   * The eighth failure has incremented the count to the threshold but not yet armed the lock. Right then a correct
+   * secret arrives, passes the isLocked check (no lock yet) and reaches its success transition. Only after that does
+   * the failure arm its lock. With increment and arm as separate statements, the success would reset the count, issue a
+   * session, and leave the arm nothing to match.
+   */
+  async function raceThresholdFailure(userId: string, success: () => Promise<Response>) {
+    state.users.get(userId)!.failedLoginCount = MAX_FAILED_LOGINS - 1;
+    let reachedReset!: () => void;
+    const atReset = new Promise<void>((r) => (reachedReset = r));
+    let pending!: Promise<Response>;
+    state.hooks.push({
+      when: isArm,
+      run: async () => {
+        state.hooks.push({ when: isReset, run: async () => reachedReset() });
+        pending = success();
+        await atReset;
+      },
+    });
+    const failure = await recordAuthFailure(userId);
+    return { failure, res: await pending };
+  }
+
+  async function expectRefusedAndLocked(userId: string, res: Response, failure: { locked: boolean }) {
+    expect(failure.locked).toBe(true);
+    expect(res.status).toBe(423);
+    expect(await res.json()).toEqual({ error: LOCKED_MESSAGE });
+    expect(res.headers.get("set-cookie")).toBeNull();
+    const row = state.users.get(userId)!;
+    expect(row.lockedUntil!.getTime()).toBeGreaterThan(Date.now());
+    expect(row.lastLoginAt ?? null).toBeNull();
+  }
+
+  it("password login", async () => {
+    const user = seedUser({ mfaEnabled: false, mfaSecret: null });
+    const { failure, res } = await raceThresholdFailure(user.id, () => login(user, PASSWORD));
+    await expectRefusedAndLocked(user.id, res, failure);
+  });
+
+  it("MFA challenge with a TOTP code", async () => {
+    const { user } = await enrolled();
+    const { failure, res } = await raceThresholdFailure(user.id, () => challenge(user.id, { code: "123456" }, freshIp()));
+    await expectRefusedAndLocked(user.id, res, failure);
+  });
+
+  it("MFA challenge with a recovery code (and the code is not spent)", async () => {
+    const { user, codes } = await enrolled();
+    const { failure, res } = await raceThresholdFailure(user.id, () => challenge(user.id, { recoveryCode: codes[0] }, freshIp()));
+    await expectRefusedAndLocked(user.id, res, failure);
+    expect(state.codes.every((c) => c.usedAt === null)).toBe(true);
+  });
+
+  it("regenerate (and the old codes are untouched)", async () => {
+    const { user } = await enrolled();
+    const before = state.codes.map((c) => ({ ...c }));
+    const { failure, res } = await raceThresholdFailure(user.id, () => regenerate(user, { password: PASSWORD }));
+    await expectRefusedAndLocked(user.id, res, failure);
+    expect(state.codes).toEqual(before);
+  });
+
+  it("a success that commits before the failure starts counting from zero, with no lock", async () => {
+    const user = seedUser({ mfaEnabled: false, mfaSecret: null, failedLoginCount: MAX_FAILED_LOGINS - 1 });
+    expect((await login(user, PASSWORD)).status).toBe(200);
+    expect(await recordAuthFailure(user.id)).toEqual({ locked: false });
+    expect(state.users.get(user.id)).toMatchObject({ failedLoginCount: 1, lockedUntil: null });
+  });
+});
+
+describe("MFA changed between the code check and the commit", () => {
+  const isReset = ({ where, data }: { where: Where; data: Record<string, unknown> }) => "OR" in where && !("googleSub" in data);
+
+  async function disable(user: UserRow) {
+    expect((await disableRoute(authed("http://localhost/api/auth/mfa/disable", user, { code: "123456" }))).status).toBe(200);
+  }
+  async function reEnroll(user: UserRow) {
+    await disable(user);
+    expect((await enrollRoute(authed("http://localhost/api/auth/mfa/enroll", user, {}))).status).toBe(200);
+    expect((await activate(user)).status).toBe(200);
+  }
+
+  function expectRefusedNothingKept(userId: string, res: Response, failedBefore: number) {
+    expect(res.status).toBe(409);
+    expect(res.headers.get("set-cookie")).toBeNull();
+    const row = state.users.get(userId)!;
+    expect(row.lastLoginAt ?? null).toBeNull();
+    expect(row.failedLoginCount).toBe(failedBefore); // the tentative reset was rolled back
+    expect(state.audits.some((a) => a.action === "user.mfa_challenge_success")).toBe(false);
+    expect(state.audits.filter((a) => a.action === "user.mfa_challenge_failed").at(-1)?.metadata).toMatchObject({ reason: "mfa_changed" });
+  }
+
+  it("TOTP: disable and re-enroll between verify and commit: 409, no session", async () => {
+    const { user } = await enrolled();
+    state.users.get(user.id)!.failedLoginCount = 2;
+    state.hooks.push({ when: isReset, run: () => reEnroll(user) });
+    const res = await challenge(user.id, { code: "123456" }, freshIp());
+    // The code was checked against the old secret; MFA is on again, but with a new one.
+    expect(mocks.verifyTotp).toHaveBeenCalledWith("SECRET", "123456");
+    expect(state.users.get(user.id)).toMatchObject({ mfaEnabled: true });
+    expect(state.users.get(user.id)!.mfaSecret).not.toBe("SECRET");
+    expectRefusedNothingKept(user.id, res, 2);
+  });
+
+  it("TOTP: disabled between verify and commit: 409, no session", async () => {
+    const { user } = await enrolled();
+    state.hooks.push({ when: isReset, run: () => disable(user) });
+    const res = await challenge(user.id, { code: "123456" }, freshIp());
+    expectRefusedNothingKept(user.id, res, 0);
+  });
+
+  it("recovery code: re-enrolled meanwhile: 409, and no code from either set is spent", async () => {
+    const { user, codes } = await enrolled();
+    state.hooks.push({ when: isReset, run: () => reEnroll(user) });
+    const res = await challenge(user.id, { recoveryCode: codes[0] }, freshIp());
+    expectRefusedNothingKept(user.id, res, 0);
+    expect(state.codes.every((c) => c.usedAt === null)).toBe(true);
+  });
+
+  it("without a change in between, the same challenge succeeds", async () => {
+    const { user } = await enrolled();
+    expect((await challenge(user.id, { code: "123456" }, freshIp())).status).toBe(200);
   });
 });
 
