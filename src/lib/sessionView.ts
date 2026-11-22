@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { withoutModelId } from "./gradable";
+import { isLlmFailedGrade } from "./grader-types";
 
 /**
  * What GET /api/transcripts/[id] reads and returns for one stored session. An explicit allowlist, never the
@@ -59,7 +60,7 @@ export interface SessionListRow {
   overallScore: number | null; grade: string | null; goalAchieved: boolean | null; createdAt: Date; evaluation: unknown; voiceTier: string | null;
 }
 export function sessionListItem(r: SessionListRow) {
-  const ev = r.evaluation as { graderVersion?: unknown; method?: unknown } | null;
+  const ev = r.evaluation as { graderVersion?: unknown; method?: unknown; llmFailed?: unknown } | null;
   // Every key is always present (null when unset), so the shape is the same for every entry.
   return {
     id: r.id,
@@ -74,6 +75,8 @@ export function sessionListItem(r: SessionListRow) {
     // Only the grader version and method, not the whole evaluation blob.
     graderVersion: typeof ev?.graderVersion === "string" ? ev.graderVersion : null,
     graderMethod: typeof ev?.method === "string" ? ev.method : null,
+    // True when AI grading failed and the stored score is a rules-based stand-in (isLlmFailedGrade); the Logbook shows "Grading pending".
+    graderLlmFailed: isLlmFailedGrade({ method: typeof ev?.method === "string" ? ev.method : null, llmFailed: ev?.llmFailed }),
     voiceUsed: r.voiceTier === "premium" || r.voiceTier === "standard" ? r.voiceTier : null,
   };
 }
