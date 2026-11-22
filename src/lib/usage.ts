@@ -566,7 +566,7 @@ export async function heartbeat(userId: string, callId: string, state: Heartbeat
       return { found: true, stop: true, reason: "ended", settlement: null } as const;
     }
 
-    const data: Prisma.TrainerSessionUpdateInput = { lastHeartbeatAt: now };
+    const data: Prisma.TrainerSessionUpdateManyMutationInput = { lastHeartbeatAt: now };
     let connectedAt = s.connectedAt;
     if (!connectedAt && state === "connected" && now.getTime() - s.createdAt.getTime() <= CONNECT_WINDOW_SECONDS * 1000) {
       connectedAt = now;
@@ -577,7 +577,11 @@ export async function heartbeat(userId: string, callId: string, state: Heartbeat
     } else if (s.degradedAt) {
       data.degradedAt = null;
     }
-    await tx.trainerSession.update({ where: { id: s.id }, data });
+    // Written only while the call is still open. A settlement (settleStale, closeNeverConnectedCall, an end event) that
+    // committed since the read above has closed the row and released its reservation: the heartbeat then records
+    // nothing, no connection included, and tells the client to stop.
+    const written = await tx.trainerSession.updateMany({ where: { id: s.id, endedAt: null }, data });
+    if (written.count === 0) return { found: true, stop: true, reason: "ended", settlement: null } as const;
 
     const { limit, capApplies, trialBound } = await limitSeconds(tx, s, now);
     const start = billingStart({ createdAt: s.createdAt, connectedAt });
@@ -662,16 +666,8 @@ interface Booking {
 
 /** End reasons that can earn a dropped-call credit; a credited call is one of these with 0 billed minutes. */
 const DROP_REASONS: CallEndReasonId[] = ["network_drop", "provider_error", "server_error"];
-/** End reasons that use up the daily free allowance (DAILY_DROP_CREDIT_CAP) when they bill 0 minutes. */
-const UNCHARGED_REASONS: CallEndReasonId[] = [...DROP_REASONS, "failed_connect"];
 
-/**
- * `serverMintFailure`: set only by the mint routes, never from a request body (see /api/usage/end's reason enum).
- * `staleClose`: set only by settleStale, for a call nobody reported the end of. Neither can come from a client.
- */
-interface SettleOpts { serverMintFailure?: boolean; staleClose?: boolean }
-
-async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId, now: Date, opts: SettleOpts = {}): Promise<CallResult | null> {
+async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId, now: Date): Promise<CallResult | null> {
   const target = await chargeTarget(tx, original, now);
   if (!target) return null;
   const { allowance, samePeriod } = target;
@@ -680,7 +676,8 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   const start = billingStart(s);
   const naturalEnd = endedAtFor(s, requested, now, start);
   // Connected means the server recorded it (connectedAt or a heartbeat). How long ago the call was minted proves
-  // nothing: a call that never reported a connection is closed as failed_connect, however old it is.
+  // nothing: a call that never reported a connection is closed as failed_connect, however old it is, and bills 0
+  // seconds and 0 minutes whoever closes it (the client, a mint route or settleStale). See settleCall.
   const connected = provedConnected(s);
   const reason: CallEndReasonId = connected ? requested : "failed_connect";
 
@@ -697,22 +694,17 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   const endedAt = connected ? billedEnd : now;
   // The connect heartbeat sets lastHeartbeatAt to the start itself, so only a later one proves the client kept running.
   const heartbeatSeen = !!s.lastHeartbeatAt && s.lastHeartbeatAt.getTime() > start.getTime();
-  // Only a call that could still go uncharged needs the 24 hour count. The user row is locked first, so two of this
-  // user's calls settle one after the other and the second sees the first one's credit. An uncharged call is a drop
-  // reason or a never-connected call (failed_connect) with 0 billed minutes, zero-second calls included: every other
-  // client-reported failure bills at least 1. A never-connected call the server closes itself (a mint it failed, or a
-  // stale call nobody ended) is not a client report: it skips the count, so it always bills 0. Nothing stored marks
-  // such a row, so later client-reported failed connects still count it toward DAILY_DROP_CREDIT_CAP.
+  // Only a drop that could still be credited needs the 24 hour count (DAILY_DROP_CREDIT_CAP). The user row is locked
+  // first, so two of this user's calls settle one after the other and the second sees the first one's credit. A
+  // credited drop is a drop reason with 0 billed minutes, zero-second drops included: an uncredited drop bills at least 1.
   let recentCreditedDrops = 0;
-  const serverClosed = !!opts.serverMintFailure || !!opts.staleClose;
-  const neverConnected = !connected && !serverClosed;
-  if (neverConnected || (connected && !heartbeatSeen && DROP_REASONS.includes(reason))) {
+  if (connected && !heartbeatSeen && DROP_REASONS.includes(reason)) {
     await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${s.userId} FOR UPDATE`;
     recentCreditedDrops = await tx.trainerSession.count({
       where: {
         userId: s.userId,
         endedAt: { gte: new Date(now.getTime() - 24 * 60 * 60 * 1000) },
-        endReason: { in: UNCHARGED_REASONS },
+        endReason: { in: DROP_REASONS },
         billedMinutes: 0,
       },
     });
@@ -835,7 +827,7 @@ function storedResult(s: OpenSession): CallResult {
  * times come from the server's own timestamps, so a client cannot shorten or lengthen what it is charged.
  * Returns null when the call does not belong to this user.
  */
-export async function endCall(userId: string, callId: string, reason: CallEndReasonId, now = new Date(), opts: SettleOpts = {}): Promise<CallResult | null> {
+export async function endCall(userId: string, callId: string, reason: CallEndReasonId, now = new Date()): Promise<CallResult | null> {
   return runMetered(async (tx) => {
     const s = await tx.trainerSession.findUnique({ where: { id: callId } });
     if (!s || s.userId !== userId) return null;
@@ -844,7 +836,7 @@ export async function endCall(userId: string, callId: string, reason: CallEndRea
       if (SERVER_ENDED.has(s.endReason ?? "") && pastReservation(s, now, callCapApplies(s))) await flagOverrun(tx, s, now);
       return storedResult(s);
     }
-    const done = await settle(tx, s, reason, now, opts);
+    const done = await settle(tx, s, reason, now);
     if (done) return done;
     const again = await tx.trainerSession.findUnique({ where: { id: callId } });
     return again ? storedResult(again) : null;
@@ -873,7 +865,7 @@ async function settleIfStale(tx: Tx, s: OpenSession, now: Date): Promise<CallRes
     ? now.getTime() - s.lastHeartbeatAt.getTime() > HEARTBEAT_TIMEOUT_SECONDS * 1000
     : now.getTime() - s.createdAt.getTime() > CONNECT_WINDOW_SECONDS * 1000;
   if (!silent) return null;
-  return settle(tx, s, provedConnected(s) ? "heartbeat_timeout" : "failed_connect", now, { staleClose: true });
+  return settle(tx, s, provedConnected(s) ? "heartbeat_timeout" : "failed_connect", now);
 }
 
 // ---- One-off repairs (scripts/usage-repair-text-billing.ts) -----------------------------------

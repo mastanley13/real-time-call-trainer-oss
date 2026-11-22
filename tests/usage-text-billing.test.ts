@@ -112,19 +112,19 @@ describe("stale voice sessions", () => {
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
   });
 
-  it("a stale never-connected close bills 0 even when the user is past the daily failed-connect allowance", async () => {
+  it("every never-connected close bills 0, stale or client-reported, however many came before", async () => {
     addUser("u-1");
-    for (let i = 0; i < DAILY_DROP_CREDIT_CAP; i++) {
+    for (let i = 0; i < DAILY_DROP_CREDIT_CAP + 1; i++) {
       const c = await mint("u-1", i * 10);
-      expect(await endCall("u-1", c.callId, "failed_connect", at(i * 10 + 2))).toMatchObject({ billedMinutes: 0 });
+      expect(await endCall("u-1", c.callId, "failed_connect", at(i * 10 + 2))).toMatchObject({ outcome: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
     }
     const stale = await mint("u-1", 100);
     await usageSummary("u-1", at(100 + CONNECT_WINDOW_SECONDS + 1));
-    expect(session(stale.callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0 });
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
-    // The explicit client-reported rule is unchanged: past the cap, the next reported failed connect costs a minute.
+    expect(session(stale.callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
     const reported = await mint("u-1", 2000);
-    expect(await endCall("u-1", reported.callId, "failed_connect", at(2002))).toMatchObject({ outcome: "billed", billedMinutes: 1 });
+    expect(await endCall("u-1", reported.callId, "user_hangup", at(2400))).toMatchObject({ outcome: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
+    expect(fake.rows("usageEntry")).toHaveLength(0);
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
   });
 
   it("inside the connect window a never-connected call stays open and keeps its reservation", async () => {
@@ -153,6 +153,50 @@ describe("stale voice sessions", () => {
     await usageSummary("u-1", at(2 * 3600));
     expect(session(c.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 60 });
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 60, minutesReserved: 0 });
+  });
+});
+
+describe("races between a heartbeat and a settlement", () => {
+  const isHeartbeatWrite = (args: { data: Record<string, unknown> }) => "lastHeartbeatAt" in args.data && !("endedAt" in args.data);
+  const isSettlementWrite = (args: { data: Record<string, unknown> }) => "endedAt" in args.data;
+
+  it("a heartbeat that loses to closeNeverConnectedCall records nothing, no connection included, and says stop", async () => {
+    addUser("u-1", { planTier: "pro" });
+    const c = await mint("u-1", 0);
+    const closeAt = at(CONNECT_WINDOW_SECONDS + 60);
+    // The heartbeat read the row while it was open; the close commits between that read and the heartbeat's write.
+    fake.interleave("trainerSession", "updateMany", async () => { await closeNeverConnectedCall(c.callId, closeAt); }, isHeartbeatWrite);
+    const hb = await heartbeat("u-1", c.callId, "connected", at(30));
+    expect(hb).toEqual({ found: true, stop: true, reason: "ended", settlement: null });
+    expect(session(c.callId)).toMatchObject({ connectedAt: null, lastHeartbeatAt: null, endReason: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
+    expect(session(c.callId).endedAt).toEqual(closeAt);
+    expect(entries(c.callId)).toHaveLength(0);
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
+  });
+
+  it("a heartbeat that loses to settleStale says stop and leaves the closed row and the allowance alone", async () => {
+    addUser("u-1", { planTier: "pro" });
+    const c = await mint("u-1", 0);
+    fake.interleave("trainerSession", "updateMany", async () => { await usageSummary("u-1", at(CONNECT_WINDOW_SECONDS + 1)); }, isHeartbeatWrite);
+    expect(await heartbeat("u-1", c.callId, "ok", at(20))).toMatchObject({ found: true, stop: true, reason: "ended" });
+    expect(session(c.callId)).toMatchObject({ connectedAt: null, lastHeartbeatAt: null, endReason: "failed_connect" });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
+  });
+
+  it("two settlers on one call release its reservation once: the second finds it ended and writes nothing", async () => {
+    addUser("u-1", { planTier: "pro" });
+    const keep = await mint("u-1", 0); // a second open call, so a double release would show as a wrong count
+    await heartbeat("u-1", keep.callId, "connected", at(CONNECT_WINDOW_SECONDS + 50));
+    const c = await mint("u-1", 1);
+    const reservedBoth = allowanceOf("u-1").minutesReserved as number;
+    const own = session(c.callId).reservedMinutes as number;
+    const closeAt = at(CONNECT_WINDOW_SECONDS + 60);
+    // closeNeverConnectedCall read the open row; settleStale closes it first, just before its settlement write.
+    fake.interleave("trainerSession", "updateMany", async () => { await usageSummary("u-1", closeAt); }, (args) => isSettlementWrite(args) && args.where.id === c.callId);
+    expect(await closeNeverConnectedCall(c.callId, closeAt)).toMatchObject({ ok: false, error: "already_ended" });
+    expect(session(c.callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0 });
+    expect(allowanceOf("u-1").minutesReserved).toBe(reservedBoth - own);
+    expect(session(keep.callId).endedAt).toBeNull();
   });
 });
 

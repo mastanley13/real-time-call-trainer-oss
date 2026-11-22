@@ -172,50 +172,44 @@ describe("billing a call", () => {
     expect(allowanceOf("u-1").minutesUsed).toBe(1);
   });
 
-  it("B1: a never-connected abuse loop uses the same 3 per 24 hours, then bills a minute per call", async () => {
+  it("B1: never-connected calls always bill 0, however many in 24 hours; the mint cap is the abuse limit", async () => {
     addUser("u-1");
-    for (let i = 0; i < 3; i++) {
-      const { callId, result } = await runCall("u-1", { connectAt: null, endAt: 5, reason: "user_hangup", start: i * 100 });
-      expect(result).toMatchObject({ outcome: "failed_connect", billedMinutes: 0 });
-      expect(session(callId).endReason).toBe("failed_connect");
+    for (let i = 0; i < 6; i++) {
+      const { callId, result } = await runCall("u-1", { connectAt: null, endAt: 5, reason: i % 2 ? "failed_connect" : "user_hangup", start: i * 100 });
+      expect(result).toMatchObject({ outcome: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
+      expect(session(callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0 });
+      expect(entries(callId)).toHaveLength(0);
     }
-    const { callId, result } = await runCall("u-1", { connectAt: null, endAt: 5, reason: "failed_connect", start: 400 });
-    expect(result).toMatchObject({ outcome: "billed", billedMinutes: 1 });
-    expect(session(callId).billedMinutes).toBe(1);
-    expect(entries(callId).map((e) => [e.kind, e.minutes])).toEqual([["voice_call", 1]]);
-    expect(allowanceOf("u-1").minutesUsed).toBe(1);
-    // Never-connected calls and credited drops share one count.
-    expect((await runCall("u-1", { endAt: 20, reason: "network_drop", start: 500, beats: false })).result).toMatchObject({ outcome: "billed", billedMinutes: 1 });
-    // The first three age out after 24 hours.
-    expect((await runCall("u-1", { connectAt: null, endAt: 5, start: 24 * 3600 + 50 })).result).toMatchObject({ outcome: "failed_connect", billedMinutes: 0 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
+    // Never-connected calls do not use up the daily drop credits: a dropped call is still credited.
+    expect((await runCall("u-1", { endAt: 20, reason: "network_drop", start: 700, beats: false })).result).toMatchObject({ outcome: "dropped_credited", billedMinutes: 0 });
   });
 
-  it("B1: over the cap, a never-connected call never bills more than the allowance has left", async () => {
+  it("B1: a never-connected call bills 0 even with the allowance nearly used", async () => {
     addUser("u-1");
     for (let i = 0; i < 3; i++) await runCall("u-1", { connectAt: null, endAt: 5, start: i * 100 });
     fake.rows("usageAllowance").find((a) => a.userId === "u-1")!.minutesUsed = 9; // Free: 10 a month
     const { result } = await runCall("u-1", { connectAt: null, endAt: 5, start: 400 });
-    expect(result.billedMinutes).toBe(1);
-    expect(allowanceOf("u-1").minutesUsed).toBe(10);
+    expect(result.billedMinutes).toBe(0);
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 9, minutesReserved: 0 });
   });
 
-  it("B1: a server-side mint failure is never billed, even past the cap, but its row counts toward the cap", async () => {
+  it("B1: a server-side mint failure is never billed, and neither is a later client-reported never-connected call", async () => {
     addUser("u-1");
     for (let i = 0; i < 5; i++) {
       const begun = await beginCall("u-1", scn, at(i * 100));
       if (!begun.ok) throw new Error(begun.error);
-      expect(await endCall("u-1", begun.callId, "failed_connect", at(i * 100 + 1), { serverMintFailure: true })).toMatchObject({ outcome: "failed_connect", billedMinutes: 0 });
+      expect(await endCall("u-1", begun.callId, "failed_connect", at(i * 100 + 1))).toMatchObject({ outcome: "failed_connect", billedMinutes: 0 });
       expect(session(begun.callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0 });
     }
-    // Five uncharged rows are past the cap of 3, so the next client-reported never-connected call bills a minute.
-    expect((await runCall("u-1", { connectAt: null, endAt: 5, start: 1000 })).result).toMatchObject({ outcome: "billed", billedMinutes: 1 });
+    expect((await runCall("u-1", { connectAt: null, endAt: 5, start: 1000 })).result).toMatchObject({ outcome: "failed_connect", billedMinutes: 0 });
   });
 
   it("B1: a server mint failure that surfaces after the 60s connect cutoff is still 0 billed, failed_connect", async () => {
     addUser("u-1");
     const begun = await beginCall("u-1", scn, at(0));
     if (!begun.ok) throw new Error(begun.error);
-    const result = await endCall("u-1", begun.callId, "failed_connect", at(61), { serverMintFailure: true });
+    const result = await endCall("u-1", begun.callId, "failed_connect", at(61));
     expect(result).toMatchObject({ outcome: "failed_connect", endReason: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
     expect(session(begun.callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0 });
     expect(entries(begun.callId)).toHaveLength(0);
@@ -227,7 +221,7 @@ describe("billing a call", () => {
     expect((await endCall("u-1", second.callId, "failed_connect", at(161)))!.billedMinutes).toBe(1);
   });
 
-  it("B1: only the server can waive the charge: the end route ignores a serverMintFailure field", async () => {
+  it("B1: through the end route, a never-connected call past three earlier failures bills 0, unknown fields ignored", async () => {
     addUser("u-1");
     for (let i = 0; i < 3; i++) await runCall("u-1", { connectAt: null, endAt: 5, start: i * 100 });
     const begun = await beginCall("u-1", scn, at(400));
@@ -237,7 +231,8 @@ describe("billing a call", () => {
     vi.setSystemTime(at(405));
     const res = await post({ callId: begun.callId, reason: "failed_connect", serverMintFailure: true });
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ outcome: "billed", billedMinutes: 1 });
+    expect(await res.json()).toMatchObject({ outcome: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
   });
 
   it("/api/usage/end rejects a server-only or unknown reason with 400 and settles nothing", async () => {
@@ -266,7 +261,7 @@ describe("billing a call", () => {
     for (let i = 0; i < 20; i++) {
       const begun = await beginCall("u-1", scn, at(i * 10));
       if (!begun.ok) throw new Error(begun.error);
-      await endCall("u-1", begun.callId, "failed_connect", at(i * 10 + 1), { serverMintFailure: true }); // free of charge, so only the mint cap is in play
+      await endCall("u-1", begun.callId, "failed_connect", at(i * 10 + 1)); // free of charge, so only the mint cap is in play
     }
     expect(await beginCall("u-1", scn, at(500))).toEqual({ ok: false, error: "daily_session_limit" });
     expect(fake.rows("trainerSession")).toHaveLength(20);
@@ -285,7 +280,7 @@ describe("billing a call", () => {
     for (let i = 0; i < 20; i++) {
       const begun = await beginCall("u-1", scn, at(i));
       if (!begun.ok) throw new Error(begun.error);
-      await endCall("u-1", begun.callId, "failed_connect", at(i), { serverMintFailure: true });
+      await endCall("u-1", begun.callId, "failed_connect", at(i));
     }
     const res = await realtimeSession(new NextRequest("http://localhost/api/realtime/session", { method: "POST", body: JSON.stringify({ scenario: BUILT_IN_SCENARIOS[0] }), headers: { "content-type": "application/json" } }));
     expect(res.status).toBe(429);
@@ -340,14 +335,14 @@ describe("billing a call", () => {
     expect(allowanceOf("u-1").minutesUsed).toBe(1);
   });
 
-  it("failed_connect shares the daily cap: free under it, one minute once drops have used it up", async () => {
+  it("failed_connect stays free after drops have used up the daily credit cap", async () => {
     addUser("u-1");
     for (let i = 0; i < 4; i++) {
       expect((await runCall("u-1", { endAt: 20, reason: "network_drop", start: i * 100, beats: false })).result.outcome).toBe(i < 3 ? "dropped_credited" : "billed");
     }
     const { callId, result } = await runCall("u-1", { connectAt: null, endAt: 5, reason: "failed_connect", start: 500 });
-    expect(result).toMatchObject({ outcome: "billed", billedMinutes: 1 });
-    expect(entries(callId).map((e) => e.kind)).toEqual(["voice_call"]);
+    expect(result).toMatchObject({ outcome: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
+    expect(entries(callId)).toHaveLength(0);
   });
 
   it("19: a provider error at 45s is billed", async () => {
