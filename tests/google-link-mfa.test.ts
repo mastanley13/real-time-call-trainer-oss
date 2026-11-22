@@ -15,7 +15,7 @@ type Row = { id: string; googleSub: string | null; lockedUntil: Date | null };
 const row = (patch: Partial<Row> = {}): Row => ({ id: "u-1", googleSub: null, lockedUntil: null, ...patch });
 const user = (r: Row) => ({
   ...r, email: "rep@example.test", firstName: "Ravi", lastName: "Shah", role: "owner",
-  mfaEnabled: true, mfaSecret: "SECRET", isPlatformAdmin: false, organization: null,
+  mfaEnabled: true, mfaSecret: "SECRET", isPlatformAdmin: false, organization: null, failedLoginCount: 0,
 });
 const post = (token: string, code = "123456") =>
   challengeRoute(new NextRequest("http://localhost/api/auth/mfa/challenge", { method: "POST", body: JSON.stringify({ challengeToken: token, code }) }));
@@ -68,12 +68,13 @@ describe("deferred Google link on MFA", () => {
   });
 
   it.each([
-    ["locked meanwhile", { lockedUntil: new Date(Date.now() + 60_000) }],
-    ["linked to a different Google account meanwhile", { googleSub: "someone-else" }],
-  ] as [string, Partial<Row>][])("rejects the challenge, with no session or cookie, when the account is %s", async (_n, patch) => {
+    // A locked account is now refused up front with login's lockout answer, before any code is checked.
+    ["locked meanwhile", { lockedUntil: new Date(Date.now() + 60_000) }, 423],
+    ["linked to a different Google account meanwhile", { googleSub: "someone-else" }, 409],
+  ] as [string, Partial<Row>, number][])("rejects the challenge, with no session or cookie, when the account is %s", async (_n, patch, status) => {
     const state = fakeDb(row(patch));
     const res = await post(signMfaChallengeToken("u-1", "g-sub-1"));
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(status);
     expect(res.headers.get("set-cookie")).toBeNull();
     expect(await res.json()).not.toHaveProperty("token");
     expect(state.googleSub).toBe(patch.googleSub ?? null);

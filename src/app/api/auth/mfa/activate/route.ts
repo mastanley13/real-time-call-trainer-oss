@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
       data: { mfaEnabled: true, mfaEnrolledAt: new Date() },
     });
     if (flipped.count !== 1) return null;
-    return replaceRecoveryCodes(tx, user.id);
+    return replaceRecoveryCodes(tx, user.id, { mfaSecret: enrolledSecret });
   });
   if (!recoveryCodes) {
     return NextResponse.json(

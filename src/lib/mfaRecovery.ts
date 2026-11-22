@@ -64,13 +64,25 @@ export function hashRecoveryCode(normalized: string): string {
 type Tx = Prisma.TransactionClient;
 
 /**
- * Inside a transaction: lock the user row, and if MFA is enabled delete every existing code and store hashes of a
- * new set. Returns the plaintext codes (for the one response that shows them) or null when MFA is off. The row lock
- * serializes this with other regenerations and with disable, so two overlapping requests never leave both sets live.
+ * What the caller verified before the transaction. `mfaSecret` is the enrollment the proof (or activation) was checked
+ * against; `passwordHash`, when present, is the hash a password proof was checked against.
  */
-export async function replaceRecoveryCodes(tx: Tx, userId: string): Promise<string[] | null> {
-  const rows = await tx.$queryRaw<{ mfaEnabled: boolean }[]>`SELECT "mfaEnabled" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
-  if (!rows[0]?.mfaEnabled) return null;
+export type ProvenState = { mfaSecret: string; passwordHash?: string | null };
+
+/**
+ * Inside a transaction: lock the user row, recheck that MFA is still on with the same secret (and, for a password
+ * proof, the same password hash) that the caller verified, then delete every existing code and store hashes of a new
+ * set. Returns the plaintext codes (for the one response that shows them), or null and writes nothing when the
+ * account changed after the proof was checked: MFA turned off, re-enrolled with a new secret, or a new password. The
+ * row lock serializes this with other regenerations and with disable, so two overlapping requests never leave both
+ * sets live.
+ */
+export async function replaceRecoveryCodes(tx: Tx, userId: string, proven: ProvenState): Promise<string[] | null> {
+  const rows = await tx.$queryRaw<{ mfaEnabled: boolean; mfaSecret: string | null; passwordHash: string | null }[]>`
+    SELECT "mfaEnabled", "mfaSecret", "passwordHash" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+  const now = rows[0];
+  if (!now?.mfaEnabled || now.mfaSecret !== proven.mfaSecret) return null;
+  if (proven.passwordHash !== undefined && now.passwordHash !== proven.passwordHash) return null;
   const codes = generateRecoveryCodes();
   await tx.mfaRecoveryCode.deleteMany({ where: { userId } });
   await tx.mfaRecoveryCode.createMany({

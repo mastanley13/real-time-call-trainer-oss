@@ -90,6 +90,7 @@ src/lib/
   sessionStore.ts, scenarioStore.ts    Client-side persistence (API when signed in, localStorage in demo)
   serverConfig.ts                 Capability flags; the only place that reads provider env vars for the UI
   apiAuth.ts, auth.ts, mfa.ts     requireAuth, JWT sessions, bcrypt, TOTP, mfaUnavailableResponse (503 in demo or no database)
+  loginLockout.ts                 Account lockout (8 failures, 15 min) shared by password login, the MFA challenge and recovery code regeneration
   mfaRecovery.ts (+ -types.ts)    Recovery codes (server-only): generate, normalize, SHA-256 hash, atomic consume; labels and .txt file are client-safe
   rateLimit.ts                    clientIp (TRUSTED_PROXY_HOPS), IP_LIMITS, USER_LIMITS, body and transcript caps
   access.ts + src/proxy.ts        Optional TRAINER_ACCESS_CODE gate

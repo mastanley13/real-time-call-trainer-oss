@@ -8,7 +8,7 @@ import { NextRequest } from "next/server";
  * one synchronous step, like a conditional UPDATE, so a lost race really returns count 0.
  */
 
-type UserRow = { id: string; email: string; role: string; mfaEnabled: boolean; mfaSecret: string | null; mfaEnrolledAt: Date | null; passwordHash: string | null; lockedUntil: Date | null; googleSub: string | null };
+type UserRow = { id: string; email: string; role: string; mfaEnabled: boolean; mfaSecret: string | null; mfaEnrolledAt: Date | null; passwordHash: string | null; lockedUntil: Date | null; failedLoginCount: number; lastLoginAt?: Date | null; googleSub: string | null };
 type CodeRow = { id: string; userId: string; codeHash: string; usedAt: Date | null; createdAt: Date };
 type Where = Record<string, unknown>;
 
@@ -19,29 +19,49 @@ const state = vi.hoisted(() => ({
   codes: [] as CodeRow[],
   audits: [] as { action: string; userId?: string; metadata?: unknown }[],
   seq: 0,
+  /** Runs once just before the row-lock read, as if another request committed a change at that moment. */
+  beforeLock: null as null | (() => void),
 }));
 
 function matchCode(row: CodeRow, where: Where): boolean {
   return Object.entries(where).every(([k, v]) => (row as unknown as Record<string, unknown>)[k] === v);
 }
 
+/** Equality, plus the `{ gte: n }` filter recordAuthFailure uses. */
+function matchUser(row: UserRow, where: Where): boolean {
+  return Object.entries(where).every(([k, v]) => {
+    const have = (row as unknown as Record<string, unknown>)[k];
+    if (v && typeof v === "object" && !(v instanceof Date) && "gte" in v) return typeof have === "number" && have >= (v as { gte: number }).gte;
+    return have === v;
+  });
+}
+
+/** Applies a Prisma-style data patch, including `{ increment: n }`, in one synchronous step (like a single UPDATE). */
+function applyUser(row: UserRow, data: Record<string, unknown>) {
+  for (const [k, v] of Object.entries(data)) {
+    const r = row as unknown as Record<string, unknown>;
+    if (v && typeof v === "object" && !(v instanceof Date) && "increment" in v) r[k] = (r[k] as number) + (v as { increment: number }).increment;
+    else r[k] = v;
+  }
+}
+
 const fakeDb = vi.hoisted(() => {
   const db = {
     user: {
-      findUnique: async ({ where }: { where: { id: string } }) => {
-        const u = state.users.get(where.id);
+      findUnique: async ({ where }: { where: { id?: string; email?: string } }) => {
+        const u = where.id !== undefined ? state.users.get(where.id) : [...state.users.values()].find((x) => x.email === where.email);
         return u ? { ...u, firstName: null, lastName: null, isPlatformAdmin: false, organization: null } : null;
       },
-      update: async ({ where, data }: { where: { id: string }; data: Partial<UserRow> }) => {
+      update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
         const u = state.users.get(where.id);
         if (!u) throw new Error("user not found");
-        Object.assign(u, data);
+        applyUser(u, data);
         return { ...u };
       },
-      updateMany: async ({ where, data }: { where: Where; data: Partial<UserRow> }) => {
+      updateMany: async ({ where, data }: { where: Where; data: Record<string, unknown> }) => {
         const u = state.users.get(where.id as string);
-        if (!u || Object.entries(where).some(([k, v]) => (u as unknown as Record<string, unknown>)[k] !== v)) return { count: 0 };
-        Object.assign(u, data);
+        if (!u || !matchUser(u, where)) return { count: 0 };
+        applyUser(u, data);
         return { count: 1 };
       },
     },
@@ -73,8 +93,11 @@ const fakeDb = vi.hoisted(() => {
       },
     },
     $queryRaw: async (_s: TemplateStringsArray, userId: string) => {
+      const hook = state.beforeLock;
+      state.beforeLock = null;
+      hook?.();
       const u = state.users.get(userId);
-      return u ? [{ mfaEnabled: u.mfaEnabled }] : [];
+      return u ? [{ mfaEnabled: u.mfaEnabled, mfaSecret: u.mfaSecret, passwordHash: u.passwordHash }] : [];
     },
     $transaction: async (arg: unknown) =>
       typeof arg === "function" ? (arg as (tx: unknown) => Promise<unknown>)(db) : Promise.all(arg as Promise<unknown>[]),
@@ -95,6 +118,8 @@ import {
 } from "@/lib/mfaRecovery";
 import { RECOVERY_CODE_COUNT, recoveryCodesFile, recoveryCodesLabel, recoveryCodesLow } from "@/lib/mfaRecovery-types";
 import { hashPassword, signMfaChallengeToken, signSessionToken } from "@/lib/auth";
+import { LOCKED_MESSAGE, LOCKOUT_MINUTES, MAX_FAILED_LOGINS } from "@/lib/loginLockout";
+import { POST as loginRoute } from "@/app/api/auth/login/route";
 import { POST as activateRoute } from "@/app/api/auth/mfa/activate/route";
 import { POST as challengeRoute } from "@/app/api/auth/mfa/challenge/route";
 import { POST as disableRoute } from "@/app/api/auth/mfa/disable/route";
@@ -118,6 +143,7 @@ beforeEach(() => {
   state.users.clear();
   state.codes = [];
   state.audits = [];
+  state.beforeLock = null;
   mocks.verifyTotp.mockClear();
 });
 
@@ -129,16 +155,17 @@ afterEach(() => {
 /** A fresh user id per test, so per-user rate limit buckets never carry over. */
 function seedUser(patch: Partial<UserRow> = {}): UserRow {
   const id = `u-${++userSeq}`;
-  const u: UserRow = { id, email: `${id}@example.test`, role: "trainee", mfaEnabled: false, mfaSecret: "SECRET", mfaEnrolledAt: null, passwordHash, lockedUntil: null, googleSub: null, ...patch };
+  const u: UserRow = { id, email: `${id}@example.test`, role: "trainee", mfaEnabled: false, mfaSecret: "SECRET", mfaEnrolledAt: null, passwordHash, lockedUntil: null, failedLoginCount: 0, googleSub: null, ...patch };
   state.users.set(id, u);
   return u;
 }
 
-function authed(url: string, user: UserRow, body?: unknown): NextRequest {
+/** Signed-in request. Each gets its own IP unless one is given, so per-IP buckets never carry over between tests. */
+function authed(url: string, user: UserRow, body?: unknown, ip = `198.51.100.${++ipSeq % 250}-${ipSeq}`): NextRequest {
   const token = signSessionToken({ id: user.id, email: user.email, role: "trainee" });
   return new NextRequest(url, {
     method: body === undefined ? "GET" : "POST",
-    headers: { cookie: `authToken=${token}`, "content-type": "application/json" },
+    headers: { cookie: `authToken=${token}`, "content-type": "application/json", "x-forwarded-for": ip },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 }
@@ -164,10 +191,20 @@ function challenge(userId: string, body: Record<string, string>, ip: string) {
     }),
   );
 }
-const freshIp = () => `203.0.113.${++ipSeq}`;
+const freshIp = () => `203.0.113.${++ipSeq % 250}-${ipSeq}`;
 
-function regenerate(user: UserRow, body: unknown) {
-  return regenerateRoute(authed("http://localhost/api/auth/mfa/recovery-codes", user, body));
+function regenerate(user: UserRow, body: unknown, ip?: string) {
+  return regenerateRoute(authed("http://localhost/api/auth/mfa/recovery-codes", user, body, ip));
+}
+
+function login(user: UserRow, password: string, ip = freshIp()) {
+  return loginRoute(
+    new NextRequest("http://localhost/api/auth/login", {
+      method: "POST",
+      headers: { "x-forwarded-for": ip, "content-type": "application/json" },
+      body: JSON.stringify({ email: user.email, password }),
+    }),
+  );
 }
 
 describe("recovery code generation", () => {
@@ -331,18 +368,99 @@ describe("sign-in with a recovery code", () => {
   });
 
   it("shares the TOTP limiter: failed recovery and TOTP attempts count together, and the limit blocks both", async () => {
-    const { user, codes } = await enrolled();
+    // Two accounts, five failures each, so the per-IP limit (10 a minute) is reached before either account locks (8).
+    const a = await enrolled();
+    const b = await enrolled();
     const ip = freshIp();
     for (let i = 0; i < 10; i++) {
-      const res = await challenge(user.id, i % 2 ? { code: "000000" } : { recoveryCode: "AAAA-AAAA-AAAA" }, ip);
+      const who = i < 5 ? a : b;
+      const res = await challenge(who.user.id, i % 2 ? { code: "000000" } : { recoveryCode: "AAAA-AAAA-AAAA" }, ip);
       expect(res.status).toBe(401);
     }
     // The 11th attempt in the window is refused before any code is checked, even a valid recovery code.
-    const blockedRecovery = await challenge(user.id, { recoveryCode: codes[0] }, ip);
+    const blockedRecovery = await challenge(a.user.id, { recoveryCode: a.codes[0] }, ip);
     expect(blockedRecovery.status).toBe(429);
-    expect((await challenge(user.id, { code: "123456" }, ip)).status).toBe(429);
+    expect((await challenge(a.user.id, { code: "123456" }, ip)).status).toBe(429);
     expect(state.codes.every((c) => c.usedAt === null)).toBe(true);
     expect(state.audits.filter((a) => a.action === "user.mfa_challenge_failed")).toHaveLength(10);
+  });
+});
+
+describe("account lockout at the MFA step (shared with password login)", () => {
+  it("uses the login route's thresholds", () => {
+    expect(MAX_FAILED_LOGINS).toBe(8);
+    expect(LOCKOUT_MINUTES).toBe(15);
+  });
+
+  it("counts failed TOTP and recovery attempts from different IPs together, then locks like login", async () => {
+    const { user, codes } = await enrolled();
+    for (let i = 0; i < MAX_FAILED_LOGINS - 1; i++) {
+      const res = await challenge(user.id, i % 2 ? { code: "000000" } : { recoveryCode: "AAAA-AAAA-AAAA" }, freshIp());
+      expect(res.status).toBe(401);
+    }
+    expect(state.users.get(user.id)!.failedLoginCount).toBe(MAX_FAILED_LOGINS - 1);
+    expect(state.users.get(user.id)!.lockedUntil).toBeNull();
+
+    // The 8th failure, from yet another IP, locks the account and resets the count, as the login route does.
+    const before = Date.now();
+    expect((await challenge(user.id, { recoveryCode: "BBBB-BBBB-BBBB" }, freshIp())).status).toBe(401);
+    const row = state.users.get(user.id)!;
+    expect(row.failedLoginCount).toBe(0);
+    expect(row.lockedUntil!.getTime()).toBeGreaterThanOrEqual(before + LOCKOUT_MINUTES * 60_000);
+    expect(state.audits.find((a) => a.action === "user.login_locked")).toMatchObject({ metadata: { via: "mfa_challenge", method: "recovery_code" } });
+
+    // Locked: even correct codes are refused with login's 423 body, and no recovery code is spent.
+    for (const body of [{ recoveryCode: codes[0] }, { code: "123456" }] as Record<string, string>[]) {
+      const res = await challenge(user.id, body, freshIp());
+      expect(res.status).toBe(423);
+      expect(await res.json()).toEqual({ error: LOCKED_MESSAGE });
+      expect(res.headers.get("set-cookie")).toBeNull();
+    }
+    expect(state.codes.every((c) => c.usedAt === null)).toBe(true);
+    // And password login sees the same lock, with the same response.
+    const pw = await login(user, PASSWORD);
+    expect(pw.status).toBe(423);
+    expect(await pw.json()).toEqual({ error: LOCKED_MESSAGE });
+  });
+
+  it("counts wrong passwords and wrong MFA codes toward one limit", async () => {
+    const { user } = await enrolled();
+    for (let i = 0; i < 4; i++) expect((await login(user, "wrong password")).status).toBe(401);
+    for (let i = 0; i < 3; i++) expect((await challenge(user.id, { code: "000000" }, freshIp())).status).toBe(401);
+    expect(state.users.get(user.id)!.failedLoginCount).toBe(7);
+    expect((await challenge(user.id, { code: "000000" }, freshIp())).status).toBe(401);
+    expect(state.users.get(user.id)!.lockedUntil).not.toBeNull();
+  });
+
+  it("a correct password alone does not reset the count of wrong MFA codes", async () => {
+    const { user } = await enrolled();
+    for (let i = 0; i < 3; i++) await challenge(user.id, { code: "000000" }, freshIp());
+    const res = await login(user, PASSWORD);
+    expect(await res.json()).toHaveProperty("mfaRequired", true);
+    expect(state.users.get(user.id)!.failedLoginCount).toBe(3);
+  });
+
+  it("counts every one of many concurrent failures (atomic increment)", async () => {
+    const { user } = await enrolled();
+    const results = await Promise.all(
+      Array.from({ length: MAX_FAILED_LOGINS }, (_, i) => challenge(user.id, i % 2 ? { code: "000000" } : { recoveryCode: "AAAA-AAAA-AAAA" }, freshIp())),
+    );
+    expect(results.every((r) => r.status === 401)).toBe(true);
+    expect(state.users.get(user.id)!.lockedUntil).not.toBeNull();
+    expect(state.audits.filter((a) => a.action === "user.login_locked")).toHaveLength(1);
+  });
+
+  it.each([
+    ["an authenticator code", (_codes: string[]) => ({ code: "123456" })],
+    ["a recovery code", (codes: string[]) => ({ recoveryCode: codes[0] })],
+  ])("a successful challenge with %s resets the counters, as login does", async (_n, body) => {
+    const { user, codes } = await enrolled();
+    for (let i = 0; i < 5; i++) await challenge(user.id, { code: "000000" }, freshIp());
+    state.users.get(user.id)!.lockedUntil = new Date(Date.now() - 1000); // an expired lock is cleared too
+    const res = await challenge(user.id, body(codes), freshIp());
+    expect(res.status).toBe(200);
+    expect(state.users.get(user.id)).toMatchObject({ failedLoginCount: 0, lockedUntil: null });
+    expect(state.users.get(user.id)!.lastLoginAt).toBeInstanceOf(Date);
   });
 });
 
@@ -413,6 +531,85 @@ describe("regenerating codes", () => {
     for (let i = 0; i < 7; i++) statuses.push((await regenerate(user, { code: "000000" })).status);
     expect(statuses.slice(0, 6).every((s) => s === 401)).toBe(true);
     expect(statuses[6]).toBe(429);
+  });
+
+  it("is rate limited per IP through IP_LIMITS (RATE_LIMIT_MFA_RECOVERY_MAX), across accounts", async () => {
+    vi.stubEnv("RATE_LIMIT_MFA_RECOVERY_MAX", "2");
+    const ip = freshIp();
+    const a = await enrolled();
+    const b = await enrolled();
+    const c = await enrolled();
+    expect((await regenerate(a.user, { code: "123456" }, ip)).status).toBe(200);
+    expect((await regenerate(b.user, { code: "123456" }, ip)).status).toBe(200);
+    const blocked = await regenerate(c.user, { code: "123456" }, ip);
+    expect(blocked.status).toBe(429);
+    expect(Number(blocked.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect((await blocked.json()).error).toBe("rate_limited");
+    // Refused before the proof is checked or anything is written.
+    expect(state.codes.filter((r) => r.userId === c.user.id).map((r) => r.codeHash).sort()).toEqual(
+      c.codes.map((x) => hashRecoveryCode(normalizeRecoveryCode(x)!)).sort(),
+    );
+    // Another IP is unaffected.
+    expect((await regenerate(c.user, { code: "123456" })).status).toBe(200);
+  });
+});
+
+describe("regenerating codes: lockout and races", () => {
+  it("wrong proofs count toward the account lockout, and a locked account cannot regenerate or sign in", async () => {
+    const { user, codes } = await enrolled();
+    state.users.get(user.id)!.failedLoginCount = MAX_FAILED_LOGINS - 1;
+    expect((await regenerate(user, { password: "not it" })).status).toBe(401);
+    expect(state.users.get(user.id)!.lockedUntil).not.toBeNull();
+    expect(state.audits.find((a) => a.action === "user.login_locked")).toMatchObject({ metadata: { via: "mfa_recovery_codes", method: "password" } });
+
+    const locked = await regenerate(user, { password: PASSWORD });
+    expect(locked.status).toBe(423);
+    expect(await locked.json()).toEqual({ error: LOCKED_MESSAGE });
+    expect((await login(user, PASSWORD)).status).toBe(423);
+    // Old codes are untouched, but sign-in with them is refused while locked.
+    expect((await challenge(user.id, { recoveryCode: codes[0] }, freshIp())).status).toBe(423);
+  });
+
+  it("wrong TOTP proofs count too", async () => {
+    const { user } = await enrolled();
+    await regenerate(user, { code: "000000" });
+    await regenerate(user, { code: "000000" });
+    expect(state.users.get(user.id)!.failedLoginCount).toBe(2);
+  });
+
+  it("a successful regeneration resets the counters", async () => {
+    const { user } = await enrolled();
+    state.users.get(user.id)!.failedLoginCount = 3;
+    expect((await regenerate(user, { code: "123456" })).status).toBe(200);
+    expect(state.users.get(user.id)!.failedLoginCount).toBe(0);
+  });
+
+  it.each([
+    ["the account re-enrolled with a new secret", (u: UserRow) => { u.mfaSecret = "NEWSECRET"; }, { code: "123456" }],
+    ["MFA was disabled", (u: UserRow) => { u.mfaEnabled = false; u.mfaSecret = null; }, { code: "123456" }],
+    ["the secret changed under a password proof", (u: UserRow) => { u.mfaSecret = "NEWSECRET"; }, { password: PASSWORD }],
+    ["the password changed under a password proof", (u: UserRow) => { u.passwordHash = "$2b$12$someoneelseshashxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"; }, { password: PASSWORD }],
+  ] as [string, (u: UserRow) => void, Record<string, string>][])(
+    "aborts with 409 and writes nothing when %s after the proof was checked",
+    async (_n, change, proof) => {
+      const { user, codes } = await enrolled();
+      const before = state.codes.map((c) => ({ ...c }));
+      state.beforeLock = () => change(state.users.get(user.id)!);
+      const res = await regenerate(user, proof);
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.error).toBe("conflict");
+      expect(body).not.toHaveProperty("recoveryCodes");
+      expect(state.codes).toEqual(before);
+      expect(state.audits.some((a) => a.action === "user.mfa_recovery_codes_regenerated")).toBe(false);
+      expect(codes).toHaveLength(10);
+    },
+  );
+
+  it("a TOTP proof does not need the password to stay unchanged", async () => {
+    const { user } = await enrolled();
+    state.beforeLock = () => { state.users.get(user.id)!.passwordHash = null; };
+    expect((await regenerate(user, { code: "123456" })).status).toBe(200);
   });
 });
 

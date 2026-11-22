@@ -9,6 +9,7 @@ import { prisma } from "@/lib/db";
 import { verifyTotp } from "@/lib/mfa";
 import { consumeRecoveryCode } from "@/lib/mfaRecovery";
 import { linkGoogleAtomically } from "@/lib/googleAuth";
+import { clearAuthFailures, isLocked, lockedResponse, recordAuthFailure } from "@/lib/loginLockout";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 
 const BodySchema = z
@@ -26,7 +27,8 @@ const BodySchema = z
  * Exchange an MFA challenge token (issued by /api/auth/login when MFA is
  * enabled on an account) plus a valid TOTP code, or one unused recovery code,
  * for a full session. Both kinds of attempt go through the same per-IP
- * limiter below, so recovery codes add no extra guesses.
+ * limiter below and the same per-account lockout as password login, so
+ * recovery codes add no extra guesses.
  */
 export async function POST(req: NextRequest) {
   const ip = clientIp(req);
@@ -69,25 +71,46 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Same lockout as password login (loginLockout.ts): a locked account is refused before any code is checked or a
+  // recovery code is spent, whichever IP the attempt comes from.
+  if (isLocked(user)) return lockedResponse();
+
   const viaRecovery = body.recoveryCode !== undefined;
-  if (body.recoveryCode !== undefined) {
-    // Spent atomically: a code used here can never be accepted again, even by a request racing this one. If the
-    // Google link below is then refused, the code stays spent; failing closed is the safer side for a single-use secret.
-    const spent = await consumeRecoveryCode(user.id, body.recoveryCode);
-    if (!spent.ok) {
+  const method = viaRecovery ? "recovery_code" : "totp";
+  // A recovery code is spent atomically: once used here it can never be accepted again, even by a request racing this
+  // one. If the Google link below is then refused, the code stays spent; failing closed is the safer side for a
+  // single-use secret.
+  const spent = body.recoveryCode !== undefined ? await consumeRecoveryCode(user.id, body.recoveryCode) : null;
+  const accepted = spent ? spent.ok : verifyTotp(user.mfaSecret, body.code ?? "");
+
+  if (!accepted) {
+    // Both methods feed the account's failedLoginCount, shared with the password step, so guesses spread across
+    // IPs are still bounded per account.
+    const { locked } = await recordAuthFailure(user.id);
+    await prisma.auditEvent.create({
+      data: {
+        userId: user.id,
+        action: "user.mfa_challenge_failed",
+        ip,
+        metadata: { method, ...(locked ? { locked: true } : {}) },
+      },
+    });
+    if (locked) {
       await prisma.auditEvent.create({
-        data: {
-          userId: user.id,
-          action: "user.mfa_challenge_failed",
-          ip,
-          metadata: { method: "recovery_code" },
-        },
+        data: { userId: user.id, action: "user.login_locked", ip, metadata: { via: "mfa_challenge", method } },
       });
-      return NextResponse.json(
-        { error: "That recovery code is not valid or was already used. Check it and try again." },
-        { status: 401 },
-      );
     }
+    return NextResponse.json(
+      {
+        error: viaRecovery
+          ? "That recovery code is not valid or was already used. Check it and try again."
+          : "Invalid code",
+      },
+      { status: 401 },
+    );
+  }
+
+  if (spent?.ok) {
     await prisma.auditEvent.create({
       data: {
         userId: user.id,
@@ -97,15 +120,6 @@ export async function POST(req: NextRequest) {
         metadata: { remaining: spent.remaining },
       },
     });
-  } else if (!verifyTotp(user.mfaSecret, body.code ?? "")) {
-    await prisma.auditEvent.create({
-      data: {
-        userId: user.id,
-        action: "user.mfa_challenge_failed",
-        ip,
-      },
-    });
-    return NextResponse.json({ error: "Invalid code" }, { status: 401 });
   }
 
   // A Google link waiting on this challenge is written only now, after the code was accepted. The write is atomic
@@ -115,10 +129,8 @@ export async function POST(req: NextRequest) {
     await prisma.auditEvent.create({ data: { userId: user.id, action: "user.mfa_challenge_failed", ip, metadata: { via: "google", reason: "link_refused" } } });
     return NextResponse.json({ error: "Google sign-in could not be completed. Sign in again." }, { status: 409 });
   }
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { lastLoginAt: new Date() },
-  });
+  // A completed sign-in clears the counters, exactly as password login does without MFA.
+  await clearAuthFailures(user.id, { lastLoginAt: new Date() });
   const successMeta = {
     ...(challenge.linkGoogleSub ? { via: "google", linked } : {}),
     ...(viaRecovery ? { method: "recovery_code" } : {}),
