@@ -18,6 +18,9 @@ vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typ
 
 import { POST as requestReset } from "@/app/api/auth/password-reset/request/route";
 import { POST as confirmReset } from "@/app/api/auth/password-reset/confirm/route";
+import { POST as checkReset } from "@/app/api/auth/password-reset/check/route";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { POST as register } from "@/app/api/auth/register/route";
 import { signResetToken } from "@/lib/passwordReset";
 import { RESET_INVALID_MESSAGE, RESET_REQUEST_MESSAGE } from "@/lib/passwordReset-types";
@@ -232,6 +235,120 @@ describe("POST /api/auth/password-reset/confirm", () => {
     const res = await confirm({ token: token(), password: "a-brand-new-password" });
     expect(res.status).toBe(503);
     expect((await res.json()).error).toBe("database_not_configured");
+  });
+});
+
+describe("dead links: check and confirm agree", () => {
+  const CHANGED = "$2b$12$changedchangedchangedchangedchangedchangedchanged12";
+  const fresh = (over: Partial<Parameters<typeof signResetToken>[0]> = {}) =>
+    signResetToken({ userId: USER.id, passwordHash: HASH, secret: SECRET, now: Date.now(), ...over });
+  const check = (body: unknown) => checkReset(json("/api/auth/password-reset/check", body));
+  const confirm = (token: string) => confirmReset(json("/api/auth/password-reset/confirm", { token, password: "a-brand-new-password" }));
+
+  /** Each case: the token and the stored user the lookup returns. */
+  const deadCases: Array<[string, () => string, unknown]> = [
+    ["garbage", () => "not-a-token", { id: USER.id, passwordHash: HASH }],
+    ["bad signature", () => fresh({ secret: "another-test-secret-0123456789abcd" }), { id: USER.id, passwordHash: HASH }],
+    ["expired", () => fresh({ now: Date.now() - 31 * 60_000 }), { id: USER.id, passwordHash: HASH }],
+    ["unknown user", () => fresh(), null],
+    ["used (password since changed)", () => fresh(), { id: USER.id, passwordHash: CHANGED }],
+    ["over-length", () => `${fresh()}${"x".repeat(600)}`, { id: USER.id, passwordHash: HASH }],
+  ];
+
+  it.each(deadCases)("check answers %s with the same body, no info and no writes", async (_name, tok, stored) => {
+    mocks.prisma.user.findUnique.mockResolvedValue(stored);
+    const res = await check({ token: tok() });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ valid: false });
+    for (const leak of [USER.id, USER.email, "expire", "reason"]) expect(text).not.toContain(leak);
+    expect(mocks.prisma.user.updateMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.auditEvent.create).not.toHaveBeenCalled();
+  });
+
+  it.each(deadCases)("confirm rejects %s", async (_name, tok, stored) => {
+    mocks.prisma.user.findUnique.mockResolvedValue(stored);
+    const res = await confirm(tok());
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_token", message: RESET_INVALID_MESSAGE });
+    expect(mocks.prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("check answers a malformed body the same way", async () => {
+    for (const body of [{}, { token: 42 }, { token: "" }]) {
+      const res = await check(body);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ valid: false });
+    }
+    expect(mocks.prisma.user.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("check answers a fresh link with valid, and writes nothing", async () => {
+    mocks.prisma.user.findUnique.mockResolvedValue({ id: USER.id, passwordHash: HASH });
+    const res = await check({ token: fresh() });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ valid: true });
+    expect(text).not.toContain(USER.id);
+    expect(text).not.toContain(USER.email);
+    expect(mocks.prisma.user.findUnique).toHaveBeenCalledWith({ where: { id: USER.id }, select: { id: true, passwordHash: true } });
+    expect(mocks.prisma.user.updateMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.auditEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("a link is valid, confirms once, then check and confirm both reject it", async () => {
+    const stored = { id: USER.id, passwordHash: HASH };
+    mocks.prisma.user.findUnique.mockImplementation(async () => ({ ...stored }));
+    mocks.prisma.user.updateMany.mockImplementation(async ({ data }: { data: { passwordHash: string } }) => {
+      stored.passwordHash = data.passwordHash;
+      return { count: 1 };
+    });
+    const tok = fresh();
+    expect(await (await check({ token: tok })).json()).toEqual({ valid: true });
+    expect((await confirm(tok)).status).toBe(200);
+    expect(await (await check({ token: tok })).json()).toEqual({ valid: false });
+    expect((await confirm(tok)).status).toBe(400);
+    expect(mocks.prisma.user.updateMany).toHaveBeenCalledOnce();
+  }, 20_000);
+
+  it("check uses its own per-IP bucket and returns 429 with Retry-After", async () => {
+    mocks.rateLimit.mockReturnValue({ allowed: false, remaining: 0, retryAfterMs: 30_000 });
+    const res = await check({ token: fresh() });
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Retry-After")).toBe("30");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(mocks.rateLimit.mock.calls[0][0].key).toMatch(/^pwreset-check:/);
+    expect(mocks.prisma.user.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("check returns 503 without a database, like confirm", async () => {
+    vi.stubEnv("DATABASE_URL", "");
+    const res = await check({ token: fresh() });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual(await (await confirm(fresh())).json());
+  });
+
+  it("check returns 500 with no details when the lookup throws", async () => {
+    mocks.prisma.user.findUnique.mockRejectedValue(new Error("db down at 10.0.0.5"));
+    const res = await check({ token: fresh() });
+    expect(res.status).toBe(500);
+    const text = await res.text();
+    expect(text).not.toContain("db down");
+    expect(JSON.parse(text).valid).toBeUndefined();
+  });
+
+  it("both routes verify through the one shared helper", () => {
+    const src = (p: string) => readFileSync(join(__dirname, "..", "src/app/api/auth/password-reset", p, "route.ts"), "utf8");
+    for (const route of ["check", "confirm"]) {
+      const s = src(route);
+      expect(s).toContain('from "@/lib/passwordResetCheck"');
+      expect(s).toContain("await checkResetToken(");
+      expect(s).not.toContain("verifyResetToken");
+      expect(s).not.toContain("fingerprintMatches");
+    }
+    expect(src("confirm")).toContain("where: { id: user.id, passwordHash: user.passwordHash }");
   });
 });
 

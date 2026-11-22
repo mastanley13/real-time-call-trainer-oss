@@ -178,6 +178,7 @@ Every limit is a fixed window in memory, per server instance, and resets on rest
 | `/api/auth/login`, `/api/auth/register`, `/api/auth/mfa/challenge` | fixed, 10, 5 and 10 per minute | Full mode only. These answer with their own error text |
 | `/api/auth/password-reset/request` | fixed, 5 per 15 min per IP; 3 per hour per email | Full mode only. The sixth request from one IP gets 429 with `Retry-After`. Past the per-email limit the route still answers 200 with the same body but sends nothing |
 | `/api/auth/password-reset/confirm` | fixed, 10 per 15 min | Full mode only. Post eleven bad tokens: the last gets 429 with `Retry-After` |
+| `/api/auth/password-reset/check` | fixed, 10 per 15 min per IP, own bucket | Full mode only. Post eleven tokens: the last gets 429 with `Retry-After`. The reset page then shows the form anyway |
 
 Each `_MAX` has a matching `_WINDOW_SEC`.
 

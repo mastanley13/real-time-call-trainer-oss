@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getJwtSecret, hashPassword } from "@/lib/auth";
+import { hashPassword } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { fingerprintMatches, RESET_TOKEN_MAX_LENGTH, verifyResetToken } from "@/lib/passwordReset";
+import { RESET_TOKEN_MAX_LENGTH } from "@/lib/passwordReset";
+import { checkResetToken } from "@/lib/passwordResetCheck";
 import { RESET_INVALID_MESSAGE, RESET_NO_DATABASE_MESSAGE } from "@/lib/passwordReset-types";
 import { passwordSchema } from "@/lib/passwordRules";
 import { clientIp, rateLimit, readJsonLimited } from "@/lib/rateLimit";
@@ -49,15 +50,9 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const secret = getJwtSecret();
-    const claims = verifyResetToken(token, { secret, now: Date.now() });
-    if (!claims) return invalid();
-
-    const user = await prisma.user.findUnique({
-      where: { id: claims.userId },
-      select: { id: true, passwordHash: true },
-    });
-    if (!user || !fingerprintMatches(claims.fingerprint, user.passwordHash, secret)) return invalid();
+    // Shared with /check, so the page-load check is never weaker than this one.
+    const user = await checkResetToken(token);
+    if (!user) return invalid();
 
     const passwordHash = await hashPassword(password);
     // Conditional on the hash the token was issued for, so two requests racing with one link cannot both succeed.
