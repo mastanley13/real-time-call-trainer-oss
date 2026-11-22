@@ -11,6 +11,7 @@ import AssignedToYou from "@/components/team/AssignedToYou";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { PersonaAvatar } from "@/components/ui/Persona";
 import { isLegacyGrader, isLlmFailedGrade, logbookScore } from "@/lib/grader-types";
+import { averageScore, bestScore, isLlmFailedEvaluation, trendPoints } from "@/lib/scoreAggregates";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatDuration } from "@/lib/format";
 import { voiceLabel, voiceOfListEntry } from "@/lib/billingUi";
@@ -65,7 +66,8 @@ function Sparkline({ values, max }: { values: (number | null)[]; max?: number })
 }
 
 function TrendChart({ rows }: { rows: Row[] }) {
-  const pts = rows.filter((r) => r.score !== null).slice(0, 20).reverse();
+  // Failed-grade rough scores stay out of the trend (aggregateScore in scoreAggregates.ts).
+  const pts = trendPoints(rows, 20);
   const w = 640, h = 220, pl = 32, pr = 12, pt = 12, pb = 28;
   const x = (i: number) => pl + (i / Math.max(1, pts.length - 1)) * (w - pl - pr);
   const y = (v: number) => pt + (1 - v / 100) * (h - pt - pb);
@@ -181,15 +183,16 @@ export default function DashboardPage() {
 
   const counted = useMemo(() => (rows ?? []).filter((r) => showLegacy || !r.legacy), [rows, showLegacy]);
   const stats = useMemo(() => {
-    const scored = counted.filter((r) => r.score !== null) as (Row & { score: number })[];
+    // Every call counts as a session and toward time practised; only scores that count (aggregateScore) enter score math.
+    const avg = averageScore(counted);
+    const best = bestScore(counted);
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const days = Array.from({ length: 14 }, (_, i) => dayKey(addDays(today, i - 13)));
     const byDay = (pick: (rs: Row[]) => number | null) => days.map((k) => pick(counted.filter((r) => dayKey(new Date(r.createdAt)) === k)));
-    const avgOf = (rs: Row[]) => { const s = rs.filter((r) => r.score !== null); return s.length ? s.reduce((a, r) => a + r.score!, 0) / s.length : null; };
     return [
       { label: "Sessions", value: String(rows?.length ?? 0), spark: byDay((rs) => rs.length) },
-      { label: "Average score", value: scored.length ? String(Math.round(scored.reduce((a, r) => a + r.score, 0) / scored.length)) : "None", spark: byDay(avgOf), max: 100 },
-      { label: "Best score", value: scored.length ? String(Math.max(...scored.map((r) => r.score))) : "None", spark: byDay((rs) => Math.max(0, ...rs.map((r) => r.score ?? 0))), max: 100 },
+      { label: "Average score", value: avg !== null ? String(avg) : "None", spark: byDay(averageScore), max: 100 },
+      { label: "Best score", value: best !== null ? String(best) : "None", spark: byDay((rs) => bestScore(rs) ?? 0), max: 100 },
       { label: "Time practised", value: formatDuration(counted.reduce((a, r) => a + r.durationSeconds, 0)), spark: byDay((rs) => rs.reduce((a, r) => a + r.durationSeconds, 0)) },
     ];
   }, [counted, rows]);
@@ -199,7 +202,8 @@ export default function DashboardPage() {
     const ids = new Set(counted.map((r) => r.id));
     const agg = new Map<string, { sum: number; n: number }>();
     for (const s of listLocalSessions()) {
-      if (!ids.has(s.id) || !s.evaluation) continue;
+      // A failed AI grade's criterion scores are rough estimates too, so they stay out of skill averages.
+      if (!ids.has(s.id) || !s.evaluation || isLlmFailedEvaluation(s.evaluation)) continue;
       for (const c of s.evaluation.criteria) { const a = agg.get(c.name) ?? { sum: 0, n: 0 }; a.sum += c.score; a.n++; agg.set(c.name, a); }
     }
     return [...agg.entries()].map(([name, a]) => ({ name, avg: Math.round(a.sum / a.n), n: a.n })).sort((a, b) => a.avg - b.avg);

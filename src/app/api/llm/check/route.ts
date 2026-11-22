@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/apiAuth";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 import { settleFailedResponse } from "@/lib/llm";
 import { chatKeyPlan, classifyOpenAiResponseDetail, withOpenAiKeyFailover } from "@/lib/openaiKeys";
+import { isOpenAiBaseUrl } from "@/lib/openaiHost";
 import { recordLlmOutcome } from "@/lib/llmStatus";
 import { llmBaseUrl, llmModel } from "@/lib/serverConfig";
 import { CHECK_TIMEOUT_MS, checkHint, type CheckFailure, type LlmCheckResult } from "../hints";
@@ -29,8 +30,8 @@ function result(r: Omit<LlmCheckResult, "hint">, failure?: CheckFailure) {
 }
 
 /**
- * Makes one minimal chat completion (max_tokens 1) with the configured key and
- * model and reports what happened in plain language. The provider's error body
+ * Makes one minimal chat completion with the configured key and model and
+ * reports what happened in plain language. The provider's error body
  * is never echoed, and neither the key, the endpoint URL nor the model id is returned.
  *
  * With the OpenAI key ladder (LLM_API_KEY unset, OpenAI base) it goes through withOpenAiKeyFailover like a real
@@ -57,7 +58,12 @@ export async function POST(req: NextRequest) {
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model, messages: [{ role: "user", content: "Reply with OK." }], max_tokens: 1 }),
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "Reply with OK." }],
+        // OpenAI chat models that reject max_tokens need max_completion_tokens, with headroom for reasoning tokens.
+        ...(isOpenAiBaseUrl(llmBaseUrl()) ? { max_completion_tokens: 256 } : { max_tokens: 1 }),
+      }),
       signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
       cache: "no-store",
       ...(pinned ? { redirect: "error" as const } : {}),

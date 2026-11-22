@@ -21,13 +21,14 @@ export interface ChatMessage {
  * Minimal OpenAI-compatible chat completion call (works with OpenAI, Azure,
  * OpenRouter, Ollama, vLLM...). Configure with LLM_API_KEY (or OPENAI_API_KEY and its
  * OPENAI_API_KEY_BACKUP_* failover keys, OpenAI base only), LLM_BASE_URL and LLM_MODEL.
+ * Callers can pass opts.model (grading reads LLM_MODEL_GRADING from serverConfig).
  * Used for the coach, grading, the persona wizard and the text simulation; voice goes
  * through OpenAI Realtime or ElevenLabs. Throws LLM_QUOTA_EXHAUSTED when every OpenAI
  * key slot is out of quota; callers already fall back on any error.
  */
 export async function chat(
   messages: ChatMessage[],
-  opts: { json?: boolean; maxTokens?: number; temperature?: number } = {},
+  opts: { json?: boolean; maxTokens?: number; temperature?: number; model?: string } = {},
 ): Promise<string> {
   return (await chatFull(messages, opts)).text;
 }
@@ -35,7 +36,7 @@ export async function chat(
 /** Like chat(), but also reports whether the model stopped because it hit max_tokens. */
 export async function chatFull(
   messages: ChatMessage[],
-  opts: { json?: boolean; maxTokens?: number; temperature?: number } = {},
+  opts: { json?: boolean; maxTokens?: number; temperature?: number; model?: string } = {},
 ): Promise<{ text: string; truncated: boolean }> {
   // Per request: an explicit LLM_API_KEY (or no OpenAI base) never uses the OpenAI key ladder.
   const plan = chatKeyPlan(process.env);
@@ -52,7 +53,7 @@ export async function chatFull(
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
         body: JSON.stringify({
-          model: llmModel(),
+          model: opts.model ?? llmModel(),
           messages,
           ...(withTemperature ? { temperature: opts.temperature ?? 0.4 } : {}),
           // OpenAI GPT-5+/6 models reject max_tokens and need max_completion_tokens; other hosts keep max_tokens.
@@ -62,6 +63,8 @@ export async function chatFull(
         signal: AbortSignal.timeout(60_000),
         ...(pinned ? { redirect: "error" as const } : {}),
       });
+    // Model id only, and only outside tests: no prompts, keys, or response bodies.
+    if (process.env.NODE_ENV !== "test") console.info("[llm] model", opts.model ?? llmModel());
     let res = await call(true);
     let detail: string | undefined;
     if (!res.ok && res.status === 400) {
