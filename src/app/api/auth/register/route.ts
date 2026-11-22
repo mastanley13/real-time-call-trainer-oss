@@ -8,6 +8,7 @@ import { accessCode, hasValidAccessCookie } from "@/lib/access";
 import { generateOrgCode, isValidOrgCode } from "@/lib/orgCodes";
 import { sanitizeSignupIntent } from "@/lib/pricing";
 import { defaultOrgName, ORG_NAME_MAX } from "@/lib/orgName";
+import { BOTH_ORG_FIELDS_MESSAGE, hasBothOrgFields, registerErrorBody, UNKNOWN_JOIN_CODE_MESSAGE } from "@/lib/registerForm";
 
 const RegisterSchema = z
   .object({
@@ -36,7 +37,7 @@ const RegisterSchema = z
   })
   .refine(
     (v) => !(v.joinOrgCode && v.newOrgName),
-    "Provide joinOrgCode or newOrgName, not both.",
+    BOTH_ORG_FIELDS_MESSAGE,
   );
 
 export async function POST(request: NextRequest) {
@@ -60,14 +61,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  let raw: unknown;
   let body;
   try {
-    body = RegisterSchema.parse(await request.json());
+    raw = await request.json();
+    body = RegisterSchema.parse(raw);
   } catch (e) {
-    const issues =
-      e instanceof z.ZodError ? e.issues.map((i) => i.message).join(", ") : "";
+    // One friendly message (plus one per field), never Zod's raw text or a comma-joined list. Zod skips the
+    // object refine when a field is missing, so the join-code/team-name conflict is read from the raw body too.
     return NextResponse.json(
-      { error: issues || "Invalid registration data" },
+      registerErrorBody(e instanceof z.ZodError ? e.issues : [], hasBothOrgFields(raw)),
       { status: 400 },
     );
   }
@@ -178,7 +181,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     if (error instanceof Error && error.message === "INVALID_ORG_CODE") {
       return NextResponse.json(
-        { error: "Unknown organization code." },
+        { error: UNKNOWN_JOIN_CODE_MESSAGE, fieldErrors: { joinOrgCode: UNKNOWN_JOIN_CODE_MESSAGE } },
         { status: 400 },
       );
     }

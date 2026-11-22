@@ -8,6 +8,7 @@ import AuthShell from "@/components/AuthShell";
 import GoogleButton from "@/components/GoogleButton";
 import { afterSigninTo, intentFromQuery, rememberNotice } from "@/lib/checkoutStart";
 import { signInHref, validNextPath } from "@/lib/safeNext";
+import { registerOrgFields } from "@/lib/registerForm";
 import { planSummary } from "@/lib/pricing";
 import LegalLinks from "@/components/LegalLinks";
 
@@ -68,8 +69,8 @@ function RegisterForm() {
         lastName: f.lastName,
         email: f.email,
         password: f.password,
-        // A blank team name is left out; the server then names the workspace after the rep.
-        ...(mode === "create" ? (f.orgName.trim() ? { newOrgName: f.orgName } : {}) : { joinOrgCode: f.orgCode }),
+        // Only the active mode's field. A blank team name is left out; the server then names the workspace after the rep.
+        ...registerOrgFields(mode, f.orgName, f.orgCode),
         ...intent,
       });
       goAfterSignin();
