@@ -14,13 +14,15 @@ describe("wantsTextMode", () => {
     expect(wantsTextMode(q(s))).toBe(false);
   });
 
-  it("the trainer reads it in the idle-phase query effect and keeps voice as the default", () => {
+  it("the trainer reads it in the idle-phase query effect, alongside the first-load mode pick", () => {
     const src = readFileSync("src/components/TrainerClient.tsx", "utf8");
     expect(src).toContain('useState<Mode>("voice")');
     expect(src).toContain('if (wantsTextMode(params)) setMode("text");');
-    // Inside the effect that also reads ?scenario=.
+    // Inside the effect that also reads ?scenario=. The first load decides the mode once (initialCallMode, which
+    // returns Text for a first-time rep; see tests/launch-fixes.test.ts).
     const effect = src.slice(src.indexOf('if (phaseRef.current !== "idle") return;'), src.indexOf("}, [query]);"));
     expect(effect).toContain("wantsTextMode(params)");
+    expect(effect).toContain("initialCallMode({ textParam: wantsTextMode(params), saved, hasPracticed })");
     expect(effect).toContain('params.get("scenario")');
   });
 });

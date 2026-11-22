@@ -8,6 +8,7 @@
  */
 import { z } from "zod";
 import { isLegacyGrader } from "./grader-types";
+import { aggregateScore, isLlmFailedEvaluation } from "./scoreAggregates";
 
 const DAY = 86_400_000;
 
@@ -63,6 +64,8 @@ export interface TeamSession {
   criteria: CriterionScore[];
   createdAt: string;
   hasNotes: boolean;
+  /** AI grading failed for this call: it counts as a session, but its rough score is left out (score is null). */
+  scorePending?: boolean;
 }
 
 /** Reads criterion scores out of a stored evaluation blob, skipping anything malformed. */
@@ -80,20 +83,24 @@ export function criteriaOf(evaluation: unknown): CriterionScore[] {
 export const isLegacyEvaluation = (evaluation: unknown): boolean =>
   !!evaluation && typeof evaluation === "object" && isLegacyGrader(evaluation as { graderVersion?: string; method: "llm" | "heuristic" });
 
-/** Score used in team math. Legacy keyword-grader sessions are left out, as on the rep dashboard. */
+/**
+ * Score used in team math. Legacy keyword-grader sessions are left out, as on the rep dashboard, and so are failed AI
+ * grades (evaluation.llmFailed), whose stored score is a rules-based rough estimate (aggregateScore in scoreAggregates.ts).
+ */
 export function scoreOf(overallScore: number | null | undefined, evaluation: unknown): number | null {
-  if (typeof overallScore !== "number" || !Number.isFinite(overallScore)) return null;
   if (isLegacyEvaluation(evaluation)) return null;
-  return Math.round(overallScore);
+  const score = aggregateScore({ score: overallScore, llmFailed: isLlmFailedEvaluation(evaluation) });
+  return score === null ? null : Math.round(score);
 }
 
 /**
  * Score and criterion scores together, so one rule decides both: a session that doesn't count
- * for the score (ungraded or legacy grader) doesn't feed the matrix, weakest criterion or queue either.
+ * for the score (ungraded, legacy grader or failed AI grade) doesn't feed the matrix, weakest criterion or queue either.
+ * `scorePending` marks a failed AI grade so the team view can say "Grading pending" instead of "ungraded".
  */
-export function gradeOf(overallScore: number | null | undefined, evaluation: unknown): { score: number | null; criteria: CriterionScore[] } {
+export function gradeOf(overallScore: number | null | undefined, evaluation: unknown): { score: number | null; criteria: CriterionScore[]; scorePending?: true } {
   const score = scoreOf(overallScore, evaluation);
-  return { score, criteria: score === null ? [] : criteriaOf(evaluation) };
+  return { score, criteria: score === null ? [] : criteriaOf(evaluation), ...(isLlmFailedEvaluation(evaluation) ? { scorePending: true as const } : {}) };
 }
 
 /** Rounded mean of the numeric values, or null when there are none. */
@@ -371,6 +378,8 @@ export interface RosterRow {
   avgScore: number | null;
   lastSessionAt: string | null;
   lastScore: number | null;
+  /** The last session's AI grade failed: show "Grading pending", not its rough score. */
+  lastScorePending?: boolean;
   weakest: string | null;
   weakestScore: number | null;
   /** Last SPARK_POINTS graded scores, oldest first. */
@@ -432,7 +441,7 @@ export function buildOverview(input: OverviewInput): TeamOverview {
       const weak = weakestAcross(recent);
       return {
         id: m.id, name: m.name, role: m.role, sessions: recent.length, avgScore: average(recent.map((s) => s.score)),
-        lastSessionAt: last?.createdAt ?? input.lastSeen?.[m.id] ?? null, lastScore: last?.score ?? null,
+        lastSessionAt: last?.createdAt ?? input.lastSeen?.[m.id] ?? null, lastScore: last?.score ?? null, lastScorePending: !!last?.scorePending,
         weakest: weak?.name ?? null, weakestScore: weak?.avg ?? null, spark: sparkline(all),
       };
     })

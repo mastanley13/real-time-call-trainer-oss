@@ -132,7 +132,7 @@ describe("showFirstGradedDemo", () => {
     expect(src).not.toContain("listLocalSessions()");
     expect(src).toContain("cap: LOCAL_SESSION_CAP");
     expect(src).toContain("cap: TRANSCRIPT_LIST_CAP");
-    expect(src).toContain("showFirstGradedDemo(sessionId, !!ev, sessionGrades.sessions, sessionGrades.cap)");
+    expect(src).toContain("showFirstGradedDemo(sessionId, !!ev && !isLlmFailedGrade(ev), sessionGrades.sessions, sessionGrades.cap)");
   });
 });
 

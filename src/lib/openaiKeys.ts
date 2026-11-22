@@ -127,8 +127,11 @@ export function classifyOpenAiFailure(
   return values.some((v) => QUOTA_CODES.has(v)) ? "quota" : "other";
 }
 
-/** Reads at most `max` bytes of the body, then cancels the rest. Never throws; an unreadable body reads as "". */
-export async function readBoundedBody(res: Response, max = MAX_ERROR_BODY_BYTES): Promise<string> {
+/**
+ * Reads at most `max` bytes of the body, then cancels the rest. Never throws; an unreadable body reads as "".
+ * With `timeoutMs`, stops after that long as well and returns whatever arrived, so a stalled body cannot hold the caller.
+ */
+export async function readBoundedBody(res: Response, max = MAX_ERROR_BODY_BYTES, timeoutMs?: number): Promise<string> {
   let reader: ReadableStreamDefaultReader<Uint8Array>;
   try {
     if (!res.body) return "";
@@ -138,9 +141,16 @@ export async function readBoundedBody(res: Response, max = MAX_ERROR_BODY_BYTES)
   }
   const chunks: Uint8Array[] = [];
   let total = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline =
+    timeoutMs === undefined
+      ? null
+      : new Promise<{ done: true; value: undefined }>((resolve) => {
+          timer = setTimeout(() => resolve({ done: true, value: undefined }), timeoutMs);
+        });
   try {
     while (total < max) {
-      const { done, value } = await reader.read();
+      const { done, value } = await (deadline ? Promise.race([reader.read(), deadline]) : reader.read());
       if (done || !value) break;
       const take = value.subarray(0, max - total);
       chunks.push(take);
@@ -149,6 +159,7 @@ export async function readBoundedBody(res: Response, max = MAX_ERROR_BODY_BYTES)
   } catch {
     /* a broken stream reads as whatever arrived */
   } finally {
+    if (timer !== undefined) clearTimeout(timer);
     reader.cancel().catch(() => {});
   }
   const bytes = new Uint8Array(total);
@@ -181,10 +192,22 @@ export function openAiErrorFields(text: string): { code?: string; type?: string 
  * 400 that the temperature retry inspected. The body is never returned, logged or stored.
  */
 export async function classifyOpenAiResponse(url: string, res: Response, alreadyRead?: string): Promise<FailureClass> {
-  if (res.ok || res.redirected || !isOpenAiBaseUrl(url) || !GATE.has(res.status)) return "other";
+  return (await classifyOpenAiResponseDetail(url, res, alreadyRead)).outcome;
+}
+
+/**
+ * classifyOpenAiResponse, plus the bounded body text when it was read here or passed in, so a caller can reuse it
+ * instead of reading the body a second time. `text` is undefined when the body was left unread.
+ */
+export async function classifyOpenAiResponseDetail(
+  url: string,
+  res: Response,
+  alreadyRead?: string,
+): Promise<{ outcome: FailureClass; text?: string }> {
+  if (res.ok || res.redirected || !isOpenAiBaseUrl(url) || !GATE.has(res.status)) return { outcome: "other", text: alreadyRead };
   const text = alreadyRead ?? (await readBoundedBody(res));
   const { code, type } = openAiErrorFields(text.slice(0, MAX_ERROR_BODY_BYTES));
-  return classifyOpenAiFailure(res.status, [code, type]);
+  return { outcome: classifyOpenAiFailure(res.status, [code, type]), text };
 }
 
 /* ---------- Per-process slot state ---------- */
