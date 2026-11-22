@@ -9,6 +9,7 @@ import { validNextPath } from "@/lib/safeNext";
 import { googleLandingPath } from "@/lib/signupIntent";
 import { sanitizeSignupIntent, type SignupIntent } from "@/lib/pricing";
 import { clientIp, ipLimitResponse } from "@/lib/rateLimit";
+import { clearAuthFailures } from "@/lib/loginLockout";
 import { notifySignup } from "@/lib/ghlWebhook";
 import { linkGoogleAtomically, checkIdTokenClaims, decodeIdToken, exchangeCode, flowCookieOptions, GOOGLE_FLOW_COOKIE, googleConfig, verifyFlowState, type GoogleProfile } from "@/lib/googleAuth";
 
@@ -128,7 +129,8 @@ export async function GET(req: NextRequest) {
       linked = true;
     }
 
-    await prisma.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null, lastLoginAt: new Date() } });
+    // Lock-aware (loginLockout.ts): a lock armed after the check above is kept, and no session is issued.
+    if (!(await clearAuthFailures(user.id, { lastLoginAt: new Date() }))) return fail(req, "locked");
     await prisma.auditEvent.create({
       data: {
         userId: user.id,

@@ -8,6 +8,7 @@ import {
 } from "@/lib/auth";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
+import { clearAuthFailures, isLocked, lockedResponse, recordAuthFailure } from "@/lib/loginLockout";
 
 const LoginSchema = z.object({
   email: z.string().email().max(254),
@@ -19,8 +20,6 @@ const LoginSchema = z.object({
 });
 
 const GENERIC_AUTH_ERROR = "Invalid email or password.";
-const MAX_FAILED = 8;
-const LOCKOUT_MINUTES = 15;
 
 export async function POST(request: NextRequest) {
   const ip = clientIp(request);
@@ -60,31 +59,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: GENERIC_AUTH_ERROR }, { status: 401 });
   }
 
-  if (user.lockedUntil && user.lockedUntil > new Date()) {
-    return NextResponse.json(
-      { error: "Account temporarily locked. Try again later." },
-      { status: 423 },
-    );
-  }
+  if (isLocked(user)) return lockedResponse();
 
   const { ok, needsRehash } = await verifyPassword(body.password, user.passwordHash);
 
   if (!ok) {
-    const failed = user.failedLoginCount + 1;
-    const shouldLock = failed >= MAX_FAILED;
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        failedLoginCount: shouldLock ? 0 : failed,
-        lockedUntil: shouldLock
-          ? new Date(Date.now() + LOCKOUT_MINUTES * 60 * 1000)
-          : null,
-      },
-    });
+    // Shared with the MFA challenge and recovery code regeneration (loginLockout.ts), so all of them count together.
+    const { locked } = await recordAuthFailure(user.id);
     await prisma.auditEvent.create({
       data: {
         userId: user.id,
-        action: shouldLock ? "user.login_locked" : "user.login_failed",
+        action: locked ? "user.login_locked" : "user.login_failed",
         ip,
         userAgent: request.headers.get("user-agent") ?? undefined,
       },
@@ -101,7 +86,9 @@ export async function POST(request: NextRequest) {
 
   // Password + org-code have passed. If this account has MFA enabled, DO
   // NOT issue a session yet — return a short-lived challenge token instead
-  // and require a valid TOTP to exchange it for a session.
+  // and require a valid TOTP to exchange it for a session. The failure counter
+  // is NOT reset here: only a completed challenge clears it, so someone who
+  // knows the password cannot wipe the count of their wrong MFA codes.
   if (user.mfaEnabled && user.mfaSecret) {
     const challengeToken = signMfaChallengeToken(user.id);
     await prisma.auditEvent.create({
@@ -115,14 +102,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ mfaRequired: true, challengeToken });
   }
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      failedLoginCount: 0,
-      lockedUntil: null,
-      lastLoginAt: new Date(),
-    },
-  });
+  // Conditional on no lock having been armed while the password was being checked; otherwise no session.
+  if (!(await clearAuthFailures(user.id, { lastLoginAt: new Date() }))) return lockedResponse();
 
   await prisma.auditEvent.create({
     data: {

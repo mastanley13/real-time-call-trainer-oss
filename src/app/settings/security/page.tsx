@@ -1,12 +1,22 @@
 "use client";
 
 import { PageSkeleton } from "@/components/ui/Skeleton";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import QRCode from "qrcode";
-import { ShieldCheck, ShieldOff, AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import { ShieldCheck, ShieldOff, AlertTriangle, CheckCircle2, Info, KeyRound, RefreshCw } from "lucide-react";
 import { useAuth } from "../../../contexts/AuthContext";
 import SettingsNav from "@/components/settings/SettingsNav";
+import RecoveryCodesPanel from "@/components/settings/RecoveryCodesPanel";
+import { RECOVERY_CODE_COUNT, recoveryCodesLabel, recoveryCodesLow } from "@/lib/mfaRecovery-types";
+
+type RecoveryCounts = { remaining: number; total: number };
+
+/** The route's human message when it sent one, else its error text. */
+async function errorText(r: Response, fallback: string): Promise<string> {
+  const data = await r.json().catch(() => ({}));
+  return data.message || data.error || fallback;
+}
 
 type MeResponse = {
   user: {
@@ -37,6 +47,23 @@ export default function SecuritySettingsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Plaintext codes from the one response that carries them. Cleared when the user dismisses the panel.
+  const [freshCodes, setFreshCodes] = useState<string[] | null>(null);
+  const [recovery, setRecovery] = useState<RecoveryCounts | null>(null);
+  const [recoveryFailed, setRecoveryFailed] = useState(false);
+  const [regenMethod, setRegenMethod] = useState<"password" | "code">("password");
+  const [regenSecret, setRegenSecret] = useState("");
+
+  const loadRecovery = useCallback(async () => {
+    setRecoveryFailed(false);
+    try {
+      const r = await fetch("/api/auth/mfa/recovery-codes", { credentials: "include" });
+      if (!r.ok) throw new Error(String(r.status));
+      setRecovery(await r.json());
+    } catch {
+      setRecoveryFailed(true);
+    }
+  }, []);
 
   const loadMe = useCallback(async () => {
     setLoadFailed(false);
@@ -57,6 +84,11 @@ export default function SecuritySettingsPage() {
   useEffect(() => {
     if (isAuthenticated && !noAccount) loadMe();
   }, [isAuthenticated, noAccount, loadMe]);
+
+  useEffect(() => {
+    if (me?.mfaEnabled) loadRecovery();
+    else setRecovery(null);
+  }, [me?.mfaEnabled, loadRecovery]);
 
   useEffect(() => {
     if (!enroll?.provisioningUri) return;
@@ -93,9 +125,11 @@ export default function SecuritySettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
       });
-      if (!r.ok) throw new Error((await r.json()).error || "Invalid code");
+      if (!r.ok) throw new Error(await errorText(r, "Invalid code"));
+      const data: { recoveryCodes?: string[] } = await r.json();
       setEnroll(null);
       setCode("");
+      setFreshCodes(data.recoveryCodes ?? null);
       setNotice("MFA is now enabled on this account.");
       await loadMe();
     } catch (e) {
@@ -115,9 +149,10 @@ export default function SecuritySettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
       });
-      if (!r.ok) throw new Error((await r.json()).error || "Invalid code");
+      if (!r.ok) throw new Error(await errorText(r, "Invalid code"));
       setCode("");
-      setNotice("MFA disabled.");
+      setFreshCodes(null);
+      setNotice("MFA disabled. Your recovery codes no longer work.");
       await loadMe();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed");
@@ -125,6 +160,33 @@ export default function SecuritySettingsPage() {
       setBusy(false);
     }
   };
+
+  const regenerate = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const r = await fetch("/api/auth/mfa/recovery-codes", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(regenMethod === "password" ? { password: regenSecret } : { code: regenSecret }),
+      });
+      if (!r.ok) throw new Error(await errorText(r, "Could not regenerate recovery codes. Try again."));
+      const data: { recoveryCodes: string[] } = await r.json();
+      setRegenSecret("");
+      setFreshCodes(data.recoveryCodes);
+      setNotice("New recovery codes are ready. Your old codes no longer work.");
+      await loadRecovery();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not regenerate recovery codes. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const regenReady = regenMethod === "password" ? regenSecret.length > 0 : regenSecret.length === 6;
 
   if (noAccount || (!me && loadFailed)) {
     return (
@@ -189,6 +251,10 @@ export default function SecuritySettingsPage() {
             <CheckCircle2 size={16} strokeWidth={1.75} className="mt-0.5 shrink-0" aria-hidden />
             <span>{notice}</span>
           </div>
+        )}
+
+        {freshCodes && (
+          <RecoveryCodesPanel codes={freshCodes} account={me.email} onDone={() => setFreshCodes(null)} />
         )}
 
         <section className="bg-surface border border-line rounded-2xl p-5">
@@ -337,6 +403,108 @@ export default function SecuritySettingsPage() {
             </>
           )}
         </section>
+
+        {me.mfaEnabled && (
+          <section aria-labelledby="recovery-title" className="bg-surface border border-line rounded-2xl p-5 mt-4">
+            <div className="flex items-center gap-2 mb-3">
+              <KeyRound size={20} strokeWidth={1.75} className="text-ink-soft" aria-hidden />
+              <h2 id="recovery-title" className="text-sm font-semibold text-ink">
+                Recovery codes
+              </h2>
+            </div>
+            <p className="text-sm text-ink-muted mb-4">
+              If you lose your authenticator app, sign in with one of these single-use codes instead.
+            </p>
+
+            {recovery ? (
+              recoveryCodesLow(recovery.remaining) ? (
+                <div className="banner-warn mb-4 flex items-start gap-2">
+                  <AlertTriangle size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-caution" aria-hidden />
+                  <span>
+                    <strong className="font-semibold">
+                      {recovery.total === 0 ? "No recovery codes yet" : recoveryCodesLabel(recovery.remaining)}
+                    </strong>
+                    {recovery.total === 0
+                      ? `. Generate a set of ${RECOVERY_CODE_COUNT} below so you can still sign in without your app.`
+                      : ". Regenerate them below before you run out."}
+                  </span>
+                </div>
+              ) : (
+                <p className="mb-4 flex items-center gap-2 text-sm text-ink">
+                  <ShieldCheck size={16} strokeWidth={1.75} className="shrink-0 text-ok" aria-hidden />
+                  {recoveryCodesLabel(recovery.remaining)}
+                </p>
+              )
+            ) : recoveryFailed ? (
+              <div className="mb-4 flex flex-wrap items-center gap-2 text-sm text-ink-soft">
+                <span>We couldn&apos;t load your recovery code count.</span>
+                <button type="button" onClick={loadRecovery} className="btn-quiet btn-sm">
+                  Try again
+                </button>
+              </div>
+            ) : (
+              <div className="skeleton h-5 w-48 mb-4" aria-hidden />
+            )}
+
+            <form onSubmit={regenerate}>
+              <fieldset className="mb-3">
+                <legend className="label">Confirm it&apos;s you with</legend>
+                <div className="inline-flex rounded-lg border border-line p-0.5" role="group">
+                  {(["password", "code"] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      aria-pressed={regenMethod === m}
+                      onClick={() => {
+                        setRegenMethod(m);
+                        setRegenSecret("");
+                      }}
+                      className="btn-quiet btn-sm aria-pressed:bg-sunken aria-pressed:text-ink"
+                    >
+                      {m === "password" ? "Password" : "Authenticator code"}
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+              <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+                <div className="flex-1">
+                  <label htmlFor="regen-secret" className="label">
+                    {regenMethod === "password" ? "Current password" : "Authenticator code"}
+                  </label>
+                  {regenMethod === "password" ? (
+                    <input
+                      id="regen-secret"
+                      type="password"
+                      autoComplete="current-password"
+                      maxLength={200}
+                      value={regenSecret}
+                      onChange={(e) => setRegenSecret(e.target.value)}
+                      className="input"
+                    />
+                  ) : (
+                    <input
+                      id="regen-secret"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      value={regenSecret}
+                      onChange={(e) => setRegenSecret(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                      className="input tracking-[0.5em] text-center font-mono"
+                      placeholder="000000"
+                    />
+                  )}
+                </div>
+                <button type="submit" disabled={busy || !regenReady} className="btn-ghost">
+                  <RefreshCw size={16} strokeWidth={1.75} aria-hidden /> Regenerate codes
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-ink-muted">
+                Regenerating replaces all of your codes. Codes you saved earlier stop working.
+              </p>
+            </form>
+          </section>
+        )}
       </div>
     </div>
   );

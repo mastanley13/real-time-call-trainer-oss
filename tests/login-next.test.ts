@@ -82,9 +82,16 @@ describe("login page source", () => {
     const body = onSubmitBody();
     expect(body.match(/router\.(push|replace)\(/g)).toEqual(["router.push("]);
     // The MFA branch and the password branch close, then the single push runs for both.
+    // completeMfaChallenge may take a third argument: the authenticator or recovery code choice.
     expect(body).toMatch(
-      /if \(challenge\) \{\s*await completeMfaChallenge\(challenge, code\);\s*\} else \{\s*const mfa = await login\(\{ email, password \}\);\s*if \(mfa\) \{[^}]*return; \}\s*\}\s*router\.push\(destination\);/,
+      /if \(challenge\) \{\s*await completeMfaChallenge\(challenge, code(?:, [^;]*)?\);\s*\} else \{\s*const mfa = await login\(\{ email, password \}\);\s*if \(mfa\) \{[^}]*return; \}\s*\}\s*router\.push\(destination\);/,
     );
+  });
+
+  it("a recovery code goes through the same completeMfaChallenge call, so it lands on the same safe destination", () => {
+    const body = onSubmitBody();
+    expect(body.match(/completeMfaChallenge\(/g)).toHaveLength(1);
+    expect(body).toMatch(/completeMfaChallenge\(challenge, code, useRecovery \? "recovery" : "totp"\)/);
   });
 
   it("has only those two navigations and no hardcoded /trainer", () => {

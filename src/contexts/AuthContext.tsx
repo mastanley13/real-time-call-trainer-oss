@@ -62,9 +62,11 @@ export interface MfaChallenge {
 interface AuthContextType {
   user: User | null;
   login: (credentials: LoginCredentials) => Promise<MfaChallenge | null>;
+  /** `kind: "recovery"` sends the code as a single-use recovery code instead of an authenticator code. */
   completeMfaChallenge: (
     challengeToken: string,
     code: string,
+    kind?: "totp" | "recovery",
   ) => Promise<void>;
   register: (formData: RegisterFormData) => Promise<void>;
   /** Stores the session a Google sign-in left in the cookie. */
@@ -176,6 +178,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const completeMfaChallenge = async (
     challengeToken: string,
     code: string,
+    kind: "totp" | "recovery" = "totp",
   ) => {
     setIsLoading(true);
     try {
@@ -183,7 +186,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ challengeToken, code }),
+        body: JSON.stringify(kind === "recovery" ? { challengeToken, recoveryCode: code } : { challengeToken, code }),
       });
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));

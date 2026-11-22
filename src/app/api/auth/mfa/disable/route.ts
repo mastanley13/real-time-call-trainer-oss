@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
-import { verifyTotp } from "@/lib/mfa";
+import { mfaUnavailableResponse, verifyTotp } from "@/lib/mfa";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 
 const BodySchema = z.object({ code: z.string().regex(/^[0-9]{6}$/) });
@@ -15,6 +15,8 @@ export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   const user = auth;
+  const unavailable = mfaUnavailableResponse();
+  if (unavailable) return unavailable;
 
   const limit = rateLimit({
     key: `mfa-disable:${user.id}`,
@@ -50,10 +52,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid code" }, { status: 401 });
   }
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { mfaEnabled: false, mfaSecret: null, mfaEnrolledAt: null },
-  });
+  // One transaction: the user update takes the row lock first, so a regeneration running at the same moment either
+  // finishes before this and has its codes deleted here, or waits and then sees MFA off and issues nothing.
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: user.id },
+      data: { mfaEnabled: false, mfaSecret: null, mfaEnrolledAt: null },
+    }),
+    prisma.mfaRecoveryCode.deleteMany({ where: { userId: user.id } }),
+  ]);
   await prisma.auditEvent.create({
     data: {
       userId: user.id,

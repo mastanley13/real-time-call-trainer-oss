@@ -119,6 +119,8 @@ export const IP_LIMITS = {
   billing: () => ({ limit: envInt("RATE_LIMIT_BILLING_MAX", 20), windowMs: envInt("RATE_LIMIT_BILLING_WINDOW_SEC", 3600) * 1000 }),
   /** Organization settings writes (voice quality, PATCH /api/team/voice). */
   teamSettings: () => ({ limit: envInt("RATE_LIMIT_TEAM_SETTINGS_MAX", 30), windowMs: envInt("RATE_LIMIT_TEAM_SETTINGS_WINDOW_SEC", 3600) * 1000 }),
+  /** MFA recovery code regeneration (POST /api/auth/mfa/recovery-codes): each attempt checks a password or TOTP. */
+  mfaRecovery: () => ({ limit: envInt("RATE_LIMIT_MFA_RECOVERY_MAX", 20), windowMs: envInt("RATE_LIMIT_MFA_RECOVERY_WINDOW_SEC", 3600) * 1000 }),
 } as const;
 
 /**

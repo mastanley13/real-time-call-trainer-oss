@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-const mocks = vi.hoisted(() => ({
-  prisma: { user: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() }, auditEvent: { create: vi.fn() } },
-  verifyTotp: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  const prisma = {
+    user: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    auditEvent: { create: vi.fn() },
+    // The challenge's success path (counter reset, then the link) runs in one interactive transaction.
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma)),
+  };
+  return { prisma, verifyTotp: vi.fn() };
+});
 vi.mock("@/lib/db", () => ({ prisma: mocks.prisma }));
 vi.mock("@/lib/mfa", () => ({ verifyTotp: mocks.verifyTotp }));
 
@@ -15,20 +20,28 @@ type Row = { id: string; googleSub: string | null; lockedUntil: Date | null };
 const row = (patch: Partial<Row> = {}): Row => ({ id: "u-1", googleSub: null, lockedUntil: null, ...patch });
 const user = (r: Row) => ({
   ...r, email: "rep@example.test", firstName: "Ravi", lastName: "Shah", role: "owner",
-  mfaEnabled: true, mfaSecret: "SECRET", isPlatformAdmin: false, organization: null,
+  mfaEnabled: true, mfaSecret: "SECRET", isPlatformAdmin: false, organization: null, failedLoginCount: 0,
 });
 const post = (token: string, code = "123456") =>
   challengeRoute(new NextRequest("http://localhost/api/auth/mfa/challenge", { method: "POST", body: JSON.stringify({ challengeToken: token, code }) }));
 
-/** An in-memory row that honours updateMany's where clause, so a lost race really returns count 0. */
+/** updateMany calls that write a Google id (the link), as opposed to the lock-aware counter reset. */
+const linkCalls = () => mocks.prisma.user.updateMany.mock.calls.filter(([args]) => "googleSub" in (args as { data: object }).data);
+
+/**
+ * An in-memory row that honours updateMany's where clause, so a lost race really returns count 0. Handles both
+ * shapes the challenge sends: the link (googleSub: null + not locked) and the counter reset (not locked).
+ */
 function fakeDb(initial: Row) {
   const state = { ...initial };
   mocks.prisma.user.findUnique.mockImplementation(async () => user({ ...state }));
   mocks.prisma.user.update.mockImplementation(async () => user({ ...state }));
-  mocks.prisma.user.updateMany.mockImplementation(async ({ where, data }: { where: { id: string; googleSub: null; OR: { lockedUntil: null | { lte: Date } }[] }; data: { googleSub: string } }) => {
+  mocks.prisma.user.updateMany.mockImplementation(async ({ where, data }: { where: { id: string; googleSub?: null; OR: { lockedUntil: null | { lte: Date } }[] }; data: { googleSub?: string } }) => {
     const unlocked = !state.lockedUntil || state.lockedUntil <= new Date();
-    if (where.id !== state.id || where.googleSub !== null || state.googleSub !== null || !unlocked) return { count: 0 };
-    state.googleSub = data.googleSub;
+    if (where.id !== state.id || !unlocked) return { count: 0 };
+    if (!("googleSub" in data)) return { count: 1 }; // counter reset
+    if (where.googleSub !== null || state.googleSub !== null) return { count: 0 };
+    state.googleSub = data.googleSub!;
     return { count: 1 };
   });
   return state;
@@ -46,7 +59,7 @@ describe("deferred Google link on MFA", () => {
     fakeDb(row());
     const res = await post(signMfaChallengeToken("u-1"));
     expect(res.status).toBe(200);
-    expect(mocks.prisma.user.updateMany).not.toHaveBeenCalled();
+    expect(linkCalls()).toHaveLength(0);
   });
 
   it("writes googleSub atomically only after the code is accepted, and issues the session", async () => {
@@ -55,7 +68,7 @@ describe("deferred Google link on MFA", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("set-cookie")).toContain("authToken=");
     expect(state.googleSub).toBe("g-sub-1");
-    expect(mocks.prisma.user.updateMany.mock.calls[0][0].where).toMatchObject({ id: "u-1", googleSub: null });
+    expect(linkCalls()[0][0].where).toMatchObject({ id: "u-1", googleSub: null });
   });
 
   it("does not link on a wrong code", async () => {
@@ -68,12 +81,13 @@ describe("deferred Google link on MFA", () => {
   });
 
   it.each([
-    ["locked meanwhile", { lockedUntil: new Date(Date.now() + 60_000) }],
-    ["linked to a different Google account meanwhile", { googleSub: "someone-else" }],
-  ] as [string, Partial<Row>][])("rejects the challenge, with no session or cookie, when the account is %s", async (_n, patch) => {
+    // A locked account is now refused up front with login's lockout answer, before any code is checked.
+    ["locked meanwhile", { lockedUntil: new Date(Date.now() + 60_000) }, 423],
+    ["linked to a different Google account meanwhile", { googleSub: "someone-else" }, 409],
+  ] as [string, Partial<Row>, number][])("rejects the challenge, with no session or cookie, when the account is %s", async (_n, patch, status) => {
     const state = fakeDb(row(patch));
     const res = await post(signMfaChallengeToken("u-1", "g-sub-1"));
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(status);
     expect(res.headers.get("set-cookie")).toBeNull();
     expect(await res.json()).not.toHaveProperty("token");
     expect(state.googleSub).toBe(patch.googleSub ?? null);
@@ -93,7 +107,11 @@ describe("deferred Google link on MFA", () => {
 
   it("a database error on the link refuses the challenge", async () => {
     fakeDb(row());
-    mocks.prisma.user.updateMany.mockRejectedValue(new Error("unique constraint"));
+    // Only the link write fails; the counter reset before it succeeds, and the transaction is rolled back.
+    mocks.prisma.user.updateMany.mockImplementation(async ({ data }: { data: object }) => {
+      if ("googleSub" in data) throw new Error("unique constraint");
+      return { count: 1 };
+    });
     const res = await post(signMfaChallengeToken("u-1", "g-sub-1"));
     expect(res.status).toBe(409);
     expect(res.headers.get("set-cookie")).toBeNull();
