@@ -11,6 +11,7 @@ import type { Evaluation } from "@/lib/grader-types";
 import { canRegrade, gradable, gradedNote, isAiGrade, withoutModelId } from "@/lib/gradable";
 import { getCapabilities, llmGradingModel, llmKey } from "@/lib/serverConfig";
 import { SESSION_VIEW_SELECT, sessionView } from "@/lib/sessionView";
+import { notifyFirstGradedCall } from "@/lib/ghlWebhook";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -183,5 +184,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     console.error("[/api/transcripts/[id]] regrade save error:", error);
     return fail(500, "Failed to save session", "The new grade couldn't be saved. Try again in a minute.");
   }
+  // Activation for the CRM: a call that had no score and now has one may be the trainee's first graded call. Scheduled
+  // first thing after the grade transaction committed (the catch above runs only when nothing committed), with nothing
+  // after it that could throw. notifyFirstGradedCall decides in the background, under its own lock and marker; it never
+  // delays this response.
+  if (session.overallScore === null) notifyFirstGradedCall(session.userId);
   return NextResponse.json({ id, evaluation: stored });
 }
