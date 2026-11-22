@@ -37,15 +37,19 @@ export default function Home() {
           <div className="enter">
             <p className="eyebrow">Free tier · no card · text or voice</p>
             <h1 className="mt-4 text-4xl font-bold leading-[1.05] sm:text-[56px]">
-              Sales call practice, <span className="text-primary">no setup required</span>
+              Know which reps are ready before they&apos;re on a live call.
             </h1>
             <p className="mt-5 max-w-xl text-lg leading-relaxed text-ink-soft">
-              Practice real sales calls against {LIBRARY.length} AI buyer personas. No API keys, no database, just sign up and start talking.
+              {`Your reps practice against ${LIBRARY.length} AI buyers who push back. You read a graded debrief that quotes their own words, so you can see who is ready and what to coach next. Free to start, no card.`}
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Link href={registerHref({ src: "home_hero" })} className="btn-primary btn-xl">Start free <ArrowRight size={18} aria-hidden /></Link>
+              <Link href={registerHref({ src: "home_hero" })} className="btn-primary btn-xl">Start free, no card <ArrowRight size={18} aria-hidden /></Link>
               <Link href="/pricing" className="btn-ghost btn-xl">See pricing</Link>
             </div>
+            <p className="mt-4 text-sm text-ink-muted">
+              {"Managing 3 or more reps? Team adds a manager view and assignments: $59 a seat a month, 3-seat minimum. "}
+              <Link href="/register?src=home_hero&plan=team&interval=month" className="text-primary underline">Start a Team</Link>
+            </p>
           </div>
           <div className="enter [animation-delay:120ms]"><HeroDeck /></div>
         </div>
@@ -90,9 +94,9 @@ export default function Home() {
         <h2 id="feat-h" className="sr-only">Features</h2>
         <div className="grid gap-4 md:grid-cols-3">
           {[
-            { icon: LibraryBig, title: `${LIBRARY.length} personas, ${families} sales jobs`, body: "SDR cold calls to collections, filtered by role, industry, difficulty and the objections they throw. Each persona is a plain JSON pack." },
-            { icon: Radar, title: "A live coach, not a script", body: "Live rubric estimate, talk-track progress and talk ratio, plus cues with a line you can use. Blind, Guided or Coached, your call." },
-            { icon: MessageSquareQuote, title: "Evidence-backed debrief", body: "Scores cite verbatim quotes that are checked against the transcript. Click any quote to see the moment, then retry from that turn." },
+            { icon: LibraryBig, title: `${LIBRARY.length} AI buyers across ${families} sales jobs`, body: "From SDR cold calls to insurance renewals, portal leads and past-due calls. Filter by role, industry, difficulty and the objection they throw." },
+            { icon: Radar, title: "A live coach, not a script", body: "A live score on every turn, talk-track progress and a line your rep can use. Train Blind, Guided or Coached, so you choose how much help each rep gets." },
+            { icon: MessageSquareQuote, title: "A debrief that quotes your rep's own words", body: "Every score cites what the rep actually said, checked against the transcript. Open a quote to see the moment, then retry the call from that turn." },
           ].map(({ icon: Icon, title, body }) => (
             <div key={title} className="card">
               <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-soft text-primary"><Icon size={20} aria-hidden /></span>
