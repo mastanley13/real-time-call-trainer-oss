@@ -21,3 +21,9 @@ export function safeNextPath(raw: string | null | undefined, fallback = "/traine
 export function validNextPath(raw: string | null | undefined): string | null {
   return safeNextPath(raw, "") || null;
 }
+
+/** The sign-in link: /login?next=<encoded path> for a safe next, else plain /login. */
+export function signInHref(next: string | null | undefined): string {
+  const path = validNextPath(next);
+  return path ? `/login?next=${encodeURIComponent(path)}` : "/login";
+}

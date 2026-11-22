@@ -7,6 +7,7 @@ import { prisma } from "@/lib/db";
 import { accessCode, hasValidAccessCookie } from "@/lib/access";
 import { generateOrgCode, isValidOrgCode } from "@/lib/orgCodes";
 import { sanitizeSignupIntent } from "@/lib/pricing";
+import { defaultOrgName, ORG_NAME_MAX } from "@/lib/orgName";
 
 const RegisterSchema = z
   .object({
@@ -18,9 +19,15 @@ const RegisterSchema = z
       .string()
       .min(10, "Password must be at least 10 characters")
       .max(200),
-    /// Exactly one of these two must be provided.
+    /// At most one of these two. With neither, a new org gets defaultOrgName(firstName).
     joinOrgCode: z.string().regex(/^[0-9]{3,8}$/).optional(),
-    newOrgName: z.string().trim().min(2).max(120).optional(),
+    /// Blank or whitespace-only counts as missing.
+    newOrgName: z
+      .string()
+      .trim()
+      .max(ORG_NAME_MAX)
+      .refine((s) => s.length === 0 || s.length >= 2, "Team name must be at least 2 characters")
+      .optional(),
     /// Sign-up link context. Never rejects the request: bad values are dropped by sanitizeSignupIntent below.
     plan: z.unknown().optional(),
     interval: z.unknown().optional(),
@@ -28,8 +35,8 @@ const RegisterSchema = z
     seg: z.unknown().optional(),
   })
   .refine(
-    (v) => !!v.joinOrgCode !== !!v.newOrgName,
-    "Either joinOrgCode or newOrgName must be provided (but not both).",
+    (v) => !(v.joinOrgCode && v.newOrgName),
+    "Provide joinOrgCode or newOrgName, not both.",
   );
 
 export async function POST(request: NextRequest) {
@@ -67,6 +74,8 @@ export async function POST(request: NextRequest) {
 
   const emailLower = body.email.toLowerCase();
   const intent = sanitizeSignupIntent(body);
+  // No join code means a new org: the given team name, or "<firstName>'s workspace" for a solo rep.
+  const newOrgName = body.joinOrgCode ? undefined : body.newOrgName || defaultOrgName(body.firstName);
 
   try {
     const existing = await prisma.user.findUnique({ where: { email: emailLower } });
@@ -83,10 +92,10 @@ export async function POST(request: NextRequest) {
       let orgId: string;
       let role: "owner" | "trainee";
 
-      if (body.newOrgName) {
+      if (newOrgName) {
         const code = await generateOrgCode();
         const org = await tx.organization.create({
-          data: { name: body.newOrgName, code },
+          data: { name: newOrgName, code },
         });
         orgId = org.id;
         role = "owner";
@@ -131,7 +140,7 @@ export async function POST(request: NextRequest) {
           metadata: {
             role,
             organizationCode: created.organization?.code ?? null,
-            joinOrCreate: body.newOrgName ? "create" : "join",
+            joinOrCreate: newOrgName ? "create" : "join",
           } satisfies Prisma.InputJsonValue,
         },
       });

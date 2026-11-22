@@ -160,3 +160,88 @@ describe("POST /api/auth/register sign-up intent", () => {
     expect(stored()).toMatchObject({ role: "trainee", signupPlanIntent: "pro", signupSrc: "pricing" });
   });
 });
+
+describe("POST /api/auth/register team name is optional", () => {
+  const orgCreate = vi.fn();
+  const userCreate = vi.fn();
+  const joinOrg = vi.fn();
+  const { newOrgName: _omit, ...soloBase } = body;
+
+  beforeEach(() => {
+    orgCreate.mockReset().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "org-1", ...data }));
+    userCreate.mockReset().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: "u-new", email: data.email, firstName: data.firstName, lastName: data.lastName, role: data.role, isPlatformAdmin: false,
+      organization: { id: data.organizationId, name: "stored", code: "123456" },
+    }));
+    joinOrg.mockReset().mockResolvedValue({ id: "org-9", code: "654321" });
+    mocks.prisma.user.findUnique.mockResolvedValue(null);
+    (mocks.prisma as Record<string, unknown>).organization = { findUnique: vi.fn().mockResolvedValue(null) };
+    mocks.prisma.$transaction.mockReset().mockImplementation(async (fn: (tx: unknown) => unknown) =>
+      fn({ organization: { create: orgCreate, findUnique: joinOrg }, user: { create: userCreate }, auditEvent: { create: vi.fn() } }));
+  });
+
+  const register = (payload: Record<string, unknown>) =>
+    POST(new NextRequest("http://localhost/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: { "content-type": "application/json" },
+    }));
+  const orgName = () => (orgCreate.mock.calls[0][0] as { data: { name: string } }).data.name;
+  const userData = () => (userCreate.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+
+  it("with no team name and no code, creates \"<First>'s workspace\" with the rep as owner", async () => {
+    const res = await register(soloBase);
+    expect(res.status).toBe(200);
+    expect(orgCreate).toHaveBeenCalledOnce();
+    expect(orgName()).toBe("Mia's workspace");
+    expect(userData()).toMatchObject({ role: "owner", organizationId: "org-1" });
+    expect(joinOrg).not.toHaveBeenCalled();
+  });
+
+  it("uses the trimmed first name", async () => {
+    const res = await register({ ...soloBase, firstName: "  Mia  " });
+    expect(res.status).toBe(200);
+    expect(orgName()).toBe("Mia's workspace");
+  });
+
+  it.each(["", "   ", "\t \n"])("treats a blank team name (%j) as missing", async (blank) => {
+    const res = await register({ ...soloBase, newOrgName: blank });
+    expect(res.status).toBe(200);
+    expect(orgName()).toBe("Mia's workspace");
+  });
+
+  it("keeps a provided team name, trimmed", async () => {
+    const res = await register({ ...soloBase, newOrgName: "  Example Team  " });
+    expect(res.status).toBe(200);
+    expect(orgName()).toBe("Example Team");
+  });
+
+  it("still rejects a one-character team name and one over 120 characters", async () => {
+    expect((await register({ ...soloBase, newOrgName: "A" })).status).toBe(400);
+    expect((await register({ ...soloBase, newOrgName: "a".repeat(121) })).status).toBe(400);
+    expect(orgCreate).not.toHaveBeenCalled();
+  });
+
+  it("joins by code as before: a trainee in the existing org, no new org", async () => {
+    const res = await register({ ...soloBase, joinOrgCode: "654321" });
+    expect(res.status).toBe(200);
+    expect(joinOrg).toHaveBeenCalledWith({ where: { code: "654321" } });
+    expect(orgCreate).not.toHaveBeenCalled();
+    expect(userData()).toMatchObject({ role: "trainee", organizationId: "org-9" });
+  });
+
+  it("an unknown join code is a 400 and never falls back to a new workspace", async () => {
+    joinOrg.mockResolvedValue(null);
+    const res = await register({ ...soloBase, joinOrgCode: "654321" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Unknown organization code." });
+    expect(orgCreate).not.toHaveBeenCalled();
+  });
+
+  it("a team name and a join code together are still a 400", async () => {
+    const res = await register({ ...soloBase, newOrgName: "Example Team", joinOrgCode: "654321" });
+    expect(res.status).toBe(400);
+    expect(orgCreate).not.toHaveBeenCalled();
+    expect(userCreate).not.toHaveBeenCalled();
+  });
+});
