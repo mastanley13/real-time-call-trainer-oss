@@ -7,9 +7,10 @@
  * - premium_added: Premium became entitled on a subscription (webhook or confirmed add).
  * - premium_removed: Premium was scheduled for removal, or left the subscription.
  * - premium_fallback_to_standard: a call on an account with the add-on was minted on Standard.
+ * - voice_cap_hit: a voice start was refused because the allowance is used up (server side, ids only).
  */
 
-export type PremiumEventName = "premium_upsell_viewed" | "premium_add_started" | "premium_added" | "premium_removed" | "premium_fallback_to_standard";
+export type PremiumEventName = "premium_upsell_viewed" | "premium_add_started" | "premium_added" | "premium_removed" | "premium_fallback_to_standard" | "voice_cap_hit";
 
 export type UpsellSurface = "setup" | "billing" | "checkout" | "pricing" | "live";
 

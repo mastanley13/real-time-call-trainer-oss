@@ -36,6 +36,8 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   async redirects() {
     return [
+      { source: "/contact", destination: "/demo", permanent: false },
+      { source: "/contact/", destination: "/demo", permanent: false },
       {
         source: "/demo",
         destination: "https://api.leadconnectorhq.com/widget/bookings/calltrainer-demo",

@@ -61,7 +61,11 @@ export async function GET(req: NextRequest) {
       return null;
     });
     if (!begun) return voiceUnavailable();
-    if (!begun.ok && begun.error === "cap_reached") return capReached();
+    if (!begun.ok && begun.error === "cap_reached") {
+      // TODO(cap-hit): no analytics sink is registered by default; a deployment registers one with setPremiumEventSink().
+      await emitPremiumEvent({ name: "voice_cap_hit", subject: "user", subjectId: auth.id, reason: "cap_reached" });
+      return capReached();
+    }
     if (!begun.ok && begun.error === "minutes_reserved") return minutesReserved();
     if (!begun.ok && begun.error === "voice_blocked") return voiceBlocked(begun.retryAfterSeconds);
     if (!begun.ok && begun.error === "daily_session_limit") return dailySessionLimit();

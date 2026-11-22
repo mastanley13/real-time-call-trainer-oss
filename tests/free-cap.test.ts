@@ -13,6 +13,7 @@ vi.mock("@/lib/apiAuth", async () => ({
 
 import { beginCall, checkCap, creditManual, endCall, ensureAllowance, heartbeat, resolveAllowance, usageSummary } from "@/lib/usage";
 import { FREE_MINUTES, MAX_CALL_SECONDS, capFor } from "@/lib/usagePlan";
+import { setPremiumEventSink, type PremiumEvent } from "@/lib/billingEvents";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
 import { POST as saveTranscript } from "@/app/api/transcripts/route";
@@ -329,6 +330,26 @@ describe("a Free call that goes silent keeps the time it was confirmed to have u
     await usageSummary("u-1", at(3 * 3600));
     expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 10 });
     expect(allowanceOf("u-1").minutesUsed).toBe(10);
+  });
+});
+
+describe("a refused voice start emits voice_cap_hit", () => {
+  afterEach(() => setPremiumEventSink(null));
+
+  it("emits one event with ids only when the allowance is used up, and none when a call starts", async () => {
+    const events: PremiumEvent[] = [];
+    setPremiumEventSink((e) => { events.push(e); });
+    vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
+    await freeUserWith(FREE_MINUTES);
+    const res = await realtimeSession(post("/api/realtime/session", { scenario }));
+    expect(res.status).toBe(402);
+    expect(events).toEqual([{ name: "voice_cap_hit", subject: "user", subjectId: "u-1", reason: "cap_reached" }]);
+
+    events.length = 0;
+    allowanceOf("u-1").minutesUsed = 5;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ value: "ek_test", expires_at: 9999999999 }), { status: 200 })));
+    expect((await realtimeSession(post("/api/realtime/session", { scenario }))).status).toBe(200);
+    expect(events).toEqual([]);
   });
 });
 
