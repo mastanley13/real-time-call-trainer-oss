@@ -617,13 +617,15 @@ export function parseCoachReply(
   } catch {
     throw new Error(truncated ? "LLM_TRUNCATED" : "LLM_BAD_JSON");
   }
+  // A reply cut off at the token budget that does not fully validate is a budget problem: the retry gets more room.
+  const invalid = truncated ? "LLM_TRUNCATED" : "LLM_SCHEMA";
   const out = LlmCoachOutput.safeParse(raw);
-  if (!out.success) throw new Error("LLM_SCHEMA");
+  if (!out.success) throw new Error(invalid);
   // Structured outputs check types, not the scenario: every requested rubric id and talk-track step must be there.
   // Unknown or duplicate ids and extra steps are ignored (the first entry per id is used).
   if (expected) {
     const ids = new Set(out.data.criteria.map((c) => c.id));
-    if (!expected.criterionIds.every((id) => ids.has(id)) || out.data.steps.length < expected.stepCount) throw new Error("LLM_SCHEMA");
+    if (!expected.criterionIds.every((id) => ids.has(id)) || out.data.steps.length < expected.stepCount) throw new Error(invalid);
   }
   return out.data;
 }

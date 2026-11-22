@@ -205,6 +205,16 @@ describe("parseCoachReply against the requested rubric and talk track", () => {
     expect(out.criteria.find((c) => c.id === RUBRIC_IDS[0])?.score).toBe(40);
   });
 
+  it("reports a truncated reply that fails any validation as LLM_TRUNCATED, and accepts a truncated valid one", () => {
+    const reply = ok();
+    const truncated = (r: unknown) => parseCoachReply(JSON.stringify(r), true, EXPECTED);
+    expect(() => truncated({ criteria: [], steps: [], cue: null })).toThrow("LLM_TRUNCATED");
+    expect(() => truncated({ ...reply, criteria: reply.criteria.slice(1) })).toThrow("LLM_TRUNCATED");
+    expect(() => truncated({ ...reply, steps: reply.steps.slice(1) })).toThrow("LLM_TRUNCATED");
+    expect(() => truncated({ criteria: reply.criteria })).toThrow("LLM_TRUNCATED");
+    expect(truncated(reply).criteria).toHaveLength(RUBRIC_IDS.length);
+  });
+
   it("accepts a scenario with zero steps or zero criteria", () => {
     expect(parse({ ...ok(), steps: [] }, { criterionIds: RUBRIC_IDS, stepCount: 0 }).steps).toEqual([]);
     expect(parse({ criteria: [], steps: ok().steps, cue: null }, { criterionIds: [], stepCount: STEP_COUNT }).criteria).toEqual([]);
@@ -331,6 +341,20 @@ describe("coach retry", () => {
     expect(sent).toHaveLength(2);
     expect(logText()).toContain("retrying once: LLM_SCHEMA");
     expect(r.steps[0]).toBe(true);
+  });
+
+  it("retries a parseable but incomplete truncated reply with the larger budget", async () => {
+    const reply = JSON.parse(validReply());
+    replies(() => completion(JSON.stringify({ ...reply, steps: [] }), "length"), () => completion(validReply()));
+    expect((await run()).source).toBe("llm");
+    expect(sent.map((s) => s.body.max_completion_tokens)).toEqual([1000, 2000]);
+    expect(logText()).toContain("retrying once: LLM_TRUNCATED");
+  });
+
+  it("accepts a truncated reply that is complete and valid, without a retry", async () => {
+    replies(() => completion(validReply(), "length"));
+    expect((await run()).source).toBe("llm");
+    expect(sent).toHaveLength(1);
   });
 
   it("falls back when both replies miss a rubric criterion", async () => {
