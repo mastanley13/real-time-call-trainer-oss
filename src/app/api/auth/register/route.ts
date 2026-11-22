@@ -7,6 +7,7 @@ import { prisma } from "@/lib/db";
 import { accessCode, hasValidAccessCookie } from "@/lib/access";
 import { generateOrgCode, isValidOrgCode } from "@/lib/orgCodes";
 import { sanitizeSignupIntent } from "@/lib/pricing";
+import { notifySignup } from "@/lib/ghlWebhook";
 import { defaultOrgName, ORG_NAME_MAX } from "@/lib/orgName";
 import { BOTH_ORG_FIELDS_MESSAGE, hasBothOrgFields, registerErrorBody, UNKNOWN_JOIN_CODE_MESSAGE } from "@/lib/registerForm";
 
@@ -149,6 +150,16 @@ export async function POST(request: NextRequest) {
       });
 
       return { user: created, organization: created.organization };
+    });
+
+    // Committed: tell the CRM. Fire and forget, so a GHL outage never fails signup.
+    notifySignup({
+      userId: user.id,
+      organizationId: user.organizationId,
+      email: user.email,
+      method: "email",
+      role: user.role === "owner" ? "owner" : "trainee",
+      intent,
     });
 
     const sessionUser = {
