@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// ghlMail reuses GHL_TIMEOUT_MS from ghlWebhook, which imports the database client; nothing here touches it.
+// ghlWebhook (imported only to check its timeout is untouched) imports the database client; nothing here touches it.
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 
 import {
   GHL_API_VERSION,
+  GHL_MAIL_TIMEOUT_MS,
   GHL_MESSAGES_URL,
   GHL_UPSERT_URL,
+  ghlContactTagsUrl,
   ghlMailConfigured,
   passwordResetEmail,
   sendMail,
@@ -25,7 +27,9 @@ const ENV = { NODE_ENV: "production", GHL_API_TOKEN: TOKEN, GHL_LOCATION_ID: LOC
 const msg = () => passwordResetEmail(RECIPIENT, LINK);
 
 const upsertOk = () => new Response(JSON.stringify({ new: false, contact: { id: CONTACT_ID, email: "mia.chen@example.test" } }), { status: 200 });
+const tagsOk = () => new Response(JSON.stringify({ tags: ["ct-signed-up", "ct-transactional", "app-calltrainer"] }), { status: 201 });
 const sendOk = () => new Response(JSON.stringify({ conversationId: "conv-1", messageId: "msg-1" }), { status: 201 });
+const TAGS_URL = `https://services.leadconnectorhq.com/contacts/${CONTACT_ID}/tags`;
 
 let fetchMock: ReturnType<typeof vi.fn>;
 let spies: Array<ReturnType<typeof vi.spyOn>>;
@@ -87,19 +91,22 @@ describe("ghlMailConfigured", () => {
 });
 
 describe("sendMail through GoHighLevel", () => {
-  it("upserts the contact, then sends the email with the right URLs, headers and body", async () => {
-    fetchMock.mockResolvedValueOnce(upsertOk()).mockResolvedValueOnce(sendOk());
+  it("upserts the contact, adds the tags, then sends the email with the right URLs, headers and bodies", async () => {
+    fetchMock.mockResolvedValueOnce(upsertOk()).mockResolvedValueOnce(tagsOk()).mockResolvedValueOnce(sendOk());
     expect(await sendMail(msg(), ENV)).toEqual({ ok: true });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
 
     const [upsertUrl, upsertInit] = fetchMock.mock.calls[0] as [string, RequestInit];
-    const [sendUrl, sendInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const [tagsUrl, tagsInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const [sendUrl, sendInit] = fetchMock.mock.calls[2] as [string, RequestInit];
     expect(upsertUrl).toBe("https://services.leadconnectorhq.com/contacts/upsert");
     expect(upsertUrl).toBe(GHL_UPSERT_URL);
+    expect(tagsUrl).toBe(TAGS_URL);
+    expect(tagsUrl).toBe(ghlContactTagsUrl(CONTACT_ID));
     expect(sendUrl).toBe("https://services.leadconnectorhq.com/conversations/messages");
     expect(sendUrl).toBe(GHL_MESSAGES_URL);
 
-    for (const init of [upsertInit, sendInit]) {
+    for (const init of [upsertInit, tagsInit, sendInit]) {
       expect(init.method).toBe("POST");
       expect(init.headers).toEqual({
         Authorization: `Bearer ${TOKEN}`,
@@ -111,12 +118,12 @@ describe("sendMail through GoHighLevel", () => {
     }
     expect(GHL_API_VERSION).toBe("2021-07-28");
 
-    // No names or phone: exactly these fields.
-    expect(JSON.parse(String(upsertInit.body))).toEqual({
-      locationId: LOCATION,
-      email: "mia.chen@example.test",
-      tags: ["ct-transactional", "app-calltrainer"],
-    });
+    // No names, phone or tags in the upsert (an upsert can replace the contact's tags): exactly these fields.
+    const upsertBody = JSON.parse(String(upsertInit.body));
+    expect(upsertBody).toEqual({ locationId: LOCATION, email: "mia.chen@example.test" });
+    expect(upsertBody).not.toHaveProperty("tags");
+    // Tags go through the additive tags endpoint instead.
+    expect(JSON.parse(String(tagsInit.body))).toEqual({ tags: ["ct-transactional", "app-calltrainer"] });
     const m = msg();
     expect(JSON.parse(String(sendInit.body))).toEqual({
       type: "Email",
@@ -129,12 +136,40 @@ describe("sendMail through GoHighLevel", () => {
     expectNoSecretsLogged();
   });
 
-  it("puts a hard timeout on each call", async () => {
+  it("puts the 8 second mail timeout on each call, separate from the webhook timeout", async () => {
+    expect(GHL_MAIL_TIMEOUT_MS).toBe(8000);
+    expect(GHL_TIMEOUT_MS).toBe(2500);
     const timeout = vi.spyOn(AbortSignal, "timeout");
-    fetchMock.mockResolvedValueOnce(upsertOk()).mockResolvedValueOnce(sendOk());
+    fetchMock.mockResolvedValueOnce(upsertOk()).mockResolvedValueOnce(tagsOk()).mockResolvedValueOnce(sendOk());
     await sendMail(msg(), ENV);
-    expect(timeout).toHaveBeenCalledTimes(2);
-    expect(timeout).toHaveBeenCalledWith(GHL_TIMEOUT_MS);
+    expect(timeout).toHaveBeenCalledTimes(3);
+    expect(timeout.mock.calls.every(([ms]) => ms === GHL_MAIL_TIMEOUT_MS)).toBe(true);
+  });
+
+  it("encodes the contact id in the tags URL", () => {
+    expect(ghlContactTagsUrl("a/b?c")).toBe("https://services.leadconnectorhq.com/contacts/a%2Fb%3Fc/tags");
+  });
+
+  it("still sends the email when adding the tags fails, logging only the step and status", async () => {
+    fetchMock
+      .mockResolvedValueOnce(upsertOk())
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: `no ${CONTACT_ID}` }), { status: 500 }))
+      .mockResolvedValueOnce(sendOk());
+    expect(await sendMail(msg(), ENV)).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2][0]).toBe(GHL_MESSAGES_URL);
+    const error = vi.mocked(console.error);
+    expect(error).toHaveBeenCalledOnce();
+    expect(String(error.mock.calls[0][0])).toBe("[mailer] GHL tags failed with status 500.");
+    expectNoSecretsLogged();
+
+    // A tag request that never completes does not block the send either.
+    fetchMock.mockResolvedValueOnce(upsertOk()).mockRejectedValueOnce(new DOMException("timed out", "TimeoutError")).mockResolvedValueOnce(sendOk());
+    expect(await sendMail(msg(), ENV)).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock.mock.calls[5][0]).toBe(GHL_MESSAGES_URL);
+    expect(String(error.mock.calls[1][0])).toBe("[mailer] GHL tags failed: the request did not complete.");
+    expectNoSecretsLogged();
   });
 
   it("does not send and does not throw when the upsert fails, logging only the step and status", async () => {
@@ -158,7 +193,7 @@ describe("sendMail through GoHighLevel", () => {
   });
 
   it("does not send and does not throw when the upsert times out", async () => {
-    // Stand in for the timer so the test does not wait GHL_TIMEOUT_MS: the mailer's signal is one we can fire.
+    // Stand in for the timer so the test does not wait GHL_MAIL_TIMEOUT_MS: the mailer's signal is one we can fire.
     const clock = new AbortController();
     vi.spyOn(AbortSignal, "timeout").mockReturnValue(clock.signal);
     fetchMock.mockImplementationOnce((_url: string, init: RequestInit) => new Promise((_, reject) => {
@@ -181,15 +216,18 @@ describe("sendMail through GoHighLevel", () => {
   });
 
   it("does not throw and does not retry when the send fails", async () => {
-    fetchMock.mockResolvedValueOnce(upsertOk()).mockResolvedValueOnce(new Response(JSON.stringify({ message: `no ${CONTACT_ID}` }), { status: 400 }));
+    fetchMock
+      .mockResolvedValueOnce(upsertOk())
+      .mockResolvedValueOnce(tagsOk())
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: `no ${CONTACT_ID}` }), { status: 400 }));
     await expect(sendMail(msg(), ENV)).resolves.toEqual({ ok: false, reason: "failed" });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(String(vi.mocked(console.error).mock.calls[0][0])).toBe("[mailer] GHL send failed with status 400.");
     expectNoSecretsLogged();
 
-    fetchMock.mockResolvedValueOnce(upsertOk()).mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+    fetchMock.mockResolvedValueOnce(upsertOk()).mockResolvedValueOnce(tagsOk()).mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
     await expect(sendMail(msg(), ENV)).resolves.toEqual({ ok: false, reason: "failed" });
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
     expectNoSecretsLogged();
   });
 });

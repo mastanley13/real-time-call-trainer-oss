@@ -1,13 +1,15 @@
 import "server-only";
-import { GHL_TIMEOUT_MS } from "./ghlWebhook";
 import { RESET_TTL_MINUTES } from "./passwordReset-types";
 
 /**
- * Transactional email through the Calltrainer Tech GoHighLevel sub-account (API v2). Two calls, one attempt each, each
- * with the hard GHL_TIMEOUT_MS timeout used by the lifecycle emitter (ghlWebhook.ts):
- *   1. POST /contacts/upsert           { locationId, email (lowercased), tags: GHL_MAIL_TAGS }  -> contact.id
- *   2. POST /conversations/messages    { type: "Email", contactId, emailFrom, subject, html, message }
- * No names or phone numbers are sent. A failed or timed-out upsert means no send.
+ * Transactional email through the Calltrainer Tech GoHighLevel sub-account (API v2). Three calls, one attempt each,
+ * each with the hard GHL_MAIL_TIMEOUT_MS timeout:
+ *   1. POST /contacts/upsert             { locationId, email (lowercased) }  -> contact.id
+ *   2. POST /contacts/{contactId}/tags   { tags: GHL_MAIL_TAGS }
+ *   3. POST /conversations/messages      { type: "Email", contactId, emailFrom, subject, html, message }
+ * No names or phone numbers are sent. The upsert carries no tags, because an upsert can replace a contact's tags and
+ * wipe the lifecycle tags (ct-signed-up, ct-paid-pro, ...); the tags endpoint only adds. A failed or timed-out upsert
+ * means no send; a failed tag add is logged and the email is still sent.
  *
  * Configured only when all three are set: GHL_API_TOKEN (Private Integration token for the location, scopes
  * contacts.write and conversations/message.write), GHL_LOCATION_ID and GHL_RESET_FROM_EMAIL (an address on a verified
@@ -33,8 +35,14 @@ export const GHL_API_BASE = "https://services.leadconnectorhq.com";
 export const GHL_API_VERSION = "2021-07-28";
 export const GHL_UPSERT_URL = `${GHL_API_BASE}/contacts/upsert`;
 export const GHL_MESSAGES_URL = `${GHL_API_BASE}/conversations/messages`;
-/** Tags put on the contact by the upsert, so transactional contacts are told apart in a shared location. */
+export const ghlContactTagsUrl = (contactId: string) => `${GHL_API_BASE}/contacts/${encodeURIComponent(contactId)}/tags`;
+/** Added to the contact after the upsert, so transactional contacts are told apart in a shared location. */
 export const GHL_MAIL_TAGS = ["ct-transactional", "app-calltrainer"] as const;
+/**
+ * Hard cap on each mail step. Longer than the lifecycle webhook's GHL_TIMEOUT_MS because mail runs in after(), off the
+ * request path, and the API calls do more work than an inbound webhook.
+ */
+export const GHL_MAIL_TIMEOUT_MS = 8000;
 
 type Env = Record<string, string | undefined>;
 
@@ -53,13 +61,19 @@ function ghlMailConfig(env: Env): GhlMailConfig | null {
 
 export const ghlMailConfigured = (env: Env = process.env): boolean => ghlMailConfig(env) !== null;
 
-type Step = "upsert" | "send";
+type Step = "upsert" | "tags" | "send";
 
 class StepError extends Error {
   constructor(readonly step: Step, readonly status?: number) {
     super(step);
   }
 }
+
+const describeFailure = (e: StepError) =>
+  `[mailer] GHL ${e.step} failed${e.status ? ` with status ${e.status}` : ": the request did not complete"}.`;
+
+/** A 2xx response whose body nobody needs is drained, never read. */
+const discard = (res: Response) => res.body?.cancel().catch(() => undefined);
 
 async function post(step: Step, url: string, token: string, body: unknown): Promise<Response> {
   let res: Response;
@@ -75,24 +89,24 @@ async function post(step: Step, url: string, token: string, body: unknown): Prom
       body: JSON.stringify(body),
       redirect: "error",
       cache: "no-store",
-      signal: AbortSignal.timeout(GHL_TIMEOUT_MS),
+      signal: AbortSignal.timeout(GHL_MAIL_TIMEOUT_MS),
     });
   } catch {
     throw new StepError(step);
   }
   if (!res.ok) {
     // The body is never read: it can echo the recipient or the contact.
-    await res.body?.cancel().catch(() => undefined);
+    await discard(res);
     throw new StepError(step, res.status);
   }
   return res;
 }
 
+/** No tags here: an upsert can replace the contact's tags. They are added by addMailTags instead. */
 async function upsertContactId(cfg: GhlMailConfig, email: string): Promise<string> {
   const res = await post("upsert", GHL_UPSERT_URL, cfg.token, {
     locationId: cfg.locationId,
     email: email.trim().toLowerCase(),
-    tags: [...GHL_MAIL_TAGS],
   });
   let id: unknown;
   try {
@@ -103,6 +117,15 @@ async function upsertContactId(cfg: GhlMailConfig, email: string): Promise<strin
   }
   if (typeof id !== "string" || id.length === 0) throw new StepError("upsert", res.status);
   return id;
+}
+
+/** Adds the mail tags (additive, keeps existing tags). Never throws: a failure is logged and the email still goes out. */
+async function addMailTags(cfg: GhlMailConfig, contactId: string): Promise<void> {
+  try {
+    await discard(await post("tags", ghlContactTagsUrl(contactId), cfg.token, { tags: [...GHL_MAIL_TAGS] }));
+  } catch (e) {
+    console.error(e instanceof StepError ? describeFailure(e) : "[mailer] GHL tags failed.");
+  }
 }
 
 export async function sendMail(msg: MailMessage, env: Env = process.env): Promise<MailResult> {
@@ -118,7 +141,8 @@ export async function sendMail(msg: MailMessage, env: Env = process.env): Promis
     }
 
     const contactId = await upsertContactId(cfg, msg.to);
-    await post("send", GHL_MESSAGES_URL, cfg.token, {
+    await addMailTags(cfg, contactId);
+    const sent = await post("send", GHL_MESSAGES_URL, cfg.token, {
       type: "Email",
       contactId,
       emailFrom: cfg.from,
@@ -126,10 +150,11 @@ export async function sendMail(msg: MailMessage, env: Env = process.env): Promis
       html: msg.html,
       message: msg.text,
     });
+    await discard(sent);
     return { ok: true };
   } catch (e) {
     if (e instanceof StepError) {
-      console.error(`[mailer] GHL ${e.step} failed${e.status ? ` with status ${e.status}` : ": the request did not complete"}.`);
+      console.error(describeFailure(e));
     } else {
       console.error("[mailer] Send failed.");
     }
