@@ -160,3 +160,164 @@ describe("POST /api/auth/register sign-up intent", () => {
     expect(stored()).toMatchObject({ role: "trainee", signupPlanIntent: "pro", signupSrc: "pricing" });
   });
 });
+
+describe("POST /api/auth/register team name is optional", () => {
+  const orgCreate = vi.fn();
+  const userCreate = vi.fn();
+  const joinOrg = vi.fn();
+  const { newOrgName: _omit, ...soloBase } = body;
+
+  beforeEach(() => {
+    orgCreate.mockReset().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "org-1", ...data }));
+    userCreate.mockReset().mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: "u-new", email: data.email, firstName: data.firstName, lastName: data.lastName, role: data.role, isPlatformAdmin: false,
+      organization: { id: data.organizationId, name: "stored", code: "123456" },
+    }));
+    joinOrg.mockReset().mockResolvedValue({ id: "org-9", code: "654321" });
+    mocks.prisma.user.findUnique.mockResolvedValue(null);
+    (mocks.prisma as Record<string, unknown>).organization = { findUnique: vi.fn().mockResolvedValue(null) };
+    mocks.prisma.$transaction.mockReset().mockImplementation(async (fn: (tx: unknown) => unknown) =>
+      fn({ organization: { create: orgCreate, findUnique: joinOrg }, user: { create: userCreate }, auditEvent: { create: vi.fn() } }));
+  });
+
+  const register = (payload: Record<string, unknown>) =>
+    POST(new NextRequest("http://localhost/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: { "content-type": "application/json" },
+    }));
+  const orgName = () => (orgCreate.mock.calls[0][0] as { data: { name: string } }).data.name;
+  const userData = () => (userCreate.mock.calls[0][0] as { data: Record<string, unknown> }).data;
+
+  it("with no team name and no code, creates \"<First>'s workspace\" with the rep as owner", async () => {
+    const res = await register(soloBase);
+    expect(res.status).toBe(200);
+    expect(orgCreate).toHaveBeenCalledOnce();
+    expect(orgName()).toBe("Mia's workspace");
+    expect(userData()).toMatchObject({ role: "owner", organizationId: "org-1" });
+    expect(joinOrg).not.toHaveBeenCalled();
+  });
+
+  it("uses the trimmed first name", async () => {
+    const res = await register({ ...soloBase, firstName: "  Mia  " });
+    expect(res.status).toBe(200);
+    expect(orgName()).toBe("Mia's workspace");
+  });
+
+  it.each(["", "   ", "\t \n"])("treats a blank team name (%j) as missing", async (blank) => {
+    const res = await register({ ...soloBase, newOrgName: blank });
+    expect(res.status).toBe(200);
+    expect(orgName()).toBe("Mia's workspace");
+  });
+
+  it("keeps a provided team name, trimmed", async () => {
+    const res = await register({ ...soloBase, newOrgName: "  Example Team  " });
+    expect(res.status).toBe(200);
+    expect(orgName()).toBe("Example Team");
+  });
+
+  it("still rejects a one-character team name and one over 120 characters", async () => {
+    expect((await register({ ...soloBase, newOrgName: "A" })).status).toBe(400);
+    expect((await register({ ...soloBase, newOrgName: "a".repeat(121) })).status).toBe(400);
+    expect(orgCreate).not.toHaveBeenCalled();
+  });
+
+  it("joins by code as before: a trainee in the existing org, no new org", async () => {
+    const res = await register({ ...soloBase, joinOrgCode: "654321" });
+    expect(res.status).toBe(200);
+    expect(joinOrg).toHaveBeenCalledWith({ where: { code: "654321" } });
+    expect(orgCreate).not.toHaveBeenCalled();
+    expect(userData()).toMatchObject({ role: "trainee", organizationId: "org-9" });
+  });
+
+  it("an unknown join code is a 400 and never falls back to a new workspace", async () => {
+    joinOrg.mockResolvedValue(null);
+    const res = await register({ ...soloBase, joinOrgCode: "654321" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "We couldn't find a team with that join code.",
+      fieldErrors: { joinOrgCode: "We couldn't find a team with that join code." },
+    });
+    expect(orgCreate).not.toHaveBeenCalled();
+  });
+
+  it("a team name and a join code together are still a 400", async () => {
+    const res = await register({ ...soloBase, newOrgName: "Example Team", joinOrgCode: "654321" });
+    expect(res.status).toBe(400);
+    expect(orgCreate).not.toHaveBeenCalled();
+    expect(userCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/auth/register validation messages", () => {
+  const { newOrgName: _omit, ...soloBase } = body;
+  const register = (payload: Record<string, unknown>) =>
+    POST(new NextRequest("http://localhost/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: { "content-type": "application/json" },
+    }));
+  /** A 400 with one friendly message: no Zod wording and no comma-joined list. */
+  const friendly400 = async (res: Response) => {
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { error: string; fieldErrors: Record<string, string> };
+    expect(json.error).not.toMatch(/String must|Invalid|Required|Expected/);
+    // Exactly one of the per-field messages, so never a joined list of several.
+    expect(Object.values(json.fieldErrors)).toContain(json.error);
+    expect(json.error.match(/\./g)).toHaveLength(1);
+    expect(mocks.prisma.user.findUnique).not.toHaveBeenCalled();
+    return json;
+  };
+
+  it("a blank first name says \"Enter your first name.\"", async () => {
+    const json = await friendly400(await register({ ...soloBase, firstName: "   " }));
+    expect(json).toEqual({ error: "Enter your first name.", fieldErrors: { firstName: "Enter your first name." } });
+    expect(JSON.stringify(json)).not.toContain("String must contain");
+  });
+
+  it("a join code with a team name gives the single clear message, even when the team name is also too short", async () => {
+    for (const newOrgName of ["Example Team", "A"]) {
+      const json = await friendly400(await register({ ...soloBase, joinOrgCode: "654321", newOrgName }));
+      expect(json.error).toBe("Choose either a join code or a team name, not both.");
+      expect(json.fieldErrors).toEqual({
+        joinOrgCode: "Choose either a join code or a team name, not both.",
+        newOrgName: "Choose either a join code or a team name, not both.",
+      });
+    }
+  });
+
+  it("reports the conflict even when a missing first name makes Zod skip its own check, first name first", async () => {
+    const { firstName: _first, ...noFirstName } = soloBase;
+    const json = await friendly400(await register({ ...noFirstName, joinOrgCode: "654321", newOrgName: "Example Team" }));
+    expect(json).toEqual({
+      error: "Enter your first name.",
+      fieldErrors: {
+        firstName: "Enter your first name.",
+        joinOrgCode: "Choose either a join code or a team name, not both.",
+        newOrgName: "Choose either a join code or a team name, not both.",
+      },
+    });
+  });
+
+  it("a bad email says \"Enter a valid email address.\"", async () => {
+    const json = await friendly400(await register({ ...soloBase, email: "not-an-email" }));
+    expect(json).toEqual({ error: "Enter a valid email address.", fieldErrors: { email: "Enter a valid email address." } });
+  });
+
+  it("a bad join code says \"Enter a valid join code.\"", async () => {
+    const json = await friendly400(await register({ ...soloBase, joinOrgCode: "12ab" }));
+    expect(json).toEqual({ error: "Enter a valid join code.", fieldErrors: { joinOrgCode: "Enter a valid join code." } });
+  });
+
+  it("several bad fields give one message for the first and one fieldErrors entry each", async () => {
+    const json = await friendly400(await register({ ...soloBase, firstName: "", email: "x", password: "short" }));
+    expect(json).toEqual({
+      error: "Enter your first name.",
+      fieldErrors: {
+        firstName: "Enter your first name.",
+        email: "Enter a valid email address.",
+        password: "Password must be at least 10 characters.",
+      },
+    });
+  });
+});
