@@ -227,7 +227,8 @@ export default function DebriefPage() {
 
   return (
     <div className="deck min-h-screen">
-      <div className="page enter space-y-6">
+      {/* Below md the fixed bottom tab bar (56 px plus the safe-area inset) overlays the page end, so the content pads past it. */}
+      <div className="page enter space-y-6 pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-10">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="eyebrow">Black-box debrief</p>
