@@ -95,6 +95,10 @@ export async function POST(req: NextRequest) {
       goalAchieved: ev?.goalAchievement.achieved ?? null,
     };
     const owner = { userId: dbUser.id, organizationId: dbUser.organizationId };
+    // A row created here is an unmetered save (text, or a voice call with no metering row): it is over the moment it
+    // is saved, so endedAt is set and it can never look like an open call to the metering code (settleStale). No
+    // voice metering field (allowanceId, connectedAt, heartbeats, billing) is ever written on it.
+    const unmetered = { ...owner, endedAt: new Date() };
     // Where a verified receipt may log its model. A metered call's receipt is bound to its metering call id, so the
     // model belongs on that call's own row (the one beginCall created) and nowhere else. An unmetered call has no
     // row yet, so it logs on the row whose primary key is receiptRowId(sessionId).
@@ -111,14 +115,14 @@ export async function POST(req: NextRequest) {
       try {
         // Unmetered calls have no row at mint, so the tier is stored here, mapped from the sealed model on the server
         // when the save lands (within the receipt's lifetime) and never recomputed later.
-        created = await prisma.trainerSession.create({ data: { id: receiptRowId(body.sessionId), ...owner, ...fields, realtimeModel: receiptModel, voiceTier: tierOfModel(receiptModel) } });
+        created = await prisma.trainerSession.create({ data: { id: receiptRowId(body.sessionId), ...unmetered, ...fields, realtimeModel: receiptModel, voiceTier: tierOfModel(receiptModel) } });
         receiptLogged = true;
       } catch (e) {
         if (!isReceiptReplay(e)) throw e;
-        created = await prisma.trainerSession.create({ data: { ...owner, ...fields } });
+        created = await prisma.trainerSession.create({ data: { ...unmetered, ...fields } });
       }
     } else {
-      created = await prisma.trainerSession.create({ data: { ...owner, ...fields } });
+      created = await prisma.trainerSession.create({ data: { ...unmetered, ...fields } });
     }
     // Activation for the CRM: only a sealed grade counts. Scheduled as soon as the graded row is written, so a failure in
     // the receipt or audit step below cannot skip it. notifyFirstGradedCall decides in the background, under its own lock

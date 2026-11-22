@@ -527,7 +527,8 @@ describe("Prism 4: history entries carry a neutral voice label, never a model", 
     const { sessions } = JSON.parse(text) as { sessions: Record<string, unknown>[] };
     expect(sessions.map((s) => s.voiceUsed)).toEqual(["premium", "standard", null]);
     for (const s of sessions) {
-      expect(Object.keys(s).sort()).toEqual(["createdAt", "durationSeconds", "goalAchieved", "grade", "graderMethod", "graderVersion", "id", "overallScore", "scenarioCategory", "scenarioId", "scenarioTitle", "voiceUsed"]);
+      expect(Object.keys(s).sort()).toEqual(["createdAt", "durationSeconds", "goalAchieved", "grade", "graderLlmFailed", "graderMethod", "graderVersion", "id", "overallScore", "scenarioCategory", "scenarioId", "scenarioTitle", "voiceUsed"]);
+      expect(s.graderLlmFailed).toBe(false);
     }
     expect(text).not.toMatch(MODEL_ID);
     expect(text).not.toMatch(/engineTier|allowanceId|voiceTier|receipt/);

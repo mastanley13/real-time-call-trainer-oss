@@ -4,6 +4,8 @@ import { signMfaChallengeToken, signSessionToken } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { accessCode, hasValidAccessCookie, safeEqual } from "@/lib/access";
 import { generateOrgCode } from "@/lib/orgCodes";
+import { defaultOrgName } from "@/lib/orgName";
+import { validNextPath } from "@/lib/safeNext";
 import { googleLandingPath } from "@/lib/signupIntent";
 import { sanitizeSignupIntent, type SignupIntent } from "@/lib/pricing";
 import { clientIp, ipLimitResponse } from "@/lib/rateLimit";
@@ -115,7 +117,10 @@ export async function GET(req: NextRequest) {
       await prisma.auditEvent.create({ data: { userId: user.id, action: "user.mfa_challenge_issued", ip, userAgent, metadata: { via: "google" } } });
       // The fragment never reaches a server or its logs; the login page picks it up. A pending link rides in the
       // signed challenge and is written by /api/auth/mfa/challenge once the code is accepted.
-      return back(req, `/login#mfa=${encodeURIComponent(signMfaChallengeToken(user.id, pendingLink ? profile.sub : undefined))}`);
+      // A safe next rides along so the login page lands there once the code is accepted.
+      const mfaNext = validNextPath(flow.next);
+      const nextQs = mfaNext ? `?next=${encodeURIComponent(mfaNext)}` : "";
+      return back(req, `/login${nextQs}#mfa=${encodeURIComponent(signMfaChallengeToken(user.id, pendingLink ? profile.sub : undefined))}`);
     }
 
     if (pendingLink) {
@@ -170,7 +175,7 @@ async function createSoloUser(profile: GoogleProfile, ip: string, userAgent: str
   const orgCode = await generateOrgCode();
   return prisma.$transaction(async (tx) => {
     const org = await tx.organization.create({
-      data: { name: profile.firstName ? `${profile.firstName}'s team` : "My team", code: orgCode },
+      data: { name: defaultOrgName(profile.firstName), code: orgCode },
     });
     const user = await tx.user.create({
       data: {
