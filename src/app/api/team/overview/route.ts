@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
     const since = new Date(now.getTime() - days * DAY);
     const historySince = new Date(now.getTime() - Math.max(days, HISTORY_DAYS) * DAY);
 
-    const [org, members, windowRows, historyRows, lastSeenRows] = await Promise.all([
+    const [org, members, windowRows, historyRows, lastSeenRows, historyPendingRows] = await Promise.all([
       prisma.organization.findUnique({ where: { id: orgId }, select: { id: true, name: true } }),
       orgMembers(orgId),
       // Evaluations are only read for the window: they drive the matrix, weakest criterion and queue.
@@ -62,25 +62,39 @@ export async function GET(req: NextRequest) {
         select: { id: true, userId: true, scenarioId: true, scenarioTitle: true, overallScore: true, goalAchieved: true, createdAt: true },
       }),
       prisma.trainerSession.groupBy({ by: ["userId"], where: { organizationId: orgId, ...HAS_TRANSCRIPT }, _max: { createdAt: true } }),
+      // History rows skip the evaluation blob, so failed AI grades there are found by their flag alone (ids only).
+      prisma.trainerSession.findMany({
+        where: { organizationId: orgId, createdAt: { gte: historySince, lt: since }, ...HAS_TRANSCRIPT, evaluation: { path: ["llmFailed"], equals: true } },
+        take: 2000,
+        select: { id: true },
+      }),
     ]);
+    const historyPending = new Set(historyPendingRows.map((r) => r.id));
 
     const title = (id: string, t: string | null) => t ?? titles.get(id) ?? id;
     // A custom persona's rubric comes from the rep's own browser, so its grade can't be compared across the team:
     // the call still counts as practice, but its score, criteria and goal stay out of team numbers.
     const ownRubric = (id: string) => !titles.has(id);
     const unscored = { score: null, criteria: [], goalAchieved: null };
+    // A failed AI grade still counts as a session, but its rough score, and the goal status estimated from it, stay out.
+    const pending = { score: null, criteria: [], goalAchieved: null, scorePending: true };
     const sessions: TeamSession[] = [
-      // gradeOf drops criteria along with the score for legacy keyword-grader rows, so they never reach the matrix or queue.
-      ...windowRows.map((r) => ({
-        id: r.id, userId: r.userId, scenarioId: r.scenarioId, scenarioTitle: title(r.scenarioId, r.scenarioTitle),
-        ...gradeOf(r.overallScore, r.evaluation), goalAchieved: r.goalAchieved,
-        ...(ownRubric(r.scenarioId) ? unscored : {}),
-        createdAt: r.createdAt.toISOString(), hasNotes: !!r.supervisorNotes,
-      })),
+      // gradeOf drops criteria along with the score for legacy keyword-grader and failed-grade rows, so they never reach the matrix or queue.
+      ...windowRows.map((r) => {
+        const grade = gradeOf(r.overallScore, r.evaluation);
+        return {
+          id: r.id, userId: r.userId, scenarioId: r.scenarioId, scenarioTitle: title(r.scenarioId, r.scenarioTitle),
+          ...grade, goalAchieved: r.goalAchieved,
+          ...(grade.scorePending ? pending : {}),
+          ...(ownRubric(r.scenarioId) ? unscored : {}),
+          createdAt: r.createdAt.toISOString(), hasNotes: !!r.supervisorNotes,
+        };
+      }),
       // Without the evaluation we cannot spot legacy-grader rows here; they predate versioning and are rare.
       ...historyRows.map((r) => ({
         id: r.id, userId: r.userId, scenarioId: r.scenarioId, scenarioTitle: title(r.scenarioId, r.scenarioTitle),
         score: r.overallScore, goalAchieved: r.goalAchieved, criteria: [],
+        ...(historyPending.has(r.id) ? pending : {}),
         ...(ownRubric(r.scenarioId) ? unscored : {}),
         createdAt: r.createdAt.toISOString(), hasNotes: false,
       })),
