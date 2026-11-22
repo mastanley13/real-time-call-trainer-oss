@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useEffect } from "react";
 import { Check } from "lucide-react";
 import { useBilling } from "@/components/landing/BillingContext";
+import { usePricingViewer } from "@/components/landing/PricingViewer";
 import {
   FREE_SUMMARY, OPEN_SOON_LINE, PREMIUM_COMING_SOON, PREMIUM_DISCLOSURE_PRO, PREMIUM_DISCLOSURE_TEAM, PRICE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT,
-  premiumPriceLine, registerHref, type Billing,
+  premiumPriceLine, registerHref, signedInTierAction, type Billing, type PricingViewer,
 } from "@/lib/pricing";
 import { trackPremiumUpsell } from "@/lib/premiumEventTypes";
 
@@ -41,6 +42,27 @@ export function tierAction(id: string, cta: string, billingEnabled: boolean, int
   return billingEnabled ? { cta, href, soon: false } : { cta: "Start free", href, soon: true };
 }
 
+/** A plan card's button for a signed-in viewer. Current plan is outlined and disabled, never a link. */
+export function SignedInAction({ id, viewer, billingEnabled, interval }: { id: "free" | "pro" | "team"; viewer: PricingViewer; billingEnabled: boolean; interval: Billing }) {
+  const a = signedInTierAction(id, viewer, billingEnabled, interval);
+  switch (a.kind) {
+    case "current":
+      return <button type="button" className="btn-ghost" disabled>{a.cta}</button>;
+    case "included":
+    case "note":
+      return <p className="flex min-h-[40px] items-center justify-center text-center text-sm text-ink-muted">{a.cta}</p>;
+    case "link":
+      return <Link href={a.href} className={id === "free" ? "btn-ghost" : "btn-primary"}>{a.cta}</Link>;
+    case "disabled":
+      return (
+        <>
+          <button type="button" className="btn-primary" disabled>{a.cta}</button>
+          <p className="text-center text-xs text-ink-muted">{OPEN_SOON_LINE}</p>
+        </>
+      );
+  }
+}
+
 /**
  * Billing toggle, tier cards and the Premium AI voice add-on row under them (one row, never a fourth card).
  * `billingEnabled` and `premiumOnSale` come from the server. The add-on row has no button: Premium is chosen at checkout
@@ -48,6 +70,7 @@ export function tierAction(id: string, cta: string, billingEnabled: boolean, int
  */
 export default function PricingCards({ billingEnabled, premiumOnSale = false }: { billingEnabled: boolean; premiumOnSale?: boolean }) {
   const { billing, setBilling } = useBilling();
+  const viewer = usePricingViewer();
   useEffect(() => { if (premiumOnSale) trackPremiumUpsell("pricing"); }, [premiumOnSale]);
   return (
     <div>
@@ -83,8 +106,12 @@ export default function PricingCards({ billingEnabled, premiumOnSale = false }: 
                 ))}
               </ul>
               <div className="mt-6 flex flex-col gap-2">
-                <Link href={a.href} className={t.id === "free" ? "btn-ghost" : "btn-primary"}>{a.cta}</Link>
-                {a.soon && <p className="text-center text-xs text-ink-muted">{OPEN_SOON_LINE}</p>}
+                {viewer ? <SignedInAction id={t.id} viewer={viewer} billingEnabled={billingEnabled} interval={billing} /> : (
+                  <>
+                    <Link href={a.href} className={t.id === "free" ? "btn-ghost" : "btn-primary"}>{a.cta}</Link>
+                    {a.soon && <p className="text-center text-xs text-ink-muted">{OPEN_SOON_LINE}</p>}
+                  </>
+                )}
               </div>
             </section>
           );

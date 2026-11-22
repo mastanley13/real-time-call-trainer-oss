@@ -80,6 +80,8 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 3. **Call mode**: with no voice keys, Voice shows a notice ending "Switch to Text to practise now." and **Start call** is disabled. Text works.
 4. **Coach modes**: the dial switches Blind, Guided and Coached, and the help line changes with it.
 5. **Test mic** (Voice mode): the browser asks for the mic, the button shows "Listening…" and then "Test again". Deny the permission and check the message says what happened and how to allow it.
+6. **First-time mode**: in a fresh browser profile (no `rtct.callMode` or `rtct.lastScenario` in localStorage) the briefing opens on Text. Pick Voice, reload: it stays on Voice. A browser that has already started a call keeps Voice as before.
+7. **Phone Start bar** (390 px): **Start call** stays visible in a bar pinned just above the bottom tab bar while you scroll the briefing. From 640 px up the bar is gone and Start sits in the systems check card.
 
 ### 7. Live call deck
 1. **Start call** in Text. The page turns into the dark deck, site chrome hides, and the caller's opening line appears.
@@ -89,7 +91,7 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 5. **Use line** puts the suggestion in the composer without sending it. **Dismiss** removes the cue, and the coach does not repeat it on the next turns.
 6. **Blind / Guided / Coached**: Blind shows "Blind mode" with no live help; Guided shows the estimate and talk track but no cues; Coached shows cues too. Switching mid-call takes effect on the next turn.
 7. **Phone coach sheet** (375 px): the rail is hidden, the latest cue docks above the composer, and tapping it opens the Coach sheet. Opening the sheet moves focus to its close button and Tab stays inside it. **Use line** in the sheet inserts the line, closes it and puts focus in the composer; the close button, Esc and a tap outside also close it, and focus returns to the coach button. Esc with the sheet open does not open the end-call dialog.
-8. **End & grade** lands on the debrief. Ending before you have said anything shows "The call ended before you said anything, so there is nothing to grade." and does not save a graded session.
+8. **End & grade** lands on the debrief. At 1280 px the phone icon and the label never overlap; at 390 px the button reads "End" (or "Grade" once the caller hangs up). Ending before you have said anything shows "The call ended before you said anything, so there is nothing to grade." and does not save a graded session.
 
 ### 8. Debrief (`/trainer/debrief/<id>`)
 1. Score ring, outcome (Goal achieved, partly met or missed), and a grader label: "rules-based" without a key.
@@ -137,6 +139,7 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 2. `/settings/security`: enrol TOTP MFA, sign out, and sign in with the code. A wrong code is rejected.
 3. Signed out, `/dashboard` redirects to `/login`. Sessions persist across devices.
 4. Google sign-in (needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL`, `DATABASE_URL`): `/login` and `/register` show Continue with Google. With any of the four unset there is no button and `curl -i localhost:3000/api/auth/google/start` returns 404. A new Google account lands in the app on the Free plan; an account with the same email signs in as that user; an account with MFA asks for the authenticator code. With `TRAINER_ACCESS_CODE` set and no access cookie, a new Google user is sent to `/access`. An unverified Google email shows the unverified error; an email whose account is linked to a different Google account fails; Cancel on Google's screen returns to `/login` with a cancelled message. From `/register?plan=pro&interval=year&src=pricing`, a new Google account lands on `/trainer` with the same query.
+5. `/pricing` signed out: the top button and the Free card read "Start free, no card". Signed in, no button on the page says "Start free" or "no card" or links to `/register`. The top button reads "Upgrade to Pro" (to `/checkout/start`) on Free with checkout set up, otherwise "Open the trainer". The card for your plan shows a disabled "Current plan", lower plans say "Included in …", and higher plans show "Upgrade to …".
 
 ### 15. API sanity
 1. `GET /api/config` returns capability flags and the provider name only, never a key, model id or base URL.
