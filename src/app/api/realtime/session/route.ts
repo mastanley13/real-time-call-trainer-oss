@@ -170,7 +170,7 @@ export async function POST(req: NextRequest) {
         return { outcome: await classifyOpenAiResponse(CLIENT_SECRETS_URL, attempt), status: attempt.status, value: attempt };
       });
       if (r.kind === "exhausted") {
-        if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
+        if (callId) await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
         return NextResponse.json(
           { error: "realtime_unavailable", message: "Voice is unavailable right now. Switch to Text to keep practising." },
           { status: 503, headers: { "Retry-After": "300" } },
@@ -183,7 +183,7 @@ export async function POST(req: NextRequest) {
     if (!res.ok) {
       // Status only: the upstream body can echo request details and is never forwarded or logged.
       console.error("[realtime/session] upstream status", res.status);
-      if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
+      if (callId) await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
       return NextResponse.json(
         { error: "realtime_upstream_error", message: realtimeUpstreamMessage(res.status) },
         { status: res.status === 429 ? 429 : 502 },
@@ -210,7 +210,7 @@ export async function POST(req: NextRequest) {
       });
       if (logged !== true) {
         if (logged === false) console.error("[realtime/session] mint log wrote no row");
-        await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
+        await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
         return voiceUnavailable();
       }
     }
@@ -226,7 +226,7 @@ export async function POST(req: NextRequest) {
     );
   } catch (e) {
     console.error("[realtime/session]", e instanceof Error ? e.message : "unknown error");
-    if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
+    if (callId) await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
     return NextResponse.json({ error: "realtime_upstream_error", message: "Could not reach OpenAI to start the voice call. Check the server's network, then try again." }, { status: 502 });
   }
 }
@@ -247,7 +247,7 @@ async function mintLive(a: {
   if (!ticket) {
     // No JWT_SECRET: there is no safe way to carry the call to the SDP step.
     console.error("[realtime/session] live ticket unavailable (JWT_SECRET unset?)");
-    if (a.callId) await endCall(a.userId, a.callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
+    if (a.callId) await endCall(a.userId, a.callId, "failed_connect", new Date()).catch(() => null);
     return voiceUnavailable();
   }
   if (a.callId) {
@@ -257,7 +257,7 @@ async function mintLive(a: {
     });
     if (logged !== true) {
       if (logged === false) console.error("[realtime/session] mint log wrote no row");
-      await endCall(a.userId, a.callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
+      await endCall(a.userId, a.callId, "failed_connect", new Date()).catch(() => null);
       return voiceUnavailable();
     }
   }

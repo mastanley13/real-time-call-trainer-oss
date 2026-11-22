@@ -37,6 +37,8 @@ function useGoogleEnv() {
   vi.stubEnv("DEMO_MODE", "");
   vi.stubEnv("TRAINER_ACCESS_CODE", "");
   vi.stubEnv("DATABASE_URL", "postgresql://ci:ci@localhost:5432/ci");
+  // Every request here shares one IP bucket; the suite makes more than the default 30 Google requests.
+  vi.stubEnv("RATE_LIMIT_GOOGLE_MAX", "1000");
 }
 
 beforeEach(() => {
@@ -265,7 +267,8 @@ describe("GET /api/auth/google/callback", () => {
   it("creates a new user as the owner of a solo Free account with no password", async () => {
     googleReplies(claims());
     const res = await call();
-    expect(mocks.prisma.organization.create.mock.calls[0][0].data).toMatchObject({ name: "Ravi's team" });
+    // Same default as email sign-up without a team name (defaultOrgName).
+    expect(mocks.prisma.organization.create.mock.calls[0][0].data).toMatchObject({ name: "Ravi's workspace" });
     const data = mocks.prisma.user.create.mock.calls[0][0].data;
     expect(data).toMatchObject({ email: "rep@example.test", googleSub: "g-sub-1", passwordHash: null, role: "owner", organizationId: "org-1" });
     // Plan and caps come from schema defaults (planTier "free"), exactly as for email signup.
@@ -273,6 +276,16 @@ describe("GET /api/auth/google/callback", () => {
     expect(mocks.prisma.auditEvent.create.mock.calls[0][0].data).toMatchObject({ action: "user.registered", metadata: { via: "google" } });
     expect(loc(res).pathname).toBe("/auth/complete");
     expect(res.headers.get("set-cookie")).toContain("authToken=");
+  });
+
+  it("names a new org \"My workspace\" when Google sends no usable first name", async () => {
+    for (const patch of [{ given_name: undefined }, { given_name: "   " }]) {
+      mocks.prisma.organization.create.mockClear();
+      googleReplies(claims(patch));
+      const res = await call();
+      expect(mocks.prisma.organization.create.mock.calls[0][0].data).toMatchObject({ name: "My workspace" });
+      expect(loc(res).pathname).toBe("/auth/complete");
+    }
   });
 
   it("stores a new account's sign-up intent and sends a paid plan to /checkout/start", async () => {
@@ -335,6 +348,17 @@ describe("GET /api/auth/google/callback", () => {
     expect(verifyMfaChallengeToken(challenge)).toBe("u-1");
     expect(res.headers.get("set-cookie")).not.toContain("authToken=");
     expect(mocks.prisma.auditEvent.create.mock.calls[0][0].data.action).toBe("user.mfa_challenge_issued");
+    // The flow's safe next rides to /login so the MFA step lands there too.
+    expect(loc(res).searchParams.get("next")).toBe("/library");
+  });
+
+  it("sends no next to /login for an MFA challenge when the flow's next is unsafe", async () => {
+    googleReplies(claims());
+    mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: Record<string, string> }) => (where.googleSub ? existing({ googleSub: "g-sub-1", mfaEnabled: true, mfaSecret: "SECRET" }) : null));
+    const res = await call({ flow: { next: "//evil.example" } });
+    expect(loc(res).pathname).toBe("/login");
+    expect(loc(res).search).toBe("");
+    expect(new URLSearchParams(loc(res).hash.slice(1)).get("mfa")).toBeTruthy();
   });
 
   it("does not sign in a locked account", async () => {

@@ -281,12 +281,29 @@ export function gradeHeuristically(scenario: Scenario, turns: Turn[], note?: str
   };
 }
 
+/**
+ * A log-safe label for a grading failure: the LLM_* code chatFull throws (LLM_HTTP_401, LLM_QUOTA_EXHAUSTED...), or
+ * only the error's class name for anything else. A JSON or schema error message can quote the model's reply, so no
+ * other message text is ever logged. The provider status, type and code are on chatFull's "[llm] provider error" line.
+ */
+export function gradingFailureCode(e: unknown): string {
+  const message = e instanceof Error ? e.message : "";
+  if (/^LLM_[A-Z0-9_]{1,48}$/.test(message)) return message;
+  const name = e instanceof Error ? e.name : typeof e;
+  return `non_llm_error:${/^[A-Za-z]{1,40}$/.test(name) ? name : "unknown"}`;
+}
+
 export async function evaluateCall(scenario: Scenario, turns: Turn[]): Promise<Evaluation> {
+  // No model configured: a plain rules-based grade, not a failure, so llmFailed stays unset.
   if (!llmKey()) return gradeHeuristically(scenario, turns);
   try {
     return await gradeWithLlm(scenario, turns);
   } catch (e) {
-    console.error("[grader] LLM grading failed, falling back to heuristic:", (e as Error).message);
-    return gradeHeuristically(scenario, turns, "AI grading failed for this call, so this is a rules-based estimate. Re-grade with AI to try again.");
+    console.error("[grader] LLM grading failed, falling back to heuristic:", gradingFailureCode(e));
+    // llmFailed tells the debrief this estimate stands in for an AI grade that didn't finish, so it shows a retry, not a grade.
+    return {
+      ...gradeHeuristically(scenario, turns, "AI grading failed for this call, so this is a rules-based estimate. Re-grade with AI to try again."),
+      llmFailed: true,
+    };
   }
 }

@@ -28,4 +28,15 @@ describe("/contact redirect", () => {
       expect(sources.indexOf(source)).toBeLessThan(sources.indexOf("/contact"));
     }
   });
+
+  it("the /for/911 redirects are still there, each once, and come before /contact", async () => {
+    const list = await redirects();
+    const sources = list.map((x) => x.source);
+    for (const source of ["/for/911", "/for/911/"]) {
+      const r = list.filter((x) => x.source === source);
+      expect(r, source).toHaveLength(1);
+      expect(r[0]).toMatchObject({ source, destination: "/demo", permanent: false });
+      expect(sources.indexOf(source)).toBeLessThan(sources.indexOf("/contact"));
+    }
+  });
 });
