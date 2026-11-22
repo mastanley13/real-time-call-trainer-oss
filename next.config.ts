@@ -67,6 +67,18 @@ const nextConfig: NextConfig = {
         destination: "/demo",
         permanent: false,
       },
+      // Permanent: old links and ads point at /signup, and the page is /register. The query string (plan, interval,
+      // src, seg) passes through, so keep the destination free of its own query and add no has/missing rule.
+      {
+        source: "/signup",
+        destination: "/register",
+        permanent: true,
+      },
+      {
+        source: "/signup/",
+        destination: "/register",
+        permanent: true,
+      },
     ];
   },
   async headers() {
