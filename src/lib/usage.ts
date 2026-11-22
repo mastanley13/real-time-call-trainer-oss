@@ -667,7 +667,23 @@ interface Booking {
 /** End reasons that can earn a dropped-call credit; a credited call is one of these with 0 billed minutes. */
 const DROP_REASONS: CallEndReasonId[] = ["network_drop", "provider_error", "server_error"];
 
-async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId, now: Date): Promise<CallResult | null> {
+/**
+ * Thrown by a settlement with `neverConnectedOnly` when the row picked up a connection (connectedAt or a heartbeat)
+ * after the caller checked it. The transaction rolls back, so nothing is written, and it is not retried.
+ */
+class ConnectedSinceCheckError extends Error {
+  constructor() { super("call connected since it was checked"); }
+}
+
+/**
+ * `neverConnectedOnly`: the caller promised to close only a call that never connected (closeNeverConnectedCall). The
+ * settlement then writes only while the row it read still has no connectedAt and no heartbeat, and throws
+ * ConnectedSinceCheckError instead of settling a call that connected in the meantime.
+ */
+interface SettleOpts { neverConnectedOnly?: boolean }
+
+async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId, now: Date, opts: SettleOpts = {}): Promise<CallResult | null> {
+  if (opts.neverConnectedOnly && (original.connectedAt || original.lastHeartbeatAt)) throw new ConnectedSinceCheckError();
   const target = await chargeTarget(tx, original, now);
   if (!target) return null;
   const { allowance, samePeriod } = target;
@@ -749,14 +765,15 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
 
   // Whoever flips endedAt from null owns the settlement, so a repeated end event writes nothing.
   // The heartbeat the credit decision saw must still be the latest: a heartbeat that committed since the read
-  // means this call was not a drop, so the settlement is redone from the fresh row.
+  // means this call was not a drop, so the settlement is redone from the fresh row. A never-connected-only close also
+  // requires connectedAt to still be null, and is refused (not redone) when the call connected since its check.
   const won = await tx.trainerSession.updateMany({
-    where: { id: s.id, endedAt: null, lastHeartbeatAt: s.lastHeartbeatAt ?? null },
+    where: { id: s.id, endedAt: null, lastHeartbeatAt: s.lastHeartbeatAt ?? null, ...(opts.neverConnectedOnly ? { connectedAt: null } : {}) },
     data: { endedAt, endReason: b.endReason, billableSeconds: b.billableSeconds, billedMinutes: b.net + b.priorNet },
   });
   if (won.count === 0) {
     const current = await tx.trainerSession.findUnique({ where: { id: s.id }, select: { endedAt: true } });
-    if (current && !current.endedAt) throw new StaleAllowanceError();
+    if (current && !current.endedAt) throw opts.neverConnectedOnly ? new ConnectedSinceCheckError() : new StaleAllowanceError();
     return null;
   }
 
@@ -939,7 +956,7 @@ export async function creditTextBillingRefund(entryId: string, now = new Date())
   });
 }
 
-export type NeverConnectedCloseError = "session_not_found" | "unmetered_session" | "already_ended" | "connected" | "heartbeat_seen" | "still_connecting";
+export type NeverConnectedCloseError = "session_not_found" | "unmetered_session" | "already_ended" | "connected" | "heartbeat_seen" | "still_connecting" | "connected_since_check";
 
 export type NeverConnectedClosePlan =
   | { ok: true; callId: string; userId: string; allowanceId: string; reservedMinutes: number }
@@ -949,34 +966,41 @@ export type NeverConnectedClosePlan =
  * Read only. Whether an open voice session can be closed as never connected: it has an allowance, no connectedAt,
  * no heartbeat, no endedAt, and its connect window is over (so it is not a call connecting right now).
  */
-async function planNeverConnectedCloseIn(tx: Tx, callId: string, now: Date): Promise<NeverConnectedClosePlan> {
+async function planNeverConnectedCloseIn(tx: Tx, callId: string, now: Date): Promise<{ plan: NeverConnectedClosePlan; row: OpenSession | null }> {
   const s = await tx.trainerSession.findUnique({ where: { id: callId } });
-  if (!s) return { ok: false, callId, error: "session_not_found" };
-  if (!s.allowanceId) return { ok: false, callId, error: "unmetered_session" };
-  if (s.endedAt) return { ok: false, callId, error: "already_ended" };
-  if (s.connectedAt) return { ok: false, callId, error: "connected" };
-  if (s.lastHeartbeatAt) return { ok: false, callId, error: "heartbeat_seen" };
-  if (now.getTime() - s.createdAt.getTime() <= CONNECT_WINDOW_SECONDS * 1000) return { ok: false, callId, error: "still_connecting" };
-  return { ok: true, callId, userId: s.userId, allowanceId: s.allowanceId, reservedMinutes: s.reservedMinutes };
+  const refuse = (error: NeverConnectedCloseError) => ({ plan: { ok: false, callId, error } as const, row: s });
+  if (!s) return refuse("session_not_found");
+  if (!s.allowanceId) return refuse("unmetered_session");
+  if (s.endedAt) return refuse("already_ended");
+  if (s.connectedAt) return refuse("connected");
+  if (s.lastHeartbeatAt) return refuse("heartbeat_seen");
+  if (now.getTime() - s.createdAt.getTime() <= CONNECT_WINDOW_SECONDS * 1000) return refuse("still_connecting");
+  return { plan: { ok: true, callId, userId: s.userId, allowanceId: s.allowanceId, reservedMinutes: s.reservedMinutes }, row: s };
 }
 
 export async function planNeverConnectedClose(callId: string, now = new Date()): Promise<NeverConnectedClosePlan> {
-  return prisma.$transaction((tx) => planNeverConnectedCloseIn(tx, callId, now));
+  return prisma.$transaction(async (tx) => (await planNeverConnectedCloseIn(tx, callId, now)).plan);
 }
 
 /**
- * Closes an open voice session that never connected, through the same path settleStale uses: failed_connect,
- * 0 seconds, 0 minutes, and its reservation released.
+ * Closes an open voice session that never connected: failed_connect, 0 seconds, 0 minutes, and its reservation
+ * released, through settle() as settleStale does. The row that passed the check is the row that is settled (no second
+ * read), and the settlement writes only while that row still has no connectedAt, no heartbeat and no endedAt. A call
+ * that connected after the check is refused as connected_since_check with nothing written (the transaction rolls back).
  */
 export async function closeNeverConnectedCall(callId: string, now = new Date()): Promise<NeverConnectedClosePlan & { settlement?: CallResult }> {
-  return runMetered(async (tx) => {
-    const plan = await planNeverConnectedCloseIn(tx, callId, now);
-    if (!plan.ok) return plan;
-    const s = await tx.trainerSession.findUniqueOrThrow({ where: { id: callId } });
-    const settlement = await settleIfStale(tx, s, now);
-    if (!settlement) return { ok: false, callId, error: "already_ended" } as const;
-    return { ...plan, settlement };
-  });
+  try {
+    return await runMetered(async (tx) => {
+      const { plan, row } = await planNeverConnectedCloseIn(tx, callId, now);
+      if (!plan.ok || !row) return plan;
+      const settlement = await settle(tx, row, "failed_connect", now, { neverConnectedOnly: true });
+      if (!settlement) return { ok: false, callId, error: "already_ended" } as const;
+      return { ...plan, settlement };
+    });
+  } catch (e) {
+    if (e instanceof ConnectedSinceCheckError) return { ok: false, callId, error: "connected_since_check" };
+    throw e;
+  }
 }
 
 // ---- Support credits and the usage summary ----------------------------------------------------

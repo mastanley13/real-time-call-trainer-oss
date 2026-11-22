@@ -183,6 +183,25 @@ describe("races between a heartbeat and a settlement", () => {
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
   });
 
+  for (const state of ["connected", "ok"] as const) {
+    it(`closeNeverConnectedCall refuses a call whose "${state}" heartbeat commits after the check: connected_since_check, nothing written`, async () => {
+      addUser("u-1", { planTier: "pro" });
+      const c = await mint("u-1", 0);
+      const closeAt = at(CONNECT_WINDOW_SECONDS + 600);
+      const beatAt = state === "connected" ? at(30) : at(CONNECT_WINDOW_SECONDS + 10); // both long silent by closeAt
+      const reservedBefore = allowanceOf("u-1").minutesReserved;
+      const versionBefore = allowanceOf("u-1").version;
+      // The check passed on a row with no heartbeat; the heartbeat commits just before the close's settlement write.
+      fake.interleave("trainerSession", "updateMany", async () => { await heartbeat("u-1", c.callId, state, beatAt); }, (args) => isSettlementWrite(args) && args.where.id === c.callId);
+      expect(await closeNeverConnectedCall(c.callId, closeAt)).toEqual({ ok: false, callId: c.callId, error: "connected_since_check" });
+      expect(session(c.callId)).toMatchObject({ endedAt: null, endReason: null, billedMinutes: 0, billableSeconds: 0, lastHeartbeatAt: beatAt, connectedAt: state === "connected" ? beatAt : null });
+      expect(entries(c.callId)).toHaveLength(0);
+      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: reservedBefore, version: versionBefore });
+      // The call is now a connected one: the ordinary stale path settles and bills it, and the repair keeps refusing it.
+      expect(await closeNeverConnectedCall(c.callId, closeAt)).toMatchObject({ ok: false, error: state === "connected" ? "connected" : "heartbeat_seen" });
+    });
+  }
+
   it("two settlers on one call release its reservation once: the second finds it ended and writes nothing", async () => {
     addUser("u-1", { planTier: "pro" });
     const keep = await mint("u-1", 0); // a second open call, so a double release would show as a wrong count
