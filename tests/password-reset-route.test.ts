@@ -33,6 +33,10 @@ const USER = { id: "user-1", email: "mia@example.test", passwordHash: HASH };
 const json = (url: string, body: unknown) =>
   new NextRequest(`http://localhost${url}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
 
+/** updateMany calls that wrote a password (as opposed to the lock-aware counter clear that follows a reset). */
+const passwordWrites = () =>
+  mocks.prisma.user.updateMany.mock.calls.filter(([args]) => "passwordHash" in (args as { data: object }).data);
+
 /** Runs every after() callback the route scheduled. */
 async function flushAfter() {
   for (const [cb] of mocks.after.mock.calls) await (cb as () => Promise<void>)();
@@ -162,19 +166,23 @@ describe("POST /api/auth/password-reset/confirm", () => {
     signResetToken({ userId: USER.id, passwordHash: HASH, secret: SECRET, now: Date.now(), ...over });
   const confirm = (body: unknown) => confirmReset(json("/api/auth/password-reset/confirm", body));
 
-  it("sets the new password, clears the lockout and does not sign in", async () => {
+  it("sets the new password, then clears the lockout only through the lock-aware, MFA-off condition, and does not sign in", async () => {
     mocks.prisma.user.findUnique.mockResolvedValue({ id: USER.id, passwordHash: HASH });
     const res = await confirm({ token: token(), password: "a-brand-new-password" });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(res.headers.get("set-cookie")).toBeNull();
 
+    // First write: the password alone, conditional on the hash the token was issued for.
     const args = mocks.prisma.user.updateMany.mock.calls[0][0];
     expect(args.where).toEqual({ id: USER.id, passwordHash: HASH });
-    expect(args.data.failedLoginCount).toBe(0);
-    expect(args.data.lockedUntil).toBeNull();
+    expect(Object.keys(args.data)).toEqual(["passwordHash"]);
     expect(args.data.passwordHash).toMatch(/^\$2[aby]\$/);
     expect(args.data.passwordHash).not.toBe(HASH);
+    // Second write: the counters, only while MFA is off and no lock is active.
+    const clear = mocks.prisma.user.updateMany.mock.calls[1][0];
+    expect(clear.where).toMatchObject({ id: USER.id, mfaEnabled: false, OR: [{ lockedUntil: null }, { lockedUntil: { lte: expect.any(Date) } }] });
+    expect(clear.data).toEqual({ failedLoginCount: 0, lockedUntil: null });
     expect(mocks.prisma.auditEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ action: "user.password_reset_completed" }) }),
     );
@@ -206,7 +214,7 @@ describe("POST /api/auth/password-reset/confirm", () => {
     const res = await confirm({ token: token(), password: "a-brand-new-password" });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(mocks.prisma.user.updateMany).toHaveBeenCalledOnce();
+    expect(passwordWrites()).toHaveLength(1);
     const error = vi.mocked(console.error);
     expect(error).toHaveBeenCalledOnce();
     const line = String(error.mock.calls[0][0]);
@@ -236,6 +244,104 @@ describe("POST /api/auth/password-reset/confirm", () => {
     expect(res.status).toBe(503);
     expect((await res.json()).error).toBe("database_not_configured");
   });
+});
+
+describe("password reset and the shared lockout counters", () => {
+  type Row = { id: string; passwordHash: string; mfaEnabled: boolean; failedLoginCount: number; lockedUntil: Date | null };
+  type Where = Record<string, unknown>;
+  const confirm = () =>
+    confirmReset(json("/api/auth/password-reset/confirm", {
+      token: signResetToken({ userId: USER.id, passwordHash: HASH, secret: SECRET, now: Date.now() }),
+      password: "a-brand-new-password",
+    }));
+  const inFifteen = () => new Date(Date.now() + 15 * 60_000);
+
+  /**
+   * One stored user whose updateMany honors its where clause (id, passwordHash, mfaEnabled and the not-locked OR),
+   * so a conditional write that no longer matches really returns count 0. `afterPasswordWrite` runs right after the
+   * password write commits, as another request would between the route's two statements.
+   */
+  function storedUser(init: Partial<Row>, afterPasswordWrite?: (row: Row) => void): Row {
+    const row: Row = { id: USER.id, passwordHash: HASH, mfaEnabled: false, failedLoginCount: 0, lockedUntil: null, ...init };
+    const holds = (where: Where): boolean =>
+      Object.entries(where).every(([k, v]) => {
+        if (k === "OR") return (v as Where[]).some(holds);
+        if (k === "lockedUntil" && v && typeof v === "object") return row.lockedUntil !== null && row.lockedUntil <= (v as { lte: Date }).lte;
+        return (row as Record<string, unknown>)[k] === v;
+      });
+    mocks.prisma.user.findUnique.mockImplementation(async () => ({ id: row.id, passwordHash: row.passwordHash }));
+    mocks.prisma.user.updateMany.mockImplementation(async ({ where, data }: { where: Where; data: Partial<Row> }) => {
+      if (!holds(where)) return { count: 0 };
+      Object.assign(row, data);
+      if ("passwordHash" in data) afterPasswordWrite?.(row);
+      return { count: 1 };
+    });
+    return row;
+  }
+  const auditMeta = () => mocks.prisma.auditEvent.create.mock.calls.at(-1)?.[0].data.metadata;
+
+  it("MFA on: a reset changes the password but does not lift a lock built up by wrong MFA codes", async () => {
+    const until = inFifteen();
+    const row = storedUser({ mfaEnabled: true, lockedUntil: until });
+    const res = await confirm();
+    expect(res.status).toBe(200);
+    expect(row.passwordHash).not.toBe(HASH);
+    expect(row.lockedUntil).toEqual(until);
+    expect(auditMeta()).toEqual({ countersCleared: false });
+  }, 20_000);
+
+  it("MFA on: a reset does not reset the failure count, so MFA guessing cannot go on", async () => {
+    const row = storedUser({ mfaEnabled: true, failedLoginCount: 6 });
+    expect((await confirm()).status).toBe(200);
+    expect(row).toMatchObject({ failedLoginCount: 6, lockedUntil: null });
+  }, 20_000);
+
+  it("MFA off: a reset clears the count and an expired lock", async () => {
+    const row = storedUser({ failedLoginCount: 5, lockedUntil: new Date(Date.now() - 1000) });
+    expect((await confirm()).status).toBe(200);
+    expect(row).toMatchObject({ failedLoginCount: 0, lockedUntil: null });
+    expect(row.passwordHash).not.toBe(HASH);
+    expect(auditMeta()).toEqual({ countersCleared: true });
+  }, 20_000);
+
+  it("MFA off, lock active at reset time: the password still changes, the lock is kept", async () => {
+    const until = inFifteen();
+    const row = storedUser({ lockedUntil: until });
+    expect((await confirm()).status).toBe(200);
+    expect(row.passwordHash).not.toBe(HASH);
+    expect(row.lockedUntil).toEqual(until);
+    expect(auditMeta()).toEqual({ countersCleared: false });
+  }, 20_000);
+
+  it("MFA off, lock armed by concurrent failures between the password write and the clear: the lock is kept", async () => {
+    const until = inFifteen();
+    const row = storedUser({ failedLoginCount: 7 }, (r) => Object.assign(r, { failedLoginCount: 0, lockedUntil: until }));
+    expect((await confirm()).status).toBe(200);
+    expect(row.passwordHash).not.toBe(HASH);
+    expect(row.lockedUntil).toEqual(until);
+  }, 20_000);
+
+  it("MFA turned on between the token check and the clear: the counters are left alone", async () => {
+    const row = storedUser({ failedLoginCount: 4 }, (r) => { r.mfaEnabled = true; });
+    expect((await confirm()).status).toBe(200);
+    expect(row.failedLoginCount).toBe(4);
+  }, 20_000);
+
+  it("if the counter write fails, the password change still stands and the log line leaks nothing", async () => {
+    const row = storedUser({ failedLoginCount: 3 });
+    const base = mocks.prisma.user.updateMany.getMockImplementation()!;
+    mocks.prisma.user.updateMany.mockImplementation(async (args: { where: Where; data: Partial<Row> }) => {
+      if (!("passwordHash" in args.data)) throw new Error("connection reset with secret detail");
+      return base(args);
+    });
+    const res = await confirm();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(row.passwordHash).not.toBe(HASH);
+    expect(row.failedLoginCount).toBe(3);
+    const line = String(vi.mocked(console.error).mock.calls[0][0]);
+    for (const leak of [USER.id, USER.email, "secret detail"]) expect(line).not.toContain(leak);
+  }, 20_000);
 });
 
 describe("dead links: check and confirm agree", () => {
@@ -301,8 +407,8 @@ describe("dead links: check and confirm agree", () => {
   it("a link is valid, confirms once, then check and confirm both reject it", async () => {
     const stored = { id: USER.id, passwordHash: HASH };
     mocks.prisma.user.findUnique.mockImplementation(async () => ({ ...stored }));
-    mocks.prisma.user.updateMany.mockImplementation(async ({ data }: { data: { passwordHash: string } }) => {
-      stored.passwordHash = data.passwordHash;
+    mocks.prisma.user.updateMany.mockImplementation(async ({ data }: { data: { passwordHash?: string } }) => {
+      if (data.passwordHash) stored.passwordHash = data.passwordHash;
       return { count: 1 };
     });
     const tok = fresh();
@@ -310,7 +416,7 @@ describe("dead links: check and confirm agree", () => {
     expect((await confirm(tok)).status).toBe(200);
     expect(await (await check({ token: tok })).json()).toEqual({ valid: false });
     expect((await confirm(tok)).status).toBe(400);
-    expect(mocks.prisma.user.updateMany).toHaveBeenCalledOnce();
+    expect(passwordWrites()).toHaveLength(1);
   }, 20_000);
 
   it("check uses its own per-IP bucket and returns 429 with Retry-After", async () => {

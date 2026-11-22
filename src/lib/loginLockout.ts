@@ -60,14 +60,17 @@ export async function recordAuthFailure(userId: string): Promise<{ locked: boole
  *
  * Returns false when a lock was armed meanwhile: the caller must answer with lockedResponse() and must not issue a
  * session or write anything else. Pass a transaction client to make the transition part of a larger atomic write.
+ * `onlyIf` adds a condition checked in the same statement, such as `{ mfaEnabled: false }`; it also returns false
+ * when that condition does not hold at the moment of the write.
  */
 export async function clearAuthFailures(
   userId: string,
   extra: { lastLoginAt?: Date } = {},
   db: Prisma.TransactionClient = prisma,
+  onlyIf: { mfaEnabled?: boolean } = {},
 ): Promise<boolean> {
   const { count } = await db.user.updateMany({
-    where: { id: userId, ...notLocked() },
+    where: { id: userId, ...onlyIf, ...notLocked() },
     data: { failedLoginCount: 0, lockedUntil: null, ...extra },
   });
   return count === 1;
