@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -111,7 +111,6 @@ export default function CommandPalette() {
 function PaletteDialog({ onClose }: { onClose: () => void }) {
   const { user, isAuthenticated } = useAuth();
   const router = useRouter();
-  const pathname = usePathname() ?? "";
   const [prefs] = useState(readPrefs);
   const [scenarios, setScenarios] = useState<Scenario[] | null>(() => store?.listScenarios() ?? null);
   const [query, setQuery] = useState("");
@@ -267,12 +266,10 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   const status = !q
     ? scenarios ? `${scenarios.length} personas · type to search` : "Loading personas"
     : !scenarios ? "Loading personas" : total ? `${total} ${total === 1 ? "result" : "results"}` : "No results";
-  // The debrief is a deck page, so the palette follows it into the dark instrument theme.
-  const deck = pathname.startsWith("/trainer/debrief");
 
   return createPortal(
     <div
-      className={`fixed inset-0 z-[220] flex items-start justify-center bg-[rgb(var(--shadow)/0.45)] px-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-[2px] sm:px-6 sm:pt-[12vh] ${deck ? "deck" : ""}`}
+      className={`fixed inset-0 z-[220] flex items-start justify-center bg-[rgb(var(--shadow)/0.45)] px-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-[2px] sm:px-6 sm:pt-[12vh]`}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div

@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono, Sora } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { AuthProvider } from "@/contexts/AuthContext";
 import SiteHeader from "@/components/SiteHeader";
@@ -7,9 +7,12 @@ import MobileTabBar from "@/components/MobileTabBar";
 import CommandPalette from "@/components/CommandPalette";
 import { shareImages, siteUrl } from "@/lib/seo";
 
-const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-inter" });
-const sora = Sora({ subsets: ["latin"], display: "swap", variable: "--font-sora" });
-const mono = JetBrains_Mono({ subsets: ["latin"], display: "swap", variable: "--font-mono" });
+/**
+ * Stage and Desk sets every word in Radio Canada Big (SIL Open Font License, src/app/fonts/OFL.txt), self-hosted: one
+ * 18 KB variable file, weights 400 to 700, so builds never fetch fonts. Its tabular figures swap digits only (see the
+ * README there), so clocks and scores line up without wide gaps.
+ */
+const radio = localFont({ src: [{ path: "./fonts/RadioCanadaBig-latin-wght.woff2", weight: "400 700", style: "normal" }], display: "swap", variable: "--font-radio" });
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl()),
@@ -36,8 +39,8 @@ export const viewport: Viewport = {
   initialScale: 1,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#F5F7FB" },
-    { media: "(prefers-color-scheme: dark)", color: "#0A0F1A" },
+    { media: "(prefers-color-scheme: light)", color: "#F3F4F1" },
+    { media: "(prefers-color-scheme: dark)", color: "#0E1014" },
   ],
 };
 
@@ -46,7 +49,7 @@ const themeScript = `try{var t=localStorage.getItem("rtct.theme");if(t==="light"
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${sora.variable} ${mono.variable}`} suppressHydrationWarning>
+    <html lang="en" className={radio.variable} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>

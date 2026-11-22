@@ -8,7 +8,7 @@ Codex loads this file from the repository root before it starts work and concate
 
 Real-Time Call Trainer is an open-source sales-call practice app. A rep picks a persona from a library of 18 sales job families, reads a pre-flight briefing, runs a voice or text call against an AI persona while a separate live coach scores each turn and cues them, then gets a quote-backed debrief. Everything degrades gracefully: with `DEMO_MODE=true` and no keys or database the app still runs end to end on a scripted caller, a rules-based coach, a template persona wizard and a heuristic grader.
 
-Stack: Next.js 16 App Router, React 19, TypeScript (strict), Tailwind 3 with CSS-variable design tokens ("Flight Deck"), zod, Prisma + Postgres (optional), Vitest. Node 22+. npm only (there is a `package-lock.json`; do not switch package managers).
+Stack: Next.js 16 App Router, React 19, TypeScript (strict), Tailwind 3 with CSS-variable design tokens ("Stage and Desk", Nov 7, 2026; replaced "Flight Deck"), zod, Prisma + Postgres (optional), Vitest. Node 22+. npm only (there is a `package-lock.json`; do not switch package managers).
 
 ## Commands
 
@@ -64,7 +64,7 @@ src/app/                          App Router pages and API routes
     sessions/[sessionId]/notes    Supervisor notes (Postgres, org-scoped); PUT with expectedNotesAt gets 409 conflict on a stale save
     auth/*, me, access, config, health, cron/purge-expired
 src/components/
-  call/Deck.tsx                   Live call deck (dark .deck scope): transcript, composer, phone coach sheet
+  call/Deck.tsx                   Live call on the night stage (.stage scope): caller light, captions, composer, phone sheet
   call/CopilotRail.tsx            Rubric tapes, talk track, cues, "Use line", coach mode dial
   call/useCoach.ts                Client hook: calls /api/coach/turn after each finished turn, tracks cue keys
   call/Briefing.tsx               Pre-flight briefing: systems-check lamps, call mode, coach mode
@@ -105,10 +105,10 @@ docs/                             PERSONA_PACKS.md, redesign/ (design council re
 ## Conventions
 
 ### Design tokens only
-- Colors come from the Tailwind token names in `tailwind.config.ts`: `background surface sunken ink ink-soft ink-muted line primary(-hover,-soft,-on) signal ok(-soft) caution(-soft) alert(-soft,-on)`. They map to RGB-triplet variables in `src/app/globals.css`, which defines daylight, dark (`[data-theme="dark"]` and `prefers-color-scheme`) and the `.deck` scope used by the live call and the debrief.
+- Colors come from the Tailwind token names in `tailwind.config.ts`: `background surface sunken ink ink-soft ink-muted line line-strong primary(-hover,-soft,-on) signal ok(-soft) caution(-soft) alert(-soft,-on)`, plus `candle` and `amber` for the caller's light. They map to RGB-triplet variables in `src/app/globals.css`, which defines the daylight desk (`:root`), the dark desk (`[data-theme="dark"]`, `prefers-color-scheme` and the older always-dark `.deck` panels) and the night stage (`.stage`: the live call and dark story panels such as the debrief verdict; always night, amber actions). `tests/design-tokens.test.ts` measures every text pair in all three.
 - Never write hex or `rgb(12 34 56)` literals, and never use Tailwind palette classes (`slate-*`, `red-*`, `gray-*`...). Inline SVG may use `rgb(var(--primary))`-style token references. Do not add `dark:` color overrides; the tokens already switch. One brand exception: `LogoMark.tsx` keeps the fixed colors of `src/app/icon.svg` so the mark matches the favicon.
-- Reuse the component classes before writing new utility soup: `.card .panel .btn-primary .btn-ghost .btn-quiet .btn-danger .btn-sm .btn-xl .input .label .eyebrow .chip .chip-model .lamp` (+ `lamp-ok/-signal/-caution/-alert/-off`) `.tape .hatched .mono .kbd .banner-warn .quote`.
-- Fonts: `font-heading`, `font-sans`, `font-mono`. Radii: `rounded-panel`, `rounded-sheet`. Icons: `lucide-react` with `strokeWidth={1.75}`, `aria-hidden` when decorative.
+- Reuse the component classes before writing new utility soup: `.card .panel .btn-primary .btn-ghost .btn-quiet .btn-danger .btn-sm .btn-xl .input .label .eyebrow .chip .chip-model .lamp` (+ `lamp-ok/-signal/-caution/-alert/-off`) `.tape .hatched .mono .kbd .banner-warn .quote .stage-backdrop .stage-panel .w-in`. The caller's light is `components/ui/VoiceLight.tsx` (WebGL with a CSS fallback, colored from the `--light-*` tokens).
+- Fonts: Radio Canada Big sets every word, self-hosted in `src/app/fonts` (no font downloads at build time); `font-heading`, `font-sans` and `font-mono` all map to it, and numbers use its tabular figures. Labels are sentence case, never uppercase mono. Radii: `rounded-panel`, `rounded-sheet`. Icons: `lucide-react` with `strokeWidth={1.75}`, `aria-hidden` when decorative.
 - Layout must work at 375 px with no horizontal page scroll, by keyboard, and in dark mode.
 
 ### UI copy
