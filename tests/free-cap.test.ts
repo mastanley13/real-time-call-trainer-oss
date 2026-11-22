@@ -4,7 +4,16 @@ import { createFakePrisma } from "./fakePrisma";
 
 // Free voice is 10 minutes a month, checked only when a call starts. Same fakes as usage-metering.test.ts:
 // the database and the session check are replaced; metering, the ledger and the routes run for real.
-const mocks = vi.hoisted(() => ({ fake: null as unknown as ReturnType<typeof import("./fakePrisma").createFakePrisma>, authId: "u-1" }));
+const mocks = vi.hoisted(() => ({
+  fake: null as unknown as ReturnType<typeof import("./fakePrisma").createFakePrisma>,
+  authId: "u-1",
+  // When set, stands in for next/server after(); otherwise the real after() runs (and throws outside a request scope).
+  after: null as null | ((task: () => unknown) => void),
+}));
+vi.mock("next/server", async (importOriginal) => {
+  const real = await importOriginal<typeof import("next/server")>();
+  return { ...real, after: (task: () => unknown) => (mocks.after ? mocks.after(task) : real.after(task as () => void)) };
+});
 vi.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get: (_t, k) => (mocks.fake.db as Record<string | symbol, unknown>)[k] }) }));
 vi.mock("@/lib/apiAuth", async () => ({
   requireAuth: () => ({ id: mocks.authId, email: `${mocks.authId}@example.test` }),
@@ -72,6 +81,7 @@ beforeEach(() => {
   fake = createFakePrisma();
   mocks.fake = fake;
   mocks.authId = "u-1";
+  mocks.after = null;
   vi.stubEnv("DATABASE_URL", "postgresql://ci:ci@localhost:5432/ci");
   vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
   vi.stubEnv("DEMO_MODE", "");
@@ -444,6 +454,86 @@ describe("voice_cap_hit: a used-up allowance is reported with ids only, and neve
     // The failure is logged by event name only.
     expect(errors).toHaveBeenCalledWith("[billing-events] premium sink failed for", "voice_cap_hit");
     errors.mockRestore();
+  });
+
+  describe("inside a request, the emit is handed to next/server after()", () => {
+    /** Synchronous work the sink does before it returns: the response must not wait for it. */
+    const busy = (ms: number) => { const end = performance.now() + ms; while (performance.now() < end) { /* spin */ } };
+    let scheduled: Array<() => unknown>;
+    beforeEach(() => {
+      scheduled = [];
+      mocks.after = (task) => { scheduled.push(task); }; // deferred, as Next.js runs it after the response is sent
+    });
+
+    it("both mint routes schedule one task via after() and run no sink work before answering", async () => {
+      await freeUser("u-after-rt", FREE_MINUTES);
+      expect((await realtimeSession(post("/api/realtime/session", { scenario }))).status).toBe(402);
+      await freeUser("u-after-el", FREE_MINUTES);
+      expect((await elToken()).status).toBe(402);
+      await flush();
+      expect(scheduled).toHaveLength(2);
+      expect(events).toEqual([]); // nothing ran yet
+      for (const task of scheduled) await task();
+      expect(events).toEqual([capHit("u-after-rt", "cap_reached"), capHit("u-after-el", "cap_reached")]);
+    });
+
+    it("a sink doing slow synchronous work does not delay the 402", async () => {
+      let ran = 0;
+      setPremiumEventSink(() => { busy(400); ran++; });
+      await freeUser("u-busy", FREE_MINUTES);
+      const t = performance.now();
+      const res = await elToken();
+      expect(performance.now() - t).toBeLessThan(200);
+      expect(res.status).toBe(402);
+      expect(ran).toBe(0);
+      for (const task of scheduled) await task();
+      expect(ran).toBe(1);
+    });
+
+    it("a throwing or rejecting sink is swallowed inside the after() task", async () => {
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      for (const [id, sink] of [
+        ["u-after-throw", () => { throw new Error("sink down"); }],
+        ["u-after-reject", async () => { throw new Error("sink down"); }],
+      ] as const) {
+        setPremiumEventSink(sink);
+        await freeUser(id, FREE_MINUTES);
+        expect((await elToken()).status).toBe(402);
+      }
+      expect(scheduled).toHaveLength(2);
+      for (const task of scheduled) await expect(Promise.resolve(task())).resolves.toBeUndefined();
+      expect(errors).toHaveBeenCalledWith("[billing-events] premium sink failed for", "voice_cap_hit");
+      errors.mockRestore();
+    });
+
+    it("the heartbeat cap stop is scheduled via after() too", async () => {
+      mocks.authId = "u-after-pro";
+      addUser("u-after-pro", { planTier: "pro" });
+      await ensureAllowance(fake.db as never, { userId: "u-after-pro" }, at(0));
+      allowanceOf("u-after-pro").minutesUsed = 199.5;
+      const begun = await beginCall("u-after-pro", scn, at(0));
+      if (!begun.ok) throw new Error(begun.error);
+      await beat(begun.callId, "connected");
+      vi.setSystemTime(at(70));
+      expect(await (await beat(begun.callId, "ok")).json()).toMatchObject({ stop: true, reason: "cap_reached" });
+      expect(scheduled).toHaveLength(1);
+      await scheduled[0]();
+      expect(events).toEqual([capHit("u-after-pro", "cap_reached_in_call")]);
+    });
+  });
+
+  it("outside a request scope (after() unavailable), slow synchronous sink work still runs only after the 402", async () => {
+    mocks.after = () => { throw new Error("`after` was called outside a request scope"); };
+    let ran = 0;
+    setPremiumEventSink(() => { const end = performance.now() + 400; while (performance.now() < end) { /* spin */ } ran++; });
+    await freeUser("u-fallback", FREE_MINUTES);
+    const t = performance.now();
+    const res = await elToken();
+    expect(performance.now() - t).toBeLessThan(200);
+    expect(res.status).toBe(402);
+    expect(ran).toBe(0);
+    await flush();
+    expect(ran).toBe(1);
   });
 
   it("the heartbeat that stops a call at its cap emits cap_reached_in_call once, and the heartbeats before and after emit nothing", async () => {

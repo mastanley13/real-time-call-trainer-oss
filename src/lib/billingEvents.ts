@@ -1,4 +1,5 @@
 import "server-only";
+import { after } from "next/server";
 import type { PlanTier } from "./usagePlan";
 import type { PremiumEvent } from "./premiumEventTypes";
 
@@ -81,12 +82,17 @@ export async function emitPremiumEvent(event: PremiumEvent): Promise<void> {
 
 /**
  * Schedules a premium event without waiting for the sink, for request paths whose answer must not wait on it
- * (the 402 at a refused voice start, the heartbeat stop). The sink runs on a later microtask, so neither a slow
- * sink nor one that throws can delay or change the response.
+ * (the 402 at a refused voice start, the heartbeat stop). Call it from a route handler: next/server after() runs the
+ * sink once the response is sent and keeps the work alive for the request's lifetime, so neither slow sink work
+ * (synchronous or not) nor a sink that throws can delay or change the response. Outside a request scope (tests,
+ * scripts) after() throws, and the event runs on a later macrotask instead, still after the caller returns.
  */
 export function queuePremiumEvent(event: PremiumEvent): void {
   if (!premiumSink) return;
-  void Promise.resolve()
-    .then(() => emitPremiumEvent(event))
-    .catch(() => {});
+  const task = () => emitPremiumEvent(event).catch(() => {});
+  try {
+    after(task);
+  } catch {
+    setImmediate(() => void task());
+  }
 }
