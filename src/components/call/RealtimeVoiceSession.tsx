@@ -6,11 +6,14 @@ import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
 import { CallMeter, type MeterEndReason } from "@/lib/callMeter";
 import { LiveTranscript, applyLiveEvent, type LiveServerEvent } from "@/lib/live";
+import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, settleAbandonedCall, voiceStatusCopy, type VoiceErrorInfo, type VoicePhase } from "@/lib/callStatus";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, realtimeAuthRedirect, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
 
 /** Same render-prop contract as the ElevenLabs VoiceSession in TrainerClient. */
 export interface VoiceRender {
   orbState: AgentState;
+  /** Where the call is; the deck's body and footer derive their copy from it (voiceStatusCopy). */
+  phase: VoicePhase;
   status: { label: string; tone: "ok" | "signal" | "caution" };
   muted: boolean;
   toggleMute: () => void;
@@ -19,12 +22,12 @@ export interface VoiceRender {
   getOutputVolume: () => number;
 }
 
-type CallPhase = "mic" | "connecting" | "connected" | "ending" | "closed";
+type CallPhase = VoicePhase;
 interface CallView { phase: CallPhase; speaking: boolean; muted: boolean }
 interface Handlers {
   onTurn: (t: AssembledTurn) => void;
   onEnded: () => void;
-  onError: (msg: string) => void;
+  onError: (msg: string, info?: VoiceErrorInfo) => void;
   onView: (v: CallView) => void;
   /**
    * Which call the server minted: its sessionId, the receipt bound to it, and the metering callId when metered.
@@ -83,6 +86,8 @@ export class RealtimeCall {
   private flushTimer?: ReturnType<typeof setInterval>;
   private endTimer?: ReturnType<typeof setTimeout>;
   private audioTimer?: ReturnType<typeof setInterval>;
+  /** Stops an attempt stuck waiting for the mic or the connection (a silent mic that never resolves, a stalled handshake). */
+  private connectTimer?: ReturnType<typeof setTimeout>;
   /** Reports connect, heartbeats and the end to the server, which meters the call. A no-op without a callId. */
   private meter?: CallMeter;
 
@@ -96,6 +101,10 @@ export class RealtimeCall {
   async start() {
     // Created before any await so it inherits the Start call click's user activation (Safari needs that).
     try { this.ctx = new AudioContext(); } catch { /* volume meters stay flat; audio still plays */ }
+    // Same failure path as any other connect failure: the meter settles a minted call as failed_connect.
+    this.connectTimer = setTimeout(() => {
+      if (this.view.phase === "mic" || this.view.phase === "connecting") this.fail(CONNECT_TIMEOUT_MESSAGE, "failed_connect");
+    }, CONNECT_TIMEOUT_MS);
 
     let mic: MediaStream;
     try {
@@ -113,7 +122,8 @@ export class RealtimeCall {
       // The rep's Standard or Premium pick is a request; the server rechecks entitlement and decides.
       const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario, ...(this.voiceTier ? { voiceTier: this.voiceTier } : {}) }) });
       secret = await res.json().catch(() => ({}));
-      if (this.closed) return;
+      // Timed out, hung up or unmounted while minting: release the late call on the server, then drop it.
+      if (this.closed) return settleAbandonedCall(secret.callId);
       const redirect = realtimeAuthRedirect(res.status, secret.error);
       if (redirect) return this.signInAgain(redirect);
       if (!res.ok || !(secret.clientSecret || secret.liveTicket)) return this.fail(secret.message || "Could not start the voice call. Try again, or switch to Text.");
@@ -168,8 +178,11 @@ export class RealtimeCall {
       dc.onmessage = (e) => this.message(e.data);
       dc.onclose = () => { if (!this.closed && !this.ending) this.fail("The voice session closed unexpectedly. Your transcript so far is kept.", "network_drop"); };
 
+      // The connect timeout or a hang-up can close the call during any await: never send an SDP offer after that.
       const offer = await pc.createOffer();
+      if (this.closed) return;
       await pc.setLocalDescription(offer);
+      if (this.closed) return;
       if (this.live) {
         // GPT-Live: the server starts the session with the full offer (src/app/api/live/sdp/route.ts).
         await iceGathered(pc);
@@ -241,6 +254,7 @@ export class RealtimeCall {
 
   private opened() {
     if (this.closed) return;
+    clearTimeout(this.connectTimer);
     this.set({ phase: "connected" });
     this.meter?.open();
     this.flushTimer = setInterval(() => this.release(), 1000);
@@ -328,7 +342,8 @@ export class RealtimeCall {
     this.meter?.end(reason);
     this.release(true);
     const repSpoke = this.emittedUser > 0;
-    this.h.onError(msg);
+    // Before connect nothing is graded (not even turns seeded from a retry), so the trainer must leave the call.
+    this.h.onError(msg, { connectFailed: this.view.phase === "mic" || this.view.phase === "connecting" });
     // Once the rep has spoken the call still gets graded; before that, the trainer goes back to the briefing and keeps this error.
     this.close(repSpoke);
   }
@@ -361,6 +376,7 @@ export class RealtimeCall {
     clearInterval(this.flushTimer);
     clearInterval(this.audioTimer);
     clearTimeout(this.endTimer);
+    clearTimeout(this.connectTimer);
     // GPT-Live: ask for a graceful close so usage is finalized; closing the connection below also ends billing.
     if (this.live) { try { this.send({ type: "session.close" }); } catch { /* channel already gone */ } }
     try { this.dc?.close(); } catch { /* already closed */ }
@@ -394,7 +410,7 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   grading: boolean;
   onTurn: (t: StoredTurn) => void;
   onEnded: () => void;
-  onError: (msg: string) => void;
+  onError: (msg: string, info?: VoiceErrorInfo) => void;
   onMinted?: (c: MintedCall) => void;
   onVoiceInfo?: (info: VoiceInfo) => void;
   registerEnd: (fn: () => void) => void;
@@ -414,7 +430,7 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
     const call = new RealtimeCall(scenario, {
       onTurn: (t) => cb.current.onTurn(t),
       onEnded: () => cb.current.onEnded(),
-      onError: (m) => cb.current.onError(m),
+      onError: (m, i) => cb.current.onError(m, i),
       onView: (v) => { if (callRef.current === call) setView(v); },
       onMinted: (c) => cb.current.onMinted?.(c),
       onVoiceInfo: (i) => cb.current.onVoiceInfo?.(i),
@@ -438,13 +454,7 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   const connected = view.phase === "connected";
   const name = scenario.aiPersona.name.split(" ")[0];
   const orbState: AgentState = grading || !connected ? "thinking" : view.speaking ? "talking" : "listening";
-  const status = view.phase === "mic" ? { label: "Allow the mic to connect", tone: "caution" as const }
-    : view.phase === "connecting" ? { label: "Connecting…", tone: "caution" as const }
-    : view.phase === "ending" ? { label: "Wrapping up…", tone: "signal" as const }
-    : view.phase === "closed" ? { label: "Call ended", tone: "caution" as const }
-    : view.muted ? { label: "Muted", tone: "caution" as const }
-    : view.speaking ? { label: `${name} is speaking`, tone: "signal" as const }
-    : { label: "Your turn", tone: "ok" as const };
+  const status = voiceStatusCopy(view.phase, view.muted, { speaking: view.speaking, name }).header;
 
-  return <>{render({ orbState, status, muted: view.muted, toggleMute, end, getInputVolume, getOutputVolume })}</>;
+  return <>{render({ orbState, phase: view.phase, status, muted: view.muted, toggleMute, end, getInputVolume, getOutputVolume })}</>;
 }

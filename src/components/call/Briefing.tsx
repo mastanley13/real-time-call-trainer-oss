@@ -156,7 +156,7 @@ export function VoiceChoiceField({ premium, usage, value, onChange }: { premium:
   );
 }
 
-export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, usage, canUpgrade = true, usageUnavailable, premium, voiceChoice = "premium", onVoiceChoiceChange }: {
+export default function Briefing({ scenario, capabilities, mode, onModeChange, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, connectFailed = false, notice, usage, canUpgrade = true, usageUnavailable, premium, voiceChoice = "premium", onVoiceChoiceChange }: {
   /** Premium minutes left, or the locked Add Premium voice / Ask your admin state. Null when not metered. */
   premium?: PremiumSnapshot | null;
   /** Standard or Premium for this call, shown only when Premium can run (premiumChoiceAvailable). */
@@ -174,6 +174,8 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
   onStart: () => void;
   retryFrom?: { turn: number; line: string } | null;
   error?: string;
+  /** The error is a voice call that never connected (timeout, mint or handshake failure): offer Retry voice and Switch to text. */
+  connectFailed?: boolean;
   /** Shown when the link named a persona this browser doesn't have and another one opened instead. */
   notice?: string;
   /** Voice minutes left and the plan's minutes this period; null or undefined when minutes are not metered (demo mode, no billing). */
@@ -342,6 +344,21 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, e
 
             {/* A cap refusal while the usage panel shows no minutes left is not repeated: the panel has the count, the reset date and the right Upgrade link. */}
             {error && !(outOfMinutes && isCapMessage(error)) && <CallError message={error} canUpgrade={canUpgrade} />}
+            {/* The mic or the line never connected: offer the two ways forward right under the error. */}
+            {/* A cap refusal would refuse again, so it gets only Switch to text next to its Upgrade link or admin note
+                (and nothing here once the usage panel shows its own Switch to text practice button). */}
+            {error && connectFailed && mode === "voice" && !(outOfMinutes && isCapMessage(error)) && (
+              <div className="flex flex-wrap gap-2">
+                {!isCapMessage(error) && (
+                  <button type="button" className="btn-primary btn-sm" onClick={onStart} disabled={blocked || voiceLookupFailed || outOfMinutes}>
+                    <RotateCcw size={14} strokeWidth={1.75} aria-hidden />Retry voice
+                  </button>
+                )}
+                <button type="button" className="btn-ghost btn-sm" onClick={() => onModeChange("text")}>
+                  <Keyboard size={14} strokeWidth={1.75} aria-hidden />Switch to text
+                </button>
+              </div>
+            )}
 
             {/* Minutes near Start, in every state: voice keys set up or not. */}
             <MinutesLeft usage={usage ?? null} mode={mode} canUpgrade={canUpgrade} />

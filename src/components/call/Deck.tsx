@@ -6,6 +6,7 @@ import { CUE_LABELS, type CoachMode } from "@/lib/coach-types";
 import { talkTrackSteps, type Scenario } from "@/lib/scenarios";
 import type { StoredTurn } from "@/lib/sessionStore";
 import { formatDuration } from "@/lib/format";
+import { callClockSeconds, voiceStatusCopy, type LampTone, type VoicePhase } from "@/lib/callStatus";
 import { NEXT_CALL_STANDARD_NOTICE, TRIAL_CALL_NOTICE, liveCallLimitNotice, voiceLabel } from "@/lib/billingUi";
 import CallOrb, { type AgentState } from "@/components/CallOrb";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
@@ -19,6 +20,8 @@ export interface DeckText {
   caller?: string;
 }
 export interface DeckVoice {
+  /** Mic and connection state. Body and footer copy come from voiceStatusCopy, like the header status. */
+  phase: VoicePhase;
   muted: boolean; onToggleMute: () => void; getInputVolume: () => number; getOutputVolume: () => number; engine?: "openai" | "elevenlabs";
   /** Voice tier this call was minted on. A label only; never a model id. */
   tier?: "premium" | "standard";
@@ -42,7 +45,9 @@ export function liveVoiceNotice(v: Pick<DeckVoice, "tier" | "trial" | "nextCallS
   return v.maxSeconds ? liveCallLimitNotice(v.maxSeconds) : NEXT_CALL_STANDARD_NOTICE;
 }
 
-const FOCUSABLE = "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
+/** Literal class names so Tailwind keeps every lamp tone. */
+const FOOTER_LAMP: Record<LampTone, string> = { ok: "lamp-ok", signal: "lamp-signal", caution: "lamp-caution", alert: "lamp-alert", off: "lamp-off" };
+const FOCUSABLE ="button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
 const clock = (iso: string | undefined, start: number) => (iso ? formatDuration(Math.max(0, Math.round((Date.parse(iso) - start) / 1000))) : "");
 
 export default function Deck({ scenario, turns, startedAt, elapsed, orbState, status, grading, gradingLabel, onEnd, coach, coachMode, onCoachModeChange, coachLabel, text, voice, inserted, onInsert, error, canUpgrade = true }: {
@@ -84,6 +89,13 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
   const activeCue = coach.cues.find((c) => c.status === "active");
   const objectionTurns = new Set(coach.cues.filter((c) => c.type === "objection" && c.status === "active").map((c) => c.triggerTurn));
   const isVoice = !!voice;
+  const voiceCopy = voice ? voiceStatusCopy(voice.phase, voice.muted) : null;
+  // Live-call time starts at 0:00 when the voice call connects (elapsed counts from Start). Recorded during render,
+  // React's pattern for state derived from a prop change; the deck remounts for every call.
+  const [connectedAt, setConnectedAt] = useState<number | null>(null);
+  if (voice?.phase === "connected" && connectedAt === null) setConnectedAt(elapsed);
+  const shownElapsed = voice ? callClockSeconds(elapsed, connectedAt) : elapsed;
+  const clockStart = startedAt + (voice ? connectedAt ?? 0 : 0) * 1000;
 
   useEffect(() => {
     const el = logRef.current;
@@ -157,7 +169,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
         <span className="sr-only ml-1 items-center gap-2 rounded-full border border-line bg-sunken px-3 py-1 text-xs font-semibold sm:not-sr-only sm:inline-flex" role="status">
           <span className={`lamp ${toneClass} ${status.tone === "signal" ? "motion-safe:animate-lamp-pulse" : ""}`} aria-hidden />{status.label}
         </span>
-        <span className="mono ml-auto text-lg font-semibold tabular-nums sm:text-xl" aria-label={`Elapsed ${formatDuration(elapsed)}`}>{formatDuration(elapsed)}</span>
+        <span className="mono ml-auto text-lg font-semibold tabular-nums sm:text-xl" aria-label={`Elapsed ${formatDuration(shownElapsed)}`}>{formatDuration(shownElapsed)}</span>
         <span className="chip-model hidden md:inline-flex">{source}</span>
         {voice && (
           <button className={`btn-ghost !min-h-[38px] !px-3 ${voice.muted ? "!border-alert/60 !text-alert" : ""}`} onClick={voice.onToggleMute} disabled={grading}
@@ -181,13 +193,13 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
 
           <ol ref={logRef} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}
             className="scroll-thin min-h-0 flex-1 space-y-1 overflow-y-auto px-2 py-4 sm:px-4" aria-live="polite" aria-label="Live transcript">
-            {turns.length === 0 && !text?.typing && <li className="py-10 text-center text-sm text-ink-muted">{isVoice ? "Connecting the call. Say hello when you hear them." : "The transcript appears here as you talk."}</li>}
+            {turns.length === 0 && !text?.typing && <li className="py-10 text-center text-sm text-ink-muted">{voiceCopy ? voiceCopy.body : "The transcript appears here as you talk."}</li>}
             {turns.map((t, i) => {
               const me = t.role === "user";
               const objection = objectionTurns.has(i + 1);
               return (
                 <li key={i} className={`grid grid-cols-[48px_minmax(0,1fr)] gap-3 rounded-lg px-2 py-2.5 sm:grid-cols-[64px_minmax(0,1fr)] ${objection ? "bg-alert-soft/60 ring-1 ring-alert/40" : ""}`}>
-                  <div className="pt-0.5 font-mono text-[11px] leading-tight text-ink-muted">T{i + 1}<br />{clock(t.timestamp, startedAt)}</div>
+                  <div className="pt-0.5 font-mono text-[11px] leading-tight text-ink-muted">T{i + 1}<br />{clock(t.timestamp, clockStart)}</div>
                   <div className="min-w-0">
                     <p className={`font-mono text-[11px] font-medium uppercase tracking-wide ${me ? "text-primary" : "text-ink-muted"}`}>{me ? "You" : persona.name}</p>
                     <p className={`mt-0.5 text-[15px] leading-relaxed ${me ? "text-ink" : "text-ink-soft"}`}>{t.text}</p>
@@ -253,10 +265,10 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
                 <p className="hidden font-mono text-[10px] text-ink-muted sm:block"><span className="kbd">Enter</span> send · <span className="kbd">Shift</span>+<span className="kbd">Enter</span> new line · <span className="kbd">Esc</span> end call</p>
               </form>
             )}
-            {voice && (
-              <p className="flex items-center justify-center gap-2 py-1 text-sm text-ink-soft">
-                <span className={`lamp ${voice.muted ? "lamp-alert" : "lamp-ok"}`} aria-hidden />
-                {voice.muted ? "Your mic is muted." : "Mic is live. Just talk; the transcript and coach follow along."}
+            {voiceCopy && (
+              <p className="flex items-center justify-center gap-2 py-1 text-center text-sm text-ink-soft">
+                <span className={`lamp ${FOOTER_LAMP[voiceCopy.footer.tone]} shrink-0`} aria-hidden />
+                {voiceCopy.footer.label}
               </p>
             )}
             {/* Static for the whole call: the voice never changes mid-call. The notice is announced once, politely. */}

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RealtimeCall } from "@/components/call/RealtimeVoiceSession";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
+import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS } from "@/lib/callStatus";
 
 const scenario = BUILT_IN_SCENARIOS[0];
 const stop = vi.fn();
@@ -89,7 +90,66 @@ describe("voice startup session recovery", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "realtime_upstream_error", message: "Voice is temporarily unavailable." }, { status: 502 })));
     await new RealtimeCall(scenario, h).start();
     expect(assign).not.toHaveBeenCalled();
-    expect(h.onError).toHaveBeenCalledWith("Voice is temporarily unavailable.");
+    // A mint failure happens before connect, so it is flagged as a connect failure (the trainer returns to the briefing).
+    expect(h.onError).toHaveBeenCalledWith("Voice is temporarily unavailable.", { connectFailed: true });
     expect(stop).toHaveBeenCalledOnce();
+  });
+});
+
+describe("connect timeout and late answers (SAL-1039)", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("times out a mic that never answers as a flagged connect failure, without grading", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: vi.fn(() => new Promise(() => {})) } });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const h = handlers();
+    void new RealtimeCall(scenario, h).start();
+    await vi.advanceTimersByTimeAsync(CONNECT_TIMEOUT_MS - 1);
+    expect(h.onError).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.onError).toHaveBeenCalledWith(CONNECT_TIMEOUT_MESSAGE, { connectFailed: true });
+    expect(h.onEnded).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("settles a mint that lands after the call closed as failed_connect, and goes no further", async () => {
+    let reply!: (response: Response) => void;
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { reply = resolve; }))
+      .mockResolvedValue(new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    const call = new RealtimeCall(scenario, handlers());
+    const started = call.start();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    call.close(false);
+    reply(Response.json({ clientSecret: "ek_fictional_test_only", callId: "call-late-mint" }));
+    await started;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/usage/end");
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ callId: "call-late-mint", reason: "failed_connect" });
+  });
+
+  it("sends no SDP offer when the call closes while createOffer is pending", async () => {
+    let offered!: (o: RTCSessionDescriptionInit) => void;
+    const setLocal = vi.fn(async () => {});
+    vi.stubGlobal("RTCPeerConnection", class {
+      addTrack() {}
+      createDataChannel() { return { readyState: "connecting", close: closeChannel }; }
+      createOffer() { return new Promise<RTCSessionDescriptionInit>((resolve) => { offered = resolve; }); }
+      setLocalDescription = setLocal;
+      close = closePeer;
+    });
+    const fetchMock = vi.fn(async () => Response.json({ clientSecret: "ek_fictional_test_only" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const call = new RealtimeCall(scenario, handlers());
+    const started = call.start();
+    await vi.waitFor(() => expect(offered).toBeTypeOf("function"));
+    call.close(false);
+    offered({ type: "offer", sdp: "v=0 test offer" });
+    await started;
+    expect(setLocal).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce(); // the mint only; no /api/realtime/sdp
   });
 });

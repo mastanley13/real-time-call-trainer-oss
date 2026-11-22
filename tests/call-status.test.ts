@@ -1,0 +1,311 @@
+import { readFileSync } from "node:fs";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, callClockSeconds, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoicePhase } from "@/lib/callStatus";
+
+const src = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
+/** U+2014, built from its code so this file holds no literal em dash. */
+const EM_DASH = String.fromCharCode(0x2014);
+const PHASES: VoicePhase[] = ["mic", "connecting", "connected", "ending", "closed"];
+const LIVE = "Mic is live. Just talk; the transcript and coach follow along.";
+
+describe("voiceStatusCopy (SAL-1039)", () => {
+  it("says the mic is live only once the call is connected and unmuted", () => {
+    for (const phase of PHASES) {
+      for (const muted of [false, true]) {
+        const c = voiceStatusCopy(phase, muted);
+        expect(c.connected).toBe(phase === "connected");
+        expect(c.footer.label === LIVE).toBe(phase === "connected" && !muted);
+        expect(c.body.includes("Say hello")).toBe(phase === "connected");
+      }
+    }
+  });
+
+  it("waits for the mic in every place at once", () => {
+    const c = voiceStatusCopy("mic", false);
+    expect(c.header).toEqual({ label: "Waiting for your mic…", tone: "caution" });
+    expect(c.body).toBe("Connecting the call…");
+    expect(c.footer.label).toMatch(/^Waiting for your mic\./);
+    expect(c.footer.tone).toBe("caution");
+  });
+
+  it("shows one connecting state until connected", () => {
+    const c = voiceStatusCopy("connecting", false);
+    expect(c.header).toEqual({ label: "Connecting…", tone: "caution" });
+    expect(c.body).toBe("Connecting the call…");
+    expect(c.footer).toEqual({ label: "Connecting the call. Your mic goes live once it connects.", tone: "caution" });
+    expect(voiceStatusCopy("connecting", true).footer.label).toMatch(/Your mic is muted\.$/);
+  });
+
+  it("covers connected: your turn, speaking, muted", () => {
+    expect(voiceStatusCopy("connected", false)).toMatchObject({ header: { label: "Your turn", tone: "ok" }, footer: { label: LIVE, tone: "ok" } });
+    expect(voiceStatusCopy("connected", false, { speaking: true, name: "Dana" }).header).toEqual({ label: "Dana is speaking", tone: "signal" });
+    expect(voiceStatusCopy("connected", true, { speaking: true, name: "Dana" })).toMatchObject({ header: { label: "Muted", tone: "caution" }, footer: { label: "Your mic is muted.", tone: "alert" } });
+  });
+
+  it("covers ending and closed", () => {
+    expect(voiceStatusCopy("ending", false).header).toEqual({ label: "Wrapping up…", tone: "signal" });
+    expect(voiceStatusCopy("closed", false).header).toEqual({ label: "Call ended", tone: "caution" });
+    expect(voiceStatusCopy("closed", false).footer.tone).toBe("off");
+  });
+
+  it("uses no em dashes in any copy", () => {
+    for (const phase of PHASES) for (const muted of [false, true]) expect(JSON.stringify(voiceStatusCopy(phase, muted))).not.toContain(EM_DASH);
+    expect(CONNECT_TIMEOUT_MESSAGE).not.toContain(EM_DASH);
+  });
+
+  it("the changed files hold no em dashes", () => {
+    for (const p of ["src/lib/callStatus.ts", "src/components/call/Deck.tsx", "src/components/call/Briefing.tsx", "src/components/call/RealtimeVoiceSession.tsx", "src/components/TrainerClient.tsx", "tests/call-status.test.ts"]) {
+      expect(src(p), p).not.toContain(EM_DASH);
+    }
+  });
+});
+
+describe("header, body and footer share voiceStatusCopy", () => {
+  const deck = src("src/components/call/Deck.tsx");
+  const realtime = src("src/components/call/RealtimeVoiceSession.tsx");
+  const trainer = src("src/components/TrainerClient.tsx");
+
+  it("Deck derives the body and footer from the voice phase", () => {
+    expect(deck).toContain("voiceStatusCopy(voice.phase, voice.muted)");
+    expect(deck).toContain("voiceCopy.body");
+    expect(deck).toContain("voiceCopy.footer.label");
+    expect(deck).not.toContain("Connecting the call. Say hello");
+    expect(deck).not.toContain(LIVE);
+  });
+
+  it("both voice engines build the header from it and pass the phase to the deck", () => {
+    expect(realtime).toMatch(/voiceStatusCopy\(view\.phase, view\.muted/);
+    expect(realtime).toContain("phase: view.phase");
+    expect(trainer).toMatch(/voiceStatusCopy\(phase, isMuted/);
+    expect(trainer).toContain("phase: v.phase");
+    expect(realtime).not.toContain("Allow the mic to connect");
+  });
+
+  it("starts the voice call clock at 0:00 on connect", () => {
+    expect(deck).toMatch(/if \(voice\?\.phase === "connected" && connectedAt === null\) setConnectedAt\(elapsed\)/);
+    expect(deck).toContain("callClockSeconds(elapsed, connectedAt)");
+    expect(deck).toContain("formatDuration(shownElapsed)");
+    expect(deck).toContain("clock(t.timestamp, clockStart)");
+  });
+});
+
+describe("elevenLabsPhase (round 6)", () => {
+  const before = { grading: false, wasConnected: false };
+  const after = { grading: false, wasConnected: true };
+
+  it("is connecting only before the first connect", () => {
+    for (const s of ["connecting", "disconnected", "error"]) expect(elevenLabsPhase(s, before)).toBe("connecting");
+    expect(elevenLabsPhase("connected", before)).toBe("connected");
+  });
+
+  it("matches Realtime after the call: ending while hanging up, closed once ended or grading", () => {
+    expect(elevenLabsPhase("disconnecting", after)).toBe("ending");
+    expect(elevenLabsPhase("disconnected", after)).toBe("closed");
+    expect(elevenLabsPhase("error", after)).toBe("closed");
+    expect(elevenLabsPhase("disconnected", { grading: true, wasConnected: true })).toBe("closed");
+    expect(elevenLabsPhase("connected", { grading: true, wasConnected: true })).toBe("closed");
+  });
+
+  it("never pairs a Connecting footer with a Grading header", () => {
+    for (const s of ["connecting", "connected", "disconnecting", "disconnected", "error"]) {
+      const copy = voiceStatusCopy(elevenLabsPhase(s, { grading: true, wasConnected: true }), false);
+      expect(copy.footer.label).not.toMatch(/Connecting/);
+      expect(copy.body).not.toMatch(/Connecting/);
+    }
+  });
+
+  it("the ElevenLabs session uses it with the grading and connected facts", () => {
+    const trainer = src("src/components/TrainerClient.tsx");
+    expect(trainer).toContain("const phase = elevenLabsPhase(status, { grading, wasConnected });");
+    expect(trainer).toContain("onConnect: () => { connectedRef.current = true; setWasConnected(true); meterRef.current.open(); },");
+    expect(trainer).not.toContain('connected ? "connected" : "connecting"');
+  });
+});
+
+describe("callClockSeconds", () => {
+  it("holds at 0 until connected, then counts from the connect moment", () => {
+    expect(callClockSeconds(0, null)).toBe(0);
+    expect(callClockSeconds(19, null)).toBe(0);
+    expect(callClockSeconds(19, 19)).toBe(0);
+    expect(callClockSeconds(20, 19)).toBe(1);
+    expect(callClockSeconds(79, 19)).toBe(60);
+    expect(callClockSeconds(3, 5)).toBe(0);
+  });
+});
+
+describe("settleAbandonedCall (late mint after timeout, hang-up or unmount)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("ends a late callId as failed_connect through the usage end call", () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response("{}")));
+    vi.stubGlobal("fetch", fetchMock);
+    settleAbandonedCall("call-late-1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/usage/end");
+    expect(JSON.parse(String(init.body))).toEqual({ callId: "call-late-1", reason: "failed_connect" });
+  });
+
+  it("does nothing without a callId, and never throws", async () => {
+    const fetchMock = vi.fn(() => Promise.reject(new Error("offline")));
+    vi.stubGlobal("fetch", fetchMock);
+    settleAbandonedCall(undefined);
+    settleAbandonedCall("");
+    settleAbandonedCall(42);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(() => settleAbandonedCall("call-late-2")).not.toThrow();
+    await Promise.resolve();
+    vi.stubGlobal("fetch", () => { throw new Error("sync"); });
+    expect(() => settleAbandonedCall("call-late-3")).not.toThrow();
+  });
+
+  it("the realtime call settles a mint that lands after close", () => {
+    expect(src("src/components/call/RealtimeVoiceSession.tsx")).toMatch(/if \(this\.closed\) return settleAbandonedCall\(secret\.callId\);/);
+  });
+
+  it("an ElevenLabs token for a cancelled attempt is settled and starts no session", () => {
+    const trainer = src("src/components/TrainerClient.tsx");
+    const settle = trainer.indexOf("if (cancelled()) return settleAbandonedCall(data.callId);");
+    expect(settle).toBeGreaterThan(-1);
+    expect(settle).toBeLessThan(trainer.indexOf("startSession({"));
+    expect(settle).toBeLessThan(trainer.indexOf("meterRef.current = new CallMeter(data.callId"));
+    expect(trainer).toMatch(/setTimeout\(\(\) => \{\s*attemptRef\.current\+\+;/);
+    expect(trainer).toContain("!mountedRef.current");
+  });
+
+  it("an ElevenLabs hang-up before connect cancels the attempt and leaves the call, like the Realtime path", () => {
+    const trainer = src("src/components/TrainerClient.tsx");
+    const body = trainer.slice(trainer.indexOf("const hangUp = useCallback("), trainer.indexOf("useEffect(() => registerEnd(hangUp)"));
+    expect(body).toMatch(/if \(connected\) \{ void endSession\(\); return; \}\s*attemptRef\.current\+\+;\s*meterRef\.current\.end\("user_hangup"\);\s*void endSession\(\);\s*onEnded\(\);/);
+    // Both ways out of the call (the End button and the trainer's registered hang-up) use it.
+    expect(trainer).toContain("useEffect(() => registerEnd(hangUp), [hangUp, registerEnd]);");
+    expect(trainer).toContain("end: hangUp,");
+    expect(trainer).not.toContain("end: () => endSession()");
+    // The Realtime path it matches: a call that is not connected closes at once and reports the end.
+    expect(src("src/components/call/RealtimeVoiceSession.tsx")).toContain('if (this.view.phase !== "connected") return this.close(true);');
+  });
+});
+
+describe("connect timeout", () => {
+  it("is a fixed 20 second limit", () => {
+    expect(CONNECT_TIMEOUT_MS).toBe(20_000);
+    expect(CONNECT_TIMEOUT_MESSAGE).toMatch(/20 seconds/);
+  });
+
+  it("ends a stuck realtime attempt through the existing failed_connect path", () => {
+    const realtime = src("src/components/call/RealtimeVoiceSession.tsx");
+    expect(realtime).toMatch(/this\.fail\(CONNECT_TIMEOUT_MESSAGE, "failed_connect"\)/);
+    expect(realtime).toContain("CONNECT_TIMEOUT_MS");
+    expect(realtime).toMatch(/clearTimeout\(this\.connectTimer\);\s*this\.set\(\{ phase: "connected" \}\)/);
+  });
+
+  it("ends a stuck ElevenLabs attempt and settles the meter as failed_connect", () => {
+    const trainer = src("src/components/TrainerClient.tsx");
+    expect(trainer).toMatch(/attemptRef\.current\+\+;\s*connectFailedRef\.current = true;\s*meterRef\.current\.end\("failed_connect"\);\s*endRef\.current\(\);\s*onErrorRef\.current\(CONNECT_TIMEOUT_MESSAGE, \{ connectFailed: true \}\)/);
+  });
+});
+
+describe("a failed connect on a retry with prior turns (SAL-1039 round 3)", () => {
+  it("leavesCallOnError: a call that never connected always goes back to the briefing", () => {
+    expect(leavesCallOnError({ connectFailed: true }, true)).toBe(true);
+    expect(leavesCallOnError({ connectFailed: true }, false)).toBe(true);
+    // After connect, the old rule stands: stay to grade what the rep said, else go back.
+    expect(leavesCallOnError({ connectFailed: false }, true)).toBe(false);
+    expect(leavesCallOnError(undefined, true)).toBe(false);
+    expect(leavesCallOnError(undefined, false)).toBe(true);
+  });
+
+  it("the trainer decides with leavesCallOnError, so seeded rep turns cannot keep it on a dead deck", () => {
+    const trainer = src("src/components/TrainerClient.tsx");
+    expect(trainer).toMatch(/onError: \(m: string, info\?: VoiceErrorInfo\) => \{ setError\(m\); setConnectFailedError\([^;]*\); if \(leavesCallOnError\(info, turnsRef\.current\.some\(/);
+  });
+
+  it("the Realtime call flags any failure before connect, timeout included", () => {
+    const realtime = src("src/components/call/RealtimeVoiceSession.tsx");
+    expect(realtime).toContain('this.h.onError(msg, { connectFailed: this.view.phase === "mic" || this.view.phase === "connecting" });');
+    expect(realtime).toContain("onError: (m, i) => cb.current.onError(m, i),");
+  });
+
+  it("ElevenLabs flags a token failure and the timeout, and the disconnect after a timeout does not grade", () => {
+    const trainer = src("src/components/TrainerClient.tsx");
+    expect(trainer).toContain('onError(e instanceof Error ? e.message : "Failed to start the call.", { connectFailed: true });');
+    expect(trainer).toContain("if (!connectFailedRef.current) onEnded();");
+    expect(trainer).toMatch(/userEndedRef\.current = false;\s*connectFailedRef\.current = false;/);
+  });
+
+  it("any ElevenLabs SDK error before connect is a connect failure, and its disconnect does not grade", () => {
+    const trainer = src("src/components/TrainerClient.tsx");
+    const sdk = trainer.slice(trainer.indexOf("const conv = useConversation({"), trainer.indexOf("const { startSession, endSession"));
+    expect(sdk).toMatch(/onConnect: \(\) => \{ connectedRef\.current = true;[^}]*meterRef\.current\.open\(\); \},/);
+    expect(sdk).toMatch(/const beforeConnect = !connectedRef\.current;\s*if \(beforeConnect\) connectFailedRef\.current = true;\s*onError\([^;]*beforeConnect \? \{ connectFailed: true \} : undefined\);/);
+    expect(sdk).toContain("if (!connectFailedRef.current) onEnded();");
+    // Each attempt starts not connected and not failed.
+    expect(trainer).toMatch(/connectFailedRef\.current = false;\s*connectedRef\.current = false;/);
+  });
+
+  it("back on the briefing, a connect failure offers Retry voice and Switch to text even with a retry seed", () => {
+    const briefing = src("src/components/call/Briefing.tsx");
+    // The actions depend on the connect-failure flag and Voice mode, never on retryFrom, the transcript or the message text.
+    expect(briefing).toContain('{error && connectFailed && mode === "voice" && !(outOfMinutes && isCapMessage(error)) && (');
+    expect(briefing).not.toContain("CONNECT_TIMEOUT_MESSAGE");
+  });
+
+  it("a cap refusal before connect gets only Switch to text, next to the existing Upgrade link or admin note", () => {
+    const briefing = src("src/components/call/Briefing.tsx");
+    const block = briefing.slice(briefing.indexOf('{error && connectFailed && mode === "voice"'), briefing.indexOf("Minutes near Start"));
+    // Retry voice is the only conditional button, and its condition is "not a cap refusal".
+    expect(block).toMatch(/\{!isCapMessage\(error\) && \(\s*<button[^>]*onClick=\{onStart\}[^>]*>\s*<RotateCcw[^>]*\/>Retry voice\s*<\/button>\s*\)\}/);
+    // Switch to text is unconditional inside the block, so the cap refusal still gets it.
+    expect(block).toMatch(/\)\}\s*<button type="button" className="btn-ghost btn-sm" onClick=\{\(\) => onModeChange\("text"\)\}>/);
+    // The Upgrade link and admin note stay in CallError, which still renders for the cap refusal.
+    expect(briefing).toContain("{error && !(outOfMinutes && isCapMessage(error)) && <CallError message={error} canUpgrade={canUpgrade} />}");
+  });
+
+  it("the error offers Retry voice and Switch to text", () => {
+    const briefing = src("src/components/call/Briefing.tsx");
+    expect(briefing).toMatch(/onClick=\{onStart\}[^>]*>\s*<RotateCcw[^>]*\/>Retry voice/);
+    expect(briefing).toMatch(/onClick=\{\(\) => onModeChange\("text"\)\}>\s*<Keyboard[^>]*\/>Switch to text/);
+  });
+});
+
+describe("connect-failure flag travels with the error (round 5)", () => {
+  const trainer = src("src/components/TrainerClient.tsx");
+
+  it("the trainer stores which error was a connect failure, from the session's metadata", () => {
+    expect(trainer).toContain('setError(m); setConnectFailedError(info?.connectFailed ? m : "");');
+  });
+
+  it("the flag is tied to the current error, so clearing or replacing the error clears it", () => {
+    expect(trainer).toContain("connectFailed={!!error && error === connectFailedError}");
+  });
+
+  it("every pre-connect failure carries the flag: timeout, ElevenLabs SDK and token errors, Realtime mint and handshake", () => {
+    expect(trainer).toContain("onErrorRef.current(CONNECT_TIMEOUT_MESSAGE, { connectFailed: true });");
+    expect(trainer).toContain("beforeConnect ? { connectFailed: true } : undefined");
+    expect(trainer).toContain('"Failed to start the call.", { connectFailed: true }');
+    // Realtime: fail() flags by phase, so mint, SDP and handshake failures before connect all carry it.
+    expect(src("src/components/call/RealtimeVoiceSession.tsx")).toContain('connectFailed: this.view.phase === "mic" || this.view.phase === "connecting"');
+  });
+});
+
+describe("Realtime connect sequence stops once closed (round 5)", () => {
+  const realtime = src("src/components/call/RealtimeVoiceSession.tsx");
+
+  it("checks closed after createOffer and setLocalDescription, before any SDP request", () => {
+    expect(realtime).toMatch(/await pc\.createOffer\(\);\s*if \(this\.closed\) return;\s*await pc\.setLocalDescription\(offer\);\s*if \(this\.closed\) return;/);
+    const guard = realtime.indexOf("await pc.setLocalDescription(offer);\n      if (this.closed) return;");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(realtime.indexOf('fetch("/api/live/sdp"'));
+    expect(guard).toBeLessThan(realtime.indexOf('fetch("/api/realtime/sdp"'));
+    expect(realtime).toMatch(/await iceGathered\(pc\);\s*if \(this\.closed\) return;\s*const res = await fetch\("\/api\/live\/sdp"/);
+  });
+
+  it("checks closed after each SDP answer, before setRemoteDescription", () => {
+    const remotes = [...realtime.matchAll(/await pc\.setRemoteDescription/g)].map((m) => m.index!);
+    expect(remotes).toHaveLength(2);
+    for (const at of remotes) {
+      const before = realtime.slice(realtime.lastIndexOf("const data = await res.json()", at), at);
+      expect(before).toContain("if (this.closed) return;");
+    }
+  });
+});
