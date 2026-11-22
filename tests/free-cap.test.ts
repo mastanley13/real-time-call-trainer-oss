@@ -361,7 +361,8 @@ describe("a Free call that goes silent keeps the time it was confirmed to have u
 
 describe("voice_cap_hit: a used-up allowance is reported with ids only, and never holds up the answer", () => {
   // Each test below runs as its own user so the per-user mint limits (fixed, on a frozen clock) never carry over.
-  const capHit = (userId: string, reason: string): PremiumEvent => ({ name: "voice_cap_hit", subject: "user", subjectId: userId, reason });
+  // occurredAt is the frozen clock (T0) at queue time: every route here runs at T0 unless a test moves the clock.
+  const capHit = (userId: string, reason: string, occurredAt = T0.toISOString()): PremiumEvent => ({ name: "voice_cap_hit", subject: "user", subjectId: userId, reason, occurredAt });
   /** The sink is scheduled after the response is built: let pending microtasks and one macrotask run first. */
   const flush = () => new Promise<void>((r) => setImmediate(r));
   const elToken = () => elevenLabsToken(new NextRequest("http://localhost/api/elevenlabs/token?scenarioId=quote-follow-up"));
@@ -414,7 +415,7 @@ describe("voice_cap_hit: a used-up allowance is reported with ids only, and neve
     await flush();
     expect(events).toEqual([capHit("u-el", "cap_reached")]);
     // Nothing else rides along: no email, plan, model, agent or call id.
-    expect(Object.keys(events[0]).sort()).toEqual(["name", "reason", "subject", "subjectId"]);
+    expect(Object.keys(events[0]).sort()).toEqual(["name", "occurredAt", "reason", "subject", "subjectId"]);
 
     events.length = 0;
     allowanceOf("u-el").minutesUsed = 5;
@@ -536,6 +537,29 @@ describe("voice_cap_hit: a used-up allowance is reported with ids only, and neve
       expect(body).toMatchObject({ event: "voice_cap_hit", userId: "u-ghl", email: "u-ghl@example.test", plan: "free", reason: "cap_reached", tags: ["app-calltrainer"] });
     });
 
+    it("a cap hit queued just before UTC midnight and sent just after keeps its own time and day", async () => {
+      vi.stubEnv("GHL_BILLING_EVENTS", "true");
+      vi.stubEnv("GHL_WEBHOOK_URL", "https://hooks.example.test/hooks/cap-hit");
+      const ghlPosts = vi.fn(async () => new Response("ok", { status: 200 }));
+      vi.stubGlobal("fetch", ghlPosts);
+      setPremiumEventSink(ghlPremiumSink);
+      await freeUser("u-midnight", FREE_MINUTES);
+
+      vi.setSystemTime(new Date("2026-10-15T23:59:59.900Z"));
+      expect((await elToken()).status).toBe(402); // queued here
+      vi.setSystemTime(new Date("2026-10-16T00:00:00.100Z"));
+      for (const task of [...scheduled]) if (typeof task === "function") await task(); // sent after midnight
+      await settleGhlEvents();
+
+      expect(ghlPosts).toHaveBeenCalledTimes(1);
+      const body = JSON.parse((ghlPosts.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+      expect(body).toMatchObject({
+        event: "voice_cap_hit",
+        occurredAt: "2026-10-15T23:59:59.900Z",
+        eventId: "voice_cap_hit:u-midnight:cap_reached:2026-10-15",
+      });
+    });
+
     it("through the GHL sink with GHL events off, nothing is looked up or posted", async () => {
       const ghlPosts = vi.fn(async () => new Response("ok", { status: 200 }));
       vi.stubGlobal("fetch", ghlPosts);
@@ -560,7 +584,7 @@ describe("voice_cap_hit: a used-up allowance is reported with ids only, and neve
       expect(await (await beat(begun.callId, "ok")).json()).toMatchObject({ stop: true, reason: "cap_reached" });
       expect(scheduled).toHaveLength(1);
       await scheduled[0]();
-      expect(events).toEqual([capHit("u-after-pro", "cap_reached_in_call")]);
+      expect(events).toEqual([capHit("u-after-pro", "cap_reached_in_call", at(70).toISOString())]);
     });
   });
 
@@ -600,7 +624,8 @@ describe("voice_cap_hit: a used-up allowance is reported with ids only, and neve
     vi.setSystemTime(at(90));
     await beat(begun.callId, "ok");
     await flush();
-    expect(events).toEqual([capHit("u-pro", "cap_reached_in_call")]);
+    // Stamped at the stopping heartbeat (70 s), not at the later "ended" heartbeats or when the sink ran.
+    expect(events).toEqual([capHit("u-pro", "cap_reached_in_call", at(70).toISOString())]);
   });
 
   it("a Free call stopped by the call length limit is not a cap hit", async () => {

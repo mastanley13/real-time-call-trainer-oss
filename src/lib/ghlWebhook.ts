@@ -136,7 +136,8 @@ export type VoiceCapHitReason = "cap_reached" | "cap_reached_in_call";
 
 /**
  * The voice minute allowance is used up (the voice_cap_hit premium event, see src/lib/premiumEventTypes.ts). A refused
- * start can be retried many times, so eventId is voice_cap_hit:{userId}:{reason}:{UTC date}: a workflow that drops repeats
+ * start can be retried many times, so eventId is voice_cap_hit:{userId}:{reason}:{UTC date of the cap hit}, the same date
+ * as occurredAt (both from the time the event was queued, not when it is sent): a workflow that drops repeats
  * sees at most one per user, reason and day. Never a transcript, call or session id, model or provider detail.
  */
 export interface GhlVoiceCapHitPayload extends GhlBase {
@@ -434,8 +435,11 @@ export const ghlPremiumSink: PremiumEventSink = (event) => {
   if (event.name !== "voice_cap_hit" || event.subject !== "user" || !event.subjectId || !CAP_HIT_REASONS.has(event.reason ?? "")) return;
   const userId = event.subjectId;
   const reason = event.reason as VoiceCapHitReason;
+  // The time of the cap hit, stamped when it was queued (queuePremiumEvent), drives occurredAt and the dedupe date.
+  // An event with no valid stamp falls back to the time the sink was called.
+  const stamped = event.occurredAt ? new Date(event.occurredAt) : null;
+  const now = stamped && !Number.isNaN(stamped.getTime()) ? stamped : new Date();
   emitGhlEvent(async () => {
-    const now = new Date();
     const contact = await voiceCapHitContact(userId, now);
     return voiceCapHitPayload({ userId, organizationId: contact?.organizationId ?? null, email: contact?.email ?? null, plan: contact?.plan ?? null, reason }, now);
   });

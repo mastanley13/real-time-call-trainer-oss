@@ -32,6 +32,8 @@ export interface PremiumEvent {
    * not_entitled. voice_cap_hit: cap_reached (refused at mint) or cap_reached_in_call (stopped by the heartbeat).
    */
   reason?: string;
+  /** ISO 8601 time the event happened, stamped by queuePremiumEvent when it is queued, before the sink runs. */
+  occurredAt?: string;
 }
 
 /** Browser event name for the client seam. A deployment can listen with window.addEventListener(PREMIUM_DOM_EVENT, ...). */

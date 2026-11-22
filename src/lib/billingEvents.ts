@@ -120,7 +120,9 @@ export async function emitPremiumEvent(event: PremiumEvent): Promise<void> {
  */
 export function queuePremiumEvent(event: PremiumEvent): void {
   if (!premiumSink) return;
-  const task = () => emitPremiumEvent(event).catch(() => {});
+  // When it happened, not when the sink runs after the response (which can be past midnight UTC).
+  const stamped: PremiumEvent = { ...event, occurredAt: event.occurredAt ?? new Date().toISOString() };
+  const task = () => emitPremiumEvent(stamped).catch(() => {});
   try {
     after(task);
   } catch {

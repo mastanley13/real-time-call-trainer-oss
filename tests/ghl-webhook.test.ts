@@ -879,6 +879,26 @@ describe("voice_cap_hit", () => {
     expect(errors.mock.calls.map((c) => c.join(" "))).toEqual(["[ghl] voice_cap_hit contact lookup failed; sending without email"]);
   });
 
+  it("occurredAt and the dedupe date come from the event's queue time, not the send time", async () => {
+    on();
+    mocks.prisma.user.findUnique.mockResolvedValue(freeUser);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-06T00:00:00.200Z")); // the sink runs just after midnight UTC
+      ghlPremiumSink(capHit("cap_reached", { occurredAt: "2026-11-05T23:59:59.800Z" })); // queued just before it
+      ghlPremiumSink(capHit("cap_reached_in_call", { occurredAt: "not a date" })); // no valid stamp: the sink's time
+      ghlPremiumSink(capHit("cap_reached_in_call")); // no stamp at all: the sink's time
+    } finally {
+      vi.useRealTimers();
+    }
+    await settleGhlEvents();
+    expect(sent().map((c) => [c.body.occurredAt, c.body.eventId])).toEqual([
+      ["2026-11-05T23:59:59.800Z", "voice_cap_hit:u-1:cap_reached:2026-11-05"],
+      ["2026-11-06T00:00:00.200Z", "voice_cap_hit:u-1:cap_reached_in_call:2026-11-06"],
+      ["2026-11-06T00:00:00.200Z", "voice_cap_hit:u-1:cap_reached_in_call:2026-11-06"],
+    ]);
+  });
+
   it("does nothing while GHL events are off: no lookup, no POST", async () => {
     mocks.prisma.user.findUnique.mockResolvedValue(freeUser);
     ghlPremiumSink(capHit("cap_reached"));
