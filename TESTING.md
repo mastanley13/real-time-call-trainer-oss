@@ -36,7 +36,7 @@ npx tsx scripts/coach-smoke.ts    # no-key coach, template wizard and URL guard
 Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every screen at 375 px wide and on desktop, in light and dark, and by keyboard alone. Nothing should scroll sideways at 375 px.
 
 ### 1. Landing and chrome
-1. `/` renders the hero, features and example debrief. The mobile tab bar shows on phones.
+1. `/` renders the hero ("Practice the price objection before your next call.", Start free, no card, See pricing), the three-turn example session with one coach cue and no score, and the numbered Brief, Call, Debrief steps. No model names, env var names or setup commands appear; the footer links to GitHub and the self-hosting guide. Nothing scrolls sideways at 1440, 768, 390 and 320 px or at 200% zoom, and the page never asks for the microphone. The mobile tab bar shows on phones.
 2. With `DEMO_MODE=true` a "Demo mode" strip shows, and `/trainer` and `/library/new` load without login.
 
 ### 2. Theme toggle and dark mode

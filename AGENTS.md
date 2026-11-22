@@ -108,7 +108,7 @@ docs/                             PERSONA_PACKS.md, redesign/ (design council re
 - Colors come from the Tailwind token names in `tailwind.config.ts`: `background surface sunken ink ink-soft ink-muted line primary(-hover,-soft,-on) signal ok(-soft) caution(-soft) alert(-soft,-on)`. They map to RGB-triplet variables in `src/app/globals.css`, which defines daylight, dark (`[data-theme="dark"]` and `prefers-color-scheme`) and the `.deck` scope used by the live call and the debrief.
 - Never write hex or `rgb(12 34 56)` literals, and never use Tailwind palette classes (`slate-*`, `red-*`, `gray-*`...). Inline SVG may use `rgb(var(--primary))`-style token references. Do not add `dark:` color overrides; the tokens already switch. One brand exception: `LogoMark.tsx` keeps the fixed colors of `src/app/icon.svg` so the mark matches the favicon.
 - Reuse the component classes before writing new utility soup: `.card .panel .btn-primary .btn-ghost .btn-quiet .btn-danger .btn-sm .btn-xl .input .label .eyebrow .chip .chip-model .lamp` (+ `lamp-ok/-signal/-caution/-alert/-off`) `.tape .hatched .mono .kbd .banner-warn .quote`.
-- Fonts: `font-heading`, `font-sans`, `font-mono`. Radii: `rounded-panel`, `rounded-sheet`. Icons: `lucide-react` with `strokeWidth={1.75}`, `aria-hidden` when decorative.
+- Fonts: `font-heading`, `font-sans`, `font-mono` (system stacks; no font files). Radii: `rounded-control` (7px), `rounded-panel` (10px), `rounded-badge` (4px), `rounded-sheet`. Icons: `lucide-react` with `strokeWidth={1.75}`, `aria-hidden` when decorative.
 - Layout must work at 375 px with no horizontal page scroll, by keyboard, and in dark mode.
 
 ### UI copy

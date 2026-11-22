@@ -21,12 +21,14 @@ const config: Config = {
         // Legacy aliases kept so untouched screens (auth, settings) pick up the new palette.
         accent: { DEFAULT: v("signal"), hover: v("primary-hover"), soft: v("primary-soft"), dark: v("primary"), darker: v("primary-hover") },
       },
+      // System stacks only: no font files are installed or fetched.
       fontFamily: {
-        heading: ["var(--font-sora)", "ui-sans-serif", "system-ui", "sans-serif"],
-        sans: ["var(--font-inter)", "ui-sans-serif", "system-ui", "sans-serif"],
-        mono: ["var(--font-mono)", "ui-monospace", "SFMono-Regular", "Consolas", "monospace"],
+        heading: ['"Trebuchet MS"', '"Segoe UI"', "ui-sans-serif", "system-ui", "sans-serif"],
+        sans: ['"Segoe UI"', "Arial", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"],
       },
-      borderRadius: { panel: "10px", sheet: "14px" },
+      // Radius roles from globals.css: control 7px, group (panel) 10px, badge 4px.
+      borderRadius: { control: "var(--radius-control)", panel: "var(--radius-group)", badge: "var(--radius-badge)", sheet: "14px" },
       boxShadow: {
         card: "0 1px 2px rgb(var(--shadow) / 0.06)",
         pop: "0 1px 2px rgb(var(--shadow) / 0.08), 0 18px 44px -18px rgb(var(--shadow) / 0.35)",

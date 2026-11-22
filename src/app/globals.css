@@ -9,27 +9,40 @@
  * Tailwind opacity modifiers work (see tailwind.config.ts). Change colors here only.
  */
 @layer base {
+  /*
+   * Daylight semantic roles (Prism shared tokens, Nov 2026): background #ffffff, ink #182b34, secondary text #465c64,
+   * action #12685d, subtle surface #edf4f3, border #cbd8d9, destructive #a52630. They are mapped onto the existing
+   * names (bg, ink, ink-soft, primary, sunken, line, alert) so every screen picks them up. Dark and .deck are unchanged.
+   */
   :root {
-    --bg: 245 247 251;
+    --bg: 255 255 255;
     --surface: 255 255 255;
-    --sunken: 236 240 246;
-    --ink: 11 18 32;
-    --ink-soft: 51 65 85;
-    --ink-muted: 82 96 119;
-    --line: 220 227 238;
-    --primary: 14 116 144;
-    --primary-hover: 21 94 117;
-    --primary-soft: 207 250 254;
+    --sunken: 237 244 243;
+    --ink: 24 43 52;
+    --ink-soft: 70 92 100;
+    --ink-muted: 84 102 109;
+    --line: 203 216 217;
+    --primary: 18 104 93;
+    --primary-hover: 13 85 75;
+    --primary-soft: 220 237 233;
     --on-primary: 255 255 255;
-    --signal: 8 145 178;
+    --signal: 15 118 110;
     --ok: 4 120 87;
     --ok-soft: 209 250 229;
     --caution: 180 83 9;
     --caution-soft: 254 243 199;
-    --alert: 220 38 38;
-    --alert-soft: 254 226 226;
+    --alert: 165 38 48;
+    --alert-soft: 251 232 233;
     --on-alert: 255 255 255;
-    --shadow: 11 18 32;
+    --shadow: 24 43 52;
+    /* Shape, focus and layout roles. Same in every theme. */
+    --radius-control: 7px;
+    --radius-group: 10px;
+    --radius-badge: 4px;
+    --focus-ring-width: 3px;
+    --focus-ring-offset: 4px;
+    --content-max: 1240px;
+    --gutter: 22px;
     /* Categorical hues (debrief criteria, persona avatars). Same in both themes: they only tag, never carry text. */
     --cat-1: 34 211 238;
     --cat-2: 52 211 153;
@@ -96,12 +109,16 @@
      or a dark soft fill (banner-warn, the focused transcript line) prints under daylight ink. */
   @media print {
     :root, .deck, :root[data-theme="dark"], :root:not([data-theme="light"]) {
-      --bg: 255 255 255; --surface: 255 255 255; --sunken: 245 247 251; --ink: 11 18 32; --ink-soft: 51 65 85; --ink-muted: 82 96 119;
-      --line: 220 227 238; --primary: 14 116 144; --primary-hover: 21 94 117; --primary-soft: 207 250 254; --on-primary: 255 255 255;
-      --signal: 8 145 178; --ok: 4 120 87; --ok-soft: 209 250 229; --caution: 180 83 9; --caution-soft: 254 243 199;
-      --alert: 220 38 38; --alert-soft: 254 226 226; --on-alert: 255 255 255; --shadow: 11 18 32;
+      --bg: 255 255 255; --surface: 255 255 255; --sunken: 237 244 243; --ink: 24 43 52; --ink-soft: 70 92 100; --ink-muted: 84 102 109;
+      --line: 203 216 217; --primary: 18 104 93; --primary-hover: 13 85 75; --primary-soft: 220 237 233; --on-primary: 255 255 255;
+      --signal: 15 118 110; --ok: 4 120 87; --ok-soft: 209 250 229; --caution: 180 83 9; --caution-soft: 254 243 199;
+      --alert: 165 38 48; --alert-soft: 251 232 233; --on-alert: 255 255 255; --shadow: 24 43 52;
       color-scheme: light;
     }
+  }
+
+  @media (min-width: 768px) {
+    :root { --gutter: 40px; }
   }
 
   html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
@@ -119,14 +136,23 @@
 }
 
 @layer components {
-  /* Radii: 8 controls, 10 panels, 14 sheets, full pills. Spacing 4/8/12/16/24/32. */
+  /* Radii: 7 controls, 10 groups and panels, 4 badges, 14 sheets, full pills. Spacing 4/8/12/16/24/32/40/64. */
   .page { @apply mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 sm:py-10; }
+  /* Content column: 1240 px max, 22 px phone and 40 px desktop gutters, never inside the safe-area insets. */
+  .site-wrap {
+    @apply mx-auto w-full;
+    max-width: var(--content-max);
+    padding-left: max(var(--gutter), env(safe-area-inset-left));
+    padding-right: max(var(--gutter), env(safe-area-inset-right));
+  }
+  /* Shared focus ring: 3 px primary outline, 4 px offset, for screens built on the Nov 2026 tokens. */
+  .focus-strong :focus-visible { outline-style: solid; outline-width: var(--focus-ring-width); outline-offset: var(--focus-ring-offset); }
   .card { @apply rounded-panel border border-line bg-surface p-5 shadow-card sm:p-6; }
   .panel { @apply rounded-panel border border-line bg-surface shadow-inner-top; }
   .card-hover { @apply transition duration-150 hover:border-ink-muted/40 hover:shadow-pop; }
 
   /* Busy buttons use aria-disabled instead of disabled so they keep keyboard focus; both look the same. */
-  .btn { @apply inline-flex min-h-[40px] items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition duration-150 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:active:scale-100; }
+  .btn { @apply inline-flex min-h-[40px] items-center justify-center gap-2 rounded-control px-4 py-2 text-sm font-semibold transition duration-150 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:active:scale-100; }
   .btn-primary { @apply btn bg-primary text-primary-on hover:bg-primary-hover; }
   .btn-accent { @apply btn-primary; }
   .btn-ghost { @apply btn border border-line bg-surface text-ink hover:border-ink-muted/50 hover:bg-sunken; }
@@ -135,8 +161,11 @@
   .btn-pill { @apply rounded-full; }
   .btn-xl { @apply min-h-[52px] px-7 text-base; }
   .btn-sm { @apply min-h-[32px] px-3 text-xs; }
+  /* The standard 48 px control. */
+  .btn-lg { @apply min-h-[48px] rounded-control px-5 text-base; }
+  .badge-tag { @apply inline-flex items-center rounded-badge bg-sunken px-2.5 py-1 text-sm font-semibold text-primary; }
 
-  .input { @apply w-full rounded-lg border border-line bg-surface px-3 py-2.5 text-sm text-ink transition placeholder:text-ink-muted hover:border-ink-muted/50 focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/15; }
+  .input { @apply w-full rounded-control border border-line bg-surface px-3 py-2.5 text-sm text-ink transition placeholder:text-ink-muted hover:border-ink-muted/50 focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/15; }
   .input[aria-invalid="true"] { @apply border-alert ring-4 ring-alert/15; }
   .field-msg { @apply mt-1 text-xs font-medium text-alert; }
   .label { @apply mb-1.5 block font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-ink-muted; }

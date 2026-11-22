@@ -1,72 +1,52 @@
-"use client";
+/**
+ * Landing hero example: three real turns from the water-heater scenario and the one coach cue they triggered.
+ * Static and server-rendered: no client code, no score, no microphone. Clearly labelled as an example session.
+ */
 
-import type { CoachResult } from "@/lib/coach-types";
-import { BUILT_IN_SCENARIOS, talkTrackSteps } from "@/lib/scenarios";
-import { CriteriaTapes, CueCard, Instruments } from "@/components/call/CopilotRail";
-import type { LiveCue } from "@/components/call/useCoach";
+export type ExampleTurn = { speaker: string; role: "buyer" | "rep"; at: string; text: string };
 
-const scenario = BUILT_IN_SCENARIOS[0];
+export const EXAMPLE_PERSONA = { name: "Dana Whitfield", context: "Inbound lead, water heater" };
 
-/** A frozen moment from a real call (water-heater scenario), rendered with the same components as the live rail. */
-const SAMPLE: CoachResult = {
-  estimate: {
-    overall: 58,
-    criteria: [
-      { id: "greeting", name: "Greeting & rapport", weight: 15, score: 86, confirmed: true },
-      { id: "discovery", name: "Discovery questions", weight: 30, score: 72, confirmed: true },
-      { id: "capture", name: "Information capture", weight: 20, score: 55, confirmed: true },
-      { id: "fee", name: "Pricing transparency", weight: 15, score: 14, confirmed: false },
-      { id: "close", name: "Booking & next steps", weight: 20, score: 10, confirmed: false },
-    ],
-  },
-  steps: [true, true, true, true, false, false],
-  cue: null,
-  talkRatio: 0.46,
-  source: "llm",
-  latencyMs: 1300,
-};
-const CUE: LiveCue = {
-  id: "demo", type: "objection", status: "active", triggerTurn: 7,
-  title: "Price objection: answer it directly",
-  message: "Name the fee before you offer a time slot.",
-  heard: "What does a visit cost? Nobody mentioned a fee.",
-  suggestedLine: "Fair question. The diagnostic visit is $89, and it's credited toward the repair.",
-};
-const LINES: [string, string][] = [
-  ["Dana", "It started this morning. There's a puddle by the base of the tank."],
-  ["You", "How old is the unit, and is the leak from the bottom of the tank or a pipe?"],
-  ["Dana", "What does a visit cost? Nobody mentioned a fee."],
+export const EXAMPLE_TURNS: ExampleTurn[] = [
+  { speaker: "Dana", role: "buyer", at: "00:52", text: "It started this morning. There’s a puddle by the base of the tank." },
+  { speaker: "You", role: "rep", at: "01:02", text: "How old is the unit, and is the leak from the bottom of the tank or a pipe?" },
+  { speaker: "Dana", role: "buyer", at: "01:14", text: "What does a visit cost? Nobody mentioned a fee." },
 ];
 
+export const EXAMPLE_CUE = { title: "Price objection", message: "Name the fee before you offer a time slot." };
+
 export default function HeroDeck() {
-  const steps = talkTrackSteps(scenario.callScript);
   return (
-    <div className="deck overflow-hidden rounded-sheet border border-line shadow-pop" aria-label="Example of the live coach during a call" role="img">
-      <div className="flex items-center gap-3 border-b border-line bg-surface px-4 py-2.5">
-        <span className="lamp lamp-ok" aria-hidden />
-        <p className="font-heading text-sm font-bold">Dana Whitfield</p>
-        <span className="hidden text-xs text-ink-muted sm:inline">Inbound lead · water heater</span>
-        <span className="mono ml-auto text-sm font-semibold">01:14</span>
-        <span className="rounded-md bg-alert px-2 py-1 text-[11px] font-semibold text-alert-on">End & grade</span>
+    <section aria-labelledby="example-h" className="min-w-0 overflow-hidden rounded-panel border border-line bg-surface">
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b border-line px-5 py-5 md:px-6">
+        <div className="min-w-0">
+          <h2 id="example-h" className="text-lg font-bold leading-7">
+            <span className="sr-only">Example session with </span>{EXAMPLE_PERSONA.name}
+          </h2>
+          <p className="text-sm leading-5 text-ink-soft">{EXAMPLE_PERSONA.context}</p>
+        </div>
+        <span className="badge-tag" aria-hidden="true">Example session</span>
       </div>
-      {/* Inert on the inside, not the root: the root's role="img" label stays exposed while the
-          real CueCard's buttons and aria-live region drop out of tab order and announcements. */}
-      <div className="grid sm:grid-cols-[minmax(0,1fr)_250px]" inert>
-        <ol className="space-y-3 p-4">
-          {LINES.map(([who, text], i) => (
-            <li key={i} className={`rounded-md p-2 ${i === 2 ? "bg-alert-soft/60 ring-1 ring-alert/40" : ""}`}>
-              <p className={`font-mono text-[10px] uppercase tracking-wide ${who === "You" ? "text-primary" : "text-ink-muted"}`}>T{5 + i} · {who}</p>
-              <p className={`mt-0.5 text-[13px] leading-snug ${who === "You" ? "text-ink" : "text-ink-soft"}`}>{text}</p>
-              {who === "You" && <p className="mt-1 inline-block rounded bg-ok-soft px-1.5 py-0.5 font-mono text-[10px] text-ok">▲ Discovery questions +12</p>}
+
+      <div className="flex flex-col gap-6 p-5 md:p-6">
+        <ol role="list" aria-label="Transcript" className="flex list-none flex-col gap-6">
+          {EXAMPLE_TURNS.map((t) => (
+            <li key={t.at} className="grid grid-cols-[48px_minmax(0,1fr)] gap-3 md:grid-cols-[56px_minmax(0,1fr)] md:gap-4">
+              <p className="text-sm leading-5">
+                <span className="block font-semibold text-ink">{t.speaker}</span>
+                <span className="sr-only">, {t.role}, at </span>
+                <span className="block tabular-nums text-ink-soft">{t.at}</span>
+              </p>
+              <p className="break-words text-lg leading-7 text-ink md:text-[20px] md:leading-[31px]">{t.text}</p>
             </li>
           ))}
-          <li className="pt-1"><CueCard cue={CUE} voice={false} onUse={() => {}} onDismiss={() => {}} compact /></li>
         </ol>
-        <div className="hidden space-y-4 border-l border-line bg-surface p-4 sm:block">
-          <Instruments result={SAMPLE} steps={steps} compact />
-          <CriteriaTapes scenario={scenario} result={SAMPLE} />
+
+        <div role="note" aria-label="Coach cue" className="rounded-r-control border-l-4 border-primary bg-sunken p-4 md:p-5">
+          <p className="text-sm font-semibold leading-5 text-ink">Coach cue: {EXAMPLE_CUE.title.toLowerCase()}</p>
+          <p className="mt-1 text-base leading-6 text-ink">{EXAMPLE_CUE.message}</p>
         </div>
       </div>
-    </div>
+    </section>
   );
 }
