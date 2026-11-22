@@ -72,13 +72,37 @@ class StepError extends Error {
 const describeFailure = (e: StepError) =>
   `[mailer] GHL ${e.step} failed${e.status ? ` with status ${e.status}` : ": the request did not complete"}.`;
 
-/** A 2xx response whose body nobody needs is drained, never read. */
-const discard = (res: Response) => res.body?.cancel().catch(() => undefined);
+/**
+ * Drops a body nobody reads. Fire and forget, never awaited: a cancel() that never settles must not hold up a step,
+ * so the per-step timeout bounds everything a step waits on.
+ */
+function discard(res: Response): void {
+  try {
+    void res.body?.cancel().catch(() => undefined);
+  } catch {
+    // Nothing to clean up.
+  }
+}
 
-async function post(step: Step, url: string, token: string, body: unknown): Promise<Response> {
+/** Settles like `work`, or rejects as soon as `signal` aborts, whichever is first. */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (v) => { signal.removeEventListener("abort", onAbort); resolve(v); },
+      (e) => { signal.removeEventListener("abort", onAbort); reject(e); },
+    );
+  });
+}
+
+/** One POST with the step's hard timeout. Returns the 2xx response and the step's signal, which also bounds any body read. */
+async function post(step: Step, url: string, token: string, body: unknown): Promise<{ res: Response; signal: AbortSignal }> {
+  const signal = AbortSignal.timeout(GHL_MAIL_TIMEOUT_MS);
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await untilAborted(fetch(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -89,30 +113,35 @@ async function post(step: Step, url: string, token: string, body: unknown): Prom
       body: JSON.stringify(body),
       redirect: "error",
       cache: "no-store",
-      signal: AbortSignal.timeout(GHL_MAIL_TIMEOUT_MS),
-    });
+      signal,
+    }), signal);
   } catch {
     throw new StepError(step);
   }
   if (!res.ok) {
     // The body is never read: it can echo the recipient or the contact.
-    await discard(res);
+    discard(res);
     throw new StepError(step, res.status);
   }
-  return res;
+  return { res, signal };
 }
 
 /** No tags here: an upsert can replace the contact's tags. They are added by addMailTags instead. */
 async function upsertContactId(cfg: GhlMailConfig, email: string): Promise<string> {
-  const res = await post("upsert", GHL_UPSERT_URL, cfg.token, {
+  const { res, signal } = await post("upsert", GHL_UPSERT_URL, cfg.token, {
     locationId: cfg.locationId,
     email: email.trim().toLowerCase(),
   });
   let id: unknown;
   try {
-    const data = (await res.json()) as { contact?: { id?: unknown } } | null;
+    // Same step timeout as the request: a body that stalls fails the upsert instead of hanging it.
+    const data = (await untilAborted(res.json(), signal)) as { contact?: { id?: unknown } } | null;
     id = data?.contact?.id;
   } catch {
+    if (signal.aborted) {
+      discard(res);
+      throw new StepError("upsert");
+    }
     throw new StepError("upsert", res.status);
   }
   if (typeof id !== "string" || id.length === 0) throw new StepError("upsert", res.status);
@@ -122,7 +151,7 @@ async function upsertContactId(cfg: GhlMailConfig, email: string): Promise<strin
 /** Adds the mail tags (additive, keeps existing tags). Never throws: a failure is logged and the email still goes out. */
 async function addMailTags(cfg: GhlMailConfig, contactId: string): Promise<void> {
   try {
-    await discard(await post("tags", ghlContactTagsUrl(contactId), cfg.token, { tags: [...GHL_MAIL_TAGS] }));
+    discard((await post("tags", ghlContactTagsUrl(contactId), cfg.token, { tags: [...GHL_MAIL_TAGS] })).res);
   } catch (e) {
     console.error(e instanceof StepError ? describeFailure(e) : "[mailer] GHL tags failed.");
   }
@@ -150,7 +179,7 @@ export async function sendMail(msg: MailMessage, env: Env = process.env): Promis
       html: msg.html,
       message: msg.text,
     });
-    await discard(sent);
+    discard(sent.res);
     return { ok: true };
   } catch (e) {
     if (e instanceof StepError) {

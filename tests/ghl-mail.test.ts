@@ -146,6 +146,55 @@ describe("sendMail through GoHighLevel", () => {
     expect(timeout.mock.calls.every(([ms]) => ms === GHL_MAIL_TIMEOUT_MS)).toBe(true);
   });
 
+  it("never waits on body cancellation: a cancel() that never settles does not hold up the tags step or the send", async () => {
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    /** A response whose body cancel() never settles. */
+    const stalled = (status: number, json: unknown = {}) =>
+      ({ ok: status >= 200 && status < 300, status, body: { cancel }, json: async () => json }) as unknown as Response;
+    const upsertBody = { contact: { id: CONTACT_ID } };
+
+    // Tags answered 2xx, then tags answered 500 (both cancel their bodies), and the send itself also stalls on cancel.
+    for (const tagsStatus of [201, 500]) {
+      fetchMock.mockResolvedValueOnce(stalled(200, upsertBody)).mockResolvedValueOnce(stalled(tagsStatus)).mockResolvedValueOnce(stalled(201));
+      const result = await Promise.race([
+        sendMail(msg(), ENV),
+        new Promise((resolve) => setTimeout(() => resolve("hung"), 500)),
+      ]);
+      expect(result).toEqual({ ok: true });
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock.mock.calls[2][0]).toBe(GHL_MESSAGES_URL);
+    expect(fetchMock.mock.calls[5][0]).toBe(GHL_MESSAGES_URL);
+    expect(cancel).toHaveBeenCalledTimes(4);
+    expectNoSecretsLogged();
+  });
+
+  it("bounds reading the upsert body by the same step timeout, and does not send when it stalls", async () => {
+    // Stand in for the timer: the signal the mailer gets for the upsert is one we can fire.
+    const clock = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(clock.signal);
+    const json = vi.fn(() => new Promise(() => {}));
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, body: { cancel: () => new Promise(() => {}) }, json } as unknown as Response);
+    const done = sendMail(msg(), ENV);
+    await vi.waitFor(() => expect(json).toHaveBeenCalledOnce());
+    clock.abort();
+    await expect(done).resolves.toEqual({ ok: false, reason: "failed" });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(vi.mocked(console.error).mock.calls[0][0])).toBe("[mailer] GHL upsert failed: the request did not complete.");
+    expectNoSecretsLogged();
+  });
+
+  it("bounds a fetch that ignores its signal by the step timeout", async () => {
+    const clock = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(clock.signal);
+    fetchMock.mockImplementationOnce(() => new Promise(() => {}));
+    const done = sendMail(msg(), ENV);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    clock.abort();
+    await expect(done).resolves.toEqual({ ok: false, reason: "failed" });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("encodes the contact id in the tags URL", () => {
     expect(ghlContactTagsUrl("a/b?c")).toBe("https://services.leadconnectorhq.com/contacts/a%2Fb%3Fc/tags");
   });
