@@ -5,6 +5,7 @@ import { elevenLabsAgentFor, meteringEnabled } from "@/lib/serverConfig";
 import { beginCall, endCall } from "@/lib/usage";
 import { capReached, dailySessionLimit, minutesReserved, standardVoiceUnavailable, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
 import { emitPremiumEvent, queuePremiumEvent } from "@/lib/billingEvents";
+import "@/lib/billing"; // registers the CRM sink that forwards voice_cap_hit
 
 /**
  * Mints a short-lived WebRTC conversation token for the configured
@@ -62,7 +63,7 @@ export async function GET(req: NextRequest) {
     });
     if (!begun) return voiceUnavailable();
     if (!begun.ok && begun.error === "cap_reached") {
-      // Ids only, and never awaited: the 402 does not wait on the sink. No sink is registered by default.
+      // Ids only, and never awaited: the 402 does not wait on the sink (the GHL sink, when GHL events are on).
       queuePremiumEvent({ name: "voice_cap_hit", subject: "user", subjectId: auth.id, reason: "cap_reached" });
       return capReached();
     }

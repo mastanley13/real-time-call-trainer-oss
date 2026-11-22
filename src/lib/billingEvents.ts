@@ -86,8 +86,8 @@ export async function emitBillingLifecycle(event: BillingLifecycleEvent): Promis
 }
 
 // ---- Premium Voice events --------------------------------------------------------------------------------
-// Same seam, its own sink. Nothing is registered by default and no external telemetry is set up here: a deployment
-// that wants these registers a sink (for example the GHL emitter) with setPremiumEventSink(). Payloads carry ids,
+// Same seam, its own sink. billing.ts registers ghlPremiumSink (src/lib/ghlWebhook.ts), which forwards only voice_cap_hit
+// to the GHL emitter and sends nothing unless GHL events are on; no other telemetry is set up here. Payloads carry ids,
 // plan, units and reasons only, never email, card data, Stripe ids or model ids. The names match the spec:
 // premium_upsell_viewed {surface} comes from the browser (src/lib/premiumEventTypes.ts); the rest are server-side.
 

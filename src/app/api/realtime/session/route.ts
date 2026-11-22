@@ -7,6 +7,7 @@ import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { meteringEnabled } from "@/lib/serverConfig";
 import { beginCall, endCall, type PremiumMintInfo } from "@/lib/usage";
 import { emitPremiumEvent, queuePremiumEvent } from "@/lib/billingEvents";
+import "@/lib/billing"; // registers the CRM sink that forwards voice_cap_hit
 import { mintVoiceTier } from "@/lib/voiceTier";
 import { capReached, dailySessionLimit, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
 import { realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest) {
     });
     if (!begun) return voiceUnavailable();
     if (!begun.ok && begun.error === "cap_reached") {
-      // Ids only, and never awaited: the 402 does not wait on the sink. No sink is registered by default.
+      // Ids only, and never awaited: the 402 does not wait on the sink (the GHL sink, when GHL events are on).
       queuePremiumEvent({ name: "voice_cap_hit", subject: "user", subjectId: auth.id, reason: "cap_reached" });
       return capReached();
     }

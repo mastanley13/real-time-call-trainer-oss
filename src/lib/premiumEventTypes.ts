@@ -1,6 +1,7 @@
 /**
  * Premium Voice event names and payloads, shared by the server sink (src/lib/billingEvents.ts) and the browser seam
- * below. Client-safe. No external telemetry: nothing leaves the app unless a deployment registers a sink.
+ * below. Client-safe. No external telemetry: nothing leaves the app unless a sink sends it. The registered GHL sink
+ * forwards only voice_cap_hit, and only while GHL events are on (src/lib/ghlWebhook.ts).
  *
  * - premium_upsell_viewed {surface}: a locked Premium control or the add-on offer was shown (browser).
  * - premium_add_started: an owner asked for the prorated preview of adding Premium to a subscription.

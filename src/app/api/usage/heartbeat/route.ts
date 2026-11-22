@@ -6,6 +6,7 @@ import { meteringEnabled } from "@/lib/serverConfig";
 import { heartbeat } from "@/lib/usage";
 import { CAP_STOPPED_MESSAGE } from "@/lib/billingUi";
 import { queuePremiumEvent } from "@/lib/billingEvents";
+import "@/lib/billing"; // registers the CRM sink that forwards voice_cap_hit
 
 // Only the call id and a state are read. Any times or durations the client adds are dropped by the schema.
 const Body = z.object({

@@ -28,6 +28,7 @@ import { POST as realtimeSession } from "@/app/api/realtime/session/route";
 import { GET as elevenLabsToken } from "@/app/api/elevenlabs/token/route";
 import { POST as heartbeatRoute } from "@/app/api/usage/heartbeat/route";
 import { capReached } from "@/lib/usageResponses";
+import { ghlPremiumSink, settleGhlEvents } from "@/lib/ghlWebhook";
 import { POST as saveTranscript } from "@/app/api/transcripts/route";
 import { POST as evaluate } from "@/app/api/evaluate-call/route";
 import { POST as simulate } from "@/app/api/simulate/turn/route";
@@ -82,6 +83,8 @@ beforeEach(() => {
   mocks.fake = fake;
   mocks.authId = "u-1";
   mocks.after = null;
+  // billing.ts registers the GHL premium sink on import; tests that check events set their own sink.
+  setPremiumEventSink(null);
   vi.stubEnv("DATABASE_URL", "postgresql://ci:ci@localhost:5432/ci");
   vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
   vi.stubEnv("DEMO_MODE", "");
@@ -379,6 +382,9 @@ describe("voice_cap_hit: a used-up allowance is reported with ids only, and neve
     vi.stubEnv("ELEVENLABS_API_KEY", "el-test-not-real");
     vi.stubEnv("ELEVENLABS_AGENT_ID", "agent-main");
     vi.stubEnv("ELEVENLABS_AGENT_ID_STANDARD", "agent-std"); // Free calls run on the Standard engine
+    // Test-only: this block mints more often than the per-IP hourly limits allow on a frozen clock. Production limits are unchanged.
+    vi.stubEnv("RATE_LIMIT_TOKEN_MAX", "1000");
+    vi.stubEnv("RATE_LIMIT_REALTIME_MAX", "1000");
   });
   afterEach(() => setPremiumEventSink(null));
 
@@ -504,6 +510,42 @@ describe("voice_cap_hit: a used-up allowance is reported with ids only, and neve
       for (const task of scheduled) await expect(Promise.resolve(task())).resolves.toBeUndefined();
       expect(errors).toHaveBeenCalledWith("[billing-events] premium sink failed for", "voice_cap_hit");
       errors.mockRestore();
+    });
+
+    it("through the GHL sink: no lookup or POST before the 402, then one voice_cap_hit POST from the nested after()", async () => {
+      vi.stubEnv("GHL_BILLING_EVENTS", "true");
+      vi.stubEnv("GHL_WEBHOOK_URL", "https://hooks.example.test/hooks/cap-hit");
+      const ghlPosts = vi.fn(async () => new Response("ok", { status: 200 }));
+      vi.stubGlobal("fetch", ghlPosts);
+      setPremiumEventSink(ghlPremiumSink);
+      await freeUser("u-ghl", FREE_MINUTES);
+      const lookups = vi.spyOn(fake.db.user as unknown as { findUnique: (...a: unknown[]) => unknown }, "findUnique");
+
+      expect((await elToken()).status).toBe(402);
+      const lookupsByRoute = lookups.mock.calls.length;
+      await flush();
+      expect(ghlPosts).not.toHaveBeenCalled();
+      expect(scheduled).toHaveLength(1); // the outer after(): the sink has not run yet
+
+      await scheduled[0]();
+      expect(lookups.mock.calls.length).toBeGreaterThan(lookupsByRoute); // the contact lookup ran only now
+      expect(scheduled).toHaveLength(2); // emitGhlEvent handed its work to a nested after()
+      await settleGhlEvents();
+      expect(ghlPosts).toHaveBeenCalledTimes(1);
+      const body = JSON.parse((ghlPosts.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+      expect(body).toMatchObject({ event: "voice_cap_hit", userId: "u-ghl", email: "u-ghl@example.test", plan: "free", reason: "cap_reached", tags: ["app-calltrainer"] });
+    });
+
+    it("through the GHL sink with GHL events off, nothing is looked up or posted", async () => {
+      const ghlPosts = vi.fn(async () => new Response("ok", { status: 200 }));
+      vi.stubGlobal("fetch", ghlPosts);
+      setPremiumEventSink(ghlPremiumSink);
+      await freeUser("u-ghl-off", FREE_MINUTES);
+      expect((await elToken()).status).toBe(402);
+      for (const task of scheduled) await task();
+      await settleGhlEvents();
+      expect(scheduled).toHaveLength(1); // emitGhlEvent returned before scheduling anything
+      expect(ghlPosts).not.toHaveBeenCalled();
     });
 
     it("the heartbeat cap stop is scheduled via after() too", async () => {
