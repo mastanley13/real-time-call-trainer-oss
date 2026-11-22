@@ -81,8 +81,11 @@ export function createFakePrisma() {
 
   const dupError = () => new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" });
 
+  /** Every query in call order: `table.method`, or `raw:<sql>` for a raw query (row and advisory locks). */
+  const calls: string[] = [];
   function table(name: string) {
     const rows = () => data[name];
+    const log = (method: string) => calls.push(`${name}.${method}`);
     const copy = (r: Row | undefined | null) => (r ? { ...r } : null);
     const withInclude = (r: Row | null, args?: { include?: { organization?: boolean } }) => {
       if (!r) return null;
@@ -103,8 +106,9 @@ export function createFakePrisma() {
       }
     };
     return {
-      findUnique: async (args: { where: Where; include?: { organization?: boolean } }) => withInclude(find(args.where) ?? null, args),
+      findUnique: async (args: { where: Where; include?: { organization?: boolean } }) => { log("findUnique"); return withInclude(find(args.where) ?? null, args); },
       findUniqueOrThrow: async (args: { where: Where; include?: { organization?: boolean } }) => {
+        log("findUniqueOrThrow");
         const r = find(args.where);
         if (!r) throw new Error(`${name} not found`);
         return withInclude(r, args);
@@ -125,6 +129,7 @@ export function createFakePrisma() {
         return { ...row };
       },
       update: async (args: { where: Where; data: Record<string, unknown> }) => {
+        log("update");
         await fire(name, "update", args);
         if (failOnce[name] > 0) { failOnce[name] -= 1; throw new Error("injected failure"); }
         const r = find(args.where);
@@ -164,6 +169,7 @@ export function createFakePrisma() {
     /** Records raw queries (row locks); the fake has no concurrent transactions to block. */
     $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
       rawQueries.push({ sql: strings.join("?"), values });
+      calls.push(`raw:${strings.join("?")}`);
       return [];
     },
     /** Runs fn on the same store; a throw restores the data as it was, like a rolled-back transaction. */
@@ -184,6 +190,7 @@ export function createFakePrisma() {
   return {
     db,
     rawQueries,
+    calls,
     /** Direct access to rows for arranging and asserting. */
     rows: (name: keyof typeof UNIQUE) => data[name],
     seed: (name: keyof typeof UNIQUE, row: Record<string, unknown>) => {

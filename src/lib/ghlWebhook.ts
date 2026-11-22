@@ -74,7 +74,11 @@ export interface GhlSignupPayload extends GhlBase {
   segment: string | null;
 }
 
-/** The first call of a user's that was saved with a server-sealed grade. eventId: first_graded_call:{userId}. */
+/**
+ * The user's first graded call (their earliest session with a stored score), sent once per user after a grade is stored
+ * by either path: a save with a server-sealed grade (POST /api/transcripts) or the first AI grade of a saved call (PATCH
+ * /api/transcripts/[id]). See claimFirstGradedCall. eventId: first_graded_call:{userId}.
+ */
 export interface GhlFirstGradedCallPayload extends GhlBase {
   event: "first_graded_call";
   userId: string;
@@ -91,9 +95,11 @@ export interface GhlFirstGradedCallPayload extends GhlBase {
 }
 
 /**
- * A Stripe plan change on a Calltrainer subscription (metadata app=calltrainer), after the plan is applied.
- * eventId: stripe:{stripeRef}:{event}, identical whether the success page or the Stripe webhook applied the change
- * first. Never a raw Stripe object, customer or subscription id, price or card data.
+ * A Stripe plan change on a Calltrainer subscription (see lifecycleEventFor in billing.ts), after the plan is applied.
+ * eventId: stripe:{stripeRef}:{event}:{transition}, where transition is a UUID made in the transaction that applied the
+ * change. Each transition is emitted once, by the one path that applied it (success page or Stripe webhook), and a later
+ * transition on the same subscription (an upgrade after a churn) gets a new id. The payload is built once, so the send
+ * and its Idempotency-Key always carry that id. Never a raw Stripe object, customer or subscription id, price or card data.
  */
 export interface GhlPlanChangePayload extends GhlBase {
   event: BillingLifecycleKind;
@@ -116,8 +122,8 @@ export interface GhlPlanChangePayload extends GhlBase {
   seats: number;
   premiumVoice: boolean;
   /**
-   * subscription:{first 32 hex of sha256(Stripe subscription id)}, so both apply paths share one eventId and the raw id
-   * is never sent. Rare fallback when no subscription id is known: checkout_session:{id} or the Stripe event id (evt_...).
+   * subscription:{first 32 hex of sha256(Stripe subscription id)}, the same on every apply path, and the raw id is never
+   * sent. Rare fallback when no subscription id is known: checkout_session:{id} or the Stripe event id (evt_...).
    */
   stripeRef: string;
 }
@@ -219,7 +225,7 @@ export function firstGradedCallPayload(
 
 export function planChangePayload(e: BillingLifecycleEvent, email: string | null, now = new Date()): GhlPlanChangePayload {
   return {
-    ...base(`stripe:${e.stripeRef}:${e.kind}`, e.kind, now),
+    ...base(`stripe:${e.stripeRef}:${e.kind}:${e.transition}`, e.kind, now),
     tags: ghlTagsFor({ event: e.kind, toPlan: e.toPlan }),
     subject: e.subject,
     subjectId: e.subjectId,
@@ -351,14 +357,56 @@ export function notifySignup(input: Parameters<typeof signupPayload>[0]): void {
   emitGhlEvent(async () => signupPayload(input));
 }
 
+/** Namespaces the per-user advisory lock taken by claimFirstGradedCall. */
+export const FIRST_GRADE_LOCK_PREFIX = "ct-first-grade:";
+
+/** AuditEvent action of the durable marker: first_graded_call was claimed for this user (one row per user, ever). */
+export const FIRST_GRADED_MARKER = "ghl.first_graded_call_sent";
+
+const GRADES = new Set(["A", "B", "C", "D", "F"]);
+
 /**
- * Sends first_graded_call when `sessionId` is the user's earliest graded call. The check runs in the background.
- * If two first calls are saved at once, both may send; they share eventId first_graded_call:{userId}, so GHL drops the repeat.
+ * Decides, after the fact, whether first_graded_call still has to be sent for this user, and claims it. One small
+ * transaction, separate from every grade write:
+ * 1. pg_advisory_xact_lock on hashtext('ct-first-grade:' || userId), held until commit, so claims for one user run one
+ *    after the other;
+ * 2. if an AuditEvent marker (FIRST_GRADED_MARKER) exists for the user, nothing is sent;
+ * 3. otherwise the user's earliest graded session (overallScore set; oldest createdAt, then id) is the first graded call,
+ *    the marker is inserted (resource = that session) and the payload is returned for sending after commit.
+ * The lock plus the marker make exactly one claimer ever, by commit order, whichever grade write triggered it. Null when
+ * events are off (no marker is written, so the event can still go out once GHL is configured), when the marker exists,
+ * or when the user has no graded session. Delivery is at most once: the marker commits before the POST, so a POST that
+ * fails or times out is not retried.
+ *
+ * Rollout: users graded before this shipped have no marker, so their next graded call sends one first_graded_call (same
+ * eventId first_graded_call:{userId}, ct-activated tag) naming their earliest graded session.
  */
-export function notifyIfFirstGradedCall(
-  input: Parameters<typeof firstGradedCallPayload>[0],
-  earliestGradedSessionId: (userId: string) => Promise<string | null>,
-): void {
-  // emitGhlEvent checks the flag first, so the database read never runs while events are off.
-  emitGhlEvent(async () => ((await earliestGradedSessionId(input.userId)) === input.sessionId ? firstGradedCallPayload(input) : null));
+export async function claimFirstGradedCall(userId: string, now = new Date()): Promise<GhlFirstGradedCallPayload | null> {
+  if (!ghlEventsEnabled()) return null;
+  return prisma.$transaction(async (tx) => {
+    // SELECT ... FROM the function, so the result column is an int Prisma can read, not void.
+    await tx.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtext(${FIRST_GRADE_LOCK_PREFIX + userId}::text))`;
+    if (await tx.auditEvent.findFirst({ where: { userId, action: FIRST_GRADED_MARKER }, select: { id: true } })) return null;
+    const first = await tx.trainerSession.findFirst({
+      where: { userId, overallScore: { not: null } },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: { id: true, organizationId: true, scenarioId: true, overallScore: true, grade: true, user: { select: { email: true } } },
+    });
+    if (!first || first.overallScore === null || !first.grade || !GRADES.has(first.grade) || !first.user?.email) return null;
+    const payload = firstGradedCallPayload({
+      userId, organizationId: first.organizationId, email: first.user.email, sessionId: first.id, scenarioId: first.scenarioId,
+      overallScore: first.overallScore, grade: first.grade as GhlFirstGradedCallPayload["grade"],
+    }, now);
+    await tx.auditEvent.create({ data: { userId, action: FIRST_GRADED_MARKER, resource: first.id, metadata: { eventId: payload.eventId } } });
+    return payload;
+  });
+}
+
+/**
+ * Call after any successful grade write (a sealed grade saved by POST /api/transcripts, or a call going from no score to
+ * a score in PATCH /api/transcripts/[id]). Schedules claimFirstGradedCall and the send in the background and returns at
+ * once; never throws and never delays the request. Does nothing while events are off.
+ */
+export function notifyFirstGradedCall(userId: string): void {
+  emitGhlEvent(() => claimFirstGradedCall(userId));
 }

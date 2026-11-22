@@ -9,17 +9,7 @@ import { isReceiptReplay, receiptRowId, verifyMintReceipt } from "@/lib/mintRece
 import { HAS_TRANSCRIPT } from "@/lib/usage";
 import { tierOfModel } from "@/lib/voiceTierServer";
 import { sessionListItem } from "@/lib/sessionView";
-import { notifyIfFirstGradedCall } from "@/lib/ghlWebhook";
-
-/** The id of the user's earliest call saved with a grade, or null. */
-async function earliestGradedSessionId(userId: string): Promise<string | null> {
-  const first = await prisma.trainerSession.findFirst({
-    where: { userId, overallScore: { not: null } },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    select: { id: true },
-  });
-  return first?.id ?? null;
-}
+import { notifyFirstGradedCall } from "@/lib/ghlWebhook";
 
 const Body = z.object({
   sessionId: z.string().min(1).max(128),
@@ -130,6 +120,10 @@ export async function POST(req: NextRequest) {
     } else {
       created = await prisma.trainerSession.create({ data: { ...owner, ...fields } });
     }
+    // Activation for the CRM: only a sealed grade counts. Scheduled as soon as the graded row is written, so a failure in
+    // the receipt or audit step below cannot skip it. notifyFirstGradedCall decides in the background, under its own lock
+    // and durable marker, whether the user's first graded call has been announced yet; it never delays this response.
+    if (ev) notifyFirstGradedCall(dbUser.id);
     if (receiptModel && meteredReceiptRow && meteredReceiptRow.userId === dbUser.id) {
       // Single use on the metered row: the model is written only while it is still unset, in one conditional
       // update, so a replayed or concurrent save of the same receipt changes nothing.
@@ -148,14 +142,6 @@ export async function POST(req: NextRequest) {
         },
       },
     });
-    // Activation for the CRM: only a sealed grade counts, and only the user's earliest graded call sends. Re-grades go
-    // through PATCH /api/transcripts/[id] and never send. The check and the POST run in the background.
-    if (ev) {
-      notifyIfFirstGradedCall(
-        { userId: dbUser.id, organizationId: dbUser.organizationId, email: dbUser.email, sessionId: created.id, scenarioId: body.scenario.id, overallScore: ev.overallScore, grade: ev.grade },
-        earliestGradedSessionId,
-      );
-    }
     return NextResponse.json({ id: created.id, graded: !!ev });
   } catch (error) {
     console.error("[/api/transcripts] error:", error);

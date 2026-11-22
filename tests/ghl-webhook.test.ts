@@ -1,26 +1,30 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-// The database, auth and seal check are the only fakes; the emitter and the routes run for real against a stubbed fetch.
+// The database, auth, seal check and model call are the only fakes; the emitter and the routes run for real against a stubbed fetch.
 const mocks = vi.hoisted(() => ({
   prisma: {
     user: { findUnique: vi.fn(), findMany: vi.fn() },
     trainerSession: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), findFirst: vi.fn() },
-    auditEvent: { create: vi.fn() },
+    auditEvent: { create: vi.fn(), findFirst: vi.fn() },
     $transaction: vi.fn(),
+    $queryRaw: vi.fn(),
   },
+  chat: vi.fn(),
+  authUser: { id: "u-1", email: "u-1@example.test", role: "owner" },
 }));
 vi.mock("@/lib/db", () => ({ prisma: mocks.prisma }));
+vi.mock("@/lib/llm", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/llm")>()), chat: mocks.chat }));
 vi.mock("@/lib/rateLimit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/rateLimit")>()),
   rateLimit: () => ({ allowed: true, retryAfterMs: 0 }),
 }));
 vi.mock("@/lib/apiAuth", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/apiAuth")>()),
-  requireAuth: () => ({ id: "u-1", email: "u-1@example.test", role: "owner" }),
+  requireAuth: () => mocks.authUser,
   isDemoUser: () => false,
 }));
-vi.mock("@/lib/gradeSeal", () => ({ verifySeal: () => true }));
+vi.mock("@/lib/gradeSeal", () => ({ verifySeal: () => true, sealEvaluation: () => "test-seal" }));
 
 import {
   GHL_TIMEOUT_MS,
@@ -29,16 +33,21 @@ import {
   ghlBillingSink,
   ghlEventsEnabled,
   ghlTagsFor,
-  notifyIfFirstGradedCall,
+  notifyFirstGradedCall,
   notifySignup,
   planChangePayload,
   postGhlEvent,
   settleGhlEvents,
   signGhlBody,
   signupPayload,
+  claimFirstGradedCall,
+  FIRST_GRADED_MARKER,
 } from "@/lib/ghlWebhook";
 import { POST as register } from "@/app/api/auth/register/route";
 import { POST as saveTranscript } from "@/app/api/transcripts/route";
+import { PATCH as regrade } from "@/app/api/transcripts/[id]/route";
+import { POST as evaluateCallRoute } from "@/app/api/evaluate-call/route";
+import { LIBRARY } from "@/lib/personas";
 
 const URL_ = "https://hooks.example.test/hooks/loc-test/webhook-trigger/trigger-test";
 const SECRET = "test-only-ghl-secret";
@@ -59,6 +68,8 @@ beforeEach(() => {
   vi.stubEnv("TRAINER_ACCESS_CODE", "");
   fetchMock = vi.fn(async () => new Response("ok", { status: 200 }));
   vi.stubGlobal("fetch", fetchMock);
+  mocks.chat.mockReset();
+  mocks.authUser = { id: "u-1", email: "u-1@example.test", role: "owner" };
   for (const group of Object.values(mocks.prisma)) {
     if (typeof group === "function") group.mockReset();
     else for (const fn of Object.values(group)) fn.mockReset();
@@ -73,7 +84,7 @@ afterEach(async () => {
 });
 
 const signupInput = { userId: "u-1", organizationId: "org-1", email: "Mia@Example.test", method: "email" as const, role: "owner" as const, intent: { plan: "pro" as const, interval: "year" as const, src: "pricing", seg: "hvac" } };
-const planEvent = { kind: "upgrade" as const, subject: "user" as const, subjectId: "u-1", fromPlan: "free" as const, toPlan: "pro" as const, seats: 1, premiumVoice: false, stripeRef: "evt_test_1", purchaserUserId: "u-1" };
+const planEvent = { kind: "upgrade" as const, subject: "user" as const, subjectId: "u-1", fromPlan: "free" as const, toPlan: "pro" as const, seats: 1, premiumVoice: false, transition: "1767225600000", stripeRef: "evt_test_1", purchaserUserId: "u-1" };
 
 describe("off by default", () => {
   it("sends nothing when the flag is off, the URL is unset, or the URL is not https", async () => {
@@ -114,15 +125,15 @@ describe("payloads", () => {
     });
   });
 
-  it("plan change: keyed on the Stripe reference and kind; a Team plan names the org and the buyer", () => {
+  it("plan change: keyed on the Stripe reference, kind and transition; a Team plan names the org and the buyer", () => {
     expect(planChangePayload(planEvent, "Mia@Example.test", NOW)).toEqual({
-      eventId: "stripe:evt_test_1:upgrade", event: "upgrade", occurredAt: "2026-11-05T12:00:00.000Z", app: "calltrainer", version: 1,
+      eventId: "stripe:evt_test_1:upgrade:1767225600000", event: "upgrade", occurredAt: "2026-11-05T12:00:00.000Z", app: "calltrainer", version: 1,
       tags: ["ct-paid-pro", "app-calltrainer"],
       subject: "user", subjectId: "u-1", userId: "u-1", organizationId: null, email: "mia@example.test",
       fromPlan: "free", toPlan: "pro", seats: 1, premiumVoice: false, stripeRef: "evt_test_1",
     });
     const team = planChangePayload({ ...planEvent, kind: "churn", subject: "organization", subjectId: "org-1", fromPlan: "team", toPlan: "free", seats: 1, purchaserUserId: "u-9" }, null, NOW);
-    expect(team).toMatchObject({ eventId: "stripe:evt_test_1:churn", subject: "organization", userId: "u-9", organizationId: "org-1", email: null, tags: ["ct-churned", "app-calltrainer"] });
+    expect(team).toMatchObject({ eventId: "stripe:evt_test_1:churn:1767225600000", subject: "organization", userId: "u-9", organizationId: "org-1", email: null, tags: ["ct-churned", "app-calltrainer"] });
   });
 });
 
@@ -275,7 +286,7 @@ describe("sending", () => {
     expect(headers["x-calltrainer-signature"]).toBe(signGhlBody(SECRET, ts, call.init.body as string));
     expect(call.init.body as string).not.toContain(SECRET);
     expect(call.init.body as string).not.toContain(URL_);
-    expect(call.body.eventId).toBe("stripe:evt_test_1:upgrade");
+    expect(call.body.eventId).toBe("stripe:evt_test_1:upgrade:1767225600000");
   });
 
   it("swallows a timeout, a network error and a non-2xx answer, and logs without the URL or secret", async () => {
@@ -326,25 +337,148 @@ describe("sending", () => {
   });
 });
 
-describe("first graded call", () => {
-  const input = { userId: "u-1", organizationId: "org-1", email: "u-1@example.test", sessionId: "s-2", scenarioId: "quote-follow-up", overallScore: 80, grade: "B" as const };
+/**
+ * A small in-memory database for the first graded call: sessions, users and audit rows. Records the order of the calls
+ * that matter (create, update, lock, marker check, session lookup, audit inserts). It cannot block, so the advisory lock
+ * is recorded, not enforced; tests run one claim at a time.
+ */
+type SessionRow = { id: string; userId: string; organizationId: string; scenarioId: string; transcript: unknown; evaluation: unknown; overallScore: number | null; grade: string | null; createdAt: Date; updatedAt: Date };
+const T0 = Date.parse("2026-01-01T00:00:00Z");
+function gradeStore() {
+  const rows: SessionRow[] = [];
+  const audits: { userId: string | null; action: string; resource?: string | null; metadata?: unknown }[] = [];
+  const order: string[] = [];
+  const users: Record<string, { id: string; email: string; organizationId: string; role: string; isPlatformAdmin: boolean }> = {
+    "u-1": { id: "u-1", email: "U-1@Example.test", organizationId: "org-1", role: "trainee", isPlatformAdmin: false },
+    "m-1": { id: "m-1", email: "m-1@example.test", organizationId: "org-1", role: "manager", isPlatformAdmin: false },
+  };
+  let clock = T0;
+  const seed = (id: string, userId: string, graded?: { score: number; grade?: string }) => {
+    const r: SessionRow = {
+      id, userId, organizationId: "org-1", scenarioId: LIBRARY[0].id, transcript: [{ role: "user", text: "Hello there, how can I help?" }, { role: "assistant", text: "I need a quote." }],
+      evaluation: graded ? { method: "heuristic", overallScore: graded.score, grade: graded.grade ?? "C" } : null,
+      overallScore: graded?.score ?? null, grade: graded ? (graded.grade ?? "C") : null, createdAt: new Date(clock += 1000), updatedAt: new Date(T0),
+    };
+    rows.push(r);
+    return r;
+  };
+  mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => users[where.id] ?? null);
+  mocks.prisma.trainerSession.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => {
+    const r = rows.find((x) => x.id === where.id);
+    return r ? { ...r } : null;
+  });
+  mocks.prisma.trainerSession.create.mockImplementation(async ({ data }: { data: Partial<SessionRow> & { userId: string } }) => {
+    order.push("create");
+    const r = { ...data, id: `s-${mocks.prisma.trainerSession.create.mock.calls.length}`, organizationId: "org-1", createdAt: new Date(clock += 1000), updatedAt: new Date() } as SessionRow;
+    rows.push(r);
+    return { id: r.id };
+  });
+  mocks.prisma.trainerSession.update.mockImplementation(async ({ where, data }: { where: { id: string }; data: Partial<SessionRow> }) => {
+    order.push("update");
+    const r = rows.find((x) => x.id === where.id)!;
+    Object.assign(r, data, { updatedAt: new Date() });
+    return { ...r };
+  });
+  mocks.prisma.trainerSession.findFirst.mockImplementation(async ({ where }: { where: { userId: string } }) => {
+    order.push("first-session");
+    const r = rows.filter((x) => x.userId === where.userId && x.overallScore !== null)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))[0];
+    return r ? { id: r.id, organizationId: r.organizationId, scenarioId: r.scenarioId, overallScore: r.overallScore, grade: r.grade, user: { email: users[r.userId]?.email ?? null } } : null;
+  });
+  mocks.prisma.auditEvent.create.mockImplementation(async ({ data }: { data: (typeof audits)[number] }) => {
+    order.push(`audit:${data.action}`);
+    audits.push(data);
+    return { id: `a-${audits.length}` };
+  });
+  mocks.prisma.auditEvent.findFirst.mockImplementation(async ({ where }: { where: { userId: string; action: string } }) => {
+    order.push("marker-check");
+    return audits.find((a) => a.userId === where.userId && a.action === where.action) ? { id: "a-marker" } : null;
+  });
+  mocks.prisma.$queryRaw.mockImplementation(async (strings: TemplateStringsArray, ...values: unknown[]) => { order.push(`lock:${strings.join("?")}:${values.join(",")}`); return []; });
+  // An interactive transaction runs on the same store; the PATCH route's array form runs its operations in order.
+  mocks.prisma.$transaction.mockImplementation(async (arg: ((tx: typeof mocks.prisma) => Promise<unknown>) | Promise<unknown>[]) =>
+    typeof arg === "function" ? arg(mocks.prisma) : Promise.all(arg));
+  const markers = () => audits.filter((a) => a.action === FIRST_GRADED_MARKER);
+  const activations = () => sent().filter((c) => c.body.event === "first_graded_call").map((c) => c.body);
+  return { rows, audits, order, seed, markers, activations };
+}
 
-  it("sends only when the saved call is the user's earliest graded call", async () => {
+describe("first graded call (claimFirstGradedCall)", () => {
+  let db: ReturnType<typeof gradeStore>;
+  beforeEach(() => { db = gradeStore(); });
+  const LOCK = "lock:SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtext(?::text)):ct-first-grade:u-1";
+
+  it("sends once, naming the earliest graded session, and writes the marker", async () => {
     on();
-    const earliest = vi.fn(async () => "s-1");
-    notifyIfFirstGradedCall(input, earliest);
+    db.seed("s-a", "u-1");
+    db.seed("s-b", "u-1", { score: 81, grade: "B" });
+    db.seed("s-c", "u-1", { score: 60 });
+    notifyFirstGradedCall("u-1");
     await settleGhlEvents();
-    expect(fetchMock).not.toHaveBeenCalled();
-    notifyIfFirstGradedCall({ ...input, sessionId: "s-1" }, earliest);
-    await settleGhlEvents();
-    expect(sent().map((c) => c.body.eventId)).toEqual(["first_graded_call:u-1"]);
+    expect(db.activations()).toEqual([expect.objectContaining({ eventId: "first_graded_call:u-1", email: "u-1@example.test", sessionId: "s-b", overallScore: 81, grade: "B", organizationId: "org-1", tags: ["ct-activated", "app-calltrainer"] })]);
+    expect(db.markers()).toEqual([expect.objectContaining({ userId: "u-1", action: "ghl.first_graded_call_sent", resource: "s-b", metadata: { eventId: "first_graded_call:u-1" } })]);
   });
 
-  it("does not read the database when events are off", async () => {
-    const earliest = vi.fn(async () => "s-2");
-    notifyIfFirstGradedCall(input, earliest);
+  it("takes the lock before the marker check, and inserts the marker before anything is sent", async () => {
+    on();
+    db.seed("s-b", "u-1", { score: 81 });
+    let sentBeforeMarker = false;
+    fetchMock.mockImplementation(async () => { sentBeforeMarker = db.markers().length === 0; return new Response("ok"); });
+    notifyFirstGradedCall("u-1");
     await settleGhlEvents();
-    expect(earliest).not.toHaveBeenCalled();
+    expect(db.order).toEqual([LOCK, "marker-check", "first-session", "audit:ghl.first_graded_call_sent"]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(sentBeforeMarker).toBe(false);
+  });
+
+  it("with the marker present: nothing is sent and nothing more is written", async () => {
+    on();
+    db.seed("s-b", "u-1", { score: 81 });
+    notifyFirstGradedCall("u-1");
+    await settleGhlEvents();
+    notifyFirstGradedCall("u-1");
+    notifyFirstGradedCall("u-1");
+    await settleGhlEvents();
+    expect(db.activations()).toHaveLength(1);
+    expect(db.markers()).toHaveLength(1);
+    // The later claims each took the lock and stopped at the marker check.
+    expect(db.order.filter((o) => o === LOCK)).toHaveLength(3);
+    expect(db.order.filter((o) => o === "marker-check")).toHaveLength(3);
+    expect(db.order.filter((o) => o === "first-session")).toHaveLength(1);
+  });
+
+  it("with GHL not configured: no marker, no lock, no send; once configured it still goes out", async () => {
+    db.seed("s-b", "u-1", { score: 81 });
+    notifyFirstGradedCall("u-1");
+    expect(await claimFirstGradedCall("u-1")).toBeNull();
+    await settleGhlEvents();
+    expect(db.markers()).toEqual([]);
+    expect(mocks.prisma.$queryRaw).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    on();
+    notifyFirstGradedCall("u-1");
+    await settleGhlEvents();
+    expect(db.activations().map((b) => b.sessionId)).toEqual(["s-b"]);
+  });
+
+  it("a user with no graded session gets no marker, so a later first grade still sends", async () => {
+    on();
+    db.seed("s-a", "u-1");
+    notifyFirstGradedCall("u-1");
+    await settleGhlEvents();
+    expect(db.markers()).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a failure inside the claim is swallowed: no marker, no send, nothing thrown", async () => {
+    on();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    db.seed("s-b", "u-1", { score: 81 });
+    mocks.prisma.auditEvent.findFirst.mockRejectedValue(new Error("db down"));
+    expect(() => notifyFirstGradedCall("u-1")).not.toThrow();
+    await settleGhlEvents();
+    expect(db.markers()).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -453,41 +587,206 @@ describe("POST /api/auth/register", () => {
   });
 });
 
-describe("POST /api/transcripts", () => {
-  const evaluation = { overallScore: 74, grade: "B", goalAchievement: { achieved: true } };
-  const save = (extra: Record<string, unknown> = {}) =>
-    saveTranscript(json("http://localhost/api/transcripts", { sessionId: "rt-1", transcript: [{ role: "user", text: "Hello" }], scenario: { id: "quote-follow-up" }, evaluation, seal: "x", ...extra }));
+/**
+ * Every path that stores a grade, against one small in-memory session table: POST /api/transcripts (a sealed grade, which
+ * /api/evaluate-call produces) and PATCH /api/transcripts/[id] (the first AI grade of a saved call, or a re-grade).
+ */
+describe("first graded call from every grading path", () => {
+  const scenario = LIBRARY[0];
+  const transcript = [{ role: "user", text: "Hi, thanks for calling. What made you reach out today?" }, { role: "assistant", text: "I need a quote." }];
+  let seq: number;
+  let db: ReturnType<typeof gradeStore>;
+  const llmReply = () => JSON.stringify({
+    summary: "You kept the caller talking.",
+    criteria: scenario.rubric.map((c) => ({ id: c.id, score: 72, rationale: "You made a solid attempt.", evidence: [] })),
+    strengths: ["You stayed calm."], improvements: ["Offer a time slot."], goalStatus: "partial", goalExplanation: "You made progress but booked nothing.",
+  });
+  const patch = (id: string) => regrade(json(`http://localhost/api/transcripts/${id}`, {}), { params: Promise.resolve({ id }) });
+  const save = (evaluation: Record<string, unknown> | undefined) =>
+    saveTranscript(json("http://localhost/api/transcripts", { sessionId: `rt-${++seq}`, transcript, scenario: { id: scenario.id }, evaluation, seal: evaluation ? "x" : undefined }));
+  const sealed = { overallScore: 74, grade: "B", goalAchievement: { achieved: true } };
 
   beforeEach(() => {
-    mocks.prisma.user.findUnique.mockResolvedValue({ id: "u-1", organizationId: "org-1", email: "U-1@Example.test" });
-    mocks.prisma.trainerSession.create.mockImplementation(async () => ({ id: `s-${mocks.prisma.trainerSession.create.mock.calls.length}` }));
-    mocks.prisma.auditEvent.create.mockResolvedValue({});
+    seq = 0;
+    db = gradeStore();
+    vi.stubEnv("DATABASE_URL", "postgresql://ci:ci@localhost:5432/ci");
+    vi.stubEnv("LLM_API_KEY", "test-key");
+    vi.stubEnv("OPENAI_API_KEY", "");
+    vi.stubEnv("RATE_LIMIT_GRADING_MAX", "1000");
+    mocks.chat.mockResolvedValue(llmReply());
+  });
+  const activations = () => db.activations();
+  const claimed = () => mocks.prisma.$queryRaw.mock.calls.length;
+
+  it("POST: the first graded save schedules the claim and sends ct-activated once; a second graded call does not", async () => {
+    on();
+    expect((await save(sealed)).status).toBe(200);
+    await settleGhlEvents();
+    expect((await save(sealed)).status).toBe(200);
+    await settleGhlEvents();
+    expect(activations()).toEqual([expect.objectContaining({ eventId: "first_graded_call:u-1", email: "u-1@example.test", sessionId: "s-1", overallScore: 74, grade: "B", tags: ["ct-activated", "app-calltrainer"] })]);
+    expect(db.markers()).toHaveLength(1);
   });
 
-  it("sends first_graded_call for the first graded save only", async () => {
+  it("POST saves exactly as before (one create with the grade, then the audit row) and schedules the claim after the create", async () => {
     on();
-    mocks.prisma.trainerSession.findFirst.mockResolvedValue({ id: "s-1" });
-    expect((await save()).status).toBe(200);
-    expect((await save()).status).toBe(200);
+    expect((await save(sealed)).status).toBe(200);
+    expect(mocks.prisma.trainerSession.create).toHaveBeenCalledWith({ data: expect.objectContaining({ overallScore: 74, grade: "B", goalAchieved: true }) });
+    expect(mocks.prisma.trainerSession.update).not.toHaveBeenCalled();
     await settleGhlEvents();
-    expect(sent().map((c) => c.body)).toEqual([expect.objectContaining({ eventId: "first_graded_call:u-1", email: "u-1@example.test", sessionId: "s-1", overallScore: 74, grade: "B", tags: ["ct-activated", "app-calltrainer"] })]);
-    expect(mocks.prisma.trainerSession.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: "u-1", overallScore: { not: null } } }));
+    expect(db.order[0]).toBe("create");
+    expect(db.order.indexOf("audit:session.saved")).toBeGreaterThan(0);
+    expect(db.order.findIndex((o) => o.startsWith("lock:"))).toBeGreaterThan(0);
   });
 
-  it("an ungraded save sends nothing and never queries", async () => {
+  it("POST: an ungraded save (no grade, or a grade that failed) schedules nothing", async () => {
     on();
-    expect((await save({ evaluation: undefined, seal: undefined })).status).toBe(200);
+    expect((await save(undefined)).status).toBe(200);
+    expect((await save({ error: "Failed to evaluate call" })).status).toBe(200);
     await settleGhlEvents();
-    expect(mocks.prisma.trainerSession.findFirst).not.toHaveBeenCalled();
+    expect(claimed()).toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("the save succeeds when the check or GHL fails", async () => {
+  it("POST: when the audit insert fails after the graded create, the save answers 500 as before and the claim still runs", async () => {
     on();
     vi.spyOn(console, "error").mockImplementation(() => {});
-    mocks.prisma.trainerSession.findFirst.mockRejectedValue(new Error("db hiccup"));
-    expect((await save()).status).toBe(200);
+    mocks.prisma.auditEvent.create.mockImplementation(async ({ data }: { data: { action: string } }) => {
+      if (data.action === "session.saved") throw new Error("audit insert failed");
+      db.audits.push(data as (typeof db.audits)[number]);
+      return { id: "a-marker" };
+    });
+    expect((await save(sealed)).status).toBe(500);
     await settleGhlEvents();
+    expect(activations()).toEqual([expect.objectContaining({ eventId: "first_graded_call:u-1", sessionId: "s-1" })]);
+    expect(db.markers()).toHaveLength(1);
+  });
+
+  it("POST: the save succeeds while GHL is down", async () => {
+    on();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockRejectedValue(new TypeError("fetch failed"));
+    expect((await save(sealed)).status).toBe(200);
+    await settleGhlEvents();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("rollout: a user graded before this shipped (no marker) gets one ct-activated on their next graded call, naming the earliest", async () => {
+    on();
+    db.seed("s-legacy", "u-1", { score: 55, grade: "D" });
+    expect((await save(sealed)).status).toBe(200);
+    expect((await save(sealed)).status).toBe(200);
+    await settleGhlEvents();
+    expect(activations()).toEqual([expect.objectContaining({ eventId: "first_graded_call:u-1", sessionId: "s-legacy", grade: "D", tags: ["ct-activated", "app-calltrainer"] })]);
+  });
+
+  it("evaluate-call then save: grading alone sends nothing, the save of its sealed grade sends once", async () => {
+    on();
+    const graded = await evaluateCallRoute(json("http://localhost/api/evaluate-call", { scenario, transcript }));
+    expect(graded.status).toBe(200);
+    const evaluation = await graded.json();
+    await settleGhlEvents();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect((await save(evaluation)).status).toBe(200);
+    await settleGhlEvents();
+    expect(activations()).toEqual([expect.objectContaining({ sessionId: "s-1", overallScore: evaluation.overallScore })]);
+  });
+
+  it("PATCH: a call going from no score to a score schedules the claim and sends ct-activated once", async () => {
+    on();
+    mocks.authUser = { id: "u-1", email: "u-1@example.test", role: "trainee" };
+    db.seed("s-old", "u-1");
+    expect((await patch("s-old")).status).toBe(200);
+    await settleGhlEvents();
+    expect(activations()).toEqual([expect.objectContaining({ eventId: "first_graded_call:u-1", userId: "u-1", email: "u-1@example.test", sessionId: "s-old", tags: ["ct-activated", "app-calltrainer"] })]);
+    expect(db.markers()).toHaveLength(1);
+  });
+
+  it("PATCH saves exactly as before: the grade and its audit row in one transaction, then the claim in the background", async () => {
+    on();
+    mocks.authUser = { id: "m-1", email: "m-1@example.test", role: "manager" };
+    db.seed("s-old", "u-1");
+    expect((await patch("s-old")).status).toBe(200);
+    expect(mocks.prisma.$transaction.mock.calls[0][0]).toBeInstanceOf(Array);
+    await settleGhlEvents();
+    expect(db.order.slice(0, 3)).toEqual(["update", "audit:session.regraded", expect.stringMatching(/^lock:/)]);
+  });
+
+  it("PATCH by a manager: the activation names the trainee, not the manager", async () => {
+    on();
+    mocks.authUser = { id: "m-1", email: "m-1@example.test", role: "manager" };
+    db.seed("s-old", "u-1");
+    expect((await patch("s-old")).status).toBe(200);
+    await settleGhlEvents();
+    expect(activations()).toEqual([expect.objectContaining({ userId: "u-1", email: "u-1@example.test", sessionId: "s-old" })]);
+  });
+
+  it("PATCH: a re-grade of a call that already had a score schedules nothing", async () => {
+    on();
+    mocks.authUser = { id: "m-1", email: "m-1@example.test", role: "manager" };
+    db.seed("s-graded", "u-1", { score: 60 });
+    expect((await patch("s-graded")).status).toBe(200);
+    await settleGhlEvents();
+    expect(claimed()).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("PATCH: once the first graded call was announced, grading an older ungraded call sends nothing", async () => {
+    on();
+    mocks.authUser = { id: "u-1", email: "u-1@example.test", role: "trainee" };
+    db.seed("s-old", "u-1");
+    expect((await save(sealed)).status).toBe(200);
+    await settleGhlEvents();
+    expect((await patch("s-old")).status).toBe(200);
+    await settleGhlEvents();
+    expect(activations().map((b) => b.sessionId)).toEqual(["s-1"]);
+  });
+
+  it("PATCH: a failed AI grade stores nothing and sends nothing", async () => {
+    on();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.authUser = { id: "u-1", email: "u-1@example.test", role: "trainee" };
+    db.seed("s-old", "u-1");
+    mocks.chat.mockRejectedValue(new Error("model down"));
+    const res = await patch("s-old");
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toBe("llm_failed");
+    await settleGhlEvents();
+    expect(db.rows[0].overallScore).toBeNull();
+    expect(claimed()).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("PATCH then POST: the re-graded call was first, so the later graded save sends nothing", async () => {
+    on();
+    mocks.authUser = { id: "u-1", email: "u-1@example.test", role: "trainee" };
+    db.seed("s-old", "u-1");
+    expect((await patch("s-old")).status).toBe(200);
+    await settleGhlEvents();
+    expect((await save(sealed)).status).toBe(200);
+    await settleGhlEvents();
+    expect(activations().map((b) => b.sessionId)).toEqual(["s-old"]);
+  });
+
+  it("PATCH: a failed save (the transaction throws) answers 500 as before and schedules nothing", async () => {
+    on();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.authUser = { id: "u-1", email: "u-1@example.test", role: "trainee" };
+    db.seed("s-old", "u-1");
+    mocks.prisma.$transaction.mockRejectedValueOnce(new Error("db down"));
+    expect((await patch("s-old")).status).toBe(500);
+    await settleGhlEvents();
+    expect(claimed()).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("PATCH succeeds and writes no marker while GHL is off", async () => {
+    mocks.authUser = { id: "u-1", email: "u-1@example.test", role: "trainee" };
+    db.seed("s-old", "u-1");
+    expect((await patch("s-old")).status).toBe(200);
+    await settleGhlEvents();
+    expect(db.markers()).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

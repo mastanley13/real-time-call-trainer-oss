@@ -5,7 +5,8 @@ import type { PremiumEvent } from "./premiumEventTypes";
 /**
  * Billing lifecycle hook for the CRM (GoHighLevel). Off unless GHL_BILLING_EVENTS=true and a sink is registered.
  * billing.ts registers ghlBillingSink from ghlWebhook.ts, which posts each event to the GHL Inbound Webhook URL
- * (GHL_WEBHOOK_URL). Only Calltrainer subscriptions (Stripe metadata app=calltrainer) reach this hook. The event here
+ * (GHL_WEBHOOK_URL). Only Calltrainer subscriptions reach this hook (metadata app=calltrainer, or plan items billing's own
+ * price and product rules classify as Calltrainer plans; see lifecycleEventFor in billing.ts). The event here
  * carries ids and plans only; the GHL sink adds the contact email from the database at send time. Never Stripe
  * customer ids, raw Stripe objects or card data.
  */
@@ -21,11 +22,22 @@ export interface PlanChange {
   toPlan: PlanTier;
   seats: number;
   premiumVoice: boolean;
+  /**
+   * Names this one transition: a random UUID made inside the transaction that applies it (newTransitionId in billing.ts).
+   * Only that transaction's path emits the transition, once, after commit, so the value is unique per transition.
+   */
+  transition: string;
+  /**
+   * True when billing's own rules made this change from a Calltrainer plan: reconcile classified the subscription's items
+   * as a Calltrainer plan (env price allowlist or product ct_* metadata), or the subject held a paid plan on this very
+   * subscription, which only such items grant. Absent or false otherwise. See lifecycleEventFor in billing.ts.
+   */
+  calltrainerPlan?: boolean;
 }
 
 export interface BillingLifecycleEvent extends PlanChange {
   /**
-   * Dedupe reference, the same on the success-page and webhook paths: subscription:{sha256 digest of the subscription id}.
+   * Subscription reference, the same on the success-page and webhook paths: subscription:{sha256 digest of the subscription id}.
    * Only when no subscription id is known: checkout_session:{id} or the Stripe event id. See lifecycleRef in billing.ts.
    */
   stripeRef: string;
@@ -33,7 +45,10 @@ export interface BillingLifecycleEvent extends PlanChange {
   purchaserUserId: string | null;
 }
 
-/** Only subscriptions Calltrainer's own checkout created carry app=calltrainer. Nothing else on a shared Stripe account is forwarded. */
+/**
+ * Calltrainer's own checkout puts app=calltrainer on the subscription. It is one of the two signals lifecycleEventFor
+ * accepts; the other is calltrainerPlan on the change. A subscription with neither is never forwarded.
+ */
 export function isCalltrainerStripe(metadata: Record<string, string> | null | undefined): boolean {
   return metadata?.app === "calltrainer";
 }

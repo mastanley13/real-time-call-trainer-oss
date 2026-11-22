@@ -53,7 +53,8 @@ export async function POST(request: NextRequest) {
     const evaluation = await evaluateCall(scenario, turns);
     const note = gradedNote(evaluation.note, turns.length, body.transcript.length);
     const out = { evaluatedAt: new Date().toISOString(), ...evaluation, ...(note ? { note } : {}) };
-    // The seal lets POST /api/transcripts store this score; a grade the client edits or invents won't verify.
+    // The seal lets POST /api/transcripts store this score; a grade the client edits or invents won't verify. Nothing is
+    // stored here, so the CRM activation event (first graded call) is sent by that save, not by this route.
     const seal = sealEvaluation({ userId: auth.id, scenarioId: scenario.id, transcript: body.transcript, evaluation: out });
     return NextResponse.json({ ...out, ...(seal ? { seal } : {}) });
   } catch (error) {
