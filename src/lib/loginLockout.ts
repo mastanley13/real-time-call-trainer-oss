@@ -67,8 +67,31 @@ export async function clearAuthFailures(
   db: Prisma.TransactionClient = prisma,
 ): Promise<boolean> {
   const { count } = await db.user.updateMany({
-    where: { id: userId, OR: [{ lockedUntil: null }, { lockedUntil: { lte: new Date() } }] },
+    where: { id: userId, ...notLocked() },
     data: { failedLoginCount: 0, lockedUntil: null, ...extra },
   });
   return count === 1;
+}
+
+/**
+ * The same lock-aware gate as clearAuthFailures, but it leaves failedLoginCount and lockedUntil alone. It is a
+ * conditional UPDATE that changes nothing (count + 0), so it takes the user row lock and serializes with
+ * recordAuthFailure in exactly the same way. Returns false when the account is locked; the caller answers with
+ * lockedResponse() and writes nothing.
+ *
+ * Use it for successes whose proof must not reset the shared counter. A password alone must not clear failures that
+ * MFA guesses built up: otherwise someone holding a session and the password could alternate wrong MFA codes with
+ * password-proved actions and never reach the lockout.
+ */
+export async function holdIfUnlocked(userId: string, db: Prisma.TransactionClient = prisma): Promise<boolean> {
+  const { count } = await db.user.updateMany({
+    where: { id: userId, ...notLocked() },
+    data: { failedLoginCount: { increment: 0 } },
+  });
+  return count === 1;
+}
+
+/** Matches the user row only while it is not locked (no lock, or one that has run out). */
+function notLocked() {
+  return { OR: [{ lockedUntil: null }, { lockedUntil: { lte: new Date() } }] };
 }

@@ -663,11 +663,38 @@ describe("regenerating codes: lockout and races", () => {
     expect(state.users.get(user.id)!.failedLoginCount).toBe(2);
   });
 
-  it("a successful regeneration resets the counters", async () => {
+  it("a regeneration proved by a TOTP code resets the counters, including an expired lock", async () => {
     const { user } = await enrolled();
-    state.users.get(user.id)!.failedLoginCount = 3;
+    Object.assign(state.users.get(user.id)!, { failedLoginCount: 3, lockedUntil: new Date(Date.now() - 1000) });
     expect((await regenerate(user, { code: "123456" })).status).toBe(200);
-    expect(state.users.get(user.id)!.failedLoginCount).toBe(0);
+    expect(state.users.get(user.id)).toMatchObject({ failedLoginCount: 0, lockedUntil: null });
+  });
+
+  it("a regeneration proved by the password succeeds but leaves the failure count alone", async () => {
+    const { user } = await enrolled();
+    state.users.get(user.id)!.failedLoginCount = 5;
+    const res = await regenerate(user, { password: PASSWORD });
+    expect(res.status).toBe(200);
+    expect((await res.json()).recoveryCodes).toHaveLength(10);
+    expect(state.users.get(user.id)).toMatchObject({ failedLoginCount: 5, lockedUntil: null });
+  });
+
+  it("alternating wrong MFA codes with password-proved regenerations still locks at 8 failures", async () => {
+    const { user } = await enrolled();
+    // Six rounds (the per-user regenerate limit is 6 a minute): a wrong code at the challenge, then a password regen.
+    for (let i = 1; i <= 6; i++) {
+      expect((await challenge(user.id, { code: "000000" }, freshIp())).status).toBe(401);
+      expect((await regenerate(user, { password: PASSWORD })).status).toBe(200);
+      expect(state.users.get(user.id)!.failedLoginCount).toBe(i);
+    }
+    expect((await challenge(user.id, { code: "000000" }, freshIp())).status).toBe(401);
+    expect((await challenge(user.id, { recoveryCode: "AAAA-AAAA-AAAA" }, freshIp())).status).toBe(401);
+    // The 8th failure locked the account: no more guesses and no password sign-in. (A locked account's regenerate is
+    // refused with 423 in "wrong proofs count toward the account lockout"; here the per-user limit of 6 a minute,
+    // checked first, already answers 429.)
+    expect(state.users.get(user.id)!.lockedUntil!.getTime()).toBeGreaterThan(Date.now());
+    expect((await challenge(user.id, { code: "123456" }, freshIp())).status).toBe(423);
+    expect((await login(user, PASSWORD)).status).toBe(423);
   });
 
   it.each([

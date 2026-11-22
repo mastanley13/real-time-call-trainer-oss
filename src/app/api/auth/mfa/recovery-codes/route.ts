@@ -5,7 +5,7 @@ import { verifyPassword } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { mfaUnavailableResponse, verifyTotp } from "@/lib/mfa";
 import { recoveryCodeCounts, replaceRecoveryCodes } from "@/lib/mfaRecovery";
-import { clearAuthFailures, isLocked, lockedResponse, recordAuthFailure } from "@/lib/loginLockout";
+import { clearAuthFailures, holdIfUnlocked, isLocked, lockedResponse, recordAuthFailure } from "@/lib/loginLockout";
 import { clientIp, ipLimitResponse, rateLimit, readJsonLimited } from "@/lib/rateLimit";
 
 /** Exactly one proof: the current password, or a current authenticator code. */
@@ -112,13 +112,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // One transaction. First the lock-aware counter reset: it takes the user row lock and refuses if failures from other
-  // requests armed a lock while the proof was being checked. Then, under that lock, the secret (and for a password
-  // proof, the password hash) must still be the ones just checked. Either refusal rolls back, so nothing is written.
+  // One transaction. First the lock-aware gate: it takes the user row lock and refuses if failures from other requests
+  // armed a lock while the proof was being checked. Only a TOTP proof resets the shared failure counter. A password
+  // proof leaves it alone, because the password is the factor an MFA guesser already has: if it reset the count,
+  // someone with a session and the password could alternate wrong MFA codes with regenerations and never lock.
+  // Then, under that lock, the secret (and for a password proof, the password hash) must still be the ones just
+  // checked. Either refusal rolls back, so nothing is written.
   const provenSecret = dbUser.mfaSecret;
   const result = await prisma
     .$transaction(async (tx): Promise<string[] | "locked"> => {
-      if (!(await clearAuthFailures(dbUser.id, {}, tx))) return "locked";
+      const unlocked = method === "totp" ? await clearAuthFailures(dbUser.id, {}, tx) : await holdIfUnlocked(dbUser.id, tx);
+      if (!unlocked) return "locked";
       const codes = await replaceRecoveryCodes(tx, dbUser.id, {
         mfaSecret: provenSecret,
         ...(method === "password" ? { passwordHash: dbUser.passwordHash } : {}),
