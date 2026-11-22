@@ -10,7 +10,8 @@ import EmptyState from "@/components/ui/EmptyState";
 import AssignedToYou from "@/components/team/AssignedToYou";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { PersonaAvatar } from "@/components/ui/Persona";
-import { isLegacyGrader } from "@/lib/grader-types";
+import { isLegacyGrader, isLlmFailedGrade, logbookScore } from "@/lib/grader-types";
+import { averageScore, bestScore, isLlmFailedEvaluation, trendPoints } from "@/lib/scoreAggregates";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatDuration } from "@/lib/format";
 import { voiceLabel, voiceOfListEntry } from "@/lib/billingUi";
@@ -32,6 +33,8 @@ interface Row {
   legacy: boolean;
   /** Voice the call ran on, from the server's neutral label; null for text, browser-only and older calls (no label). */
   voice: "premium" | "standard" | null;
+  /** AI grading failed and the score is a rules-based stand-in (isLlmFailedGrade): the Logbook shows "Grading pending". */
+  llmFailed: boolean;
 }
 
 const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -42,6 +45,7 @@ const toRow = (s: StoredSession): Row => ({
   score: s.evaluation?.overallScore ?? null, grade: s.evaluation?.grade ?? null, method: s.evaluation?.method ?? null, legacy: isLegacyGrader(s.evaluation),
   // Calls kept only in this browser have no server-verified voice label.
   voice: null,
+  llmFailed: isLlmFailedGrade(s.evaluation),
 });
 
 /** Tiny line chart; values are drawn to one 0..max scale. */
@@ -62,7 +66,8 @@ function Sparkline({ values, max }: { values: (number | null)[]; max?: number })
 }
 
 function TrendChart({ rows }: { rows: Row[] }) {
-  const pts = rows.filter((r) => r.score !== null).slice(0, 20).reverse();
+  // Failed-grade rough scores stay out of the trend (aggregateScore in scoreAggregates.ts).
+  const pts = trendPoints(rows, 20);
   const w = 640, h = 220, pl = 32, pr = 12, pt = 12, pb = 28;
   const x = (i: number) => pl + (i / Math.max(1, pts.length - 1)) * (w - pl - pr);
   const y = (v: number) => pt + (1 - v / 100) * (h - pt - pb);
@@ -170,7 +175,7 @@ export default function DashboardPage() {
       .then(async (r) => {
         if (!r.ok) throw new Error("Could not load sessions.");
         const { sessions } = await r.json();
-        const remote: Row[] = sessions.map((s: { id: string; scenarioTitle: string | null; scenarioId: string; createdAt: string; durationSeconds: number; overallScore: number | null; grade: string | null; graderVersion: string | null; graderMethod: string | null; voiceUsed?: unknown }) => ({ id: s.id, title: s.scenarioTitle ?? s.scenarioId, scenarioId: s.scenarioId, createdAt: s.createdAt, durationSeconds: s.durationSeconds, score: s.overallScore, grade: s.grade, method: (s.graderMethod as Row["method"]) ?? null, legacy: s.overallScore !== null && !s.graderVersion && s.graderMethod !== "llm", voice: voiceOfListEntry(s.voiceUsed) }));
+        const remote: Row[] = sessions.map((s: { id: string; scenarioTitle: string | null; scenarioId: string; createdAt: string; durationSeconds: number; overallScore: number | null; grade: string | null; graderVersion: string | null; graderMethod: string | null; graderLlmFailed?: unknown; voiceUsed?: unknown }) => ({ id: s.id, title: s.scenarioTitle ?? s.scenarioId, scenarioId: s.scenarioId, createdAt: s.createdAt, durationSeconds: s.durationSeconds, score: s.overallScore, grade: s.grade, method: (s.graderMethod as Row["method"]) ?? null, legacy: s.overallScore !== null && !s.graderVersion && s.graderMethod !== "llm", voice: voiceOfListEntry(s.voiceUsed), llmFailed: isLlmFailedGrade({ method: s.graderMethod, llmFailed: s.graderLlmFailed }) }));
         setRows([...remote, ...local].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
       })
       .catch((e) => { setError(e.message); setRows(local); });
@@ -178,15 +183,16 @@ export default function DashboardPage() {
 
   const counted = useMemo(() => (rows ?? []).filter((r) => showLegacy || !r.legacy), [rows, showLegacy]);
   const stats = useMemo(() => {
-    const scored = counted.filter((r) => r.score !== null) as (Row & { score: number })[];
+    // Every call counts as a session and toward time practised; only scores that count (aggregateScore) enter score math.
+    const avg = averageScore(counted);
+    const best = bestScore(counted);
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const days = Array.from({ length: 14 }, (_, i) => dayKey(addDays(today, i - 13)));
     const byDay = (pick: (rs: Row[]) => number | null) => days.map((k) => pick(counted.filter((r) => dayKey(new Date(r.createdAt)) === k)));
-    const avgOf = (rs: Row[]) => { const s = rs.filter((r) => r.score !== null); return s.length ? s.reduce((a, r) => a + r.score!, 0) / s.length : null; };
     return [
       { label: "Sessions", value: String(rows?.length ?? 0), spark: byDay((rs) => rs.length) },
-      { label: "Average score", value: scored.length ? String(Math.round(scored.reduce((a, r) => a + r.score, 0) / scored.length)) : "None", spark: byDay(avgOf), max: 100 },
-      { label: "Best score", value: scored.length ? String(Math.max(...scored.map((r) => r.score))) : "None", spark: byDay((rs) => Math.max(0, ...rs.map((r) => r.score ?? 0))), max: 100 },
+      { label: "Average score", value: avg !== null ? String(avg) : "None", spark: byDay(averageScore), max: 100 },
+      { label: "Best score", value: best !== null ? String(best) : "None", spark: byDay((rs) => bestScore(rs) ?? 0), max: 100 },
       { label: "Time practised", value: formatDuration(counted.reduce((a, r) => a + r.durationSeconds, 0)), spark: byDay((rs) => rs.reduce((a, r) => a + r.durationSeconds, 0)) },
     ];
   }, [counted, rows]);
@@ -196,7 +202,8 @@ export default function DashboardPage() {
     const ids = new Set(counted.map((r) => r.id));
     const agg = new Map<string, { sum: number; n: number }>();
     for (const s of listLocalSessions()) {
-      if (!ids.has(s.id) || !s.evaluation) continue;
+      // A failed AI grade's criterion scores are rough estimates too, so they stay out of skill averages.
+      if (!ids.has(s.id) || !s.evaluation || isLlmFailedEvaluation(s.evaluation)) continue;
       for (const c of s.evaluation.criteria) { const a = agg.get(c.name) ?? { sum: 0, n: 0 }; a.sum += c.score; a.n++; agg.set(c.name, a); }
     }
     return [...agg.entries()].map(([name, a]) => ({ name, avg: Math.round(a.sum / a.n), n: a.n })).sort((a, b) => a.avg - b.avg);
@@ -291,22 +298,24 @@ export default function DashboardPage() {
         <section className="panel overflow-hidden" aria-labelledby="log-h">
           <h2 id="log-h" className="border-b border-line px-4 py-3 text-sm font-bold">Logbook</h2>
           <ul className="divide-y divide-line">
-            {rows.map((r) => (
+            {rows.map((r) => {
+              const cell = logbookScore(r);
+              return (
               <li key={r.id} className="group flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 transition-colors hover:bg-sunken sm:flex-nowrap">
                 <Link href={`/trainer/debrief/${r.id}`} className="min-w-0 basis-full rounded sm:basis-auto sm:flex-1">
                   <p className="break-words text-sm font-semibold">{r.title}</p>
                   <p className="font-mono text-[11px] text-ink-muted">{new Date(r.createdAt).toLocaleString()} · {formatDuration(r.durationSeconds)}{r.voice ? ` · ${voiceLabel(r.voice)}` : ""}{r.id.startsWith("local-") ? " · this browser" : ""}</p>
                 </Link>
-                <div className="flex w-36 items-center gap-2" aria-label={r.score !== null ? `Score ${r.score}, grade ${r.grade}` : "Ungraded"}>
-                  {r.score !== null ? (
+                <div className="flex w-36 items-center gap-2" aria-label={cell.label}>
+                  {cell.kind === "score" ? (
                     <>
-                      <div className="tape flex-1"><span className={r.score >= 80 ? "bg-ok" : r.score >= 60 ? "bg-signal" : "bg-caution"} style={{ width: `${r.score}%` }} /></div>
-                      <span className="mono w-12 text-right text-sm">{r.score}<span className="text-ink-muted"> {r.grade}</span></span>
+                      <div className="tape flex-1"><span className={cell.score >= 80 ? "bg-ok" : cell.score >= 60 ? "bg-signal" : "bg-caution"} style={{ width: `${cell.score}%` }} /></div>
+                      <span className="mono w-12 text-right text-sm">{cell.score}<span className="text-ink-muted"> {cell.grade}</span></span>
                     </>
-                  ) : <span className="text-xs text-ink-muted">Ungraded</span>}
+                  ) : <span className="text-xs text-ink-muted">{cell.label}</span>}
                 </div>
-                {/* No chip for an ungraded call: the score column already says "Ungraded". */}
-                {(r.legacy || r.method) && <span className={`chip !text-[10.5px] ${r.legacy ? "" : r.method === "llm" ? "!border-ok/40 !text-ok" : "!border-caution/40 !text-caution"}`}>{r.legacy ? "Legacy" : r.method === "llm" ? "AI-graded" : "Estimate"}</span>}
+                {/* No chip for an ungraded or pending call: the score column already says which. */}
+                {cell.kind !== "pending" && (r.legacy || r.method) && <span className={`chip !text-[10.5px] ${r.legacy ? "" : r.method === "llm" ? "!border-ok/40 !text-ok" : "!border-caution/40 !text-caution"}`}>{r.legacy ? "Legacy" : r.method === "llm" ? "AI-graded" : "Estimate"}</span>}
                 <ChevronRight size={16} className="hidden text-ink-muted sm:block" aria-hidden />
                 {r.id.startsWith("local-") && (
                   <button aria-label={`Delete session: ${r.title}, ${new Date(r.createdAt).toLocaleString()}`} title="Delete session"
@@ -314,7 +323,8 @@ export default function DashboardPage() {
                     onClick={() => removeRow(r)}><Trash2 size={16} aria-hidden /><span className="sm:sr-only">Delete</span></button>
                 )}
               </li>
-            ))}
+              );
+            })}
           </ul>
         </section>
       )}

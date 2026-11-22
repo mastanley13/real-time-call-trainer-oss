@@ -1,7 +1,7 @@
 import Link from "next/link";
 import PricingSummary from "@/components/landing/PricingSummary";
 import PublicFooter from "@/components/landing/PublicFooter";
-import { CLOSING, PARTNER_BENEFITS, PARTNER_RULES, type Landing } from "@/lib/landing";
+import { CLOSING, PARTNER_RULES, type Landing } from "@/lib/landing";
 import { registerHref } from "@/lib/pricing";
 
 /** Shared layout for the /for/* vertical landing pages. Static; copy comes from src/lib/landing.ts. */
@@ -39,8 +39,8 @@ export default function LandingPage({ l, billingEnabled }: { l: Landing; billing
       <section className="border-y border-line bg-surface" aria-labelledby="how-h">
         <div className="page py-12">
           <p className="eyebrow">How it works</p>
-          <h2 id="how-h" className="mt-1 text-2xl font-bold sm:text-3xl">{partner ? "From application to commission" : "Brief, call, debrief. Then go again."}</h2>
-          <ol className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <h2 id="how-h" className="mt-1 text-2xl font-bold sm:text-3xl">{partner ? "From application to practice" : "Brief, call, debrief. Then go again."}</h2>
+          <ol className={`mt-8 grid gap-4 ${l.steps.length === 3 ? "md:grid-cols-3" : "md:grid-cols-2 lg:grid-cols-4"}`}>
             {l.steps.map((s, i) => (
               <li key={s.title} className="rounded-panel border border-line p-4">
                 <span className="mono text-xs text-ink-muted">0{i + 1}</span>
@@ -51,15 +51,6 @@ export default function LandingPage({ l, billingEnabled }: { l: Landing; billing
           </ol>
         </div>
       </section>
-
-      {partner && (
-        <section className="page py-12" aria-labelledby="benefits-h">
-          <h2 id="benefits-h" className="text-2xl font-bold">Benefits</h2>
-          <ul className="mt-4 list-disc space-y-2 pl-5 text-ink-soft">
-            {PARTNER_BENEFITS.map((b) => <li key={b}>{b}</li>)}
-          </ul>
-        </section>
-      )}
 
       <section className="page py-12 sm:py-14" aria-labelledby="personas-h">
         <p className="eyebrow">Personas</p>
