@@ -17,7 +17,8 @@ type Outcome =
   | { kind: "invalid" }
   | { kind: "locked" }
   | { kind: "mfa_changed" }
-  | { kind: "link_refused" };
+  | { kind: "link_refused" }
+  | { kind: "error" };
 
 /** Thrown inside the success transaction to roll it back and report why. */
 class Abort extends Error {
@@ -105,6 +106,9 @@ export async function POST(req: NextRequest) {
     // isLocked check above. Any refusal rolls everything back, so a recovery code is spent only by a sign-in that
     // actually issues a session: a lock armed meanwhile, or a refused Google link, leaves the code usable later.
     // It stays single use: the spend is still one conditional UPDATE, committed together with the sign-in.
+    // The success audit rows are written in the same transaction, so a failed insert rolls back the spend as well:
+    // either all of it commits and the session is issued below, or none of it does and the code stays usable.
+    const userAgent = req.headers.get("user-agent") ?? undefined;
     outcome = await prisma
       .$transaction(async (tx): Promise<Outcome> => {
         if (!(await clearAuthFailures(user.id, { lastLoginAt: new Date() }, tx))) return { kind: "locked" };
@@ -123,15 +127,42 @@ export async function POST(req: NextRequest) {
         if (challenge.linkGoogleSub && !(await linkGoogleAtomically(tx, user.id, challenge.linkGoogleSub))) {
           throw new Abort({ kind: "link_refused" });
         }
+        if (remaining !== undefined) {
+          await tx.auditEvent.create({
+            data: { userId: user.id, action: "user.mfa_recovery_code_used", ip, userAgent, metadata: { remaining } },
+          });
+        }
+        const successMeta = {
+          ...(challenge.linkGoogleSub ? { via: "google", linked: true } : {}),
+          ...(viaRecovery ? { method: "recovery_code" } : {}),
+        };
+        await tx.auditEvent.create({
+          data: {
+            userId: user.id,
+            action: "user.mfa_challenge_success",
+            ip,
+            userAgent,
+            ...(Object.keys(successMeta).length ? { metadata: successMeta } : {}),
+          },
+        });
         return { kind: "ok", remaining };
       })
-      .catch((e: unknown) => {
+      .catch((e: unknown): Outcome => {
         if (e instanceof Abort) return e.outcome;
-        throw e;
+        // Rolled back: no code spent, counters and links unchanged. The cause is not logged (it may carry row data).
+        console.error("[mfa-challenge] Sign-in could not be completed; the transaction was rolled back.");
+        return { kind: "error" };
       });
   }
 
   if (outcome.kind === "locked") return lockedResponse();
+
+  if (outcome.kind === "error") {
+    return NextResponse.json(
+      { error: "We could not complete sign-in, and your code was not used. Try again." },
+      { status: 500 },
+    );
+  }
 
   if (outcome.kind === "mfa_changed") {
     // MFA was turned off or re-enrolled after the code was checked. Everything was rolled back; no session.
@@ -178,34 +209,8 @@ export async function POST(req: NextRequest) {
     await prisma.auditEvent.create({ data: { userId: user.id, action: "user.mfa_challenge_failed", ip, metadata: { via: "google", reason: "link_refused" } } });
     return NextResponse.json({ error: "Google sign-in could not be completed. Sign in again." }, { status: 409 });
   }
-  const linked = Boolean(challenge.linkGoogleSub);
 
-  if (outcome.remaining !== undefined) {
-    await prisma.auditEvent.create({
-      data: {
-        userId: user.id,
-        action: "user.mfa_recovery_code_used",
-        ip,
-        userAgent: req.headers.get("user-agent") ?? undefined,
-        metadata: { remaining: outcome.remaining },
-      },
-    });
-  }
-
-  const successMeta = {
-    ...(challenge.linkGoogleSub ? { via: "google", linked } : {}),
-    ...(viaRecovery ? { method: "recovery_code" } : {}),
-  };
-  await prisma.auditEvent.create({
-    data: {
-      userId: user.id,
-      action: "user.mfa_challenge_success",
-      ip,
-      userAgent: req.headers.get("user-agent") ?? undefined,
-      ...(Object.keys(successMeta).length ? { metadata: successMeta } : {}),
-    },
-  });
-
+  // Committed: the code spend, counters, link and success audit rows. Only now is a session issued.
   const sessionUser = {
     id: user.id,
     email: user.email,

@@ -8,6 +8,9 @@ import { rateLimit, clientIp } from "@/lib/rateLimit";
 
 const BodySchema = z.object({ code: z.string().regex(/^[0-9]{6}$/) });
 
+/** Thrown inside the activation transaction to roll it back when MFA changed in another tab. */
+class Conflict extends Error {}
+
 /**
  * Confirm MFA enrollment by verifying the user's first TOTP code. On success
  * `mfaEnabled` flips to true, subsequent logins will require TOTP, and the
@@ -64,31 +67,42 @@ export async function POST(req: NextRequest) {
   }
 
   const enrolledSecret = dbUser.mfaSecret;
-  const recoveryCodes = await prisma.$transaction(async (tx) => {
-    // Conditional on MFA still being off and on the secret that was just verified, so a second activation or a
-    // re-enrollment in another tab cannot slip in between the check above and this write.
-    const flipped = await tx.user.updateMany({
-      where: { id: user.id, mfaEnabled: false, mfaSecret: enrolledSecret },
-      data: { mfaEnabled: true, mfaEnrolledAt: new Date() },
+  const ip = clientIp(req);
+  // One transaction: the MFA flip, the code hashes and the audit row. If any of them fails, everything rolls back,
+  // so MFA stays off and no codes exist that the user never saw. The plaintext codes leave only after the commit.
+  const result = await prisma
+    .$transaction(async (tx): Promise<string[]> => {
+      // Conditional on MFA still being off and on the secret that was just verified, so a second activation or a
+      // re-enrollment in another tab cannot slip in between the check above and this write.
+      const flipped = await tx.user.updateMany({
+        where: { id: user.id, mfaEnabled: false, mfaSecret: enrolledSecret },
+        data: { mfaEnabled: true, mfaEnrolledAt: new Date() },
+      });
+      if (flipped.count !== 1) throw new Conflict();
+      const codes = await replaceRecoveryCodes(tx, user.id, { mfaSecret: enrolledSecret });
+      if (!codes) throw new Conflict(); // undo the flip too
+      await tx.auditEvent.create({
+        data: { userId: user.id, action: "user.mfa_enabled", ip, metadata: { recoveryCodesIssued: codes.length } },
+      });
+      return codes;
+    })
+    .catch((e: unknown): "conflict" | "error" => {
+      if (e instanceof Conflict) return "conflict";
+      console.error("[mfa-activate] Activation could not be completed; the transaction was rolled back.");
+      return "error";
     });
-    if (flipped.count !== 1) return null;
-    return replaceRecoveryCodes(tx, user.id, { mfaSecret: enrolledSecret });
-  });
-  if (!recoveryCodes) {
+  if (result === "conflict") {
     return NextResponse.json(
       { error: "conflict", message: "MFA changed in another tab or window. Reload this page and try again." },
       { status: 409 },
     );
   }
+  if (result === "error") {
+    return NextResponse.json(
+      { error: "activation_failed", message: "We could not turn on MFA. Nothing changed. Try again." },
+      { status: 500 },
+    );
+  }
 
-  await prisma.auditEvent.create({
-    data: {
-      userId: user.id,
-      action: "user.mfa_enabled",
-      ip: clientIp(req),
-      metadata: { recoveryCodesIssued: recoveryCodes.length },
-    },
-  });
-
-  return NextResponse.json({ mfaEnabled: true, recoveryCodes });
+  return NextResponse.json({ mfaEnabled: true, recoveryCodes: result });
 }

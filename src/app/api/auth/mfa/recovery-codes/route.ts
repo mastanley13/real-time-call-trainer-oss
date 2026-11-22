@@ -117,8 +117,11 @@ export async function POST(req: NextRequest) {
   // proof leaves it alone, because the password is the factor an MFA guesser already has: if it reset the count,
   // someone with a session and the password could alternate wrong MFA codes with regenerations and never lock.
   // Then, under that lock, the secret (and for a password proof, the password hash) must still be the ones just
-  // checked. Either refusal rolls back, so nothing is written.
+  // checked. Either refusal rolls back, so nothing is written. The audit row is part of the same transaction: if it
+  // cannot be written, the old codes stay valid and no new codes exist that the user never saw. The plaintext codes
+  // leave only after the commit.
   const provenSecret = dbUser.mfaSecret;
+  const userAgent = req.headers.get("user-agent") ?? undefined;
   const result = await prisma
     .$transaction(async (tx): Promise<string[] | "locked"> => {
       const unlocked = method === "totp" ? await clearAuthFailures(dbUser.id, {}, tx) : await holdIfUnlocked(dbUser.id, tx);
@@ -128,13 +131,32 @@ export async function POST(req: NextRequest) {
         ...(method === "password" ? { passwordHash: dbUser.passwordHash } : {}),
       });
       if (!codes) throw new Changed(); // undo the counter reset too
+      await tx.auditEvent.create({
+        data: {
+          userId: dbUser.id,
+          action: "user.mfa_recovery_codes_regenerated",
+          ip,
+          userAgent,
+          metadata: { method, issued: codes.length },
+        },
+      });
       return codes;
     })
-    .catch((e: unknown) => {
-      if (e instanceof Changed) return "changed" as const;
-      throw e;
+    .catch((e: unknown): "changed" | "error" => {
+      if (e instanceof Changed) return "changed";
+      console.error("[mfa-recovery-codes] Regeneration could not be completed; the transaction was rolled back.");
+      return "error";
     });
   if (result === "locked") return lockedResponse();
+  if (result === "error") {
+    return NextResponse.json(
+      {
+        error: "regenerate_failed",
+        message: "We could not create new recovery codes. Your current codes still work. Try again.",
+      },
+      { status: 500 },
+    );
+  }
   if (result === "changed") {
     // MFA was turned off, re-enrolled or the password changed after the proof was checked. Nothing was written.
     return NextResponse.json(
@@ -142,16 +164,5 @@ export async function POST(req: NextRequest) {
       { status: 409 },
     );
   }
-  const recoveryCodes = result;
-
-  await prisma.auditEvent.create({
-    data: {
-      userId: dbUser.id,
-      action: "user.mfa_recovery_codes_regenerated",
-      ip,
-      userAgent: req.headers.get("user-agent") ?? undefined,
-      metadata: { method, issued: recoveryCodes.length },
-    },
-  });
-  return NextResponse.json({ recoveryCodes });
+  return NextResponse.json({ recoveryCodes: result });
 }

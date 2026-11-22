@@ -26,6 +26,8 @@ const state = vi.hoisted(() => ({
    * user.updateMany, `run` executes as if another connection did that work at that moment.
    */
   hooks: [] as { when: (args: { where: Where; data: Record<string, unknown> }) => boolean; run: () => Promise<void> }[],
+  /** When set, an auditEvent.create with this action throws, like a failed insert. */
+  failAudit: null as string | null,
 }));
 
 function matchCode(row: CodeRow, where: Where): boolean {
@@ -65,7 +67,9 @@ function applyUser(row: UserRow, data: Record<string, unknown>) {
  * Reads never wait, like MVCC reads.
  */
 const fakeDb = vi.hoisted(() => {
-  type Ctx = { release?: () => void; saved?: { users: Map<string, Record<string, unknown>>; codes: CodeRow[] } };
+  type Audit = (typeof state.audits)[number];
+  /** A transaction's audit rows stay invisible until it commits and are dropped if it rolls back. */
+  type Ctx = { release?: () => void; saved?: { users: Map<string, Record<string, unknown>>; codes: CodeRow[] }; audits: Audit[] };
   let tail: Promise<void> = Promise.resolve();
   const acquire = (): Promise<() => void> => {
     let release!: () => void;
@@ -157,8 +161,9 @@ const fakeDb = vi.hoisted(() => {
         count: async ({ where }: { where: Where }) => state.codes.filter((c) => matchCode(c, where)).length,
       },
       auditEvent: {
-        create: async ({ data }: { data: { action: string; userId?: string; metadata?: unknown } }) => {
-          state.audits.push(data);
+        create: async ({ data }: { data: Audit }) => {
+          if (state.failAudit === data.action) throw new Error("audit insert failed");
+          (ctx ? ctx.audits : state.audits).push(data);
           return data;
         },
       },
@@ -175,9 +180,11 @@ const fakeDb = vi.hoisted(() => {
       /** Interactive form: a throw restores what the transaction changed. Array form: each write locks on its own. */
       $transaction: async (arg: unknown) => {
         if (typeof arg !== "function") return Promise.all(arg as Promise<unknown>[]);
-        const tx: Ctx = {};
+        const tx: Ctx = { audits: [] };
         try {
-          return await (arg as (c: unknown) => Promise<unknown>)(client(tx));
+          const result = await (arg as (c: unknown) => Promise<unknown>)(client(tx));
+          state.audits.push(...tx.audits); // commit
+          return result;
         } catch (e) {
           if (tx.saved) restore(tx.saved);
           throw e;
@@ -230,6 +237,7 @@ beforeEach(() => {
   state.audits = [];
   state.beforeLock = null;
   state.hooks = [];
+  state.failAudit = null;
   mocks.verifyTotp.mockClear();
 });
 
@@ -973,6 +981,105 @@ describe("MFA changed between the code check and the commit", () => {
     const { user } = await enrolled();
     expect((await challenge(user.id, { code: "123456" }, freshIp())).status).toBe(200);
   });
+});
+
+describe("a failed audit insert rolls back the whole success", () => {
+  let errorLog: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  /** The log line says what happened without the cause, which may carry row data. */
+  const expectQuietLog = () => {
+    expect(errorLog).toHaveBeenCalledOnce();
+    expect(String(errorLog.mock.calls[0][0])).not.toContain("audit insert failed");
+  };
+
+  it.each(["user.mfa_recovery_code_used", "user.mfa_challenge_success"])(
+    "recovery code sign-in, %s insert fails: 500, no session, the code stays usable, counters unchanged",
+    async (failing) => {
+      const { user, codes } = await enrolled();
+      state.users.get(user.id)!.failedLoginCount = 3;
+      state.failAudit = failing;
+      const res = await challenge(user.id, { recoveryCode: codes[0] }, freshIp());
+      expect(res.status).toBe(500);
+      expect(res.headers.get("set-cookie")).toBeNull();
+      expect(await res.json()).not.toHaveProperty("token");
+      expect(state.codes.every((c) => c.usedAt === null)).toBe(true);
+      expect(state.users.get(user.id)).toMatchObject({ failedLoginCount: 3 });
+      expect(state.users.get(user.id)!.lastLoginAt ?? null).toBeNull();
+      expect(state.audits.some((a) => a.action === "user.mfa_recovery_code_used" || a.action === "user.mfa_challenge_success")).toBe(false);
+      expectQuietLog();
+
+      // Nothing was spent, so the same code signs in once the database is healthy again.
+      state.failAudit = null;
+      const ok = await challenge(user.id, { recoveryCode: codes[0] }, freshIp());
+      expect(ok.status).toBe(200);
+      expect(ok.headers.get("set-cookie")).toContain("authToken=");
+      expect(state.audits.find((a) => a.action === "user.mfa_recovery_code_used")).toMatchObject({ metadata: { remaining: 9 } });
+    },
+  );
+
+  it("TOTP sign-in, success insert fails: 500, no session, counters unchanged", async () => {
+    const { user } = await enrolled();
+    state.users.get(user.id)!.failedLoginCount = 2;
+    state.failAudit = "user.mfa_challenge_success";
+    const res = await challenge(user.id, { code: "123456" }, freshIp());
+    expect(res.status).toBe(500);
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(state.users.get(user.id)).toMatchObject({ failedLoginCount: 2 });
+    expectQuietLog();
+  });
+
+  it("Google link waiting on the challenge is not written when the success insert fails", async () => {
+    const { user, codes } = await enrolled();
+    state.failAudit = "user.mfa_challenge_success";
+    const res = await challenge(user.id, { recoveryCode: codes[0] }, freshIp(), "g-sub-new");
+    expect(res.status).toBe(500);
+    expect(state.users.get(user.id)!.googleSub).toBeNull();
+    expect(state.codes.every((c) => c.usedAt === null)).toBe(true);
+  });
+
+  it("activation, audit insert fails: 500, MFA stays off and no codes exist; a retry then works", async () => {
+    const user = seedUser();
+    state.failAudit = "user.mfa_enabled";
+    const res = await activate(user);
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("activation_failed");
+    expect(body).not.toHaveProperty("recoveryCodes");
+    expect(state.users.get(user.id)).toMatchObject({ mfaEnabled: false, mfaEnrolledAt: null, mfaSecret: "SECRET" });
+    expect(state.codes).toHaveLength(0);
+    expectQuietLog();
+
+    state.failAudit = null;
+    const retry = await activate(user);
+    expect(retry.status).toBe(200);
+    expect((await retry.json()).recoveryCodes).toHaveLength(10);
+  });
+
+  it.each([
+    ["password", { password: PASSWORD }],
+    ["TOTP", { code: "123456" }],
+  ] as [string, Record<string, string>][])(
+    "regeneration by %s, audit insert fails: 500, old codes still valid, counters unchanged",
+    async (_n, proof) => {
+      const { user, codes } = await enrolled();
+      state.users.get(user.id)!.failedLoginCount = 2;
+      const before = state.codes.map((c) => ({ ...c }));
+      state.failAudit = "user.mfa_recovery_codes_regenerated";
+      const res = await regenerate(user, proof);
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.error).toBe("regenerate_failed");
+      expect(body).not.toHaveProperty("recoveryCodes");
+      expect(state.codes).toEqual(before);
+      expect(state.users.get(user.id)).toMatchObject({ failedLoginCount: 2 });
+      expectQuietLog();
+
+      state.failAudit = null;
+      expect((await challenge(user.id, { recoveryCode: codes[0] }, freshIp())).status).toBe(200);
+    },
+  );
 });
 
 describe("demo mode and database-free installs", () => {
