@@ -84,7 +84,7 @@ export async function GET(req: NextRequest) {
     );
     if (!res.ok) {
       console.error("[elevenlabs/token] upstream status", res.status);
-      if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
+      if (callId) await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
       return NextResponse.json(
         { error: "elevenlabs_upstream_error", message: `ElevenLabs returned ${res.status}. Check your API key and agent id.` },
         { status: 502 },
@@ -96,7 +96,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ token, ...(callId ? { callId, maxSeconds, ...(voiceTier ? { voiceTier, nextCallStandard } : {}) } : {}) });
   } catch (e) {
     console.error("[elevenlabs/token]", e);
-    if (callId) await endCall(auth.id, callId, "failed_connect", new Date(), { serverMintFailure: true }).catch(() => null);
+    if (callId) await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
     return NextResponse.json({ error: "elevenlabs_upstream_error", message: "Could not reach ElevenLabs." }, { status: 502 });
   }
 }

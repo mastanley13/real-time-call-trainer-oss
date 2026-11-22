@@ -426,19 +426,29 @@ describe("Premium voice limit", () => {
 // ---- The server's clock, not the browser's -----------------------------------------------------------
 
 describe("heartbeat trust: usage is settled from the server's mint time", () => {
-  it("a client that never says 'connected' is billed from the mint time plus 60 seconds, not nothing", async () => {
+  it("a client that heartbeats but never says 'connected' is billed from the mint time plus 60 seconds, not nothing", async () => {
     addUser("u-1");
     const c = await begin("u-1");
+    await heartbeat("u-1", c.callId, "ok", at(30));
     const result = await endCall("u-1", c.callId, "user_hangup", at(300));
     expect(result).toMatchObject({ outcome: "billed", billedMinutes: 4, billableSeconds: 240 });
     expect(allowanceOf("u-1").minutesUsed).toBe(4);
   });
 
-  it("claiming failed_connect after a long call does not make it free", async () => {
+  it("claiming failed_connect after the server recorded a heartbeat does not make the call free", async () => {
     addUser("u-1");
     const c = await begin("u-1");
+    await heartbeat("u-1", c.callId, "ok", at(30));
     const result = await endCall("u-1", c.callId, "failed_connect", at(300));
     expect(result).toMatchObject({ outcome: "billed", billedMinutes: 4 });
+  });
+
+  it("age alone is not a connection: a call with no heartbeat ended at 5 minutes is failed_connect, 0 billed", async () => {
+    addUser("u-1");
+    const c = await begin("u-1");
+    const result = await endCall("u-1", c.callId, "user_hangup", at(300));
+    expect(result).toMatchObject({ outcome: "failed_connect", endReason: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
   });
 
   it("a connect heartbeat sent late cannot move the start past the 60 second cutoff", async () => {
@@ -467,17 +477,18 @@ describe("heartbeat trust: usage is settled from the server's mint time", () => 
     expect(allowanceOf("u-1").minutesUsed).toBe(60);
   });
 
-  it("a call with no heartbeat at all is settled after the connect window and billed from the cutoff", async () => {
+  it("a call with no heartbeat at all is closed after the connect window as failed_connect, 0 billed, reservation released", async () => {
     addUser("u-1", { planTier: "pro" });
     const c = await begin("u-1");
     await usageSummary("u-1", at(16 * 60));
-    expect(session(c.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 15 });
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 15, minutesReserved: 0 });
+    expect(session(c.callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
   });
 
   it("a silent Free call is still bounded by its reservation: a closed tab is not billed for a day", async () => {
     addUser("u-1");
     const c = await begin("u-1");
+    await heartbeat("u-1", c.callId, "connected", at(0));
     await usageSummary("u-1", at(3 * 3600));
     expect(session(c.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 10, abuseFlagged: false });
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
