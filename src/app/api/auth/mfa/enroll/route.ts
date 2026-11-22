@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
-import { buildProvisioningUri, generateMfaSecret } from "@/lib/mfa";
+import { buildProvisioningUri, generateMfaSecret, mfaUnavailableResponse } from "@/lib/mfa";
 import { rateLimit } from "@/lib/rateLimit";
 
 /**
@@ -13,6 +13,8 @@ export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
   const user = auth;
+  const unavailable = mfaUnavailableResponse();
+  if (unavailable) return unavailable;
 
   const limit = rateLimit({
     key: `mfa-enroll:${user.id}`,

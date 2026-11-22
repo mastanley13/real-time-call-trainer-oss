@@ -135,6 +135,10 @@ Use `DEMO_MODE=true` with no keys unless a step says otherwise. Check every scre
 ### 14. Accounts (full mode only)
 1. Register a new team and land in the app. Sign out and back in. A wrong password shows an error.
 2. `/settings/security`: enrol TOTP MFA, sign out, and sign in with the code. A wrong code is rejected.
+   - Recovery codes: activating MFA shows 10 codes once, with **Copy**, **Download .txt** and the "each code works once" note. **I saved my codes** hides them for good. The page then reads "10 of 10 recovery codes left".
+   - Sign out, enter the password, choose **Use a recovery code instead** and sign in with one code (lower case and no dashes work too). The same code fails a second time, and the count reads 9 of 10. At 3 or fewer, or for an account that enabled MFA before codes existed, the count shows as a warning.
+   - **Regenerate codes** needs the current password or an authenticator code; a wrong one changes nothing. Afterwards the new codes show once and every old code fails at sign-in. Disabling MFA deletes the codes.
+   - Wrong recovery codes and wrong authenticator codes share the `/api/auth/mfa/challenge` limit below. In demo mode the MFA routes, including `/api/auth/mfa/recovery-codes`, return 503 `mfa_not_available`.
 3. Signed out, `/dashboard` redirects to `/login`. Sessions persist across devices.
 4. Google sign-in (needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL`, `DATABASE_URL`): `/login` and `/register` show Continue with Google. With any of the four unset there is no button and `curl -i localhost:3000/api/auth/google/start` returns 404. A new Google account lands in the app on the Free plan; an account with the same email signs in as that user; an account with MFA asks for the authenticator code. With `TRAINER_ACCESS_CODE` set and no access cookie, a new Google user is sent to `/access`. An unverified Google email shows the unverified error; an email whose account is linked to a different Google account fails; Cancel on Google's screen returns to `/login` with a cancelled message. From `/register?plan=pro&interval=year&src=pricing`, a new Google account lands on `/trainer` with the same query.
 
@@ -174,7 +178,7 @@ Every limit is a fixed window in memory, per server instance, and resets on rest
 | `/api/auth/google/start` + `/callback` (Google sign-in, shared) | `RATE_LIMIT_GOOGLE_MAX` (30 per 900 s) | Needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL`. Set 2 and `curl -i` the start route three times |
 | `/api/llm/check` (Models page) | fixed, 6 per 10 min | Press **Check connection** seven times |
 | `/api/access` | fixed, 10 per 15 min | See Access code above |
-| `/api/auth/login`, `/api/auth/register`, `/api/auth/mfa/challenge` | fixed, 10, 5 and 10 per minute | Full mode only. These answer with their own error text |
+| `/api/auth/login`, `/api/auth/register`, `/api/auth/mfa/challenge` | fixed, 10, 5 and 10 per minute | Full mode only. These answer with their own error text. The challenge limit counts authenticator and recovery code attempts together |
 
 Each `_MAX` has a matching `_WINDOW_SEC`.
 
@@ -198,7 +202,7 @@ Each `_MAX` has a matching `_WINDOW_SEC`.
 | `PUT /api/sessions/[sessionId]/notes` | 30 per minute |
 | `/api/team/overview` | 60 per minute |
 | `POST` and `DELETE /api/team/assignments` | 20 per minute |
-| `/api/auth/mfa/enroll`, `/activate`, `/disable` | 10, 8 and 6 per minute |
+| `/api/auth/mfa/enroll`, `/activate`, `/disable`, `POST /recovery-codes` (regenerate) | 10, 8, 6 and 6 per minute; regenerate sends `Retry-After` |
 | `GET /api/cron/openai-keys` (key slot health) | 30 per minute per platform admin, or per IP for the cron bearer, with `Retry-After` |
 
 A quick wizard check with curl (demo mode skips login):

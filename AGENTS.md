@@ -45,7 +45,7 @@ src/app/                          App Router pages and API routes
   dashboard/page.tsx              Progress logbook: sparklines, trend, heatmap, practise next
   team/                           Team view: KPIs, heatmap, coaching queue, assignments (sample data in demo mode)
   settings/page.tsx               Settings index
-  settings/security/              TOTP MFA enrolment
+  settings/security/              TOTP MFA enrolment, recovery codes (count, regenerate, one-time Copy/Download panel)
   settings/models/                Models page: which model runs each AI job, plus a connection check
   access/, login/, register/      Access-code gate, sign-in, sign-up
   api/
@@ -62,6 +62,7 @@ src/app/                          App Router pages and API routes
     transcripts                   Saved sessions; POST stores a score only with a valid grade seal
     transcripts/[id]              GET one session; PATCH re-grades the stored transcript (canRegrade, capped by gradable)
     sessions/[sessionId]/notes    Supervisor notes (Postgres, org-scoped); PUT with expectedNotesAt gets 409 conflict on a stale save
+    auth/mfa/*                    enroll, activate (returns 10 recovery codes once), challenge (TOTP or recovery code, one limiter), disable (deletes codes), recovery-codes (GET count, POST regenerate with password or TOTP)
     auth/*, me, access, config, health, cron/purge-expired
 src/components/
   call/Deck.tsx                   Live call deck (dark .deck scope): transcript, composer, phone coach sheet
@@ -88,7 +89,8 @@ src/lib/
   openaiKeys.ts                   OpenAI key slots and quota failover (server-only); openaiHost.ts has the exact-host check
   sessionStore.ts, scenarioStore.ts    Client-side persistence (API when signed in, localStorage in demo)
   serverConfig.ts                 Capability flags; the only place that reads provider env vars for the UI
-  apiAuth.ts, auth.ts, mfa.ts     requireAuth, JWT sessions, bcrypt, TOTP
+  apiAuth.ts, auth.ts, mfa.ts     requireAuth, JWT sessions, bcrypt, TOTP, mfaUnavailableResponse (503 in demo or no database)
+  mfaRecovery.ts (+ -types.ts)    Recovery codes (server-only): generate, normalize, SHA-256 hash, atomic consume; labels and .txt file are client-safe
   rateLimit.ts                    clientIp (TRUSTED_PROXY_HOPS), IP_LIMITS, USER_LIMITS, body and transcript caps
   access.ts + src/proxy.ts        Optional TRAINER_ACCESS_CODE gate
   realtime.ts                     OpenAI Realtime helpers shared by server and client (see Secrets below)

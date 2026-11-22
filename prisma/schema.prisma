@@ -153,6 +153,7 @@ model User {
   usageEntries        UsageEntry[]
   trainerSessions     TrainerSession[]
   auditEvents         AuditEvent[]
+  mfaRecoveryCodes    MfaRecoveryCode[]
   assignmentsCreated  TrainingAssignment[] @relation("AssignmentAssigner")
   assignmentsReceived TrainingAssignment[] @relation("AssignmentAssignee")
 
@@ -363,6 +364,19 @@ model TrainingAssignment {
 // ─────────────────────────────────────────────────────────────────────────
 //  Audit log
 // ─────────────────────────────────────────────────────────────────────────
+
+/// Single-use MFA recovery codes. Only the SHA-256 of the normalized code is stored (see src/lib/mfaRecovery.ts).
+/// A code is spent by setting `usedAt` with a conditional update; regenerating or disabling MFA deletes the rows.
+model MfaRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String    @unique
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
 
 model AuditEvent {
   id         String   @id @default(cuid())

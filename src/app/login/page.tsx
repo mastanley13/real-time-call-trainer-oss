@@ -15,6 +15,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [challenge, setChallenge] = useState<string | null>(null);
+  // MFA step: an authenticator code by default, or a single-use recovery code.
+  const [useRecovery, setUseRecovery] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -39,7 +41,7 @@ export default function LoginPage() {
     setBusy(true);
     try {
       if (challenge) {
-        await completeMfaChallenge(challenge, code);
+        await completeMfaChallenge(challenge, code, useRecovery ? "recovery" : "totp");
       } else {
         const mfa = await login({ email, password });
         if (mfa) { setChallenge(mfa.challengeToken); setBusy(false); return; }
@@ -63,8 +65,25 @@ export default function LoginPage() {
       <form onSubmit={onSubmit} className="space-y-4">
         {challenge ? (
           <div>
-            <label htmlFor="code" className="label">Authenticator code</label>
-            <input id="code" className="input" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} required />
+            {useRecovery ? (
+              <>
+                <label htmlFor="recovery-code" className="label">Recovery code</label>
+                <input id="recovery-code" className="input font-mono" autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false} maxLength={64} placeholder="xxxx-xxxx-xxxx" aria-describedby="recovery-code-hint" value={code} onChange={(e) => setCode(e.target.value)} required />
+                <p id="recovery-code-hint" className="mt-1 text-xs text-ink-muted">Each recovery code works once. Case, spaces and dashes don&apos;t matter.</p>
+              </>
+            ) : (
+              <>
+                <label htmlFor="code" className="label">Authenticator code</label>
+                <input id="code" className="input" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} required />
+              </>
+            )}
+            <button
+              type="button"
+              className="btn-quiet btn-sm mt-2 -ml-3"
+              onClick={() => { setUseRecovery((v) => !v); setCode(""); setError(""); }}
+            >
+              {useRecovery ? "Use your authenticator app instead" : "Use a recovery code instead"}
+            </button>
           </div>
         ) : (
           <>

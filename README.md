@@ -17,7 +17,7 @@ By Mykel Stanley · MIT licensed
 - **Command palette**: Ctrl K (⌘K on macOS) jumps to any page or persona, resumes your last persona and switches the theme.
 - **Model settings** (`/settings/models`): which model runs the coach, grading, wizard and text caller, which voice engines are on, and a one-token connection check (`/api/llm/check`). Keys and endpoint URLs are never shown.
 - **Graceful degradation**: runs without a voice provider, an LLM key or a database (`DEMO_MODE=true`).
-- **Teams and accounts** (optional): Postgres + Prisma, org join codes, TOTP MFA, supervisor notes, training assignments, retention purge job.
+- **Teams and accounts** (optional): Postgres + Prisma, org join codes, TOTP MFA with single-use recovery codes, supervisor notes, training assignments, retention purge job.
 
 ## Architecture
 ```
