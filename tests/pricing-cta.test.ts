@@ -197,12 +197,23 @@ describe("landing hero line", () => {
   const hero = html.slice(0, html.indexOf("how-h"));
 
   it("leads with the hosted pitch and the two CTAs", () => {
-    expect(hero).toContain("Sales call practice, <span");
-    expect(hero.replace(/<[^>]+>/g, "")).toContain("Sales call practice, no setup required");
-    expect(hero).toContain("Practice real sales calls against 54 AI buyer personas. No API keys, no database, just sign up and start talking.");
+    const text = hero.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").replace(/\s+/g, " ");
+    expect(text).toContain("Know which reps are ready before they're on a live call.");
+    expect(text).not.toContain("no setup required");
+    expect(text).toContain("Your reps practice against 54 AI buyers who push back. You read a graded debrief that quotes their own words, so you can see who is ready and what to coach next. Free to start, no card.");
     expect(hrefs(hero)).toEqual(expect.arrayContaining(["/register?src=home_hero", "/pricing"]));
-    expect(hero).toContain(">Start free <");
+    expect(hero).toContain(">Start free, no card <");
     expect(hero).toContain(">See pricing<");
+  });
+
+  it("adds the Team line under the buttons with a separate Start a Team link", () => {
+    const line = "Managing 3 or more reps? Team adds a manager view and assignments: $59 a seat a month, 3-seat minimum.";
+    expect(hero).toContain(line);
+    expect(hero).toContain(">Start a Team<");
+    expect(hero).toContain('href="/register?src=home_hero&amp;plan=team&amp;interval=month"');
+    expect(hrefs(hero)).toContain("/register?src=home_hero&plan=team&interval=month");
+    expect(hero.indexOf(line)).toBeGreaterThan(hero.indexOf(">See pricing<"));
+    expect(hero).not.toMatch(/<a [^>]*>[^<]*Team adds a manager view/);
   });
 
   it("keeps demo mode and bring your own key out of the hero", () => {

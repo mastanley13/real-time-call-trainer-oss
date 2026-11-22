@@ -9,6 +9,7 @@ import { isReceiptReplay, receiptRowId, verifyMintReceipt } from "@/lib/mintRece
 import { HAS_TRANSCRIPT } from "@/lib/usage";
 import { tierOfModel } from "@/lib/voiceTierServer";
 import { sessionListItem } from "@/lib/sessionView";
+import { notifyFirstGradedCall } from "@/lib/ghlWebhook";
 
 const Body = z.object({
   sessionId: z.string().min(1).max(128),
@@ -123,6 +124,10 @@ export async function POST(req: NextRequest) {
     } else {
       created = await prisma.trainerSession.create({ data: { ...unmetered, ...fields } });
     }
+    // Activation for the CRM: only a sealed grade counts. Scheduled as soon as the graded row is written, so a failure in
+    // the receipt or audit step below cannot skip it. notifyFirstGradedCall decides in the background, under its own lock
+    // and durable marker, whether the user's first graded call has been announced yet; it never delays this response.
+    if (ev) notifyFirstGradedCall(dbUser.id);
     if (receiptModel && meteredReceiptRow && meteredReceiptRow.userId === dbUser.id) {
       // Single use on the metered row: the model is written only while it is still unset, in one conditional
       // update, so a replayed or concurrent save of the same receipt changes nothing.

@@ -4,10 +4,13 @@ import { signMfaChallengeToken, signSessionToken } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { accessCode, hasValidAccessCookie, safeEqual } from "@/lib/access";
 import { generateOrgCode } from "@/lib/orgCodes";
+import { defaultOrgName } from "@/lib/orgName";
+import { validNextPath } from "@/lib/safeNext";
 import { googleLandingPath } from "@/lib/signupIntent";
 import { sanitizeSignupIntent, type SignupIntent } from "@/lib/pricing";
 import { clientIp, ipLimitResponse } from "@/lib/rateLimit";
 import { clearAuthFailures } from "@/lib/loginLockout";
+import { notifySignup } from "@/lib/ghlWebhook";
 import { linkGoogleAtomically, checkIdTokenClaims, decodeIdToken, exchangeCode, flowCookieOptions, GOOGLE_FLOW_COOKIE, googleConfig, verifyFlowState, type GoogleProfile } from "@/lib/googleAuth";
 
 /**
@@ -88,8 +91,9 @@ export async function GET(req: NextRequest) {
         if (gate && !(await hasValidAccessCookie(req, gate))) {
           return back(req, "/access?next=%2Fregister&reason=google_invite");
         }
+        const intent = sanitizeSignupIntent(flow.intent ?? {});
         try {
-          user = await createSoloUser(profile, ip, userAgent, sanitizeSignupIntent(flow.intent ?? {}));
+          user = await createSoloUser(profile, ip, userAgent, intent);
           created = true;
         } catch (error) {
           // Two first-time callbacks can both pass the email lookup and then lose on user.email or
@@ -100,6 +104,11 @@ export async function GET(req: NextRequest) {
           user = recovered.user;
           pendingLink = recovered.pendingLink;
         }
+        // Only the callback whose create committed is a new signup; a clash winner already sent its own event.
+        // Fire and forget, so a GHL outage never fails sign-in.
+        if (created) {
+          notifySignup({ userId: user.id, organizationId: user.organizationId, email: user.email, method: "google", role: "owner", intent });
+        }
       }
     }
 
@@ -109,7 +118,10 @@ export async function GET(req: NextRequest) {
       await prisma.auditEvent.create({ data: { userId: user.id, action: "user.mfa_challenge_issued", ip, userAgent, metadata: { via: "google" } } });
       // The fragment never reaches a server or its logs; the login page picks it up. A pending link rides in the
       // signed challenge and is written by /api/auth/mfa/challenge once the code is accepted.
-      return back(req, `/login#mfa=${encodeURIComponent(signMfaChallengeToken(user.id, pendingLink ? profile.sub : undefined))}`);
+      // A safe next rides along so the login page lands there once the code is accepted.
+      const mfaNext = validNextPath(flow.next);
+      const nextQs = mfaNext ? `?next=${encodeURIComponent(mfaNext)}` : "";
+      return back(req, `/login${nextQs}#mfa=${encodeURIComponent(signMfaChallengeToken(user.id, pendingLink ? profile.sub : undefined))}`);
     }
 
     if (pendingLink) {
@@ -165,7 +177,7 @@ async function createSoloUser(profile: GoogleProfile, ip: string, userAgent: str
   const orgCode = await generateOrgCode();
   return prisma.$transaction(async (tx) => {
     const org = await tx.organization.create({
-      data: { name: profile.firstName ? `${profile.firstName}'s team` : "My team", code: orgCode },
+      data: { name: defaultOrgName(profile.firstName), code: orgCode },
     });
     const user = await tx.user.create({
       data: {
