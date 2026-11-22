@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
           ...(history[0]?.role === "assistant" ? [{ role: "user" as const, content: "(The call connects.)" }] : []),
           ...mergeTurns(history),
         ],
-        { maxTokens: 500, temperature: 0.8 },
+        { maxTokens: 800, temperature: 0.8 },
       );
       const hadEnd = text.includes(END_TOKEN);
       let reply = text.replace(END_TOKEN, "").trim();
