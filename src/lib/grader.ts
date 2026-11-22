@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { APOLOGY_STEP_RE, isApology } from "./apology";
 import { chat, extractJson } from "./llm";
-import { llmKey } from "./serverConfig";
+import { llmGradingModel, llmKey } from "./serverConfig";
 import { Scenario, normalizeWeights } from "./scenarios";
 
 export interface Turn {
@@ -86,7 +86,7 @@ async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluati
   ].join("\n\n");
 
   // The evaluation goes to the browser, so it records that AI graded it (method "llm") but not the model id.
-  const out =LlmOutput.parse(extractJson(await chat([{ role: "system", content: system }, { role: "user", content: user }], { json: true })));
+  const out =LlmOutput.parse(extractJson(await chat([{ role: "system", content: system }, { role: "user", content: user }], { json: true, model: llmGradingModel() })));
   // Line numbers/speakers come from the transcript itself, not from the model.
   const haystack = turns.map((t) => norm(t.text));
 
