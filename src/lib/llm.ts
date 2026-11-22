@@ -48,6 +48,16 @@ export interface ChatOptions {
    * A 400 that names response_format or json_schema is retried once on the same key with json_object.
    */
   jsonSchema?: JsonSchemaFormat;
+  /**
+   * Aborts the request in flight (combined with the 60 s per-request timeout). Once it fires, no further request
+   * starts: no temperature or response_format retry and no next key in the failover ladder.
+   */
+  signal?: AbortSignal;
+  /**
+   * Treat `message.content: null` as empty text instead of throwing LLM_BAD_RESPONSE, so the caller can see the
+   * finish reason (reasoning tokens can use up the budget and leave no content). A missing message still throws.
+   */
+  nullContentAsEmpty?: boolean;
 }
 
 /** Like chat(), but also reports whether the model stopped because it hit max_tokens. */
@@ -61,6 +71,10 @@ export async function chatFull(messages: ChatMessage[], opts: ChatOptions = {}):
   // never send it there and rely on extractJson() + the prompt instead.
   const sendJsonFormat = opts.json && !/anthropic\.com/i.test(base);
   const sendJsonSchema = Boolean(sendJsonFormat && opts.jsonSchema && isOpenAiBaseUrl(base));
+  /** Called before every request: once the caller's signal fires, nothing new goes to the provider. */
+  const checkAborted = () => {
+    if (opts.signal?.aborted) throw new Error("LLM_ABORTED");
+  };
   /** One request on one key, with same-key retries without temperature and without json_schema. `pinned` refuses redirects. */
   const send = async (key: string, pinned: boolean) => {
     const call = (withTemperature: boolean, withSchema: boolean) =>
@@ -79,13 +93,14 @@ export async function chatFull(messages: ChatMessage[], opts: ChatOptions = {}):
               ? { response_format: { type: "json_object" } }
               : {}),
         }),
-        signal: AbortSignal.timeout(60_000),
+        signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
         ...(pinned ? { redirect: "error" as const } : {}),
       });
     // Model id only, and only outside tests: no prompts, keys, or response bodies.
     if (process.env.NODE_ENV !== "test") console.info("[llm] model", opts.model ?? llmModel());
     let withTemperature = true;
     let withSchema = sendJsonSchema;
+    checkAborted();
     let res = await call(withTemperature, withSchema);
     let detail: string | undefined;
     // At most one retry per adjustment. The body is only inspected (bounded), never logged.
@@ -96,6 +111,7 @@ export async function chatFull(messages: ChatMessage[], opts: ChatOptions = {}):
       // A model or deployment without structured outputs: retry once with plain json_object.
       else if (withSchema && /response_format|json_schema/i.test(detail)) withSchema = false;
       else break;
+      checkAborted();
       res = await call(withTemperature, withSchema);
       detail = undefined;
     }
@@ -125,7 +141,8 @@ export async function chatFull(messages: ChatMessage[], opts: ChatOptions = {}):
     sent = await obtain();
   } catch (e) {
     // Network error, abort or timeout: note it for /api/health and rethrow the same error unchanged.
-    recordLlmOutcome("error");
+    // The caller's own abort says nothing about the provider, so it is not recorded.
+    if (!opts.signal?.aborted) recordLlmOutcome("error");
     throw e;
   }
   if (!sent) {
@@ -142,13 +159,14 @@ export async function chatFull(messages: ChatMessage[], opts: ChatOptions = {}):
   let result: { text: string; truncated: boolean };
   try {
     const data = await res.json();
-    const raw = data?.choices?.[0]?.message?.content;
+    const message = data?.choices?.[0]?.message;
+    const raw = opts.nullContentAsEmpty && message && typeof message === "object" && message.content === null ? "" : message?.content;
     const text = Array.isArray(raw) ? raw.map((p: { text?: string }) => p?.text ?? "").join("") : raw;
     if (typeof text !== "string") throw new Error("LLM_BAD_RESPONSE");
     const reason = data?.choices?.[0]?.finish_reason ?? data?.stop_reason;
     result = { text, truncated: reason === "length" || reason === "max_tokens" };
   } catch (e) {
-    recordLlmOutcome("error");
+    if (!opts.signal?.aborted) recordLlmOutcome("error");
     throw e;
   }
   recordLlmOutcome("ok");

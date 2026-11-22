@@ -9,7 +9,7 @@ import { z } from "zod";
  */
 
 import { COACH_JSON_SCHEMA, coachFailureCode, coachTurn, parseCoachReply, type CoachTurnInput } from "@/lib/coach";
-import { parseFirstJsonObject } from "@/lib/llm";
+import { chatFull, parseFirstJsonObject } from "@/lib/llm";
 import { OPENAI_KEY_SLOT_VARS, resetOpenAiKeyState } from "@/lib/openaiKeys";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 
@@ -45,7 +45,7 @@ const completion = (content: string | null, finish = "stop") =>
   new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason: finish }] }), { status: 200, headers: { "content-type": "application/json" } });
 const errorResponse = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-type Sent = { url: string; body: Record<string, unknown>; auth: string };
+type Sent = { url: string; body: Record<string, unknown>; auth: string; signal?: AbortSignal | null };
 let sent: Sent[];
 let logs: string[];
 
@@ -54,7 +54,7 @@ function replies(...rs: (() => Response | Promise<Response>)[]) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit) => {
-      sent.push({ url, body: JSON.parse(String(init.body)), auth: String((init.headers as Record<string, string>).Authorization) });
+      sent.push({ url, body: JSON.parse(String(init.body)), auth: String((init.headers as Record<string, string>).Authorization), signal: init.signal });
       return rs[Math.min(sent.length - 1, rs.length - 1)]();
     }),
   );
@@ -140,6 +140,59 @@ describe("parseCoachReply", () => {
     expect(() => parseCoachReply(`No JSON here ${CANARY}`, false)).toThrow("LLM_BAD_JSON");
     expect(() => parseCoachReply(JSON.stringify({ criteria: CANARY, steps: [], cue: null }), false)).toThrow("LLM_SCHEMA");
   });
+
+  it("rejects incomplete replies and wrong field types", () => {
+    const ok = JSON.parse(validReply());
+    const cue = ok.cue;
+    for (const bad of [
+      {},
+      { criteria: [], steps: [] },
+      { steps: [], cue: null },
+      { criteria: [], cue: null },
+      { ...ok, steps: ["yes", 1] },
+      { ...ok, criteria: [{ id: "a", score: "high", quote: null }] },
+      { ...ok, criteria: [{ id: 7, score: 10, quote: null }] },
+      { ...ok, criteria: [{ score: 10, quote: null }] },
+      { ...ok, cue: CANARY },
+      { ...ok, cue: { ...cue, type: "praise" } },
+      { ...ok, cue: { ...cue, triggerTurn: "3" } },
+      { ...ok, cue: { title: "x" } },
+    ]) {
+      expect(() => parseCoachReply(JSON.stringify(bad), false), JSON.stringify(bad)).toThrow("LLM_SCHEMA");
+    }
+  });
+
+  it("accepts nulls where the strict schema allows them", () => {
+    const ok = JSON.parse(validReply());
+    expect(parseCoachReply(JSON.stringify({ criteria: [], steps: [], cue: null }), false).cue).toBeNull();
+    const out = parseCoachReply(JSON.stringify({ ...ok, cue: { ...ok.cue, suggestedLine: null, criterionId: null } }), false);
+    expect(out.cue).toMatchObject({ suggestedLine: null, criterionId: null });
+  });
+});
+
+describe("chatFull null content", () => {
+  const ask = (opts: Parameters<typeof chatFull>[1]) => chatFull([{ role: "user", content: "hi" }], opts);
+
+  it("keeps LLM_BAD_RESPONSE for null content unless the caller opts in", async () => {
+    replies(() => completion(null, "length"));
+    await expect(ask({})).rejects.toThrow("LLM_BAD_RESPONSE");
+    await expect(ask({ nullContentAsEmpty: true })).resolves.toEqual({ text: "", truncated: true });
+  });
+
+  it("still throws LLM_BAD_RESPONSE for a missing message or choices", async () => {
+    replies(() => new Response(JSON.stringify({ choices: [{ finish_reason: "length" }] }), { status: 200 }));
+    await expect(ask({ nullContentAsEmpty: true })).rejects.toThrow("LLM_BAD_RESPONSE");
+    replies(() => new Response(JSON.stringify({}), { status: 200 }));
+    await expect(ask({ nullContentAsEmpty: true })).rejects.toThrow("LLM_BAD_RESPONSE");
+  });
+
+  it("sends nothing once the caller's signal has fired", async () => {
+    replies(() => completion(validReply()));
+    const c = new AbortController();
+    c.abort();
+    await expect(ask({ signal: c.signal })).rejects.toThrow("LLM_ABORTED");
+    expect(sent).toHaveLength(0);
+  });
 });
 
 describe("coachFailureCode", () => {
@@ -213,6 +266,26 @@ describe("coach retry", () => {
     expect(r.source).toBe("llm");
     expect(sent.map((s) => s.body.max_completion_tokens)).toEqual([1000, 2000]);
     expect(logText()).toContain("LLM_TRUNCATED");
+  });
+
+  it("retries null content that hit the budget with a larger budget", async () => {
+    replies(() => completion(null, "length"), () => completion(validReply()));
+    expect((await run()).source).toBe("llm");
+    expect(sent.map((s) => s.body.max_completion_tokens)).toEqual([1000, 2000]);
+    expect(logText()).toContain("retrying once: LLM_TRUNCATED");
+  });
+
+  it("retries an incomplete {} reply as a schema failure, then falls back", async () => {
+    replies(() => completion("{}"));
+    expect((await run()).source).toBe("heuristic");
+    expect(sent).toHaveLength(2);
+    expect(logText()).toContain("heuristic: LLM_SCHEMA");
+  });
+
+  it("aborts the request signal once the coach has its result", async () => {
+    replies(() => completion(validReply()));
+    expect((await run()).source).toBe("llm");
+    expect(sent[0].signal?.aborted).toBe(true);
   });
 
   it("retries an empty reply with a larger budget", async () => {
@@ -300,6 +373,30 @@ describe("coach time budget", () => {
     const r = await p;
     expect(r.source).toBe("heuristic");
     expect(logText()).toContain("heuristic: COACH_LLM_TIMEOUT");
+  });
+
+  it("starts no temperature or format retry after the budget has expired", async () => {
+    vi.useFakeTimers();
+    replies(delayed(16_000, () => errorResponse(400, { error: { message: `Unsupported value: 'temperature' ${CANARY}`, param: "temperature" } })), () => completion(validReply()));
+    const p = run();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect((await p).source).toBe("heuristic");
+    expect(sent[0].signal?.aborted).toBe(true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("moves to no further key after the budget has expired", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("LLM_API_KEY", "");
+    vi.stubEnv("OPENAI_API_KEY", KEY);
+    vi.stubEnv("OPENAI_API_KEY_BACKUP_1", `${KEY}backup`);
+    replies(delayed(16_000, () => errorResponse(429, { error: { message: CANARY, type: "insufficient_quota", code: "insufficient_quota" } })), () => completion(validReply()));
+    const p = run();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect((await p).source).toBe("heuristic");
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(sent).toHaveLength(1);
   });
 
   it("times out a single slow reply at 15 s without a retry", async () => {

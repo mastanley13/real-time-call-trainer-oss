@@ -533,12 +533,26 @@ export function coachHeuristic(scenario: Scenario, transcript: CoachTurnInput[],
 // LLM path
 // ---------------------------------------------------------------------------
 
+/**
+ * The reply shape, matching COACH_JSON_SCHEMA. Every key is required with its type checked, so an incomplete
+ * reply such as {} on a custom provider or the json_object fallback is a schema failure (and retried), not an
+ * all-zero LLM estimate. Nulls are accepted where the strict schema allows them.
+ */
 const LlmCoachOutput = z.object({
-  criteria: z
-    .array(z.object({ id: z.coerce.string(), score: z.coerce.number().catch(0), quote: z.string().nullish() }))
-    .default([]),
-  steps: z.array(z.unknown()).default([]),
-  cue: z.unknown().optional(),
+  criteria: z.array(z.object({ id: z.string(), score: z.number(), quote: z.string().nullish() })),
+  steps: z.array(z.boolean()),
+  cue: z.union([
+    z.null(),
+    z.object({
+      type: z.enum(CUE_TYPES),
+      title: z.string(),
+      message: z.string(),
+      suggestedLine: z.string().nullish(),
+      triggerTurn: z.number(),
+      criterionId: z.string().nullish(),
+      key: z.string(),
+    }),
+  ]),
 });
 
 const nullableString = { type: ["string", "null"] };
@@ -703,23 +717,29 @@ async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptio
   ];
   // One retry for an unusable reply, inside the same overall budget: the retry gets only the time that is left.
   const deadline = Date.now() + LLM_TIMEOUT_MS;
+  // Aborted once the coach is done (result, fallback or timeout): no provider request starts after that.
+  const abort = new AbortController();
   let maxTokens = COACH_MAX_TOKENS;
   let out: z.infer<typeof LlmCoachOutput>;
-  for (let attempt = 1; ; attempt++) {
-    try {
-      const { text, truncated } = await withTimeout(
-        chatFull(messages, { json: true, jsonSchema: COACH_JSON_SCHEMA, maxTokens, temperature: 0.2 }),
-        Math.max(0, deadline - Date.now()),
-      );
-      out = parseCoachReply(text, truncated);
-      break;
-    } catch (e) {
-      const code = coachFailureCode(e);
-      if (attempt >= 2 || !RETRYABLE_COACH_CODES.has(code) || deadline - Date.now() < COACH_RETRY_MIN_MS) throw e;
-      console.warn("[coach] LLM coach reply unusable, retrying once:", code);
-      // Reasoning tokens can use up the whole budget and leave no content: give the retry more room, same model.
-      if (code === "LLM_EMPTY" || code === "LLM_TRUNCATED") maxTokens = COACH_RETRY_MAX_TOKENS;
+  try {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const { text, truncated } = await withTimeout(
+          chatFull(messages, { json: true, jsonSchema: COACH_JSON_SCHEMA, maxTokens, temperature: 0.2, signal: abort.signal, nullContentAsEmpty: true }),
+          Math.max(0, deadline - Date.now()),
+        );
+        out = parseCoachReply(text, truncated);
+        break;
+      } catch (e) {
+        const code = coachFailureCode(e);
+        if (attempt >= 2 || !RETRYABLE_COACH_CODES.has(code) || deadline - Date.now() < COACH_RETRY_MIN_MS) throw e;
+        console.warn("[coach] LLM coach reply unusable, retrying once:", code);
+        // Reasoning tokens can use up the whole budget and leave no content: give the retry more room, same model.
+        if (code === "LLM_EMPTY" || code === "LLM_TRUNCATED") maxTokens = COACH_RETRY_MAX_TOKENS;
+      }
     }
+  } finally {
+    abort.abort();
   }
 
   const criteria: CriterionEstimate[] = rubric.map((c) => {
@@ -729,10 +749,7 @@ async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptio
     const raw = Math.max(0, Math.min(100, Math.round(Number.isFinite(r?.score) ? (r?.score as number) : 0)));
     return { id: c.id, name: c.name, weight: c.weight, score: confirmed ? raw : Math.min(raw, PROVISIONAL_MAX), confirmed, evidenceLine };
   });
-  const flags = steps.map((_, i) => {
-    const v = out.steps[i];
-    return v === true || v === "true" || v === 1;
-  });
+  const flags = steps.map((_, i) => out.steps[i] === true);
   const picked = opts.allowCue ? parseLlmCue(out.cue, spoken, rubric, new Set(opts.recentCueKeys ?? [])) : null;
 
   return {
