@@ -21,6 +21,7 @@ import { ACCESS_COOKIE, accessToken } from "@/lib/access";
 import { verifyMfaChallenge, verifyMfaChallengeToken, verifySessionToken } from "@/lib/auth";
 import { authorizeUrl, checkIdTokenClaims, GOOGLE_FLOW_COOKIE, googleConfig, pkceChallenge, randomToken, safeNextPath, signFlowState, verifyFlowState } from "@/lib/googleAuth";
 import { GET as status } from "@/app/api/auth/google/status/route";
+import { settleGhlEvents } from "@/lib/ghlWebhook";
 
 const NOW = 1_800_000_000;
 const good = {
@@ -180,9 +181,14 @@ describe("GET /api/auth/google/callback", () => {
     iss: "https://accounts.google.com", aud: "client-1", exp: Math.floor(Date.now() / 1000) + 300, sub: "g-sub-1",
     email: "Rep@Example.test", email_verified: true, nonce: flow.nonce, given_name: "Ravi", family_name: "Shah", ...patch,
   });
+  // Each call comes from its own client IP. /start and /callback share one in-memory per-IP bucket (IP_LIMITS.google,
+  // 30 per 15 minutes) that lives for the whole file, so without this the 31st request in the file gets a 429 instead
+  // of the redirect under test, and whichever tests happen to run last fail.
+  let ipSeq = 0;
   const call = (opts: { state?: string; cookie?: string; extraCookie?: string; flow?: Record<string, unknown> } = {}) => {
     const cookies = [`${GOOGLE_FLOW_COOKIE}=${opts.cookie ?? signFlowState({ ...flow, ...opts.flow })}`, opts.extraCookie].filter(Boolean).join("; ");
-    return callback(new NextRequest(`http://localhost/api/auth/google/callback?code=abc&state=${opts.state ?? flow.state}`, { headers: { cookie: cookies } }));
+    const ip = `198.51.100.${(++ipSeq % 250) + 1}`;
+    return callback(new NextRequest(`http://localhost/api/auth/google/callback?code=abc&state=${opts.state ?? flow.state}`, { headers: { cookie: cookies, "x-forwarded-for": ip } }));
   };
   const googleReplies = (c: Record<string, unknown>) =>
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ id_token: jwt.sign(c, "google-key") }), { status: 200 })));
@@ -273,6 +279,93 @@ describe("GET /api/auth/google/callback", () => {
     expect(mocks.prisma.auditEvent.create.mock.calls[0][0].data).toMatchObject({ action: "user.registered", metadata: { via: "google" } });
     expect(loc(res).pathname).toBe("/auth/complete");
     expect(res.headers.get("set-cookie")).toContain("authToken=");
+  });
+
+  describe("GHL signup event", () => {
+    const GHL = "https://hooks.example.test/hooks/loc-test/webhook-trigger/trigger-test";
+    /** Google's token endpoint answers with the ID token; the GHL webhook answers `ghl`. */
+    const routedFetch = (ghl: () => Promise<Response>) => {
+      const f = vi.fn(async (url: string) => (url === GHL ? ghl() : new Response(JSON.stringify({ id_token: jwt.sign(claims(), "google-key") }), { status: 200 })));
+      vi.stubGlobal("fetch", f);
+      return { ghlBodies: () => f.mock.calls.filter(([u]) => u === GHL).map((c) => JSON.parse((c as unknown as [string, RequestInit])[1].body as string)) };
+    };
+    beforeEach(() => {
+      vi.stubEnv("GHL_BILLING_EVENTS", "true");
+      vi.stubEnv("GHL_WEBHOOK_URL", GHL);
+    });
+
+    it("a new Google account sends signup with signupMethod google", async () => {
+      const f = routedFetch(async () => new Response("ok"));
+      await call({ flow: { intent: { plan: "team", src: "pricing" } } });
+      await settleGhlEvents();
+      expect(f.ghlBodies()).toEqual([expect.objectContaining({
+        eventId: "signup:u-new", event: "signup", email: "rep@example.test", signupMethod: "google", role: "owner", planIntent: "team", source: "pricing",
+        tags: ["ct-signed-up", "app-calltrainer", "ct-signup-google"],
+      })]);
+      expect(JSON.stringify(f.ghlBodies())).not.toMatch(/trial/i);
+    });
+
+    it("a lost create race (P2002) signs in the winner and sends nothing; the winning callback sends", async () => {
+      const f = routedFetch(async () => new Response("ok"));
+      let createTried = false;
+      mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: Record<string, string> }) =>
+        (createTried && where.googleSub === "g-sub-1" ? existing({ id: "u-winner", googleSub: "g-sub-1" }) : null));
+      mocks.prisma.user.create.mockImplementation(async () => {
+        createTried = true;
+        throw new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" });
+      });
+      const res = await call();
+      await settleGhlEvents();
+      expect(loc(res).pathname).toBe("/auth/complete");
+      expect(f.ghlBodies()).toEqual([]);
+    });
+
+    it("with GHL off a new Google account signs in and nothing is posted to GHL", async () => {
+      vi.stubEnv("GHL_BILLING_EVENTS", "");
+      const f = routedFetch(async () => new Response("ok"));
+      const res = await call();
+      await settleGhlEvents();
+      expect(loc(res).pathname).toBe("/auth/complete");
+      expect(res.headers.get("set-cookie")).toContain("authToken=");
+      expect(f.ghlBodies()).toEqual([]);
+    });
+
+    it("a hung GHL POST does not hold the sign-in", async () => {
+      let ghlAborted = false;
+      let abortGhl!: () => void;
+      vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+        if (url !== GHL) return new Response(JSON.stringify({ id_token: jwt.sign(claims(), "google-key") }), { status: 200 });
+        // Hangs until its own signal fires; the test fires it below in place of the GHL_TIMEOUT_MS timer.
+        return new Promise<Response>((_, reject) => {
+          abortGhl = () => { ghlAborted = true; reject(new DOMException("timed out", "TimeoutError")); };
+          init?.signal?.addEventListener("abort", abortGhl);
+        });
+      }));
+      const res = await call();
+      expect(loc(res).pathname).toBe("/auth/complete");
+      expect(res.headers.get("set-cookie")).toContain("authToken=");
+      await vi.waitFor(() => expect(abortGhl).toBeTypeOf("function"));
+      expect(ghlAborted).toBe(false);
+      abortGhl();
+      await settleGhlEvents();
+      expect(ghlAborted).toBe(true);
+    });
+
+    it("signing in or linking an existing account sends nothing", async () => {
+      const f = routedFetch(async () => new Response("ok"));
+      mocks.prisma.user.findUnique.mockImplementation(async ({ where }: { where: Record<string, string> }) => (where.email === "rep@example.test" ? existing() : null));
+      await call();
+      await settleGhlEvents();
+      expect(f.ghlBodies()).toEqual([]);
+    });
+
+    it("a GHL outage does not fail the sign-in", async () => {
+      routedFetch(async () => { throw new TypeError("fetch failed"); });
+      const res = await call();
+      await settleGhlEvents();
+      expect(loc(res).pathname).toBe("/auth/complete");
+      expect(res.headers.get("set-cookie")).toContain("authToken=");
+    });
   });
 
   it("stores a new account's sign-up intent and sends a paid plan to /checkout/start", async () => {

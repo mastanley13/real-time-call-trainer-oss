@@ -1,14 +1,19 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "./db";
 import { ensureAllowance } from "./usage";
-import { emitBillingLifecycle, emitPremiumEvent, classifyPlanChange, type BillingLifecycleEvent, type PremiumEvent } from "./billingEvents";
+import { emitBillingLifecycle, emitPremiumEvent, classifyPlanChange, isCalltrainerStripe, setBillingEventSink, type BillingLifecycleEvent, type PlanChange, type PremiumEvent } from "./billingEvents";
+import { ghlBillingSink } from "./ghlWebhook";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS, isPlanTier, nextAnchorUnix, type PlanTier } from "./usagePlan";
 import { blocksCheckout, isEntitled, nextPastDueSince } from "./subscriptionStatus";
 import { PREMIUM_STATUSES } from "./premiumVoice";
 import { premiumOnSale } from "./serverConfig";
 import { stripeApi, StripeApiError, stripeLiveMode, type StripeParams } from "./stripe";
+
+// The one place the CRM sink is registered. It still sends nothing unless GHL_BILLING_EVENTS=true and GHL_WEBHOOK_URL is set.
+setBillingEventSink(ghlBillingSink);
 
 /**
  * Checkout parameters and webhook handling. Stripe is the billing source of truth; this module mirrors
@@ -506,7 +511,7 @@ async function pastDueSinceOf(tx: Tx, subject: Subject): Promise<Date | null> {
 }
 
 interface Applied {
-  event: BillingLifecycleEvent | null;
+  event: PlanChange | null;
   /** A second subscription for a subject that already has one: cancel it at Stripe after the transaction commits. */
   cancelSubscriptionId?: string;
   /** Premium Voice events to emit after commit (premium_added, premium_removed). */
@@ -671,7 +676,7 @@ async function applyEntitlement(
   };
 }
 
-function build(subject: Subject, from: PlanTier, to: PlanTier, seats: number, premiumVoice: boolean): BillingLifecycleEvent | null {
+function build(subject: Subject, from: PlanTier, to: PlanTier, seats: number, premiumVoice: boolean): PlanChange | null {
   const kind = classifyPlanChange(from, to);
   return kind ? { kind, subject: subject.kind, subjectId: subject.id, fromPlan: from, toPlan: to, seats, premiumVoice } : null;
 }
@@ -1016,7 +1021,10 @@ export async function handleStripeEvent(event: StripeEventLike, now = new Date()
   }
   try {
     // The event id is the trigger: Stripe's retry of this event repeats the same add-on sync key, a later event does not.
-    await afterApplied(applied, deps, event.id);
+    await afterApplied(applied, deps, event.id, {
+      stripeRef: lifecycleRef((live && live !== "gone" ? live.id : null) ?? subscriptionIdOf(event), event.id),
+      metadata: [metadataOf(event.data.object), live && live !== "gone" ? live.metadata : null],
+    });
   } catch (e) {
     // Cancel and add-on sync run after commit. Drop the event id so Stripe's 500 retry can do them again.
     if (applied?.cancelSubscriptionId || applied?.addonSync) {
@@ -1027,8 +1035,50 @@ export async function handleStripeEvent(event: StripeEventLike, now = new Date()
   return applied ? "processed" : "ignored";
 }
 
-/** The work that must wait until the transaction has committed: dropping a duplicate subscription, then the lifecycle event. */
-async function afterApplied(applied: Applied | null, deps: StripeDeps, trigger: string): Promise<void> {
+/** Where an applied change came from: the Stripe reference for dedupe, and the metadata on the event object and the live subscription. */
+interface Origin {
+  stripeRef: string | null;
+  metadata: (Record<string, string> | null | undefined)[];
+}
+
+const metadataOf = (obj: unknown): Record<string, string> | null => {
+  const m = Meta.safeParse((obj as { metadata?: unknown } | null | undefined)?.metadata);
+  return m.success ? (m.data ?? null) : null;
+};
+
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * The CRM dedupe reference for a plan change, identical whichever path applies it first (the success page via
+ * applyCompletedCheckout, or the Stripe webhook): `subscription:{first 32 hex of sha256(subscription id)}`. A digest,
+ * so the raw Stripe subscription id never reaches GHL. Every handled event names its subscription (session.subscription,
+ * the live subscription, or the updated or deleted subscription's id), so the fallback is rare: a checkout session or
+ * event that carries no subscription id keeps `checkout_session:{id}` or the Stripe event id (evt_...).
+ *
+ * A Pro subscription only moves between free and pro, and a Team one between free and team, so the same subscription
+ * can repeat a kind only after an opposite change (for example a past-due churn, then an upgrade when payment recovers).
+ * Those repeats are never back to back, so dedupe on the contact's last eventId, not on a global seen set.
+ */
+export function lifecycleRef(subscriptionId: string | null | undefined, fallback: string | null): string | null {
+  return subscriptionId ? `subscription:${createHash("sha256").update(subscriptionId).digest("hex").slice(0, 32)}` : fallback;
+}
+
+/**
+ * The lifecycle event for the CRM, or null. Only a change on a Calltrainer subscription (metadata app=calltrainer on
+ * the event object or the live subscription) is forwarded, so other products on a shared Stripe account never reach
+ * GHL. A subscription without that metadata (for example one made by hand in the Stripe dashboard) is not forwarded.
+ */
+export function lifecycleEventFor(change: PlanChange | null, origin: Origin): BillingLifecycleEvent | null {
+  if (!change || !origin.stripeRef || !origin.metadata.some(isCalltrainerStripe)) return null;
+  const buyer = origin.metadata.map((m) => m?.userId).find((id): id is string => typeof id === "string" && SAFE_ID.test(id)) ?? null;
+  return { ...change, stripeRef: origin.stripeRef, purchaserUserId: buyer };
+}
+
+/**
+ * The work that must wait until the transaction has committed: dropping a duplicate subscription, the add-on quantity
+ * sync (keyed by `trigger`), then the CRM lifecycle event (tied to `origin`, see lifecycleEventFor) and Premium events.
+ */
+async function afterApplied(applied: Applied | null, deps: StripeDeps, trigger: string, origin: Origin): Promise<void> {
   if (applied?.cancelSubscriptionId) {
     try {
       await deps.cancelSubscription(applied.cancelSubscriptionId);
@@ -1074,7 +1124,9 @@ async function afterApplied(applied: Applied | null, deps: StripeDeps, trigger: 
       throw e;
     }
   }
-  if (applied?.event) await emitBillingLifecycle(applied.event);
+  // Only a change on a Calltrainer subscription becomes a CRM event; Premium events are unaffected by that gate.
+  const event = lifecycleEventFor(applied?.event ?? null, origin);
+  if (event) await emitBillingLifecycle(event);
   for (const e of applied?.premiumEvents ?? []) await emitPremiumEvent(e);
 }
 
@@ -1085,8 +1137,12 @@ async function afterApplied(applied: Applied | null, deps: StripeDeps, trigger: 
 export async function syncSubscriptionNow(subscriptionId: string, now = new Date(), deps: StripeDeps = liveDeps): Promise<void> {
   const live = await fetchLive(subscriptionId, deps);
   const applied = await prisma.$transaction((tx) => reconcile(tx, subscriptionId, live, {}, now));
-  // No Stripe event here: the app's own sync is its own trigger.
-  await afterApplied(applied, deps, `app-sync-${now.getTime()}`);
+  // No Stripe event here: the app's own sync is its own trigger. The CRM reference is the subscription digest, the same
+  // one the webhook for this change will compute, so GHL sees one eventId whichever path applies it first.
+  await afterApplied(applied, deps, `app-sync-${now.getTime()}`, {
+    stripeRef: lifecycleRef(live && live !== "gone" ? live.id : subscriptionId, null),
+    metadata: [live && live !== "gone" ? live.metadata : null],
+  });
 }
 
 /**
@@ -1096,5 +1152,8 @@ export async function syncSubscriptionNow(subscriptionId: string, now = new Date
 async function applyCompletedCheckout(session: z.infer<typeof SessionObject>, now: Date, deps: StripeDeps): Promise<void> {
   const live = await fetchLive(session.subscription ?? null, deps);
   const applied = await prisma.$transaction((tx) => onCheckoutPaid(tx, session, live, now, true));
-  await afterApplied(applied, deps, `checkout-${session.id ?? now.getTime()}`);
+  await afterApplied(applied, deps, `checkout-${session.id ?? now.getTime()}`, {
+    stripeRef: lifecycleRef(session.subscription ?? (live && live !== "gone" ? live.id : null), session.id ? `checkout_session:${session.id}` : null),
+    metadata: [session.metadata, live && live !== "gone" ? live.metadata : null],
+  });
 }
