@@ -21,17 +21,26 @@ const state = vi.hoisted(() => ({
   seq: 0,
   /** Runs once just before the row-lock read, as if another request committed a change at that moment. */
   beforeLock: null as null | (() => void),
+  /**
+   * One-shot hooks, the interleave pattern from tests/fakePrisma.ts: just before the next matching user.updateMany,
+   * `run` executes as if another connection did that work and committed at that moment.
+   */
+  hooks: [] as { when: (args: { where: Where; data: Record<string, unknown> }) => boolean; run: () => Promise<void> }[],
 }));
 
 function matchCode(row: CodeRow, where: Where): boolean {
   return Object.entries(where).every(([k, v]) => (row as unknown as Record<string, unknown>)[k] === v);
 }
 
-/** Equality, plus the `{ gte: n }` filter recordAuthFailure uses. */
+/** Equality, plus the filters loginLockout.ts and the Google link use: `{ gte: n }`, `{ lte: date }` and `OR`. */
 function matchUser(row: UserRow, where: Where): boolean {
   return Object.entries(where).every(([k, v]) => {
-    const have = (row as unknown as Record<string, unknown>)[k];
-    if (v && typeof v === "object" && !(v instanceof Date) && "gte" in v) return typeof have === "number" && have >= (v as { gte: number }).gte;
+    if (k === "OR") return (v as Where[]).some((w) => matchUser(row, w));
+    const have = (row as unknown as Record<string, unknown>)[k] ?? null;
+    if (v && typeof v === "object" && !(v instanceof Date)) {
+      if ("gte" in v) return typeof have === "number" && have >= (v as { gte: number }).gte;
+      if ("lte" in v) return have instanceof Date && have.getTime() <= (v as { lte: Date }).lte.getTime();
+    }
     return have === v;
   });
 }
@@ -45,64 +54,137 @@ function applyUser(row: UserRow, data: Record<string, unknown>) {
   }
 }
 
+/**
+ * The fake database. Postgres takes a row lock on the user row for every write here (the code paths under test
+ * always write the user row first in a transaction), so the fake models that lock as one FIFO mutex:
+ * - A write outside a transaction waits for the lock, applies in one synchronous step, and releases.
+ * - A transaction takes the lock at its first write (or FOR UPDATE read) and holds it until it commits or rolls
+ *   back. Because nobody else can write while it is held, a rollback can restore the state saved at that moment.
+ * - Interleave hooks and the beforeLock hook run before the lock is taken, as work another connection committed
+ *   just before this statement.
+ * Reads never wait, like MVCC reads.
+ */
 const fakeDb = vi.hoisted(() => {
-  const db = {
-    user: {
-      findUnique: async ({ where }: { where: { id?: string; email?: string } }) => {
-        const u = where.id !== undefined ? state.users.get(where.id) : [...state.users.values()].find((x) => x.email === where.email);
-        return u ? { ...u, firstName: null, lastName: null, isPlatformAdmin: false, organization: null } : null;
-      },
-      update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
-        const u = state.users.get(where.id);
-        if (!u) throw new Error("user not found");
-        applyUser(u, data);
-        return { ...u };
-      },
-      updateMany: async ({ where, data }: { where: Where; data: Record<string, unknown> }) => {
-        const u = state.users.get(where.id as string);
-        if (!u || !matchUser(u, where)) return { count: 0 };
-        applyUser(u, data);
-        return { count: 1 };
-      },
-    },
-    mfaRecoveryCode: {
-      deleteMany: async ({ where }: { where: Where }) => {
-        const before = state.codes.length;
-        state.codes = state.codes.filter((c) => !matchCode(c, where));
-        return { count: before - state.codes.length };
-      },
-      createMany: async ({ data }: { data: { userId: string; codeHash: string }[] }) => {
-        for (const d of data) {
-          if (state.codes.some((c) => c.codeHash === d.codeHash)) throw new Error("P2002 unique codeHash");
-          state.codes.push({ id: `code-${++state.seq}`, usedAt: null, createdAt: new Date(), ...d });
-        }
-        return { count: data.length };
-      },
-      // Check and write in one step, with no await between them: the shape of UPDATE ... WHERE "usedAt" IS NULL.
-      updateMany: async ({ where, data }: { where: Where; data: Partial<CodeRow> }) => {
-        const hit = state.codes.filter((c) => matchCode(c, where));
-        hit.forEach((c) => Object.assign(c, data));
-        return { count: hit.length };
-      },
-      count: async ({ where }: { where: Where }) => state.codes.filter((c) => matchCode(c, where)).length,
-    },
-    auditEvent: {
-      create: async ({ data }: { data: { action: string; userId?: string; metadata?: unknown } }) => {
-        state.audits.push(data);
-        return data;
-      },
-    },
-    $queryRaw: async (_s: TemplateStringsArray, userId: string) => {
-      const hook = state.beforeLock;
-      state.beforeLock = null;
-      hook?.();
-      const u = state.users.get(userId);
-      return u ? [{ mfaEnabled: u.mfaEnabled, mfaSecret: u.mfaSecret, passwordHash: u.passwordHash }] : [];
-    },
-    $transaction: async (arg: unknown) =>
-      typeof arg === "function" ? (arg as (tx: unknown) => Promise<unknown>)(db) : Promise.all(arg as Promise<unknown>[]),
+  type Ctx = { release?: () => void; saved?: { users: Map<string, Record<string, unknown>>; codes: CodeRow[] } };
+  let tail: Promise<void> = Promise.resolve();
+  const acquire = (): Promise<() => void> => {
+    let release!: () => void;
+    const mine = new Promise<void>((r) => (release = r));
+    const prev = tail;
+    tail = prev.then(() => mine);
+    return prev.then(() => release);
   };
-  return db;
+  const save = () => ({
+    users: new Map([...state.users].map(([id, u]) => [id, { ...u } as Record<string, unknown>])),
+    codes: state.codes.map((c) => ({ ...c })),
+  });
+  const restore = (saved: NonNullable<Ctx["saved"]>) => {
+    for (const [id, snap] of saved.users) {
+      const live = state.users.get(id) as unknown as Record<string, unknown>;
+      for (const k of Object.keys(live)) if (!(k in snap)) delete live[k];
+      Object.assign(live, snap);
+    }
+    state.codes = saved.codes;
+  };
+
+  /** Runs `apply` under the row lock: briefly outside a transaction, or held to the end inside one. */
+  async function locked<T>(ctx: Ctx | null, apply: () => T): Promise<T> {
+    if (!ctx) {
+      const release = await acquire();
+      try {
+        return apply();
+      } finally {
+        release();
+      }
+    }
+    if (!ctx.release) {
+      ctx.release = await acquire();
+      ctx.saved = save();
+    }
+    return apply();
+  }
+
+  function client(ctx: Ctx | null) {
+    return {
+      user: {
+        findUnique: async ({ where }: { where: { id?: string; email?: string } }) => {
+          const u = where.id !== undefined ? state.users.get(where.id) : [...state.users.values()].find((x) => x.email === where.email);
+          return u ? { ...u, firstName: null, lastName: null, isPlatformAdmin: false, organization: null } : null;
+        },
+        update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) =>
+          locked(ctx, () => {
+            const u = state.users.get(where.id);
+            if (!u) throw new Error("user not found");
+            applyUser(u, data);
+            return { ...u };
+          }),
+        updateMany: async ({ where, data }: { where: Where; data: Record<string, unknown> }) => {
+          const i = state.hooks.findIndex((h) => h.when({ where, data }));
+          if (i >= 0) await state.hooks.splice(i, 1)[0].run();
+          return locked(ctx, () => {
+            const u = state.users.get(where.id as string);
+            if (!u || !matchUser(u, where)) return { count: 0 };
+            applyUser(u, data);
+            return { count: 1 };
+          });
+        },
+      },
+      mfaRecoveryCode: {
+        deleteMany: async ({ where }: { where: Where }) =>
+          locked(ctx, () => {
+            const before = state.codes.length;
+            state.codes = state.codes.filter((c) => !matchCode(c, where));
+            return { count: before - state.codes.length };
+          }),
+        createMany: async ({ data }: { data: { userId: string; codeHash: string }[] }) =>
+          locked(ctx, () => {
+            for (const d of data) {
+              if (state.codes.some((c) => c.codeHash === d.codeHash)) throw new Error("P2002 unique codeHash");
+              state.codes.push({ id: `code-${++state.seq}`, usedAt: null, createdAt: new Date(), ...d });
+            }
+            return { count: data.length };
+          }),
+        // Check and write in one step: the shape of UPDATE ... WHERE "usedAt" IS NULL.
+        updateMany: async ({ where, data }: { where: Where; data: Partial<CodeRow> }) =>
+          locked(ctx, () => {
+            const hit = state.codes.filter((c) => matchCode(c, where));
+            hit.forEach((c) => Object.assign(c, data));
+            return { count: hit.length };
+          }),
+        count: async ({ where }: { where: Where }) => state.codes.filter((c) => matchCode(c, where)).length,
+      },
+      auditEvent: {
+        create: async ({ data }: { data: { action: string; userId?: string; metadata?: unknown } }) => {
+          state.audits.push(data);
+          return data;
+        },
+      },
+      /** SELECT ... FOR UPDATE on the user row. */
+      $queryRaw: async (_s: TemplateStringsArray, userId: string) => {
+        const hook = state.beforeLock;
+        state.beforeLock = null;
+        hook?.();
+        return locked(ctx, () => {
+          const u = state.users.get(userId);
+          return u ? [{ mfaEnabled: u.mfaEnabled, mfaSecret: u.mfaSecret, passwordHash: u.passwordHash }] : [];
+        });
+      },
+      /** Interactive form: a throw restores what the transaction changed. Array form: each write locks on its own. */
+      $transaction: async (arg: unknown) => {
+        if (typeof arg !== "function") return Promise.all(arg as Promise<unknown>[]);
+        const tx: Ctx = {};
+        try {
+          return await (arg as (c: unknown) => Promise<unknown>)(client(tx));
+        } catch (e) {
+          if (tx.saved) restore(tx.saved);
+          throw e;
+        } finally {
+          tx.release?.();
+        }
+      },
+    };
+  }
+  return client(null);
 });
 
 vi.mock("@/lib/db", () => ({ prisma: fakeDb }));
@@ -118,7 +200,7 @@ import {
 } from "@/lib/mfaRecovery";
 import { RECOVERY_CODE_COUNT, recoveryCodesFile, recoveryCodesLabel, recoveryCodesLow } from "@/lib/mfaRecovery-types";
 import { hashPassword, signMfaChallengeToken, signSessionToken } from "@/lib/auth";
-import { LOCKED_MESSAGE, LOCKOUT_MINUTES, MAX_FAILED_LOGINS } from "@/lib/loginLockout";
+import { LOCKED_MESSAGE, LOCKOUT_MINUTES, MAX_FAILED_LOGINS, recordAuthFailure } from "@/lib/loginLockout";
 import { POST as loginRoute } from "@/app/api/auth/login/route";
 import { POST as activateRoute } from "@/app/api/auth/mfa/activate/route";
 import { POST as challengeRoute } from "@/app/api/auth/mfa/challenge/route";
@@ -144,6 +226,7 @@ beforeEach(() => {
   state.codes = [];
   state.audits = [];
   state.beforeLock = null;
+  state.hooks = [];
   mocks.verifyTotp.mockClear();
 });
 
@@ -182,12 +265,12 @@ async function enrolled(): Promise<{ user: UserRow; codes: string[] }> {
   return { user, codes: (await res.json()).recoveryCodes };
 }
 
-function challenge(userId: string, body: Record<string, string>, ip: string) {
+function challenge(userId: string, body: Record<string, string>, ip: string, linkGoogleSub?: string) {
   return challengeRoute(
     new NextRequest("http://localhost/api/auth/mfa/challenge", {
       method: "POST",
       headers: { "x-forwarded-for": ip, "content-type": "application/json" },
-      body: JSON.stringify({ challengeToken: signMfaChallengeToken(userId), ...body }),
+      body: JSON.stringify({ challengeToken: signMfaChallengeToken(userId, linkGoogleSub), ...body }),
     }),
   );
 }
@@ -640,6 +723,98 @@ describe("disabling MFA", () => {
     const { user } = await enrolled();
     expect((await disableRoute(authed("http://localhost/api/auth/mfa/disable", user, { code: "000000" }))).status).toBe(401);
     expect(state.codes.filter((c) => c.userId === user.id)).toHaveLength(10);
+  });
+});
+
+describe("a lock armed while a correct secret is being checked is never erased", () => {
+  /** The success transition: the lock-aware counter reset (updateMany with the not-locked OR, no Google id). */
+  const isReset = ({ where, data }: { where: Where; data: Record<string, unknown> }) => "OR" in where && !("googleSub" in data);
+
+  /** Just before the next success transition, eight failures from elsewhere arm the lock. */
+  function armLockBeforeReset(userId: string, failures: () => Promise<unknown> = () => recordAuthFailure(userId)) {
+    state.hooks.push({ when: isReset, run: async () => { await Promise.all(Array.from({ length: MAX_FAILED_LOGINS }, failures)); } });
+  }
+
+  function expectStillLocked(userId: string) {
+    const row = state.users.get(userId)!;
+    expect(row.lockedUntil!.getTime()).toBeGreaterThan(Date.now());
+    expect(row.lastLoginAt ?? null).toBeNull();
+  }
+
+  it("password login: correct password, lock armed meanwhile: 423, no session, lock kept", async () => {
+    const user = seedUser({ mfaEnabled: false, mfaSecret: null });
+    armLockBeforeReset(user.id);
+    const res = await login(user, PASSWORD);
+    expect(res.status).toBe(423);
+    expect(await res.json()).toEqual({ error: LOCKED_MESSAGE });
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expectStillLocked(user.id);
+    expect(state.audits.some((a) => a.action === "user.login_success")).toBe(false);
+  });
+
+  it("password login without interference still succeeds and resets the counters", async () => {
+    const user = seedUser({ mfaEnabled: false, mfaSecret: null, failedLoginCount: 5 });
+    const res = await login(user, PASSWORD);
+    expect(res.status).toBe(200);
+    expect(state.users.get(user.id)).toMatchObject({ failedLoginCount: 0, lockedUntil: null });
+  });
+
+  it("MFA challenge with a TOTP code: wrong codes from other IPs lock the account mid-check: 423, no session", async () => {
+    const { user } = await enrolled();
+    armLockBeforeReset(user.id, () => challenge(user.id, { code: "000000" }, freshIp()));
+    const res = await challenge(user.id, { code: "123456" }, freshIp());
+    expect(res.status).toBe(423);
+    expect(await res.json()).toEqual({ error: LOCKED_MESSAGE });
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expectStillLocked(user.id);
+    expect(state.audits.some((a) => a.action === "user.mfa_challenge_success")).toBe(false);
+  });
+
+  it("MFA challenge with a recovery code: 423, no session, and the code is not burned", async () => {
+    const { user, codes } = await enrolled();
+    armLockBeforeReset(user.id, () => challenge(user.id, { recoveryCode: "AAAA-AAAA-AAAA" }, freshIp()));
+    const res = await challenge(user.id, { recoveryCode: codes[0] }, freshIp());
+    expect(res.status).toBe(423);
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expectStillLocked(user.id);
+    expect(state.codes.every((c) => c.usedAt === null)).toBe(true);
+    expect(state.audits.some((a) => a.action === "user.mfa_recovery_code_used")).toBe(false);
+
+    // Once the lock runs out, the same code still works, exactly once.
+    state.users.get(user.id)!.lockedUntil = new Date(Date.now() - 1000);
+    expect((await challenge(user.id, { recoveryCode: codes[0] }, freshIp())).status).toBe(200);
+    expect((await challenge(user.id, { recoveryCode: codes[0] }, freshIp())).status).toBe(401);
+  });
+
+  it("regenerate: correct proof, lock armed meanwhile: 423 and the old codes are untouched", async () => {
+    const { user, codes } = await enrolled();
+    const before = state.codes.map((c) => ({ ...c }));
+    armLockBeforeReset(user.id);
+    const res = await regenerate(user, { password: PASSWORD });
+    expect(res.status).toBe(423);
+    expect(await res.json()).toEqual({ error: LOCKED_MESSAGE });
+    expect(state.codes).toEqual(before);
+    expect(state.users.get(user.id)!.lockedUntil!.getTime()).toBeGreaterThan(Date.now());
+    expect(state.audits.some((a) => a.action === "user.mfa_recovery_codes_regenerated")).toBe(false);
+    expect(codes).toHaveLength(10);
+  });
+
+  it("a wrong recovery code rolls back the tentative reset, so the failure counts on top of earlier ones", async () => {
+    const { user } = await enrolled();
+    state.users.get(user.id)!.failedLoginCount = 5;
+    expect((await challenge(user.id, { recoveryCode: "AAAA-AAAA-AAAA" }, freshIp())).status).toBe(401);
+    expect(state.users.get(user.id)!.failedLoginCount).toBe(6);
+    expect(state.users.get(user.id)!.lastLoginAt ?? null).toBeNull();
+  });
+
+  it("a refused Google link rolls back the whole success: no session, code not burned, counters unchanged", async () => {
+    const { user, codes } = await enrolled();
+    Object.assign(state.users.get(user.id)!, { googleSub: "someone-else", failedLoginCount: 3 });
+    const res = await challenge(user.id, { recoveryCode: codes[0] }, freshIp(), "g-sub-new");
+    expect(res.status).toBe(409);
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(state.codes.every((c) => c.usedAt === null)).toBe(true);
+    expect(state.users.get(user.id)).toMatchObject({ googleSub: "someone-else", failedLoginCount: 3 });
   });
 });
 

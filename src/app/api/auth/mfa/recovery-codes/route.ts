@@ -16,6 +16,9 @@ const BodySchema = z
   })
   .refine((b) => (b.password === undefined) !== (b.code === undefined));
 
+/** Thrown inside the regeneration transaction to roll it back when the account changed after the proof. */
+class Changed extends Error {}
+
 const notEnabled = () =>
   NextResponse.json(
     { error: "mfa_not_enabled", message: "MFA is not enabled on this account. Turn it on first." },
@@ -109,22 +112,33 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Under the row lock, the secret (and for a password proof, the password hash) must still be the ones just checked.
+  // One transaction. First the lock-aware counter reset: it takes the user row lock and refuses if failures from other
+  // requests armed a lock while the proof was being checked. Then, under that lock, the secret (and for a password
+  // proof, the password hash) must still be the ones just checked. Either refusal rolls back, so nothing is written.
   const provenSecret = dbUser.mfaSecret;
-  const recoveryCodes = await prisma.$transaction((tx) =>
-    replaceRecoveryCodes(tx, dbUser.id, {
-      mfaSecret: provenSecret,
-      ...(method === "password" ? { passwordHash: dbUser.passwordHash } : {}),
-    }),
-  );
-  if (!recoveryCodes) {
+  const result = await prisma
+    .$transaction(async (tx): Promise<string[] | "locked"> => {
+      if (!(await clearAuthFailures(dbUser.id, {}, tx))) return "locked";
+      const codes = await replaceRecoveryCodes(tx, dbUser.id, {
+        mfaSecret: provenSecret,
+        ...(method === "password" ? { passwordHash: dbUser.passwordHash } : {}),
+      });
+      if (!codes) throw new Changed(); // undo the counter reset too
+      return codes;
+    })
+    .catch((e: unknown) => {
+      if (e instanceof Changed) return "changed" as const;
+      throw e;
+    });
+  if (result === "locked") return lockedResponse();
+  if (result === "changed") {
     // MFA was turned off, re-enrolled or the password changed after the proof was checked. Nothing was written.
     return NextResponse.json(
       { error: "conflict", message: "Your security settings changed while this was running. Reload the page and try again." },
       { status: 409 },
     );
   }
-  await clearAuthFailures(dbUser.id);
+  const recoveryCodes = result;
 
   await prisma.auditEvent.create({
     data: {

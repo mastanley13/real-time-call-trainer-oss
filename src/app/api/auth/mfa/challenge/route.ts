@@ -12,6 +12,19 @@ import { linkGoogleAtomically } from "@/lib/googleAuth";
 import { clearAuthFailures, isLocked, lockedResponse, recordAuthFailure } from "@/lib/loginLockout";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 
+type Outcome =
+  | { kind: "ok"; remaining?: number }
+  | { kind: "invalid" }
+  | { kind: "locked" }
+  | { kind: "link_refused" };
+
+/** Thrown inside the success transaction to roll it back and report why. */
+class Abort extends Error {
+  constructor(readonly outcome: Outcome) {
+    super(outcome.kind);
+  }
+}
+
 const BodySchema = z
   .object({
     challengeToken: z.string().min(10),
@@ -77,13 +90,42 @@ export async function POST(req: NextRequest) {
 
   const viaRecovery = body.recoveryCode !== undefined;
   const method = viaRecovery ? "recovery_code" : "totp";
-  // A recovery code is spent atomically: once used here it can never be accepted again, even by a request racing this
-  // one. If the Google link below is then refused, the code stays spent; failing closed is the safer side for a
-  // single-use secret.
-  const spent = body.recoveryCode !== undefined ? await consumeRecoveryCode(user.id, body.recoveryCode) : null;
-  const accepted = spent ? spent.ok : verifyTotp(user.mfaSecret, body.code ?? "");
+  const recoveryCode = body.recoveryCode;
 
-  if (!accepted) {
+  // TOTP needs no database, so a wrong one is refused here without opening a transaction.
+  let outcome: Outcome =
+    !viaRecovery && !verifyTotp(user.mfaSecret, body.code ?? "") ? { kind: "invalid" } : { kind: "ok" };
+
+  if (outcome.kind === "ok") {
+    // One transaction for the whole success: the lock-aware counter reset, the recovery code spend and the pending
+    // Google link. The reset runs first, so it takes the user row lock before the code row (the same order as
+    // regeneration, so the two cannot deadlock) and refuses if failures from other requests armed a lock after the
+    // isLocked check above. Any refusal rolls everything back, so a recovery code is spent only by a sign-in that
+    // actually issues a session: a lock armed meanwhile, or a refused Google link, leaves the code usable later.
+    // It stays single use: the spend is still one conditional UPDATE, committed together with the sign-in.
+    outcome = await prisma
+      .$transaction(async (tx): Promise<Outcome> => {
+        if (!(await clearAuthFailures(user.id, { lastLoginAt: new Date() }, tx))) return { kind: "locked" };
+        let remaining: number | undefined;
+        if (recoveryCode !== undefined) {
+          const spent = await consumeRecoveryCode(user.id, recoveryCode, tx);
+          if (!spent.ok) throw new Abort({ kind: "invalid" });
+          remaining = spent.remaining;
+        }
+        if (challenge.linkGoogleSub && !(await linkGoogleAtomically(tx, user.id, challenge.linkGoogleSub))) {
+          throw new Abort({ kind: "link_refused" });
+        }
+        return { kind: "ok", remaining };
+      })
+      .catch((e: unknown) => {
+        if (e instanceof Abort) return e.outcome;
+        throw e;
+      });
+  }
+
+  if (outcome.kind === "locked") return lockedResponse();
+
+  if (outcome.kind === "invalid") {
     // Both methods feed the account's failedLoginCount, shared with the password step, so guesses spread across
     // IPs are still bounded per account.
     const { locked } = await recordAuthFailure(user.id);
@@ -110,27 +152,27 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (spent?.ok) {
+  // A Google link waiting on this challenge was attempted in the transaction above, only after the code was accepted.
+  // The write is atomic (no Google id yet, not locked). If it could not be made, the challenge is refused: no
+  // session, no cookie, and nothing from the transaction is kept.
+  if (outcome.kind === "link_refused") {
+    await prisma.auditEvent.create({ data: { userId: user.id, action: "user.mfa_challenge_failed", ip, metadata: { via: "google", reason: "link_refused" } } });
+    return NextResponse.json({ error: "Google sign-in could not be completed. Sign in again." }, { status: 409 });
+  }
+  const linked = Boolean(challenge.linkGoogleSub);
+
+  if (outcome.remaining !== undefined) {
     await prisma.auditEvent.create({
       data: {
         userId: user.id,
         action: "user.mfa_recovery_code_used",
         ip,
         userAgent: req.headers.get("user-agent") ?? undefined,
-        metadata: { remaining: spent.remaining },
+        metadata: { remaining: outcome.remaining },
       },
     });
   }
 
-  // A Google link waiting on this challenge is written only now, after the code was accepted. The write is atomic
-  // (no Google id yet, not locked). If it cannot be made, the challenge is refused: no session, no cookie.
-  const linked = Boolean(challenge.linkGoogleSub);
-  if (challenge.linkGoogleSub && !(await linkGoogleAtomically(prisma, user.id, challenge.linkGoogleSub))) {
-    await prisma.auditEvent.create({ data: { userId: user.id, action: "user.mfa_challenge_failed", ip, metadata: { via: "google", reason: "link_refused" } } });
-    return NextResponse.json({ error: "Google sign-in could not be completed. Sign in again." }, { status: 409 });
-  }
-  // A completed sign-in clears the counters, exactly as password login does without MFA.
-  await clearAuthFailures(user.id, { lastLoginAt: new Date() });
   const successMeta = {
     ...(challenge.linkGoogleSub ? { via: "google", linked } : {}),
     ...(viaRecovery ? { method: "recovery_code" } : {}),

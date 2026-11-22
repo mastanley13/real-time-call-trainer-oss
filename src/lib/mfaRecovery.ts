@@ -97,16 +97,17 @@ export type ConsumeResult = { ok: true; remaining: number } | { ok: false };
  * Spend one recovery code. The code is matched and marked used by a single conditional UPDATE (`usedAt IS NULL`),
  * so two concurrent requests with the same code cannot both succeed: the loser's update matches no row and gets
  * count 0. The comparison happens in the database by unique hash; no hash is compared in application memory.
+ * Pass a transaction client so the spend commits or rolls back together with the sign-in it pays for.
  */
-export async function consumeRecoveryCode(userId: string, input: string): Promise<ConsumeResult> {
+export async function consumeRecoveryCode(userId: string, input: string, db: Tx = prisma): Promise<ConsumeResult> {
   const normalized = normalizeRecoveryCode(input);
   if (!normalized) return { ok: false };
-  const spent = await prisma.mfaRecoveryCode.updateMany({
+  const spent = await db.mfaRecoveryCode.updateMany({
     where: { userId, codeHash: hashRecoveryCode(normalized), usedAt: null },
     data: { usedAt: new Date() },
   });
   if (spent.count !== 1) return { ok: false };
-  const remaining = await prisma.mfaRecoveryCode.count({ where: { userId, usedAt: null } });
+  const remaining = await db.mfaRecoveryCode.count({ where: { userId, usedAt: null } });
   return { ok: true, remaining };
 }
 

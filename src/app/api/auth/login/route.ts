@@ -102,7 +102,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ mfaRequired: true, challengeToken });
   }
 
-  await clearAuthFailures(user.id, { lastLoginAt: new Date() });
+  // Conditional on no lock having been armed while the password was being checked; otherwise no session.
+  if (!(await clearAuthFailures(user.id, { lastLoginAt: new Date() }))) return lockedResponse();
 
   await prisma.auditEvent.create({
     data: {
