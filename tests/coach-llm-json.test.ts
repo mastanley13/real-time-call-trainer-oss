@@ -11,7 +11,7 @@ import { z } from "zod";
 import { COACH_JSON_SCHEMA, coachFailureCode, coachTurn, parseCoachReply, type CoachTurnInput } from "@/lib/coach";
 import { chatFull, parseFirstJsonObject } from "@/lib/llm";
 import { OPENAI_KEY_SLOT_VARS, resetOpenAiKeyState } from "@/lib/openaiKeys";
-import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
+import { BUILT_IN_SCENARIOS, talkTrackSteps } from "@/lib/scenarios";
 
 const hex = (n: number) => randomBytes(n).toString("hex");
 const KEY = `${hex(8)}fixturecoachkey${hex(8)}`;
@@ -26,10 +26,14 @@ const CALL: CoachTurnInput[] = [
   { role: "assistant", text: "Since this morning. What does a visit cost?" },
 ];
 
+const STEP_COUNT = talkTrackSteps(scenario.callScript).length;
+const RUBRIC_IDS = scenario.rubric.map((c) => c.id);
+const EXPECTED = { criterionIds: RUBRIC_IDS, stepCount: STEP_COUNT };
+
 const validReply = () =>
   JSON.stringify({
     criteria: scenario.rubric.map((c) => ({ id: c.id, score: 40, quote: c === scenario.rubric[0] ? "How long has it been leaking" : null })),
-    steps: [true],
+    steps: Array.from({ length: STEP_COUNT }, (_, i) => i === 0),
     cue: {
       type: "objection",
       title: "Explain the fee",
@@ -170,6 +174,44 @@ describe("parseCoachReply", () => {
   });
 });
 
+describe("parseCoachReply against the requested rubric and talk track", () => {
+  const ok = () => JSON.parse(validReply());
+  const parse = (reply: unknown, expected = EXPECTED) => parseCoachReply(JSON.stringify(reply), false, expected);
+
+  it("needs at least two criteria and steps in the fixture scenario", () => {
+    expect(RUBRIC_IDS.length).toBeGreaterThan(1);
+    expect(STEP_COUNT).toBeGreaterThan(1);
+  });
+
+  it("rejects empty arrays", () => {
+    expect(() => parse({ criteria: [], steps: [], cue: null })).toThrow("LLM_SCHEMA");
+  });
+
+  it("rejects a missing criterion id", () => {
+    expect(() => parse({ ...ok(), criteria: ok().criteria.slice(1) })).toThrow("LLM_SCHEMA");
+  });
+
+  it("rejects too few steps", () => {
+    expect(() => parse({ ...ok(), steps: ok().steps.slice(1) })).toThrow("LLM_SCHEMA");
+  });
+
+  it("accepts extra or duplicate ids and extra steps", () => {
+    const reply = ok();
+    const out = parse({
+      ...reply,
+      criteria: [...reply.criteria, { id: "unknown-criterion", score: 90, quote: null }, { ...reply.criteria[0], score: 99 }],
+      steps: [...reply.steps, true, false],
+    });
+    expect(out.criteria.find((c) => c.id === RUBRIC_IDS[0])?.score).toBe(40);
+  });
+
+  it("accepts a scenario with zero steps or zero criteria", () => {
+    expect(parse({ ...ok(), steps: [] }, { criterionIds: RUBRIC_IDS, stepCount: 0 }).steps).toEqual([]);
+    expect(parse({ criteria: [], steps: ok().steps, cue: null }, { criterionIds: [], stepCount: STEP_COUNT }).criteria).toEqual([]);
+    expect(parse({ criteria: [], steps: [], cue: null }, { criterionIds: [], stepCount: 0 }).cue).toBeNull();
+  });
+});
+
 describe("chatFull null content", () => {
   const ask = (opts: Parameters<typeof chatFull>[1]) => chatFull([{ role: "user", content: "hi" }], opts);
 
@@ -277,6 +319,23 @@ describe("coach retry", () => {
 
   it("retries an incomplete {} reply as a schema failure, then falls back", async () => {
     replies(() => completion("{}"));
+    expect((await run()).source).toBe("heuristic");
+    expect(sent).toHaveLength(2);
+    expect(logText()).toContain("heuristic: LLM_SCHEMA");
+  });
+
+  it("retries a reply with empty criteria and steps and uses the complete second reply", async () => {
+    replies(() => completion(JSON.stringify({ criteria: [], steps: [], cue: null })), () => completion(validReply()));
+    const r = await run();
+    expect(r.source).toBe("llm");
+    expect(sent).toHaveLength(2);
+    expect(logText()).toContain("retrying once: LLM_SCHEMA");
+    expect(r.steps[0]).toBe(true);
+  });
+
+  it("falls back when both replies miss a rubric criterion", async () => {
+    const reply = JSON.parse(validReply());
+    replies(() => completion(JSON.stringify({ ...reply, criteria: reply.criteria.slice(1) })));
     expect((await run()).source).toBe("heuristic");
     expect(sent).toHaveLength(2);
     expect(logText()).toContain("heuristic: LLM_SCHEMA");

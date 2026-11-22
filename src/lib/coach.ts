@@ -605,7 +605,11 @@ export const COACH_JSON_SCHEMA: JsonSchemaFormat = {
  * Parses a coach reply. Throws only a safe code: LLM_TRUNCATED (stopped at the token budget), LLM_EMPTY,
  * LLM_BAD_JSON or LLM_SCHEMA. Never a SyntaxError or ZodError, whose messages can quote the reply.
  */
-export function parseCoachReply(text: string, truncated: boolean): z.infer<typeof LlmCoachOutput> {
+export function parseCoachReply(
+  text: string,
+  truncated: boolean,
+  expected?: { criterionIds: string[]; stepCount: number },
+): z.infer<typeof LlmCoachOutput> {
   if (!text.trim()) throw new Error(truncated ? "LLM_TRUNCATED" : "LLM_EMPTY");
   let raw: unknown;
   try {
@@ -615,6 +619,12 @@ export function parseCoachReply(text: string, truncated: boolean): z.infer<typeo
   }
   const out = LlmCoachOutput.safeParse(raw);
   if (!out.success) throw new Error("LLM_SCHEMA");
+  // Structured outputs check types, not the scenario: every requested rubric id and talk-track step must be there.
+  // Unknown or duplicate ids and extra steps are ignored (the first entry per id is used).
+  if (expected) {
+    const ids = new Set(out.data.criteria.map((c) => c.id));
+    if (!expected.criterionIds.every((id) => ids.has(id)) || out.data.steps.length < expected.stepCount) throw new Error("LLM_SCHEMA");
+  }
   return out.data;
 }
 
@@ -728,7 +738,7 @@ async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptio
           chatFull(messages, { json: true, jsonSchema: COACH_JSON_SCHEMA, maxTokens, temperature: 0.2, signal: abort.signal, nullContentAsEmpty: true }),
           Math.max(0, deadline - Date.now()),
         );
-        out = parseCoachReply(text, truncated);
+        out = parseCoachReply(text, truncated, { criterionIds: rubric.map((c) => c.id), stepCount: steps.length });
         break;
       } catch (e) {
         const code = coachFailureCode(e);
