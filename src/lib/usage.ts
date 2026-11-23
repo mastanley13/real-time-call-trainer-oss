@@ -847,6 +847,14 @@ async function freeAbandonReducedUsedUp(tx: Tx, s: OpenSession): Promise<boolean
 }
 
 /**
+ * Whether settling this call with this reason takes the Free silent-call path (a call on the Free rule that proved it
+ * connected, reaped as heartbeat_timeout), which needs the user row lock before any allowance or call row lock.
+ */
+function needsUserRowLock(s: Pick<OpenSession, "capEnforced" | "allowanceId" | "connectedAt" | "lastHeartbeatAt">, requested: CallEndReasonId): boolean {
+  return !exactStopOf(s) && requested === "heartbeat_timeout" && provedConnected(s);
+}
+
+/**
  * `neverConnectedOnly`: the caller promised to close only a call that never connected (closeNeverConnectedCall). The
  * settlement then writes only while the row it read still has no connectedAt and no heartbeat, and throws
  * ConnectedSinceCheckError instead of settling a call that connected in the meantime.
@@ -860,7 +868,8 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   // then allowance, then call rows). Taken after them, it deadlocked with a voice start that held the user row and
   // waited for the allowance. Paid calls and every other end reason skip this and lock as before. (The dropped-call
   // count below still locks the user row after chargeTarget, as on main.)
-  const freeAbandon = !exactStopOf(original) && requested === "heartbeat_timeout" && provedConnected(original);
+  // A caller that settles several calls in one transaction (settleStale) takes this lock before its first settlement.
+  const freeAbandon = needsUserRowLock(original, requested);
   if (freeAbandon) await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${original.userId} FOR UPDATE`;
   const target = await chargeTarget(tx, original, now);
   if (!target) return null;
@@ -1081,24 +1090,41 @@ export async function endCall(userId: string, callId: string, reason: CallEndRea
  *   its reservation: the server cannot see the provider connection, so silence is not treated as proof the call
  *   stopped. The first FREE_ABANDON_REDUCED_PER_PERIOD such calls on the Free rule in a period are billed through their
  *   last heartbeat plus FREE_ABANDON_GRACE_SECONDS, up to their reservation, so a closed tab reaped hours later costs
- *   what the call used, not every minute it reserved. Later ones in the same period are billed their whole reservation, whenever they are
- *   reaped (see settle()).
+ *   what the call used, not every minute it reserved. Later ones in the same period are billed their whole reservation,
+ *   whenever they are reaped (see settle()).
  * - A call that never reported a connection within the 15 minute connect window is closed as failed_connect: 0 seconds,
  *   0 minutes, and its reservation released. It is never billed for its age.
+ *
+ * Lock order: every stale call of the batch is settled in this one transaction, and settling a paid or never-connected
+ * call can lock the allowance (its booking or a rollover). So when any call of the batch will be settled on the Free
+ * silent-call path (needsUserRowLock), the user row is locked here, before the first settlement, and the transaction
+ * keeps beginCall's order (user row, then allowance, then call rows) whatever order the calls come in. settle() locks the
+ * user row again for that call, which is a no-op in the same transaction. A batch with no such call takes no user row
+ * lock, exactly as before, so a paid-only batch locks and bills as on main.
  */
 export async function settleStale(tx: Tx, userId: string, now: Date): Promise<void> {
   const open = await tx.trainerSession.findMany({ where: { userId, endedAt: null, allowanceId: { not: null } } });
-  for (const s of open) await settleIfStale(tx, s, now);
+  const due = open.flatMap((s) => {
+    const reason = staleReason(s, now);
+    return reason ? [{ s, reason }] : [];
+  });
+  if (due.some(({ s, reason }) => needsUserRowLock(s, reason))) {
+    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+  }
+  for (const { s, reason } of due) await settle(tx, s, reason, now);
 }
 
-/** One open metered call: settled when stale (see settleStale), left alone otherwise. The settlement when this closed it. */
-async function settleIfStale(tx: Tx, s: OpenSession, now: Date): Promise<CallResult | null> {
+/**
+ * How settleStale closes one open metered call: heartbeat_timeout for a call that proved it connected and then went
+ * silent, failed_connect for one that never connected within the connect window, null when it is not stale.
+ */
+function staleReason(s: OpenSession, now: Date): CallEndReasonId | null {
   if (!s.allowanceId || s.endedAt) return null;
   const silent = s.lastHeartbeatAt
     ? now.getTime() - s.lastHeartbeatAt.getTime() > HEARTBEAT_TIMEOUT_SECONDS * 1000
     : now.getTime() - s.createdAt.getTime() > CONNECT_WINDOW_SECONDS * 1000;
   if (!silent) return null;
-  return settle(tx, s, provedConnected(s) ? "heartbeat_timeout" : "failed_connect", now);
+  return provedConnected(s) ? "heartbeat_timeout" : "failed_connect";
 }
 
 // ---- One-off repairs (scripts/usage-repair-text-billing.ts) -----------------------------------

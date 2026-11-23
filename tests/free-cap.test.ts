@@ -769,6 +769,90 @@ describe("settling a silent Free call locks the user row first, in a voice start
     expect(fake.rawQueries.slice(before).filter((q) => q.sql.includes('FROM "User"'))).toEqual([]);
     expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 160, billedMinutes: 3 });
   });
+
+  /**
+   * One reap settles a batch whose first stale call takes the allowance lock without the user row (a never-connected
+   * call, or a call on the exact paid rule), then a stale connected Free call, while a real beginCall holds the user row
+   * and then reserves on the allowance. The reap must lock the user row before its first settlement.
+   */
+  async function mixedBatch(first: "never-connected" | "paid") {
+    await freeUserWith(-170); // 180 Free minutes left: three open calls of 60 reserved minutes each
+    const allowance = allowanceOf("u-1");
+    let firstId: string;
+    if (first === "never-connected") {
+      const a = await beginCall("u-1", scn, at(0)); // never sends a heartbeat
+      if (!a.ok) throw new Error(a.error);
+      firstId = a.callId;
+    } else {
+      // A call on the exact (paid) rule on this allowance, as one minted on Pro before a downgrade to Free.
+      firstId = fake.seed("trainerSession", {
+        userId: "u-1", organizationId: "org-1", createdAt: at(0), transcript: [], allowanceId: allowance.id,
+        allowancePeriodStart: allowance.periodStart, reservedMinutes: 60, capEnforced: true, connectedAt: at(0), lastHeartbeatAt: at(30),
+      }).id as string;
+      allowance.minutesReserved = (allowance.minutesReserved as number) + 60;
+    }
+    const free = await beginCall("u-1", scn, at(10));
+    if (!free.ok) throw new Error(free.error);
+    await heartbeat("u-1", free.callId, "connected", at(20)); // then silent
+    fake.enableRowLocks();
+
+    // Hold the voice start right after it took the user row, until the reap is blocked on that row (bounded).
+    let startHasUser!: () => void;
+    const userTaken = new Promise<void>((r) => { startHasUser = r; });
+    const raw = fake.db.$queryRaw;
+    let gated = false;
+    fake.db.$queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const out = await raw(strings, ...values);
+      if (!gated && strings.join("?").includes('FROM "User"')) {
+        gated = true;
+        startHasUser();
+        for (let i = 0; i < 200 && !fake.ops.some((o) => o.op === "wait:user:u-1"); i++) await tick();
+      }
+      return out;
+    };
+    // At 40 s nothing is stale yet, so this start settles nothing: user row, then the allowance (its reservation).
+    const start = beginCall("u-1", scn, at(40));
+    await userTaken;
+    // At 1000 s both earlier calls are stale; the batch settles the first one first.
+    const reap = usageSummary("u-1", at(1000));
+    const [started, read] = await Promise.allSettled([start, reap]);
+    fake.db.$queryRaw = raw;
+    return { allowanceId: allowance.id as string, firstId, freeId: free.callId, started, read };
+  }
+
+  for (const first of ["never-connected", "paid"] as const) {
+    it(`a batch that settles a stale ${first} call before a stale connected Free call takes the user row first: no deadlock with beginCall`, async () => {
+      const { allowanceId, firstId, freeId, started, read } = await mixedBatch(first);
+      expect(started.status).toBe("fulfilled");
+      expect(started.status === "fulfilled" && started.value).toMatchObject({ ok: true });
+      expect(read.status).toBe("fulfilled");
+      expect(fake.ops.some((o) => o.op.startsWith("deadlock:"))).toBe(false);
+      // The reap waited for the user row before it locked the allowance for any settlement.
+      const reapTx = fake.ops.find((o) => o.op === "wait:user:u-1")!.tx;
+      const mine = fake.ops.filter((o) => o.tx === reapTx).map((o) => o.op);
+      expect(mine.indexOf("wait:user:u-1")).toBeGreaterThanOrEqual(0);
+      expect(mine.indexOf("wait:user:u-1")).toBeLessThan(mine.indexOf(`lock:usageAllowance:${allowanceId}`));
+      // Billing as without the race. The first call: 0 for a never-connected one; through the reap for the paid rule
+      // (1000 s, 17 minutes, as on main). The Free call: connected at 20 s, plus 15 s, 1 minute, with its marker.
+      expect(session(firstId)).toMatchObject(first === "never-connected"
+        ? { endReason: "failed_connect", billableSeconds: 0, billedMinutes: 0 }
+        : { endReason: "heartbeat_timeout", billableSeconds: 1000, billedMinutes: 17 });
+      expect(session(freeId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 15, billedMinutes: 1 });
+      expect(fake.rows("auditEvent").filter((e) => e.action === FREE_ABANDON_REDUCED_MARKER)).toHaveLength(1);
+      // The voice start's own call is still open, holding its reservation.
+      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: -170 + (first === "paid" ? 17 : 0) + 1, minutesReserved: 60 });
+    });
+  }
+
+  it("a batch with no Free silent call takes no user row lock in settleStale, as before", async () => {
+    await freeUserWith(-170);
+    const a = await beginCall("u-1", scn, at(0)); // never connects
+    if (!a.ok) throw new Error(a.error);
+    const before = fake.rawQueries.length;
+    await usageSummary("u-1", at(1000));
+    expect(session(a.callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0 });
+    expect(fake.rawQueries.slice(before).filter((q) => q.sql.includes('FROM "User"'))).toEqual([]);
+  });
 });
 
 describe("fractional usage", () => {
