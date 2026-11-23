@@ -14,6 +14,7 @@ import {
   sendMail,
 } from "@/lib/ghlMail";
 import { GHL_TIMEOUT_MS } from "@/lib/ghlWebhook";
+import { RESET_TTL_MINUTES } from "@/lib/passwordReset-types";
 
 const TOKEN = "pit-test-token-0123456789";
 const LOCATION = "loc-test-123";
@@ -56,12 +57,15 @@ afterEach(() => {
 });
 
 describe("passwordResetEmail", () => {
-  it("is short and transactional: subject, one link, the 30 minute expiry and the ignore line", () => {
+  it("is short and transactional: subject, one link, the 15 minute expiry and the ignore line", () => {
     const m = msg();
     expect(m.to).toBe(RECIPIENT);
     expect(m.subject).toBe("Reset your Call Trainer password");
     for (const body of [m.text, m.html]) {
-      expect(body).toContain("30 minutes");
+      expect(body).toContain(`${RESET_TTL_MINUTES} minutes`);
+      expect(body).toContain("15 minutes");
+      // Exactly one expiry figure, and it is the TTL.
+      expect(body.match(/\d+ minutes/g)).toEqual([`${RESET_TTL_MINUTES} minutes`]);
       expect(body).toContain("If you did not ask for this, ignore this email.");
       expect(body).not.toMatch(/—/);
     }

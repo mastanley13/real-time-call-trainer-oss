@@ -8,6 +8,7 @@ import {
   signResetToken,
   verifyResetToken,
 } from "@/lib/passwordReset";
+import { RESET_REQUEST_MESSAGE, RESET_TTL_MINUTES } from "@/lib/passwordReset-types";
 import { passwordSchema, PASSWORD_MIN_LENGTH } from "@/lib/passwordRules";
 
 const SECRET = "test-only-secret-0123456789abcdef";
@@ -27,9 +28,18 @@ describe("reset token sign and verify", () => {
     expect(fingerprintMatches(claims!.fingerprint, HASH, SECRET)).toBe(true);
   });
 
-  it("lasts 30 minutes", () => {
-    expect(RESET_TOKEN_TTL_MS).toBe(30 * 60 * 1000);
+  it("lasts 15 minutes, derived from RESET_TTL_MINUTES", () => {
+    expect(RESET_TTL_MINUTES).toBe(15);
+    expect(RESET_TOKEN_TTL_MS).toBe(15 * 60 * 1000);
+    expect(RESET_TOKEN_TTL_MS).toBe(RESET_TTL_MINUTES * 60 * 1000);
     expect(verifyResetToken(sign(), { secret: SECRET, now: NOW + RESET_TOKEN_TTL_MS - 1 })).not.toBeNull();
+    // A link 16 minutes old is dead.
+    expect(verifyResetToken(sign(), { secret: SECRET, now: NOW + 16 * 60 * 1000 })).toBeNull();
+  });
+
+  it("says the same number of minutes in the request message", () => {
+    expect(RESET_REQUEST_MESSAGE).toContain(`expires in ${RESET_TTL_MINUTES} minutes`);
+    expect(RESET_REQUEST_MESSAGE).toContain("15 minutes");
   });
 
   it("rejects an expired token", () => {

@@ -89,7 +89,7 @@ describe("POST /api/auth/password-reset/request", () => {
     expect(mail.to).toBe(USER.email);
     expect(mail.subject).toBe("Reset your Call Trainer password");
     expect(mail.text).toMatch(/https:\/\/calltrainer\.example\/reset-password\?token=v1\./);
-    expect(mail.text).toContain("30 minutes");
+    expect(mail.text).toContain("15 minutes");
     expect(mail.text).toContain("If you did not ask for this, ignore this email.");
     expect(mocks.prisma.auditEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ userId: USER.id, action: "user.password_reset_requested" }) }),
@@ -191,7 +191,7 @@ describe("POST /api/auth/password-reset/confirm", () => {
   });
 
   it("gives the same generic error for expired, forged and unknown-user tokens", async () => {
-    const expired = await confirm({ token: token({ now: Date.now() - 31 * 60_000 }), password: "a-brand-new-password" });
+    const expired = await confirm({ token: token({ now: Date.now() - 16 * 60_000 }), password: "a-brand-new-password" });
     const forged = await confirm({ token: token({ secret: "another-test-secret-0123456789abcd" }), password: "a-brand-new-password" });
     mocks.prisma.user.findUnique.mockResolvedValue(null);
     const unknown = await confirm({ token: token(), password: "a-brand-new-password" });
@@ -251,7 +251,7 @@ describe("dead links: check and confirm agree", () => {
   const deadCases: Array<[string, () => string, unknown]> = [
     ["garbage", () => "not-a-token", { id: USER.id, passwordHash: HASH }],
     ["bad signature", () => fresh({ secret: "another-test-secret-0123456789abcd" }), { id: USER.id, passwordHash: HASH }],
-    ["expired", () => fresh({ now: Date.now() - 31 * 60_000 }), { id: USER.id, passwordHash: HASH }],
+    ["expired", () => fresh({ now: Date.now() - 16 * 60_000 }), { id: USER.id, passwordHash: HASH }],
     ["unknown user", () => fresh(), null],
     ["used (password since changed)", () => fresh(), { id: USER.id, passwordHash: CHANGED }],
     ["over-length", () => `${fresh()}${"x".repeat(600)}`, { id: USER.id, passwordHash: HASH }],
