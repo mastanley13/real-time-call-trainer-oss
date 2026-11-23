@@ -56,12 +56,22 @@ const WHISPER_MIN_TURNS = 4;
  * This is the budget for the whole LLM path, the one retry included.
  */
 const LLM_TIMEOUT_MS = 15_000;
-/** Completion budget for a coach reply; reasoning tokens count against it on the OpenAI base. */
-const COACH_MAX_TOKENS = 1000;
-/** Completion budget for the retry after an empty or truncated reply. Same model, more room. */
-const COACH_RETRY_MAX_TOKENS = 2000;
-/** The retry is skipped when less than this is left of LLM_TIMEOUT_MS. */
-const COACH_RETRY_MIN_MS = 3000;
+/**
+ * Completion budget for a coach reply. Hidden reasoning tokens count against it on the OpenAI base and grow with the
+ * call: at 1000 a long call's first attempt ran out after about 9.5 s with no usable JSON, so the first attempt gets
+ * room for reasoning plus the reply (a few hundred tokens). It is a cap, not a target: a short reply costs no more.
+ */
+export const COACH_MAX_TOKENS = 2500;
+/** Completion budget for the retry after an empty or truncated reply. Same model, at least as much room. */
+export const COACH_RETRY_MAX_TOKENS = 4000;
+/**
+ * The retry is skipped, and the heuristic answers at once, when less than this is left of LLM_TIMEOUT_MS. Coach
+ * replies on a long call took 6 to 9 s at p50, and every retry that started with about 5.4 s left timed out (7 of 7
+ * in one call), so a shorter retry only delays the fallback cue until the deadline.
+ */
+export const COACH_RETRY_MIN_MS = 6000;
+/** Low reasoning effort keeps hidden reasoning (and latency) small; the coach's job is pattern-matching, not proofs. */
+const COACH_REASONING_EFFORT = "low" as const;
 
 // ---------------------------------------------------------------------------
 // Text helpers (same normalisation as grader.ts, reimplemented so grader stays untouched)
@@ -737,13 +747,22 @@ async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptio
     for (let attempt = 1; ; attempt++) {
       try {
         const { text, truncated } = await withTimeout(
-          chatFull(messages, { json: true, jsonSchema: COACH_JSON_SCHEMA, maxTokens, temperature: 0.2, signal: abort.signal, nullContentAsEmpty: true }),
+          chatFull(messages, {
+            json: true,
+            jsonSchema: COACH_JSON_SCHEMA,
+            maxTokens,
+            temperature: 0.2,
+            reasoningEffort: COACH_REASONING_EFFORT,
+            signal: abort.signal,
+            nullContentAsEmpty: true,
+          }),
           Math.max(0, deadline - Date.now()),
         );
         out = parseCoachReply(text, truncated, { criterionIds: rubric.map((c) => c.id), stepCount: steps.length });
         break;
       } catch (e) {
         const code = coachFailureCode(e);
+        // Too little time left for a realistic retry: fall back now instead of burning the rest of the deadline.
         if (attempt >= 2 || !RETRYABLE_COACH_CODES.has(code) || deadline - Date.now() < COACH_RETRY_MIN_MS) throw e;
         console.warn("[coach] LLM coach reply unusable, retrying once:", code);
         // Reasoning tokens can use up the whole budget and leave no content: give the retry more room, same model.

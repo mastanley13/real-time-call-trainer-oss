@@ -8,7 +8,7 @@ import { z } from "zod";
  * carry only a safe code. No network: fetch is stubbed, keys are fixtures.
  */
 
-import { COACH_JSON_SCHEMA, coachFailureCode, coachTurn, parseCoachReply, type CoachTurnInput } from "@/lib/coach";
+import { COACH_JSON_SCHEMA, COACH_MAX_TOKENS, COACH_RETRY_MAX_TOKENS, COACH_RETRY_MIN_MS, coachFailureCode, coachTurn, parseCoachReply, type CoachTurnInput } from "@/lib/coach";
 import { chatFull, parseFirstJsonObject } from "@/lib/llm";
 import { OPENAI_KEY_SLOT_VARS, resetOpenAiKeyState } from "@/lib/openaiKeys";
 import { BUILT_IN_SCENARIOS, talkTrackSteps } from "@/lib/scenarios";
@@ -54,12 +54,13 @@ let sent: Sent[];
 let logs: string[];
 
 /** Stubs fetch with one responder per call, in order; the last one repeats. */
-function replies(...rs: (() => Response | Promise<Response>)[]) {
+function replies(...rs: ((body: Record<string, unknown>) => Response | Promise<Response>)[]) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit) => {
-      sent.push({ url, body: JSON.parse(String(init.body)), auth: String((init.headers as Record<string, string>).Authorization), signal: init.signal });
-      return rs[Math.min(sent.length - 1, rs.length - 1)]();
+      const body = JSON.parse(String(init.body));
+      sent.push({ url, body, auth: String((init.headers as Record<string, string>).Authorization), signal: init.signal });
+      return rs[Math.min(sent.length - 1, rs.length - 1)](body);
     }),
   );
 }
@@ -329,7 +330,8 @@ describe("coach request format", () => {
     expect(rf.type).toBe("json_schema");
     expect(rf.json_schema).toEqual({ name: "coach_turn", strict: true, schema: COACH_JSON_SCHEMA.schema });
     assertStrict(rf.json_schema.schema);
-    expect(sent[0].body.max_completion_tokens).toBe(1000);
+    expect(sent[0].body.max_completion_tokens).toBe(COACH_MAX_TOKENS);
+    expect(sent[0].body.reasoning_effort).toBe("low");
     expect(sent[0].body.model).toBe("gpt-6-luna");
   });
 
@@ -338,7 +340,8 @@ describe("coach request format", () => {
     replies(() => completion(validReply()));
     expect((await run()).source).toBe("llm");
     expect(sent[0].body.response_format).toEqual({ type: "json_object" });
-    expect(sent[0].body.max_tokens).toBe(1000);
+    expect(sent[0].body.max_tokens).toBe(COACH_MAX_TOKENS);
+    expect(sent[0].body).not.toHaveProperty("reasoning_effort");
   });
 
   it("retries once on the same key with json_object after a 400 about response_format", async () => {
@@ -367,14 +370,14 @@ describe("coach retry", () => {
     replies(() => completion("", "length"), () => completion(validReply()));
     const r = await run();
     expect(r.source).toBe("llm");
-    expect(sent.map((s) => s.body.max_completion_tokens)).toEqual([1000, 2000]);
+    expect(sent.map((s) => s.body.max_completion_tokens)).toEqual([COACH_MAX_TOKENS, COACH_RETRY_MAX_TOKENS]);
     expect(logText()).toContain("LLM_TRUNCATED");
   });
 
   it("retries null content that hit the budget with a larger budget", async () => {
     replies(() => completion(null, "length"), () => completion(validReply()));
     expect((await run()).source).toBe("llm");
-    expect(sent.map((s) => s.body.max_completion_tokens)).toEqual([1000, 2000]);
+    expect(sent.map((s) => s.body.max_completion_tokens)).toEqual([COACH_MAX_TOKENS, COACH_RETRY_MAX_TOKENS]);
     expect(logText()).toContain("retrying once: LLM_TRUNCATED");
   });
 
@@ -398,7 +401,7 @@ describe("coach retry", () => {
     const reply = JSON.parse(validReply());
     replies(() => completion(JSON.stringify({ ...reply, steps: [] }), "length"), () => completion(validReply()));
     expect((await run()).source).toBe("llm");
-    expect(sent.map((s) => s.body.max_completion_tokens)).toEqual([1000, 2000]);
+    expect(sent.map((s) => s.body.max_completion_tokens)).toEqual([COACH_MAX_TOKENS, COACH_RETRY_MAX_TOKENS]);
     expect(logText()).toContain("retrying once: LLM_TRUNCATED");
   });
 
@@ -425,14 +428,14 @@ describe("coach retry", () => {
   it("retries an empty reply with a larger budget", async () => {
     replies(() => completion("   "), () => completion(validReply()));
     expect((await run()).source).toBe("llm");
-    expect(sent.map((s) => s.body.max_completion_tokens)).toEqual([1000, 2000]);
+    expect(sent.map((s) => s.body.max_completion_tokens)).toEqual([COACH_MAX_TOKENS, COACH_RETRY_MAX_TOKENS]);
     expect(logText()).toContain("LLM_EMPTY");
   });
 
   it("retries bad JSON with the same budget and parses fenced output with prose on the retry", async () => {
     replies(() => completion(`I think the rep is doing well. ${CANARY}`), () => completion(`Here you go:\n\`\`\`json\n${validReply()}\n\`\`\`\nAnything else?`));
     expect((await run()).source).toBe("llm");
-    expect(sent.map((s) => s.body.max_completion_tokens)).toEqual([1000, 1000]);
+    expect(sent.map((s) => s.body.max_completion_tokens)).toEqual([COACH_MAX_TOKENS, COACH_MAX_TOKENS]);
   });
 
   it("falls back to the heuristic after two bad replies, logging only the code", async () => {
@@ -531,6 +534,52 @@ describe("coach time budget", () => {
     expect((await p).source).toBe("heuristic");
     await vi.advanceTimersByTimeAsync(10_000);
     expect(sent).toHaveLength(1);
+  });
+
+  // Call B on the preview: attempt 1 ran out of tokens after about 9.5 s, the retry started with 5.4 s left and timed out.
+  it("falls back at once, without a retry, when attempt 1 is truncated after 9.5 s", async () => {
+    vi.useFakeTimers();
+    replies(delayed(9_500, () => completion("", "length")), () => completion(validReply()));
+    let done = false;
+    const p = run().then((r) => {
+      done = true;
+      return r;
+    });
+    await vi.advanceTimersByTimeAsync(9_500);
+    expect(done).toBe(true);
+    const r = await p;
+    expect(r.source).toBe("heuristic");
+    expect(sent).toHaveLength(1);
+    expect(logs.filter((l) => l.startsWith("[coach]"))).toEqual(["[coach] LLM coach failed, falling back to heuristic: LLM_TRUNCATED"]);
+  });
+
+  it("still retries when at least COACH_RETRY_MIN_MS is left", async () => {
+    vi.useFakeTimers();
+    const at = 15_000 - COACH_RETRY_MIN_MS;
+    replies(delayed(at, () => completion("", "length")), () => completion(validReply()));
+    const p = run();
+    await vi.advanceTimersByTimeAsync(at);
+    const r = await p;
+    expect(r.source).toBe("llm");
+    expect(sent.map((s) => s.body.max_completion_tokens)).toEqual([COACH_MAX_TOKENS, COACH_RETRY_MAX_TOKENS]);
+  });
+
+  it("gives attempt 1 enough room for a long call's reasoning, so it succeeds without a retry", async () => {
+    vi.useFakeTimers();
+    // A model that spends 1,800 hidden reasoning tokens before a 400-token reply: 1000 was not enough.
+    const needs = 1800 + 400;
+    replies((body) => {
+      const fits = Number(body.max_completion_tokens) >= needs;
+      return new Promise((resolve) => setTimeout(() => resolve(fits ? completion(validReply()) : completion(null, "length")), 9_500));
+    });
+    expect(COACH_MAX_TOKENS).toBeGreaterThanOrEqual(needs);
+    expect(COACH_RETRY_MAX_TOKENS).toBeGreaterThanOrEqual(COACH_MAX_TOKENS);
+    const p = run();
+    await vi.advanceTimersByTimeAsync(9_500);
+    const r = await p;
+    expect(r.source).toBe("llm");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body.reasoning_effort).toBe("low");
   });
 
   it("times out a single slow reply at 15 s without a retry", async () => {
