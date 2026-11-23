@@ -527,6 +527,42 @@ describe("the Free 1 minute warning goes out once per call", () => {
     expect(answers.filter((a) => a.found && a.stop && a.reason === "cap_reached")).toHaveLength(1);
   });
 
+  it("an ok heartbeat before the call connected never warns; after connecting the crossing warns once", async () => {
+    await freeUserWith(0);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    // Codex's sequence: an ok heartbeat at 540 s with no connectedAt yet, then "connected" at 550 s.
+    const early = await heartbeat("u-1", begun.callId, "ok", at(540));
+    expect(early).toMatchObject({ found: true, stop: false });
+    expect(early).not.toHaveProperty("capWarning");
+    expect(session(begun.callId).connectedAt ?? null).toBeNull();
+    const connected = await heartbeat("u-1", begun.callId, "connected", at(550));
+    expect(session(begun.callId).connectedAt).toEqual(at(550));
+    // The billing start is min(connectedAt, mint + 60 s) = 60 s: recording connectedAt never moves it later.
+    expect(connected).toEqual({ found: true, stop: false, secondsLeft: limit - (550 - 60) });
+    const times = [550];
+    const answers = [connected];
+    for (let t = 560; t <= 1090; t += 10) { times.push(t); answers.push(await heartbeat("u-1", begun.callId, "ok", at(t))); }
+    // The window opens at 80 s left (600 s on this timeline): one warning there, none after, through 1090 s.
+    expect(warned(answers)).toEqual([{ found: true, stop: false, secondsLeft: 80, capWarning: true }]);
+    expect(times.filter((_, i) => answers[i].found && !answers[i].stop && answers[i].capWarning)).toEqual([600]);
+    expect(answers.filter((a) => a.found && a.stop && a.reason === "cap_reached")).toHaveLength(1);
+  });
+
+  it("a call inside the window from its start warns on the heartbeat that connects it, not before, and only once", async () => {
+    await freeUserWith(9); // 1 Free minute: 80 s with the grace, inside the window from the start
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    // Before connecting (billing start would be the 60 s cutoff, 80 s left): no warning without connectedAt.
+    expect(await heartbeat("u-1", begun.callId, "ok", at(30))).toEqual({ found: true, stop: false, secondsLeft: 80 });
+    // Connecting at 40 s fixes the start at 40 s: still 80 s left, the warning goes out here.
+    const answers = [await heartbeat("u-1", begun.callId, "connected", at(40))];
+    expect(answers[0]).toEqual({ found: true, stop: false, secondsLeft: 80, capWarning: true });
+    for (let t = 50; t <= 130; t += 10) answers.push(await heartbeat("u-1", begun.callId, "ok", at(t)));
+    expect(warned(answers)).toHaveLength(1);
+    expect(answers.find((a) => a.found && a.stop)).toMatchObject({ reason: "cap_reached", freeCap: true });
+  });
+
   it("the window, once reached, stays reached, the deadline included", () => {
     // secondsLeft includes the 20 s end grace: the window opens at 80 s left.
     expect([81, 80, 1, 0, -5].map(freeCapWarningReached)).toEqual([false, true, true, true, true]);

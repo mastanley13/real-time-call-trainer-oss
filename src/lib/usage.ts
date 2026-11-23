@@ -710,16 +710,22 @@ const leftSeconds = (limit: number, t: Date, from: Date): number =>
  * read under the lock, before the write) had not reached it. "Reached" (freeCapWarningReached) includes being at or past
  * the deadline, so it never turns false again as time moves on. Heartbeats are serialized by the call-row lock and the
  * stored value only moves forward (max), so once a stored heartbeat has reached the window no later heartbeat warns,
- * even an older one that arrives after a deadline heartbeat. No previous heartbeat counts as not reached, so a call
- * that starts inside the window warns on its first heartbeat. Both times are measured from the call's current billing
- * start, so the comparison is on one timeline.
+ * even an older one that arrives after a deadline heartbeat.
+ *
+ * One timeline: no warning while the call has no connectedAt (neither in the row read under the lock nor set by this
+ * write). connectedAt is written only by recordHeartbeat, only while it is null, under the call-row lock, so once set it
+ * never changes, and billingStart (min(connectedAt, mint time plus MAX_CONNECT_LAG_SECONDS)) is fixed from then on.
+ * Every warning decision is therefore made on that fixed start. A heartbeat stored before connectedAt existed cannot
+ * have warned, so the heartbeat that records connectedAt treats the call as not yet warned (a call that connects inside
+ * the window warns on that heartbeat). A client that never reports "connected" gets no warning; the stop still comes.
  */
 function capWarningDue(locked: OpenSession, row: OpenSession, now: Date, lim: { limit: number; exactStop: boolean; trialBound: boolean }): boolean {
-  if (lim.exactStop || lim.trialBound) return false;
+  if (lim.exactStop || lim.trialBound || !row.connectedAt) return false;
   const start = billingStart(row);
   const left = leftSeconds(lim.limit, now, start);
   if (left <= 0 || !freeCapWarningReached(left)) return false;
-  return !locked.lastHeartbeatAt || !freeCapWarningReached(leftSeconds(lim.limit, locked.lastHeartbeatAt, start));
+  if (!locked.connectedAt || !locked.lastHeartbeatAt) return true;
+  return !freeCapWarningReached(leftSeconds(lim.limit, locked.lastHeartbeatAt, start));
 }
 
 /** The trial deadline applied to a base limit: min(existing deadline, 300 s). trialBound says the trial cap binds. */
