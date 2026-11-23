@@ -93,6 +93,21 @@ async function callUntilStopped(userId: string, o: { endAt: number }) {
   return { begun, callId: begun.callId, connected, answers, stop, result: result! };
 }
 
+/**
+ * The debrief path as TrainerClient runs it: grade under the id the call is saved under (sessionId = the call id for a
+ * metered call, plus its callId), split the grade seal off the answer (splitSeal), and save the transcript with the grade
+ * and its seal. The seal is keyed on JWT_SECRET, stubbed here with a fixture value. Returns both answers.
+ */
+async function gradeAndSave(ids: { sessionId: string; callId?: string }, durationSeconds: number) {
+  vi.stubEnv("JWT_SECRET", "fixture-only-not-a-secret-0123456789abcdef");
+  const graded = await evaluate(post("/api/evaluate-call", { scenario, transcript, ...ids }));
+  expect(graded.status).toBe(200);
+  const { seal, ...evaluation } = (await graded.json()) as { seal?: string; overallScore: number; grade: string };
+  expect(typeof seal).toBe("string");
+  const saved = await saveTranscript(post("/api/transcripts", { ...ids, transcript, durationSeconds, scenario: { id: scenario.id }, evaluation, seal }));
+  expect(saved.status).toBe(200);
+  return { evaluation, saved: (await saved.json()) as { id: string } };
+}
 const post =(url: string, body: unknown) => new NextRequest(`http://localhost${url}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
 const scenario = BUILT_IN_SCENARIOS[0];
 const transcript = [
@@ -218,15 +233,15 @@ describe("a running Free call is stopped at its Free minutes plus the end grace"
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10.5, minutesReserved: 0 });
     expect(await usageSummary("u-1", at(200))).toMatchObject({ minutesCap: 10, remaining: 0 });
 
-    // The debrief path is open: the cap-stopped call is graded and its transcript is saved against the metered call.
-    const graded = await evaluate(post("/api/evaluate-call", { scenario, transcript }));
-    expect(graded.status).toBe(200);
-    const evaluation = await graded.json();
+    // The debrief path is open: the cap-stopped call is graded under its own id (sessionId = callId), and the sealed
+    // grade is stored on the metered call's own row together with its transcript.
+    const { evaluation, saved } = await gradeAndSave({ sessionId: callId, callId }, 80);
     expect(typeof evaluation.overallScore).toBe("number");
-    const saved = await saveTranscript(post("/api/transcripts", { sessionId: callId, callId, transcript, durationSeconds: 80, scenario: { id: scenario.id }, evaluation }));
-    expect(saved.status).toBe(200);
+    expect(saved.id).toBe(callId);
     expect(session(callId).transcript).toHaveLength(transcript.length);
-    expect(session(callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 1 });
+    expect(session(callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 1, overallScore: Math.round(evaluation.overallScore), grade: evaluation.grade });
+    expect(session(callId).evaluation).toMatchObject({ overallScore: evaluation.overallScore, grade: evaluation.grade });
+    expect(fake.rows("trainerSession").filter((s) => s.overallScore != null)).toHaveLength(1);
   });
 
   it("a Free call is stopped at its cap plus the grace and never billed past the allowance (this reverses STR-715)", async () => {
@@ -2015,14 +2030,11 @@ describe("text practice is never capped", () => {
     expect(turn.status).toBe(200);
     expect(((await turn.json()) as { reply?: string }).reply).toBeTruthy();
 
-    const graded = await evaluate(post("/api/evaluate-call", { scenario, transcript }));
-    expect(graded.status).toBe(200);
-    const evaluation = await graded.json();
+    // Graded under the id the text session is saved under, and the sealed grade is stored with it.
+    const { evaluation } = await gradeAndSave({ sessionId: "text-1" }, 600);
     expect(typeof evaluation.overallScore).toBe("number");
-
-    const saved = await saveTranscript(post("/api/transcripts", { sessionId: "text-1", transcript, durationSeconds: 600, scenario: { id: scenario.id }, evaluation }));
-    expect(saved.status).toBe(200);
-    expect(fake.rows("trainerSession")[0]).toMatchObject({ billedMinutes: 0, billableSeconds: 0, connectedAt: null });
+    expect(fake.rows("trainerSession")).toHaveLength(1);
+    expect(fake.rows("trainerSession")[0]).toMatchObject({ billedMinutes: 0, billableSeconds: 0, connectedAt: null, overallScore: Math.round(evaluation.overallScore), grade: evaluation.grade });
     expect(fake.rows("usageEntry")).toHaveLength(0);
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 12, minutesReserved: 0 });
 
