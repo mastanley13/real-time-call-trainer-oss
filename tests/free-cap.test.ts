@@ -23,7 +23,7 @@ vi.mock("@/lib/apiAuth", async () => ({
   isDemoUser: () => false,
 }));
 
-import { beginCall, checkCap, creditManual, endCall, ensureAllowance, heartbeat, resolveAllowance, usageSummary } from "@/lib/usage";
+import { FREE_ABANDON_REDUCED_MARKER, beginCall, checkCap, creditManual, endCall, ensureAllowance, freeAbandonClaimKey, heartbeat, resolveAllowance, usageSummary } from "@/lib/usage";
 import { FREE_ABANDON_GRACE_SECONDS, FREE_CAP_WARNING_SECONDS, FREE_END_GRACE_SECONDS, FREE_MINUTES, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, callLimitSeconds, capFor, endGraceSeconds, exactCapStop, freeCapWarning, freeCapWarningReached } from "@/lib/usagePlan";
 import { CAP_STOPPED_MESSAGE, FREE_CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE, isCapMessage } from "@/lib/billingUi";
 import { setPremiumEventSink, type PremiumEvent } from "@/lib/billingEvents";
@@ -1022,6 +1022,42 @@ describe("a Free call that goes silent is billed to its last heartbeat plus a sh
     await usageSummary("u-1", at(nov10 + 60 + 365));
     expect(session(november.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 140, billedMinutes: 3 });
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 3, minutesReserved: 0 });
+  });
+
+  it("the claim survives the retention purge: after the first call's row is deleted, the second still bills its whole reservation", async () => {
+    await freeUserWith(0);
+    fake.rows("organization")[0].sessionRetentionDays = 1; // shorter than any billing period
+    const first = await silentAfterHeartbeat("u-1", 50);
+    await usageSummary("u-1", at(3600));
+    expect(session(first.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 65, billedMinutes: 2 });
+    const claims = () => fake.rows("auditEvent").filter((e) => e.action === FREE_ABANDON_REDUCED_MARKER);
+    const october = freeAbandonClaimKey(allowanceOf("u-1").id as string, allowanceOf("u-1").periodStart as Date);
+    expect(claims()).toEqual([expect.objectContaining({ userId: "u-1", resource: october, metadata: { trainerSessionId: first.callId } })]);
+
+    // Two days later the nightly purge deletes the call row; the AuditEvent claim stays.
+    vi.stubEnv("CRON_SECRET", "cron-test-secret-not-real");
+    vi.setSystemTime(at(2 * 24 * 3600));
+    const res = await purge(new NextRequest("https://trainer.example/api/cron/purge-expired", { headers: { authorization: "Bearer cron-test-secret-not-real" } }));
+    expect(res.status).toBe(200);
+    vi.setSystemTime(T0);
+    expect(fake.rows("trainerSession").find((s) => s.id === first.callId)).toBeUndefined();
+    expect(fake.rows("trainerSession").filter((s) => s.endReason === "heartbeat_timeout")).toEqual([]);
+    expect(claims()).toHaveLength(1);
+
+    // A second silent call in the same period, reaped 31 s after its last heartbeat: its whole 8 minute reservation.
+    const start = 2 * 24 * 3600 + 100;
+    const second = await silentAfterHeartbeat("u-1", 125, start);
+    await usageSummary("u-1", at(start + 125 + HEARTBEAT_TIMEOUT_SECONDS + 1));
+    expect(session(second.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 480, billedMinutes: 8 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
+    expect(claims()).toHaveLength(1); // a full-reservation settlement claims nothing
+
+    // The next period has no claim yet: its first abandoned call is reduced again, and claims it.
+    const nov10 = 26 * 24 * 3600;
+    const november = await silentAfterHeartbeat("u-1", 125, nov10 + 60);
+    await usageSummary("u-1", at(nov10 + 60 + 365));
+    expect(session(november.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 140, billedMinutes: 3 });
+    expect(claims().map((c) => c.resource)).toEqual([october, freeAbandonClaimKey(allowanceOf("u-1").id as string, at(nov10))]);
   });
 
   it("a never-connected call or a hung-up call does not use up the period's reduced abandoned call", async () => {

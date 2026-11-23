@@ -810,31 +810,32 @@ class ConnectedSinceCheckError extends Error {
 }
 
 /**
- * Whether this user already had the reduced abandoned-call charge in the period this call started in: another call on
- * the Free rule, from the same allowance and period, that the server settled as heartbeat_timeout. No new column is
- * needed because the reduced charge always goes to the first such call of a period, so any earlier one means it is
- * used. (A row settled the old way before this rule existed counts too, which only ever bills more, never less.) A
- * call from before calls recorded their period (allowancePeriodStart null) is treated as already used.
+ * The durable claim of a period's reduced abandoned-call charge: an AuditEvent with this action, the user, and
+ * `resource` = freeAbandonClaimKey(allowance, period start). Written by the settlement that took the reduced charge, in
+ * its own transaction. AuditEvent rows are never deleted (the retention purge deletes only TrainerSession rows, see
+ * src/app/api/cron/purge-expired), so the claim outlives the call row whatever the organization's retention. Same
+ * marker pattern as the GHL send markers in ghlWebhook.ts. No schema change.
+ */
+export const FREE_ABANDON_REDUCED_MARKER = "usage.free_abandon_reduced";
+/** The billing period a claim is for: the allowance and the start of the period the call started in. */
+export const freeAbandonClaimKey = (allowanceId: string, periodStart: Date): string => `${allowanceId}@${periodStart.toISOString()}`;
+
+/**
+ * Whether this user already had the reduced abandoned-call charge in the period this call started in, from the durable
+ * claim (FREE_ABANDON_REDUCED_MARKER), not from earlier call rows, which the retention purge can delete. A call from
+ * before calls recorded their period (allowancePeriodStart null) is treated as already used.
  *
- * Concurrency: the caller (settle) holds the user row lock, taken before any allowance or call row lock, so two
- * settlements of this user's calls run one after the other and the second sees the first one's row. A Free call
- * reserves all the Free minutes left, so a user rarely has two open Free calls at once anyway. Residual race: a
- * settlement that does not take this path (an end event) does not lock the user row, but it never writes
- * heartbeat_timeout, so it cannot change this count.
+ * Concurrency: the caller (settle) holds the user row lock, taken before any allowance or call row lock, and writes the
+ * claim in the same transaction, so two settlements of this user's calls run one after the other and the second sees
+ * the first one's claim. A settlement that rolls back takes its claim with it.
  */
 async function freeAbandonReducedUsed(tx: Tx, s: OpenSession): Promise<boolean> {
   if (!s.allowanceId || !s.allowancePeriodStart) return true;
-  const earlier = await tx.trainerSession.count({
-    where: {
-      userId: s.userId,
-      allowanceId: s.allowanceId,
-      allowancePeriodStart: s.allowancePeriodStart,
-      capEnforced: false,
-      endReason: "heartbeat_timeout",
-      id: { not: s.id },
-    },
+  const claim = await tx.auditEvent.findFirst({
+    where: { userId: s.userId, action: FREE_ABANDON_REDUCED_MARKER, resource: freeAbandonClaimKey(s.allowanceId, s.allowancePeriodStart) },
+    select: { id: true },
   });
-  return earlier > 0;
+  return !!claim;
 }
 
 /**
@@ -967,6 +968,13 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
     const current = await tx.trainerSession.findUnique({ where: { id: s.id }, select: { endedAt: true } });
     if (current && !current.endedAt) throw opts.neverConnectedOnly ? new ConnectedSinceCheckError() : new StaleAllowanceError();
     return null;
+  }
+  // This settlement took the period's reduced abandoned-call charge: claim it durably, in this transaction, so no later
+  // call of the period gets it, even after the retention purge deletes this call row (see freeAbandonReducedUsed).
+  if (freeAbandon && !fullReservation && s.allowanceId && s.allowancePeriodStart) {
+    await tx.auditEvent.create({
+      data: { userId: s.userId, action: FREE_ABANDON_REDUCED_MARKER, resource: freeAbandonClaimKey(s.allowanceId, s.allowancePeriodStart), metadata: { trainerSessionId: s.id } },
+    });
   }
 
   // When the call really ran, written on every call entry so it outlives the TrainerSession row (see usedInOtherAllowances).
