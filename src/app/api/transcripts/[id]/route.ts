@@ -110,12 +110,13 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   // One graded row per call (src/lib/callRow.ts), for everyone, platform admins included. Only the call's own row is
   // re-graded: a copy of the call (a replay, a fill that lost a race) gets the same refusal while the call has its own
   // row. A copy can never gain a grade, so this needs no lock. A legacy call (saved before call rows existed, so it has
-  // only copies) keeps the old rules, but never gains a second graded row: checked now, so no model call is spent, and
-  // again under the call's lock when the grade is written.
+  // only copies) keeps the old rules only while no other row of the call has a score, whatever this row's own score:
+  // checked now, so no model call is spent, and again under the call's lock when the grade is written. The call's own
+  // row is refused only when it has no score and a (pre-existing) copy does, since that would add a graded row.
   const callKey = session.realtimeSessionId;
   const legacyCopy = !!callKey && !isCallRow(id, callKey);
   if (legacyCopy && (await hasCallRow(prisma, session.userId, callKey))) return notAllowed();
-  if (callKey && session.overallScore === null && (await hasGradedSibling(prisma, session.userId, callKey, id))) return notAllowed();
+  if (callKey && (legacyCopy || session.overallScore === null) && (await hasGradedSibling(prisma, session.userId, callKey, id))) return notAllowed();
 
   // Library personas come from the server's own copy, so a client can't loosen the rubric it is graded on.
   const libraryScenario = LIBRARY.find((s) => s.id === session.scenarioId);
@@ -188,14 +189,13 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   } satisfies Prisma.AuditEventCreateArgs;
   try {
     if (legacyCopy && callKey) {
-      // A legacy copy: under the call's lock, the call still has no own row (a save never adds one to a legacy call) and,
-      // while this row has no score, no other row of the call has one. Re-grades of two copies, or a re-grade and a
-      // save, run one after the other, so the second sees the first's committed grade and nothing in it commits.
+      // A legacy copy: under the call's lock, the call still has no own row (a save never adds one to a legacy call) and
+      // no other row of the call has a score. Re-grades of two copies, or a re-grade and a save, run one after the
+      // other, so the second sees the first's committed grade and nothing in it commits.
       await prisma.$transaction(async (tx) => {
         await lockCall(tx, session.userId, callKey);
-        const current = await tx.trainerSession.findUnique({ where: { id }, select: { overallScore: true } });
         if (await hasCallRow(tx, session.userId, callKey)) throw new SecondGrade();
-        if (current?.overallScore == null && (await hasGradedSibling(tx, session.userId, callKey, id))) throw new SecondGrade();
+        if (await hasGradedSibling(tx, session.userId, callKey, id)) throw new SecondGrade();
         await tx.trainerSession.update(update);
         await tx.auditEvent.create(audit);
       });

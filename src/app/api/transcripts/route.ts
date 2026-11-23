@@ -82,9 +82,10 @@ export async function POST(req: NextRequest) {
     // A metered voice call already has its row (created when the call started, empty transcript). Fill it so the
     // call has one row. durationSeconds is display only: billing never reads it, so a client cannot change what it is charged.
     // realtimeModel is read only to tell whether the mint already logged this call (src/lib/voiceMintLog.ts); it is
-    // never returned.
+    // never returned. Only a save of that very call fills it: its sessionId is the metering call id (the client saves a
+    // metered call under it), so a save naming another call's callId never uses up that call's row.
     const metered = body.callId ? await prisma.trainerSession.findUnique({ where: { id: body.callId }, select: { userId: true, transcript: true, realtimeModel: true } }) : null;
-    const fillExisting = !!body.callId && !!metered && metered.userId === dbUser.id && Array.isArray(metered.transcript) && metered.transcript.length === 0;
+    const fillExisting = !!body.callId && body.callId === body.sessionId && !!metered && metered.userId === dbUser.id && Array.isArray(metered.transcript) && metered.transcript.length === 0;
     /** The row's fields, with the verified grade only on the one write that claims it. */
     const fieldsFor = (withGrade: boolean) => {
       const g = withGrade ? ev : undefined;
@@ -137,10 +138,10 @@ export async function POST(req: NextRequest) {
       // so the condition is exact in Postgres (unlike a JSON comparison on the transcript). Two saves that both read the
       // empty row can't both fill it: the second finds realtimeSessionId set and changes nothing, so an ungraded fill
       // can never erase a grade another save just stored, and a grade lands on this row at most once, ever.
-      // A seal for another call id (sessionId differs from callId) never lands here. The model is not part of the fill;
+      // Only a save whose sessionId is this callId gets here (fillExisting). The model is not part of the fill;
       // it is set once, below. No metering field (endedAt, billing, heartbeats) is written, so settleStale and billing
       // see the row exactly as before.
-      const withGrade = !!ev && body.callId === body.sessionId;
+      const withGrade = !!ev;
       const filled = await prisma.trainerSession.updateMany({ where: { id: body.callId, userId: dbUser.id, realtimeSessionId: null }, data: fieldsFor(withGrade) });
       if (filled.count === 1) {
         created = { id: body.callId! };

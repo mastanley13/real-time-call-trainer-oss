@@ -142,7 +142,7 @@ describe("the cap is checked only when a call starts", () => {
     expect(graded.status).toBe(200);
     const evaluation = await graded.json();
     expect(typeof evaluation.overallScore).toBe("number");
-    const saved = await saveTranscript(post("/api/transcripts", { sessionId: "voice-1", callId, transcript, durationSeconds: 180, scenario: { id: scenario.id }, evaluation }));
+    const saved = await saveTranscript(post("/api/transcripts", { sessionId: callId, callId, transcript, durationSeconds: 180, scenario: { id: scenario.id }, evaluation }));
     expect(saved.status).toBe(200);
     expect(session(callId).transcript).toHaveLength(transcript.length);
   });

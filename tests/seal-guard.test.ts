@@ -495,6 +495,20 @@ describe("PATCH /api/transcripts/[id]: one graded row per call (src/lib/callRow.
     expect(callRows(CALL).filter((s) => s.overallScore != null).map((s) => s.id)).toEqual([CALL]);
   });
 
+  it("doesn't fill a metered call's row from a save whose callId differs from its sessionId; the real call's save still fills it and re-grades", async () => {
+    const CALL = "cm-call-regrade-02";
+    fake.seed("trainerSession", { id: CALL, userId, organizationId: "org-1", transcript: [], realtimeSessionId: null, evaluation: null, overallScore: null, grade: null, goalAchieved: null });
+    const stray = (await (await save({ sessionId: textId(), callId: CALL })).json()) as { id: string };
+    expect(stray.id).not.toBe(CALL);
+    expect(sessions().find((s) => s.id === CALL)).toMatchObject({ transcript: [], realtimeSessionId: null });
+    // The real call, saved under its own id, still fills its row; that row is the call's own and re-grades.
+    expect(await (await save({ sessionId: CALL, callId: CALL })).json()).toEqual({ id: CALL, graded: false });
+    expect(sessions().find((s) => s.id === CALL)).toMatchObject({ transcript, realtimeSessionId: CALL });
+    as(trainee);
+    expect((await patch(CALL)).status).toBe(200);
+    expect(sessions().find((s) => s.id === CALL)).toMatchObject({ overallScore: 88 });
+  });
+
   it("concurrent re-grades of the original and its replay copy leave one graded row", async () => {
     const sessionId = textId();
     const first = (await (await save({ sessionId })).json()) as { id: string };
@@ -527,6 +541,23 @@ describe("PATCH /api/transcripts/[id]: one graded row per call (src/lib/callRow.
       expect(mocks.aiCalls).toBe(0);
       expect((await patch("legacy-a")).status).toBe(200);
       expect(graded()).toEqual(["legacy-a"]);
+    });
+
+    it("refuses a scored legacy row while a sibling is also scored, for a manager and a platform admin; a lone scored one still re-grades", async () => {
+      // An old call saved twice, both copies graded (the bug this card fixes).
+      seedLegacy("legacy-a", 55);
+      seedLegacy("legacy-b", 60);
+      for (const who of [manager, admin]) {
+        as(who);
+        for (const id of ["legacy-a", "legacy-b"]) expect(await (await patch(id)).json()).toEqual(NOT_ALLOWED);
+      }
+      expect(mocks.aiCalls).toBe(0);
+      expect(sessions().filter((s) => s.realtimeSessionId === LEGACY).map((s) => s.overallScore).sort()).toEqual([55, 60]);
+      // A lone scored legacy row (its call has no other graded row) keeps the old rules.
+      fake.rows("trainerSession").find((s) => s.id === "legacy-b")!.overallScore = null;
+      as(manager);
+      expect((await patch("legacy-a")).status).toBe(200);
+      expect(sessions().find((s) => s.id === "legacy-a")).toMatchObject({ overallScore: 88 });
     });
 
     it("concurrent re-grades of two ungraded legacy copies store one grade (the second is refused under the call's lock)", async () => {

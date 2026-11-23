@@ -691,10 +691,11 @@ describe("what is not metered, and what a client cannot change", () => {
   it("saving a voice call's transcript fills its metered row instead of adding a second one", async () => {
     addUser("u-1");
     const { callId } = await runCall("u-1", { endAt: 61 });
-    const res = await save({ sessionId: "voice-1", callId, transcript, durationSeconds: 61, scenario: { id: "quote-follow-up" } });
+    // Saved the way the client saves a metered call: under its metering call id.
+    const res = await save({ sessionId: callId, callId, transcript, durationSeconds: 61, scenario: { id: "quote-follow-up" } });
     expect(res.status).toBe(200);
     expect(fake.rows("trainerSession")).toHaveLength(1);
-    expect(session(callId)).toMatchObject({ billedMinutes: 2, realtimeSessionId: "voice-1" });
+    expect(session(callId)).toMatchObject({ billedMinutes: 2, realtimeSessionId: callId });
     expect(session(callId).transcript).toHaveLength(2);
   });
 
