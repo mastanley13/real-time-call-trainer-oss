@@ -118,6 +118,7 @@ export function createFakePrisma() {
         if (args.orderBy) out = [...out].sort((a, b) => ((a.createdAt as Date).getTime() - (b.createdAt as Date).getTime()) * (args.orderBy!.createdAt === "desc" ? -1 : 1));
         return out.slice(0, args.take ?? out.length).map((r) => ({ ...r }));
       },
+      findFirst: async (args: { where?: Where } = {}) => { log("findFirst"); return copy(rows().find((r) => matches(r, args.where ?? {}))); },
       count: async (args: { where?: Where } = {}) => rows().filter((r) => matches(r, args.where ?? {})).length,
       create: async (args: { data: Record<string, unknown> }) => {
         const row = { id: `${name}-${++seq}`, ...DEFAULTS[name](), ...Object.fromEntries(Object.entries(args.data).filter(([, v]) => v !== undefined)) } as Row;

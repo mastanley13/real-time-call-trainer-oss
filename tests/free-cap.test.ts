@@ -764,6 +764,8 @@ describe("voice_cap_hit: a used-up allowance is reported with ids only, and neve
       expect(ghlPosts).toHaveBeenCalledTimes(1);
       const body = JSON.parse((ghlPosts.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
       expect(body).toMatchObject({ event: "voice_cap_hit", userId: "u-ghl", email: "u-ghl@example.test", plan: "free", reason: "cap_reached", tags: ["app-calltrainer"] });
+      // The claim marker for the organization's day is written once, before the POST.
+      expect(fake.rows("auditEvent").filter((a) => a.action === "ghl.voice_cap_hit_sent")).toEqual([expect.objectContaining({ userId: "u-ghl", resource: "voice_cap_hit:org-1:2026-10-15" })]);
     });
 
     it("a cap hit queued just before UTC midnight and sent just after keeps its own time and day", async () => {
@@ -785,7 +787,7 @@ describe("voice_cap_hit: a used-up allowance is reported with ids only, and neve
       expect(body).toMatchObject({
         event: "voice_cap_hit",
         occurredAt: "2026-10-15T23:59:59.900Z",
-        eventId: "voice_cap_hit:u-midnight:cap_reached:2026-10-15",
+        eventId: "voice_cap_hit:org-1:2026-10-15",
       });
     });
 

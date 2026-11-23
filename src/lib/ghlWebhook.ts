@@ -144,9 +144,11 @@ export type VoiceCapHitReason = "cap_reached" | "cap_reached_in_call";
 
 /**
  * The voice minute allowance is used up (the voice_cap_hit premium event, see src/lib/premiumEventTypes.ts). A refused
- * start can be retried many times, so eventId is voice_cap_hit:{userId}:{reason}:{UTC date of the cap hit}, the same date
- * as occurredAt (both from the time the event was queued, not when it is sent): a workflow that drops repeats
- * sees at most one per user, reason and day. Never a transcript, call or session id, model or provider detail.
+ * start can be retried many times and every member of a team can hit the same pool, so eventId is
+ * voice_cap_hit:{organizationId}:{UTC date of the cap hit} (voice_cap_hit:user:{userId}:{date} only for a user with no
+ * organization), whatever the reason. The date is the same as occurredAt (both from the time the event was queued, not
+ * when it is sent). claimVoiceCapHit drops every repeat of an eventId in the app before anything is posted, so at most
+ * one is sent per organization and UTC day. Never a transcript, call or session id, model or provider detail.
  */
 export interface GhlVoiceCapHitPayload extends GhlBase {
   event: "voice_cap_hit";
@@ -277,12 +279,20 @@ export function planChangePayload(e: BillingLifecycleEvent, email: string | null
   };
 }
 
+/**
+ * The dedupe key of a voice cap hit: one per organization and UTC day of `now`, for any reason and any member. A user
+ * with no organization is keyed on the user instead (the "user:" prefix keeps the two id spaces apart).
+ */
+export function voiceCapHitEventId(input: { userId: string; organizationId: string | null }, now: Date): string {
+  return `voice_cap_hit:${input.organizationId ?? `user:${input.userId}`}:${now.toISOString().slice(0, 10)}`;
+}
+
 export function voiceCapHitPayload(
   input: { userId: string; organizationId: string | null; email: string | null; plan: PlanTier | null; reason: VoiceCapHitReason },
   now = new Date(),
 ): GhlVoiceCapHitPayload {
   return {
-    ...base(`voice_cap_hit:${input.userId}:${input.reason}:${now.toISOString().slice(0, 10)}`, "voice_cap_hit", now),
+    ...base(voiceCapHitEventId(input, now), "voice_cap_hit", now),
     tags: ghlTagsFor({ event: "voice_cap_hit" }),
     userId: input.userId,
     organizationId: input.organizationId,
@@ -480,11 +490,48 @@ export async function voiceCapHitContact(userId: string, now = new Date()): Prom
 
 const CAP_HIT_REASONS: ReadonlySet<string> = new Set<VoiceCapHitReason>(["cap_reached", "cap_reached_in_call"]);
 
+/** Namespaces the per-eventId advisory lock taken by claimVoiceCapHit. */
+export const VOICE_CAP_HIT_LOCK_PREFIX = "ct-voice-cap-hit:";
+
+/** AuditEvent action of the durable marker: voice_cap_hit was claimed for this eventId (resource = the eventId). */
+export const VOICE_CAP_HIT_MARKER = "ghl.voice_cap_hit_sent";
+
+/**
+ * Claims the one voice_cap_hit send for an organization and UTC day. One small transaction:
+ * 1. reads the user's organizationId (from the database, so the key never depends on the slower contact lookup);
+ * 2. builds the eventId (voiceCapHitEventId) and takes pg_advisory_xact_lock on hashtext('ct-voice-cap-hit:' || eventId),
+ *    held until commit, so claims for one organization and day run one after the other, across users and instances;
+ * 3. if an AuditEvent marker (VOICE_CAP_HIT_MARKER, resource = eventId) exists, returns null: nothing is sent;
+ * 4. otherwise inserts the marker and returns the organizationId the key was built from.
+ * The lock plus the marker give exactly one claimer per eventId, by commit order, whichever reason or member came first.
+ * The marker commits before the POST and is never claimed again, so a send that fails is not repeated (one attempt, as
+ * before). A failed claim logs and returns null: at most once wins over at least once. Only called while events are on.
+ */
+export async function claimVoiceCapHit(userId: string, reason: VoiceCapHitReason, now: Date): Promise<{ eventId: string; organizationId: string | null } | null> {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({ where: { id: userId }, select: { organizationId: true } });
+      const organizationId = user?.organizationId ?? null;
+      const eventId = voiceCapHitEventId({ userId, organizationId }, now);
+      // SELECT ... FROM the function, so the result column is an int Prisma can read, not void.
+      await tx.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtext(${VOICE_CAP_HIT_LOCK_PREFIX + eventId}::text))`;
+      if (await tx.auditEvent.findFirst({ where: { action: VOICE_CAP_HIT_MARKER, resource: eventId }, select: { id: true } })) return null;
+      // A user deleted since the cap hit keeps no foreign key on the marker; the eventId still names them.
+      await tx.auditEvent.create({ data: { userId: user ? userId : null, action: VOICE_CAP_HIT_MARKER, resource: eventId, metadata: { eventId, reason } } });
+      return { eventId, organizationId };
+    });
+  } catch {
+    console.error("[ghl] voice_cap_hit claim failed; not sent");
+    return null;
+  }
+}
+
 /**
  * The premium event sink: forwards voice_cap_hit (subject user, a known reason) to the GHL emitter and ignores every
  * other premium event. Registered once, in billing.ts. queuePremiumEvent already calls it from after(), once the
- * response is sent; emitGhlEvent then hands the lookup and POST to a nested after() (supported by Next.js, the request
- * stays alive until that queue is idle), so nothing here runs before the response. A no-op while GHL events are off.
+ * response is sent; emitGhlEvent then hands the claim, lookup and POST to a nested after() (supported by Next.js, the
+ * request stays alive until that queue is idle), so nothing here runs before the response. A no-op while GHL events are
+ * off (no marker is written then). Only the first cap hit of an organization's UTC day is sent (claimVoiceCapHit).
  */
 export const ghlPremiumSink: PremiumEventSink = (event) => {
   if (event.name !== "voice_cap_hit" || event.subject !== "user" || !event.subjectId || !CAP_HIT_REASONS.has(event.reason ?? "")) return;
@@ -495,8 +542,11 @@ export const ghlPremiumSink: PremiumEventSink = (event) => {
   const stamped = event.occurredAt ? new Date(event.occurredAt) : null;
   const now = stamped && !Number.isNaN(stamped.getTime()) ? stamped : new Date();
   emitGhlEvent(async () => {
+    const claim = await claimVoiceCapHit(userId, reason, now);
+    if (!claim) return null;
     const contact = await voiceCapHitContact(userId, now);
-    return voiceCapHitPayload({ userId, organizationId: contact?.organizationId ?? null, email: contact?.email ?? null, plan: contact?.plan ?? null, reason }, now);
+    // organizationId from the claim, so the payload's eventId is the one that was claimed.
+    return voiceCapHitPayload({ userId, organizationId: claim.organizationId, email: contact?.email ?? null, plan: contact?.plan ?? null, reason }, now);
   });
 };
 
