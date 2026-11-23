@@ -163,7 +163,7 @@ export function VoiceChoiceField({ premium, usage, value, onChange }: { premium:
   );
 }
 
-export default function Briefing({ scenario, capabilities, mode, onModeChange, onUseText, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, usage, canUpgrade = true, usageUnavailable, premium, voiceChoice = "premium", onVoiceChoiceChange }: {
+export default function Briefing({ scenario, capabilities, mode, onModeChange, onUseText, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, connectFailed = false, notice, usage, canUpgrade = true, usageUnavailable, premium, voiceChoice = "premium", onVoiceChoiceChange }: {
   /** Premium minutes left, or the locked Add Premium voice / Ask your admin state. Null when not metered. */
   premium?: PremiumSnapshot | null;
   /** Standard or Premium for this call, shown only when Premium can run (premiumChoiceAvailable). */
@@ -183,6 +183,8 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, o
   onStart: () => void;
   retryFrom?: { turn: number; line: string } | null;
   error?: string;
+  /** The error is a voice call that never connected (timeout, mint or handshake failure): offer Retry voice and Switch to text. */
+  connectFailed?: boolean;
   /** Shown when the link named a persona this browser doesn't have and another one opened instead. */
   notice?: string;
   /** Voice minutes left and the plan's minutes this period; null or undefined when minutes are not metered (demo mode, no billing). */
@@ -206,6 +208,8 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, o
   const voiceLookupFailed = mode === "voice" && !!usageUnavailable;
   const switchToText = onUseText ?? (() => onModeChange("text"));
   const outOfMinutes = mode === "voice" && !!usage && usage.remaining <= 0;
+  /** VoiceUnavailable or the out-of-minutes button already offers switchToText, so a connect failure adds no second one. */
+  const textSwitchShown = voiceLookupFailed || outOfMinutes;
   const voiceDetail = !voiceReady ? "Voice isn't configured on this server."
     : engine === "openai" ? "OpenAI Realtime over WebRTC. Your browser asks for the mic when the call starts."
     : "ElevenLabs Agents over WebRTC. Your browser asks for the mic when the call starts.";
@@ -361,6 +365,23 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, o
 
             {/* A cap refusal while the usage panel shows no minutes left is not repeated: the panel has the count, the reset date and the right Upgrade link. */}
             {error && !(outOfMinutes && isCapMessage(error)) && <CallError message={error} canUpgrade={canUpgrade} />}
+            {/* The mic or the line never connected: offer the two ways forward right under the error. */}
+            {/* A cap refusal would refuse again, so it gets only Switch to text next to its Upgrade link or admin note.
+                Switch to text is left out when a button below already offers it. */}
+            {error && connectFailed && mode === "voice" && (!isCapMessage(error) || !textSwitchShown) && (
+              <div className="flex flex-wrap gap-2">
+                {!isCapMessage(error) && (
+                  <button type="button" className="btn-primary btn-sm" onClick={onStart} disabled={blocked || voiceLookupFailed || outOfMinutes}>
+                    <RotateCcw size={14} strokeWidth={1.75} aria-hidden />Retry voice
+                  </button>
+                )}
+                {!textSwitchShown && (
+                  <button type="button" className="btn-ghost btn-sm" onClick={switchToText}>
+                    <Keyboard size={14} strokeWidth={1.75} aria-hidden />Switch to text
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Minutes near Start, in every state: voice keys set up or not. */}
             <MinutesLeft usage={usage ?? null} mode={mode} canUpgrade={canUpgrade} />

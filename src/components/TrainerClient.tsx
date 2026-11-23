@@ -14,6 +14,7 @@ import { PageSkeleton } from "@/components/ui/Skeleton";
 import Briefing from "@/components/call/Briefing";
 import Deck from "@/components/call/Deck";
 import { CallMeter } from "@/lib/callMeter";
+import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, DISCONNECTED_BEFORE_CONNECT_MESSAGE, VoiceAttempts, elevenLabsConnectTimeout, elevenLabsDisconnect, elevenLabsHangUp, settleElevenLabsUnmount, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoiceErrorInfo } from "@/lib/callStatus";
 import RealtimeVoiceSession, { voiceInfoFrom, type VoiceInfo, type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
@@ -34,7 +35,7 @@ const missingNotice = (asked: string | null, picked: Scenario) =>
   asked && picked.id !== asked ? `That persona isn't in this browser's library, so we opened ${picked.aiPersona.name} instead. Pick another in the Library.` : "";
 
 /** Rendered inside ConversationProvider; owns the ElevenLabs session and feeds the shared deck. */
-function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onVoiceInfo, registerEnd, render, voiceTier }: {
+function VoiceSession({ scenario, active, grading, onTurn, onEnded, onCancelled, onError, onVoiceInfo, registerEnd, render, voiceTier }: {
   scenario: Scenario;
   /** The setup's Standard or Premium pick, sent as a request with the token. */
   voiceTier?: "premium" | "standard";
@@ -42,39 +43,98 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
   grading: boolean;
   onTurn: (t: StoredTurn) => void;
   onEnded: () => void;
-  onError: (msg: string) => void;
+  /** The rep hung up before the call connected: back to the briefing, nothing graded. */
+  onCancelled: () => void;
+  onError: (msg: string, info?: VoiceErrorInfo) => void;
   onVoiceInfo?: (info: VoiceInfo) => void;
   registerEnd: (fn: () => void) => void;
-  render: (v: { orbState: AgentState; status: { label: string; tone: "ok" | "signal" | "caution" }; muted: boolean; toggleMute: () => void; end: () => void; getInputVolume: () => number; getOutputVolume: () => number }) => React.ReactNode;
+  render: (v: VoiceRender) => React.ReactNode;
 }) {
   // Server-side voice metering (see lib/callMeter.ts). Replaced per call once the token route returns a callId.
   const meterRef = useRef<CallMeter>(new CallMeter(undefined, { onStop: () => {}, onGiveUp: () => {} }));
   const userEndedRef = useRef(false);
   const endRef = useRef<() => void>(() => {});
+  /** Set when the call failed before it connected: the disconnect that follows must not grade (a retry may have seeded rep turns). */
+  const connectFailedRef = useRef(false);
+  /**
+   * Bumped by the connect timeout and by a hang-up before connect; a token or SDK session for an older attempt is
+   * dropped. Also holds whether the current attempt connected, set synchronously in onConnect (attempts.connected()).
+   */
+  const attempts = useRef(new VoiceAttempts()).current;
+  /** The connected fact for rendering: once connected, a later non-connected status means the call ended. One call per mount. */
+  const [wasConnected, setWasConnected] = useState(false);
+  /** False after unmount. Set again on mount, so a StrictMode remount does not cancel a real attempt. */
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      // live() ignores every SDK callback from now on, so settle the meter and end the session here (see settleElevenLabsUnmount).
+      settleElevenLabsUnmount(attempts, meterRef.current, () => endRef.current());
+    };
+  }, [attempts]);
+  /** SDK callbacks act only for the current attempt's session (see VoiceAttempts). */
+  const live = () => attempts.live() && mountedRef.current;
   const conv = useConversation({
-    onConnect: () => meterRef.current.open(),
+    onConnect: () => {
+      // The attempt was abandoned while the mic or handshake was pending: end the late session, never meter it.
+      if (!live()) { endRef.current(); return; }
+      attempts.connect(); setWasConnected(true); meterRef.current.open();
+    },
     onMessage: ({ message, role }) => {
+      if (!live()) return;
       // ElevenLabs has no packet-level event; the first agent message is the first remote audio.
       if (role !== "user") meterRef.current.audio();
       onTurn({ role: role === "user" ? "user" : "assistant", text: message });
     },
-    onError: (m: unknown) => { meterRef.current.end("provider_error"); onError(typeof m === "string" ? m : "Voice connection error"); },
-    onDisconnect: () => { meterRef.current.end(userEndedRef.current ? "user_hangup" : "network_drop"); onEnded(); },
+    onError: (m: unknown) => {
+      if (!live()) return;
+      meterRef.current.end("provider_error");
+      // Any SDK error before the call connected is a connect failure: back to the briefing at once, nothing graded.
+      const beforeConnect = !attempts.connected();
+      if (beforeConnect) connectFailedRef.current = true;
+      onError(typeof m === "string" ? m : "Voice connection error", beforeConnect ? { connectFailed: true } : undefined);
+    },
+    onDisconnect: () => {
+      if (!live()) return;
+      // Before onConnect this is a failed connect: back to the briefing with the connect error, nothing graded.
+      const d = elevenLabsDisconnect(attempts, { failed: connectFailedRef.current, userEnded: userEndedRef.current });
+      meterRef.current.end(d.meter);
+      if (d.then === "grade") onEnded();
+      else if (d.then === "report_connect_failure") { connectFailedRef.current = true; onError(DISCONNECTED_BEFORE_CONNECT_MESSAGE, { connectFailed: true }); }
+    },
   });
   const { startSession, endSession, status, isSpeaking, isMuted, setMuted, getInputVolume, getOutputVolume } = conv;
   const startedRef = useRef(false);
   useEffect(() => { endRef.current = () => { void endSession(); }; }, [endSession]);
+  const connected = status === "connected";
 
-  useEffect(() => registerEnd(() => { userEndedRef.current = true; endSession(); }), [endSession, registerEnd]);
+  /** Ending an attempt before it connects: its disconnect grades nothing, and the meter settles it as failed_connect. */
+  const failAttempt = useCallback(() => { connectFailedRef.current = true; meterRef.current.end("failed_connect"); }, []);
+
+  // Hang-up. Before the call connects (token still minting, or the SDK still starting) it ends like the timeout: the
+  // attempt is abandoned and settled as failed_connect, so a late token or session is dropped, and nothing is graded
+  // (a retry may have seeded rep turns). The call screen closes now instead of waiting for a disconnect.
+  // Connected is read from attempts, set in onConnect, not from the rendered status, which can lag behind it.
+  const hangUp = useCallback(() => {
+    userEndedRef.current = true;
+    if (elevenLabsHangUp(attempts, { endSession: () => { void endSession(); }, failAttempt }) === "cancelled") onCancelled();
+  }, [endSession, failAttempt, onCancelled, attempts]);
+  useEffect(() => registerEnd(hangUp), [hangUp, registerEnd]);
 
   useEffect(() => {
     if (!active || startedRef.current) return;
     startedRef.current = true;
+    const attempt = attempts.begin();
+    const cancelled = () => !attempts.isCurrent(attempt) || !mountedRef.current;
     (async () => {
       try {
         userEndedRef.current = false;
+        connectFailedRef.current = false;
         const res = await fetch(`/api/elevenlabs/token?${new URLSearchParams({ scenarioId: scenario.id, title: scenario.title, ...(voiceTier ? { voiceTier } : {}) })}`);
         const data = await res.json().catch(() => ({}));
+        // Timed out or left while the token was minting: release the late call on the server, start nothing.
+        if (cancelled()) return settleAbandonedCall(data.callId);
         if (!res.ok) throw new Error(data.message || "Could not get a voice token.");
         const info = voiceInfoFrom(data);
         if (info) onVoiceInfo?.(info);
@@ -83,6 +143,7 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
           onStop: (m) => { userEndedRef.current = true; endRef.current(); onError(m); },
           onGiveUp: () => endRef.current(),
         });
+        attempts.bind(attempt);
         startSession({
           conversationToken: data.token,
           connectionType: "webrtc",
@@ -92,25 +153,36 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
           },
         });
       } catch (e) {
+        if (cancelled()) return;
         startedRef.current = false;
-        onError(e instanceof Error ? e.message : "Failed to start the call.");
+        onError(e instanceof Error ? e.message : "Failed to start the call.", { connectFailed: true });
       }
     })();
-  }, [active, scenario, startSession, onError, onVoiceInfo, voiceTier]);
+  }, [active, scenario, startSession, onError, onVoiceInfo, voiceTier, attempts]);
 
   useEffect(() => {
     if (!active) startedRef.current = false;
   }, [active]);
 
-  const connected = status === "connected";
+  // A mic or handshake that never connects is stopped the same way as a failed start: settle the meter, end, explain.
+  const onErrorRef = useRef(onError);
+  useEffect(() => { onErrorRef.current = onError; });
+  useEffect(() => {
+    if (!active || connected) return;
+    // The timer can fire after onConnect but before the connected render clears it; elevenLabsConnectTimeout then does nothing.
+    const t = setTimeout(() => {
+      if (elevenLabsConnectTimeout(attempts, { endSession: () => endRef.current(), failAttempt })) onErrorRef.current(CONNECT_TIMEOUT_MESSAGE, { connectFailed: true });
+    }, CONNECT_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [active, connected, attempts, failAttempt]);
+
   const orbState: AgentState = grading || !connected ? "thinking" : isSpeaking ? "talking" : "listening";
   const name = scenario.aiPersona.name.split(" ")[0];
-  const statusLabel = !connected
-    ? { label: "Connecting… allow the mic", tone: "caution" as const }
-    : isMuted ? { label: "Muted", tone: "caution" as const }
-    : isSpeaking ? { label: `${name} is speaking`, tone: "signal" as const }
-    : { label: "Your turn", tone: "ok" as const };
-  return <>{render({ orbState, status: statusLabel, muted: isMuted, toggleMute: () => setMuted(!isMuted), end: () => endSession(), getInputVolume, getOutputVolume })}</>;
+  // ElevenLabs asks for the mic inside startSession, so "mic" and "connecting" are one state here; after the call it is
+  // "ending" or "closed", like Realtime, so the footer never says "Connecting" under "Grading…".
+  const phase = elevenLabsPhase(status, { grading, wasConnected });
+  const statusLabel = voiceStatusCopy(phase, isMuted, { speaking: isSpeaking, name }).header;
+  return <>{render({ orbState, phase, status: statusLabel, muted: isMuted, toggleMute: () => setMuted(!isMuted), end: hangUp, getInputVolume, getOutputVolume })}</>;
 }
 
 export default function TrainerClient() {
@@ -125,6 +197,8 @@ export default function TrainerClient() {
   const [input, setInput] = useState("");
   const [inserted, setInserted] = useState(false);
   const [error, setError] = useState("");
+  /** The error that was a voice connect failure. Compared with `error`, so clearing or replacing the error clears the flag. */
+  const [connectFailedError, setConnectFailedError] = useState("");
   const [notice, setNotice] = useState("");
   /** Voice minutes left this period, shown on the briefing. Null when minutes are not metered. */
   const [usage, setUsage] = useState<UsageSnapshot | null>(null);
@@ -456,7 +530,7 @@ export default function TrainerClient() {
     return (
       // Keyed by persona: revealed prep answers, "Got it" and the mic test belong to one buyer.
       <Briefing key={scenario.id} scenario={scenario} capabilities={capabilities} mode={mode} onModeChange={chooseMode} onUseText={() => setMode("text")} engine={engine} onEngineChange={setEngine} coachMode={coachMode} onCoachModeChange={setCoachMode}
-        onStart={begin} retryFrom={retry ? { turn: retry.turn, line: retry.line } : null} error={error} notice={notice} usage={usage} canUpgrade={canUpgrade} usageUnavailable={usageUnavailable} premium={premium}
+        onStart={begin} retryFrom={retry ? { turn: retry.turn, line: retry.line } : null} error={error} connectFailed={!!error && error === connectFailedError} notice={notice} usage={usage} canUpgrade={canUpgrade} usageUnavailable={usageUnavailable} premium={premium}
         voiceChoice={voiceChoice} onVoiceChoiceChange={setVoiceChoice} />
     );
   }
@@ -467,12 +541,15 @@ export default function TrainerClient() {
   if (mode === "voice" && engine) {
     const voiceProps = {
       scenario, active: live, grading, onTurn: addTurn, onEnded: onVoiceEnded, onVoiceInfo, voiceTier: callTier,
+      // A deliberate hang-up before connect: back to the briefing with no banner and nothing graded (see callStatus.ts).
+      onCancelled: () => { setError(""); setConnectFailedError(""); mintedCallRef.current = null; setPhase("idle"); },
       // With nothing from the rep there is nothing to grade: go back to the briefing, where the error explains what happened.
-      onError: (m: string) => { setError(m); if (!turnsRef.current.some((t) => t.role === "user" && t.text.trim())) setPhase("idle"); },
+      // A call that never connected always goes back too, even when a retry seeded rep turns, so the error and its actions show.
+      onError: (m: string, info?: VoiceErrorInfo) => { setError(m); setConnectFailedError(info?.connectFailed ? m : ""); if (leavesCallOnError(info, turnsRef.current.some((t) => t.role === "user" && t.text.trim()))) setPhase("idle"); },
       registerEnd: (fn: () => void) => { endVoice.current = fn; },
       render: (v: VoiceRender) => (
         <Deck {...shared} orbState={v.orbState} status={grading ? { label: "Grading…", tone: "signal" } : v.status} onEnd={v.end}
-          voice={{ engine, muted: v.muted, onToggleMute: v.toggleMute, getInputVolume: v.getInputVolume, getOutputVolume: v.getOutputVolume, tier: voiceInfo?.tier, nextCallStandard: voiceInfo?.nextCallStandard, trial: voiceInfo?.trial, maxSeconds: voiceInfo?.maxSeconds }} />
+          voice={{ engine, phase: v.phase, muted: v.muted, onToggleMute: v.toggleMute, getInputVolume: v.getInputVolume, getOutputVolume: v.getOutputVolume, tier: voiceInfo?.tier, nextCallStandard: voiceInfo?.nextCallStandard, trial: voiceInfo?.trial, maxSeconds: voiceInfo?.maxSeconds }} />
       ),
     };
     // Coach cues stay on the trainee's screen: neither engine is ever sent coach output.

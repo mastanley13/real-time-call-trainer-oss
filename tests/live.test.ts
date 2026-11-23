@@ -153,6 +153,32 @@ describe("/api/live/sdp", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("aborts the upstream start when the browser aborts its request, without failing over to a backup key", async () => {
+    vi.stubEnv("OPENAI_API_KEY_BACKUP_1", "sk-test-live-backup");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let upstream: AbortSignal | undefined;
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      upstream = init?.signal ?? undefined;
+      upstream?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.doMock("@/lib/apiAuth", () => ({ requireAuth: () => user }));
+    const { POST } = await import("@/app/api/live/sdp/route");
+    const liveTicket = sealLiveTicket(user.id, "call-abcdef12", { model: "gpt-live-1.1", voice: "marin" })!;
+    const browser = new AbortController();
+    const pending = POST(new NextRequest("http://localhost/api/live/sdp", {
+      method: "POST", headers: { "content-type": "application/json" }, signal: browser.signal,
+      body: JSON.stringify({ liveTicket, sessionId: "call-abcdef12", sdp: "v=0 test offer", scenario }),
+    }));
+    await vi.waitFor(() => expect(upstream).toBeDefined());
+    expect(upstream!.aborted).toBe(false);
+    browser.abort();
+    expect(upstream!.aborted).toBe(true);
+    const res = await pending;
+    expect(res.status).toBe(502);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("never forwards the upstream body or a model id on failure", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: { message: "model gpt-live-1.1 not found" } }, { status: 404 })));
     const liveTicket = sealLiveTicket(user.id, "call-abcdef12", { model: "gpt-live-1.1", voice: "marin" })!;
@@ -192,7 +218,7 @@ describe("browser call on the Live path", () => {
       .mockResolvedValueOnce(Response.json({ voiceApi: "live", liveTicket: "lt1.ticket", sessionId: "call-abcdef12", voice: "marin" }))
       .mockResolvedValueOnce(Response.json({ sdp: "v=0 answer" }));
     vi.stubGlobal("fetch", fetchMock);
-    const h = { onTurn: vi.fn(), onEnded: vi.fn(), onError: vi.fn(), onView: vi.fn(), onMinted: vi.fn(), onVoiceInfo: vi.fn() };
+    const h = { onTurn: vi.fn(), onEnded: vi.fn(), onCancelled: vi.fn(), onError: vi.fn(), onView: vi.fn(), onMinted: vi.fn(), onVoiceInfo: vi.fn() };
     const call = new RealtimeCall(scenario, h);
     await call.start();
     expect(h.onError).not.toHaveBeenCalled();

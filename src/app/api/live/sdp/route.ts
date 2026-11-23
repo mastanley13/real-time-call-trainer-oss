@@ -61,13 +61,17 @@ export async function POST(req: NextRequest) {
     openingLine: body.scenario.aiPersona.openingLine,
     sdp: body.sdp,
   }));
+  // The browser aborting this request (timeout, hang-up, unmount) cancels the upstream start too; a thrown abort is not
+  // a quota outcome, so it never fails over to another key. If OpenAI already created the session, the answer goes
+  // nowhere: the browser closed its peer connection, so the session ends on its own ICE timeout, and the call was
+  // settled as failed_connect, so it bills 0.
   const start = (apiKey: string, pinned: boolean) =>
     fetch(LIVE_SESSIONS_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: payload,
       cache: "no-store",
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.any([req.signal, AbortSignal.timeout(15_000)]),
       ...(pinned ? { redirect: "error" as const } : {}),
     });
 

@@ -6,12 +6,15 @@ import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
 import { CallMeter, type MeterEndReason } from "@/lib/callMeter";
 import { LiveTranscript, applyLiveEvent, type LiveServerEvent } from "@/lib/live";
+import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, settleAbandonedCall, voiceStatusCopy, type VoiceErrorInfo, type VoicePhase } from "@/lib/callStatus";
 import { expireSession, storedSessionKey } from "@/lib/sessionExpiry";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, realtimeAuthRedirect, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
 
 /** Same render-prop contract as the ElevenLabs VoiceSession in TrainerClient. */
 export interface VoiceRender {
   orbState: AgentState;
+  /** Where the call is; the deck's body and footer derive their copy from it (voiceStatusCopy). */
+  phase: VoicePhase;
   status: { label: string; tone: "ok" | "signal" | "caution" };
   muted: boolean;
   toggleMute: () => void;
@@ -20,12 +23,14 @@ export interface VoiceRender {
   getOutputVolume: () => number;
 }
 
-type CallPhase = "mic" | "connecting" | "connected" | "ending" | "closed";
+type CallPhase = VoicePhase;
 interface CallView { phase: CallPhase; speaking: boolean; muted: boolean }
 interface Handlers {
   onTurn: (t: AssembledTurn) => void;
   onEnded: () => void;
-  onError: (msg: string) => void;
+  /** The rep hung up before the call connected: back to the briefing, nothing graded. */
+  onCancelled: () => void;
+  onError: (msg: string, info?: VoiceErrorInfo) => void;
   onView: (v: CallView) => void;
   /**
    * Which call the server minted: its sessionId, the receipt bound to it, and the metering callId when metered.
@@ -84,8 +89,15 @@ export class RealtimeCall {
   private flushTimer?: ReturnType<typeof setInterval>;
   private endTimer?: ReturnType<typeof setTimeout>;
   private audioTimer?: ReturnType<typeof setInterval>;
+  /** Stops an attempt stuck waiting for the mic or the connection (a silent mic that never resolves, a stalled handshake). */
+  private connectTimer?: ReturnType<typeof setTimeout>;
   /** Reports connect, heartbeats and the end to the server, which meters the call. A no-op without a callId. */
   private meter?: CallMeter;
+  /**
+   * Aborts the in-flight SDP request when the attempt closes (timeout, hang-up, unmount). The mint is never aborted:
+   * its late answer carries the callId that settles the reservation as failed_connect.
+   */
+  private sdpAbort = new AbortController();
 
   constructor(private scenario: Scenario, private h: Handlers, private voiceTier?: "premium" | "standard") {}
 
@@ -97,6 +109,10 @@ export class RealtimeCall {
   async start() {
     // Created before any await so it inherits the Start call click's user activation (Safari needs that).
     try { this.ctx = new AudioContext(); } catch { /* volume meters stay flat; audio still plays */ }
+    // Same failure path as any other connect failure: the meter settles a minted call as failed_connect.
+    this.connectTimer = setTimeout(() => {
+      if (this.view.phase === "mic" || this.view.phase === "connecting") this.fail(CONNECT_TIMEOUT_MESSAGE, "failed_connect");
+    }, CONNECT_TIMEOUT_MS);
 
     let mic: MediaStream;
     try {
@@ -115,7 +131,8 @@ export class RealtimeCall {
       const session = storedSessionKey();
       const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario, ...(this.voiceTier ? { voiceTier: this.voiceTier } : {}) }) });
       secret = await res.json().catch(() => ({}));
-      if (this.closed) return;
+      // Timed out, hung up or unmounted while minting: release the late call on the server, then drop it.
+      if (this.closed) return settleAbandonedCall(secret.callId);
       const redirect = realtimeAuthRedirect(res.status, secret.error);
       if (redirect) return this.signInAgain(redirect, session);
       if (!res.ok || !(secret.clientSecret || secret.liveTicket)) return this.fail(secret.message || "Could not start the voice call. Try again, or switch to Text.");
@@ -170,16 +187,19 @@ export class RealtimeCall {
       dc.onmessage = (e) => this.message(e.data);
       dc.onclose = () => { if (!this.closed && !this.ending) this.fail("The voice session closed unexpectedly. Your transcript so far is kept.", "network_drop"); };
 
+      // The connect timeout or a hang-up can close the call during any await: never send an SDP offer after that.
       const offer = await pc.createOffer();
+      if (this.closed) return;
       await pc.setLocalDescription(offer);
+      if (this.closed) return;
       if (this.live) {
         // GPT-Live: the server starts the session with the full offer (src/app/api/live/sdp/route.ts).
         await iceGathered(pc);
         if (this.closed) return;
         const liveSession = storedSessionKey();
-        const res = await fetch("/api/live/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ liveTicket: secret.liveTicket, sessionId: secret.sessionId, scenario: this.scenario, sdp: pc.localDescription?.sdp ?? offer.sdp }) });
+        const res = await fetch("/api/live/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ liveTicket: secret.liveTicket, sessionId: secret.sessionId, scenario: this.scenario, sdp: pc.localDescription?.sdp ?? offer.sdp }), signal: this.sdpAbort.signal });
         const data = await res.json().catch(() => ({}));
-        if (this.closed) return;
+        if (this.closed) return this.dropLateAnswer();
         const redirect = data.error === "realtime_secret_expired" ? null : realtimeAuthRedirect(res.status, data.error);
         if (redirect) return this.signInAgain(redirect, liveSession);
         if (!res.ok || typeof data.sdp !== "string") return this.fail(data.error === "realtime_secret_expired" ? EXPIRED : data.message || "OpenAI could not connect the voice call. Try again, or switch to Text.", "failed_connect");
@@ -188,9 +208,9 @@ export class RealtimeCall {
       }
       // Same-origin relay of the documented SDP exchange; see src/app/api/realtime/sdp/route.ts.
       const sdpSession = storedSessionKey();
-      const res = await fetch("/api/realtime/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientSecret: secret.clientSecret, sdp: offer.sdp }) });
+      const res = await fetch("/api/realtime/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientSecret: secret.clientSecret, sdp: offer.sdp }), signal: this.sdpAbort.signal });
       const data = await res.json().catch(() => ({}));
-      if (this.closed) return;
+      if (this.closed) return this.dropLateAnswer();
       const redirect = realtimeAuthRedirect(res.status, data.error);
       if (redirect) return this.signInAgain(redirect, sdpSession);
       if (!res.ok || typeof data.sdp !== "string") return this.fail(data.error === "realtime_secret_expired" ? EXPIRED : data.message || "OpenAI could not connect the voice call. Try again, or switch to Text.", "failed_connect");
@@ -245,6 +265,7 @@ export class RealtimeCall {
 
   private opened() {
     if (this.closed) return;
+    clearTimeout(this.connectTimer);
     this.set({ phase: "connected" });
     this.meter?.open();
     this.flushTimer = setInterval(() => this.release(), 1000);
@@ -310,11 +331,19 @@ export class RealtimeCall {
     this.set({ muted });
   };
 
-  /** Hang up: stop the mic and the persona now, wait briefly for the last transcript, then close and report. */
+  /**
+   * Hang up: stop the mic and the persona now, wait briefly for the last transcript, then close and report.
+   * Before connect it ends like any other connect failure (settled as failed_connect, never graded, not even a
+   * retry's seeded turns) but reports onCancelled instead of an error: the rep chose to stop.
+   */
   end = () => {
     if (this.closed || this.ending) return;
     this.ending = true;
-    if (this.view.phase !== "connected") return this.close(true);
+    if (this.view.phase !== "connected") {
+      this.meter?.end("failed_connect");
+      this.close(false);
+      return this.h.onCancelled();
+    }
     this.mic?.getAudioTracks().forEach((t) => (t.enabled = false));
     if (this.audio) this.audio.muted = true;
     this.set({ phase: "ending", speaking: false });
@@ -332,7 +361,8 @@ export class RealtimeCall {
     this.meter?.end(reason);
     this.release(true);
     const repSpoke = this.emittedUser > 0;
-    this.h.onError(msg);
+    // Before connect nothing is graded (not even turns seeded from a retry), so the trainer must leave the call.
+    this.h.onError(msg, { connectFailed: this.view.phase === "mic" || this.view.phase === "connecting" });
     // Once the rep has spoken the call still gets graded; before that, the trainer goes back to the briefing and keeps this error.
     this.close(repSpoke);
   }
@@ -347,8 +377,19 @@ export class RealtimeCall {
     if (path === "/access") return window.location.assign(path);
     // The shared guard clears the cached session (it can look fresh while the server rejects the cookie) and
     // makes the one redirect to /login?next=&reason=expired. It leaves a newer sign-in alone; then this
-    // request was stale, so let the rep start again.
-    if (expireSession(session) === "stale") this.h.onError("Could not start the voice call. Try again, or switch to Text.");
+    // request was stale, so let the rep start again. Flagged as a connect failure like every other pre-connect error,
+    // so the trainer returns to the briefing (Retry voice, Switch to text) even when a retry seeded rep turns.
+    if (expireSession(session) === "stale") this.h.onError("Could not start the voice call. Try again, or switch to Text.", { connectFailed: true });
+  }
+
+  /**
+   * An SDP answer that arrived after the attempt closed. The provider session it started is bound to this peer
+   * connection's offer and has no data channel to close, so it is never applied: the peer connection and media stay
+   * torn down (close() already did this; repeated here so a late answer can never revive them) and ICE never connects.
+   */
+  private dropLateAnswer() {
+    try { this.pc?.close(); } catch { /* already closed */ }
+    this.mic?.getTracks().forEach((t) => t.stop());
   }
 
   /** Releases everything exactly once. notify=false is for unmounts, which must not trigger grading. */
@@ -358,9 +399,12 @@ export class RealtimeCall {
     this.meter?.end("user_hangup");
     if (notify) this.release(true);
     this.closed = true;
+    // An SDP request still in flight is abandoned; its rejection lands in start()'s catch, where fail() is a no-op once closed.
+    this.sdpAbort.abort();
     clearInterval(this.flushTimer);
     clearInterval(this.audioTimer);
     clearTimeout(this.endTimer);
+    clearTimeout(this.connectTimer);
     // GPT-Live: ask for a graceful close so usage is finalized; closing the connection below also ends billing.
     if (this.live) { try { this.send({ type: "session.close" }); } catch { /* channel already gone */ } }
     try { this.dc?.close(); } catch { /* already closed */ }
@@ -386,7 +430,7 @@ function iceGathered(pc: RTCPeerConnection, timeoutMs = 3000): Promise<void> {
 }
 
 /** Voice session on the OpenAI Realtime API, or GPT-Live when the server sets OPENAI_VOICE_API=live. Drop-in for the ElevenLabs VoiceSession. */
-export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onMinted, onVoiceInfo, registerEnd, render, voiceTier }: {
+export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onCancelled, onError, onMinted, onVoiceInfo, registerEnd, render, voiceTier }: {
   scenario: Scenario;
   /** The setup's Standard or Premium pick for this call, sent as a request. Read when the call starts. */
   voiceTier?: "premium" | "standard";
@@ -394,7 +438,8 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   grading: boolean;
   onTurn: (t: StoredTurn) => void;
   onEnded: () => void;
-  onError: (msg: string) => void;
+  onCancelled: () => void;
+  onError: (msg: string, info?: VoiceErrorInfo) => void;
   onMinted?: (c: MintedCall) => void;
   onVoiceInfo?: (info: VoiceInfo) => void;
   registerEnd: (fn: () => void) => void;
@@ -403,8 +448,8 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   const [view, setView] = useState<CallView>({ phase: "mic", speaking: false, muted: false });
   const callRef = useRef<RealtimeCall | null>(null);
   // Latest callbacks without restarting the call when the parent re-renders.
-  const cb = useRef({ onTurn, onEnded, onError, onMinted, onVoiceInfo });
-  useEffect(() => { cb.current = { onTurn, onEnded, onError, onMinted, onVoiceInfo }; });
+  const cb = useRef({ onTurn, onEnded, onCancelled, onError, onMinted, onVoiceInfo });
+  useEffect(() => { cb.current = { onTurn, onEnded, onCancelled, onError, onMinted, onVoiceInfo }; });
   // The pick at the moment the call starts; changing it later never restarts or switches a running call.
   const tierRef = useRef(voiceTier);
   useEffect(() => { tierRef.current = voiceTier; });
@@ -414,7 +459,8 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
     const call = new RealtimeCall(scenario, {
       onTurn: (t) => cb.current.onTurn(t),
       onEnded: () => cb.current.onEnded(),
-      onError: (m) => cb.current.onError(m),
+      onCancelled: () => cb.current.onCancelled(),
+      onError: (m, i) => cb.current.onError(m, i),
       onView: (v) => { if (callRef.current === call) setView(v); },
       onMinted: (c) => cb.current.onMinted?.(c),
       onVoiceInfo: (i) => cb.current.onVoiceInfo?.(i),
@@ -438,13 +484,7 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   const connected = view.phase === "connected";
   const name = scenario.aiPersona.name.split(" ")[0];
   const orbState: AgentState = grading || !connected ? "thinking" : view.speaking ? "talking" : "listening";
-  const status = view.phase === "mic" ? { label: "Allow the mic to connect", tone: "caution" as const }
-    : view.phase === "connecting" ? { label: "Connecting…", tone: "caution" as const }
-    : view.phase === "ending" ? { label: "Wrapping up…", tone: "signal" as const }
-    : view.phase === "closed" ? { label: "Call ended", tone: "caution" as const }
-    : view.muted ? { label: "Muted", tone: "caution" as const }
-    : view.speaking ? { label: `${name} is speaking`, tone: "signal" as const }
-    : { label: "Your turn", tone: "ok" as const };
+  const status = voiceStatusCopy(view.phase, view.muted, { speaking: view.speaking, name }).header;
 
-  return <>{render({ orbState, status, muted: view.muted, toggleMute, end, getInputVolume, getOutputVolume })}</>;
+  return <>{render({ orbState, phase: view.phase, status, muted: view.muted, toggleMute, end, getInputVolume, getOutputVolume })}</>;
 }
