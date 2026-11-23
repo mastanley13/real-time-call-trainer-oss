@@ -92,6 +92,11 @@ export class RealtimeCall {
   private connectTimer?: ReturnType<typeof setTimeout>;
   /** Reports connect, heartbeats and the end to the server, which meters the call. A no-op without a callId. */
   private meter?: CallMeter;
+  /**
+   * Aborts the in-flight SDP request when the attempt closes (timeout, hang-up, unmount). The mint is never aborted:
+   * its late answer carries the callId that settles the reservation as failed_connect.
+   */
+  private sdpAbort = new AbortController();
 
   constructor(private scenario: Scenario, private h: Handlers, private voiceTier?: "premium" | "standard") {}
 
@@ -189,9 +194,9 @@ export class RealtimeCall {
         // GPT-Live: the server starts the session with the full offer (src/app/api/live/sdp/route.ts).
         await iceGathered(pc);
         if (this.closed) return;
-        const res = await fetch("/api/live/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ liveTicket: secret.liveTicket, sessionId: secret.sessionId, scenario: this.scenario, sdp: pc.localDescription?.sdp ?? offer.sdp }) });
+        const res = await fetch("/api/live/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ liveTicket: secret.liveTicket, sessionId: secret.sessionId, scenario: this.scenario, sdp: pc.localDescription?.sdp ?? offer.sdp }), signal: this.sdpAbort.signal });
         const data = await res.json().catch(() => ({}));
-        if (this.closed) return;
+        if (this.closed) return this.dropLateAnswer();
         const redirect = data.error === "realtime_secret_expired" ? null : realtimeAuthRedirect(res.status, data.error);
         if (redirect) return this.signInAgain(redirect);
         if (!res.ok || typeof data.sdp !== "string") return this.fail(data.error === "realtime_secret_expired" ? EXPIRED : data.message || "OpenAI could not connect the voice call. Try again, or switch to Text.", "failed_connect");
@@ -199,9 +204,9 @@ export class RealtimeCall {
         return;
       }
       // Same-origin relay of the documented SDP exchange; see src/app/api/realtime/sdp/route.ts.
-      const res = await fetch("/api/realtime/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientSecret: secret.clientSecret, sdp: offer.sdp }) });
+      const res = await fetch("/api/realtime/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientSecret: secret.clientSecret, sdp: offer.sdp }), signal: this.sdpAbort.signal });
       const data = await res.json().catch(() => ({}));
-      if (this.closed) return;
+      if (this.closed) return this.dropLateAnswer();
       const redirect = realtimeAuthRedirect(res.status, data.error);
       if (redirect) return this.signInAgain(redirect);
       if (!res.ok || typeof data.sdp !== "string") return this.fail(data.error === "realtime_secret_expired" ? EXPIRED : data.message || "OpenAI could not connect the voice call. Try again, or switch to Text.", "failed_connect");
@@ -376,6 +381,16 @@ export class RealtimeCall {
     window.location.assign(path);
   }
 
+  /**
+   * An SDP answer that arrived after the attempt closed. The provider session it started is bound to this peer
+   * connection's offer and has no data channel to close, so it is never applied: the peer connection and media stay
+   * torn down (close() already did this; repeated here so a late answer can never revive them) and ICE never connects.
+   */
+  private dropLateAnswer() {
+    try { this.pc?.close(); } catch { /* already closed */ }
+    this.mic?.getTracks().forEach((t) => t.stop());
+  }
+
   /** Releases everything exactly once. notify=false is for unmounts, which must not trigger grading. */
   close(notify: boolean) {
     if (this.closed) return;
@@ -383,6 +398,8 @@ export class RealtimeCall {
     this.meter?.end("user_hangup");
     if (notify) this.release(true);
     this.closed = true;
+    // An SDP request still in flight is abandoned; its rejection lands in start()'s catch, where fail() is a no-op once closed.
+    this.sdpAbort.abort();
     clearInterval(this.flushTimer);
     clearInterval(this.audioTimer);
     clearTimeout(this.endTimer);

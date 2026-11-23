@@ -179,6 +179,128 @@ describe("connect timeout and late answers (SAL-1039)", () => {
     expect(closePeer).toHaveBeenCalledOnce();
   });
 
+  describe("an SDP request in flight when the attempt closes (Codex re-review)", () => {
+    const setRemote = vi.fn(async () => {});
+    beforeEach(() => {
+      setRemote.mockClear();
+      vi.stubGlobal("RTCPeerConnection", class {
+        iceGatheringState = "complete";
+        localDescription = { type: "offer", sdp: "v=0 gathered offer" };
+        addTrack() {}
+        createDataChannel() { return { readyState: "connecting", close: closeChannel }; }
+        async createOffer() { return { type: "offer", sdp: "v=0 test offer" }; }
+        async setLocalDescription() {}
+        setRemoteDescription = setRemote;
+        close = closePeer;
+      });
+    });
+
+    const LIVE_MINT = { voiceApi: "live", liveTicket: "lt_fictional_test_only", sessionId: "sess-fictional-01", callId: "call-live-sdp" };
+    const REALTIME_MINT = { clientSecret: "ek_fictional_test_only", callId: "call-live-sdp" };
+
+    /** The mint answers at once; the SDP request stays pending and records its abort signal. Later calls (usage end) answer {}. */
+    function pendingSdp(mint: object) {
+      const sdp: { signal?: AbortSignal; answer?: (r: Response) => void; url?: string } = {};
+      const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === "/api/realtime/session") return Response.json(mint);
+        if (url.endsWith("/sdp")) {
+          sdp.url = url;
+          sdp.signal = init?.signal ?? undefined;
+          return new Promise<Response>((resolve, reject) => {
+            sdp.answer = resolve;
+            init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+          });
+        }
+        return new Response("{}");
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      return { sdp, fetchMock };
+    }
+    const usageEnds = (fetchMock: ReturnType<typeof vi.fn>) =>
+      fetchMock.mock.calls.filter((c) => c[0] === "/api/usage/end").map((c) => JSON.parse((c[1] as RequestInit).body as string));
+
+    it.each([["GPT-Live", LIVE_MINT, "/api/live/sdp"], ["Realtime", REALTIME_MINT, "/api/realtime/sdp"]])(
+      "%s: a hang-up aborts the SDP request, settles failed_connect and cancels without grading",
+      async (_name, mint, url) => {
+        const { sdp, fetchMock } = pendingSdp(mint);
+        const h = handlers();
+        const call = new RealtimeCall(scenario, h);
+        const started = call.start();
+        await vi.waitFor(() => expect(sdp.signal).toBeDefined());
+        expect(sdp.url).toBe(url);
+        expect(sdp.signal!.aborted).toBe(false);
+        call.end();
+        expect(sdp.signal!.aborted).toBe(true);
+        await started;
+        expect(h.onCancelled).toHaveBeenCalledOnce();
+        expect(h.onEnded).not.toHaveBeenCalled();
+        expect(h.onError).not.toHaveBeenCalled();
+        expect(usageEnds(fetchMock)).toEqual([{ callId: "call-live-sdp", reason: "failed_connect" }]);
+        expect(setRemote).not.toHaveBeenCalled();
+        expect(closePeer).toHaveBeenCalled();
+        expect(stop).toHaveBeenCalled();
+      },
+    );
+
+    it("the connect timeout aborts a GPT-Live SDP request in flight and reports the timeout once", async () => {
+      vi.useFakeTimers();
+      const { sdp, fetchMock } = pendingSdp(LIVE_MINT);
+      const h = handlers();
+      const started = new RealtimeCall(scenario, h).start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(sdp.signal).toBeDefined();
+      await vi.advanceTimersByTimeAsync(CONNECT_TIMEOUT_MS);
+      await started;
+      expect(sdp.signal!.aborted).toBe(true);
+      expect(h.onError).toHaveBeenCalledOnce();
+      expect(h.onError).toHaveBeenCalledWith(CONNECT_TIMEOUT_MESSAGE, { connectFailed: true });
+      expect(h.onEnded).not.toHaveBeenCalled();
+      expect(usageEnds(fetchMock)).toEqual([{ callId: "call-live-sdp", reason: "failed_connect" }]);
+      expect(setRemote).not.toHaveBeenCalled();
+      expect(closePeer).toHaveBeenCalled();
+    });
+
+    it("an unmount aborts a GPT-Live SDP request in flight without grading", async () => {
+      const { sdp } = pendingSdp(LIVE_MINT);
+      const h = handlers();
+      const call = new RealtimeCall(scenario, h);
+      const started = call.start();
+      await vi.waitFor(() => expect(sdp.signal).toBeDefined());
+      call.close(false);
+      expect(sdp.signal!.aborted).toBe(true);
+      await started;
+      expect(h.onEnded).not.toHaveBeenCalled();
+      expect(h.onError).not.toHaveBeenCalled();
+      expect(setRemote).not.toHaveBeenCalled();
+    });
+
+    it("an answer that arrives after close anyway is never applied, and the peer connection and mic stay torn down", async () => {
+      // A fetch that cannot be aborted (the request already completed on the wire) still answers late.
+      let answer!: (r: Response) => void;
+      const fetchMock = vi.fn(async (url: string) => {
+        if (url === "/api/realtime/session") return Response.json(LIVE_MINT);
+        if (url === "/api/live/sdp") return new Promise<Response>((resolve) => { answer = resolve; });
+        return new Response("{}");
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const h = handlers();
+      const call = new RealtimeCall(scenario, h);
+      const started = call.start();
+      await vi.waitFor(() => expect(answer).toBeTypeOf("function"));
+      call.end();
+      const closesAtHangUp = closePeer.mock.calls.length;
+      const stopsAtHangUp = stop.mock.calls.length;
+      answer(Response.json({ sdp: "v=0 late answer" }));
+      await started;
+      expect(setRemote).not.toHaveBeenCalled();
+      expect(closePeer.mock.calls.length).toBeGreaterThan(closesAtHangUp);
+      expect(stop.mock.calls.length).toBeGreaterThan(stopsAtHangUp);
+      expect(h.onCancelled).toHaveBeenCalledOnce();
+      expect(h.onEnded).not.toHaveBeenCalled();
+      expect(h.onError).not.toHaveBeenCalled();
+    });
+  });
+
   it("sends no SDP offer when the call closes while createOffer is pending", async () => {
     let offered!: (o: RTCSessionDescriptionInit) => void;
     const setLocal = vi.fn(async () => {});

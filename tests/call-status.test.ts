@@ -453,7 +453,14 @@ describe("Realtime connect sequence stops once closed (round 5)", () => {
     expect(remotes).toHaveLength(2);
     for (const at of remotes) {
       const before = realtime.slice(realtime.lastIndexOf("const data = await res.json()", at), at);
-      expect(before).toContain("if (this.closed) return;");
+      expect(before).toContain("if (this.closed) return this.dropLateAnswer();");
     }
+  });
+
+  it("both SDP requests can be aborted by close(); the mint is not, so a late callId is still settled", () => {
+    expect(realtime.match(/signal: this\.sdpAbort\.signal/g)).toHaveLength(2);
+    expect(realtime).toMatch(/this\.closed = true;\s*\/\/[^\n]*\n\s*this\.sdpAbort\.abort\(\);/);
+    const mint = realtime.slice(realtime.indexOf('fetch("/api/realtime/session"'), realtime.indexOf("secret = await res.json()"));
+    expect(mint).not.toContain("signal");
   });
 });
