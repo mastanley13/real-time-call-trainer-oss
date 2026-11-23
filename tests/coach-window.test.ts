@@ -2,7 +2,19 @@ import { describe, expect, it } from "vitest";
 import { coachHeuristic, trailingWindow, type CoachTurnInput } from "@/lib/coach";
 import type { CoachResult } from "@/lib/coach-types";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
-import { WINDOW_CHARS, WINDOW_TURNS, coachWindow, mergeChips, mergeWindowed, shiftIndex, shiftResult } from "@/components/call/useCoach";
+import {
+  STALE_AFTER_REP_TURNS,
+  WINDOW_CHARS,
+  WINDOW_TURNS,
+  coachWindow,
+  mergeChips,
+  mergeWindowed,
+  resultGate,
+  retireStaleCues,
+  shiftIndex,
+  shiftResult,
+  type LiveCue,
+} from "@/components/call/useCoach";
 
 const scenario = BUILT_IN_SCENARIOS.find((s) => s.id === "home-services-inbound-lead")!;
 const filler = (n: number): CoachTurnInput[] =>
@@ -114,5 +126,45 @@ describe("shiftIndex and shiftResult", () => {
     expect(shiftResult(r, [])).toBe(r);
     expect(shiftResult(result({ windowStart: 5 }), [1]).windowStart).toBe(6);
     expect(shiftResult(result({ windowStart: 5 }), [7]).windowStart).toBe(5);
+  });
+});
+
+describe("retireStaleCues", () => {
+  const cue = (over: Partial<LiveCue>): LiveCue => ({ id: "c", type: "next_question", title: "Next: ask about timing", message: "", triggerTurn: 10, status: "active", ...over });
+
+  it("retires an unused non-objection cue once the rep has spoken twice after its trigger", () => {
+    expect(STALE_AFTER_REP_TURNS).toBe(2);
+    const cs = [cue({ id: "next" }), cue({ id: "guard", type: "guardrail", triggerTurn: 11 }), cue({ id: "whisper", type: "whisper", triggerTurn: 9 })];
+    // Rep lines 11 and 13 came after line 10.
+    const out = retireStaleCues(cs, [3, 5, 7, 9, 11, 13]);
+    expect(out.map((c) => c.status)).toEqual(["dismissed", "active", "dismissed"]);
+  });
+
+  it("keeps a cue the rep has answered only once", () => {
+    expect(retireStaleCues([cue({})], [9, 11])[0].status).toBe("active");
+  });
+
+  it("never retires objection cues or touches used and dismissed ones", () => {
+    const cs = [cue({ id: "o", type: "objection" }), cue({ id: "u", status: "used" }), cue({ id: "d", status: "dismissed" })];
+    expect(retireStaleCues(cs, [11, 13, 15, 17]).map((c) => c.status)).toEqual(["active", "used", "dismissed"]);
+  });
+});
+
+describe("resultGate", () => {
+  it("applies results in order and drops one older than the last applied", () => {
+    const g = resultGate();
+    const a = g.issue();
+    const b = g.issue();
+    expect(g.accept(b)).toBe(true);
+    expect(g.accept(a)).toBe(false);
+    expect(g.accept(g.issue())).toBe(true);
+  });
+
+  it("drops a result that was in flight when the call was reset", () => {
+    const g = resultGate();
+    const before = g.issue();
+    g.invalidate();
+    expect(g.accept(before)).toBe(false);
+    expect(g.accept(g.issue())).toBe(true);
   });
 });

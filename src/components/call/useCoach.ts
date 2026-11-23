@@ -59,6 +59,34 @@ export function mergeWindowed(prev: CoachResult | null, next: CoachResult, offse
   };
 }
 
+/**
+ * An active cue that is not an objection is retired (it stays in the log) once the rep has spoken this many times
+ * after the line that triggered it without using it. A late or failed coach run then never leaves an old cue looking
+ * current. Objection cues stay until used, dismissed or pushed out by MAX_ACTIVE.
+ */
+export const STALE_AFTER_REP_TURNS = 2;
+
+/** Retires active non-objection cues that the rep's later lines (1-based) have moved past. */
+export function retireStaleCues(cues: LiveCue[], repLines: number[], after = STALE_AFTER_REP_TURNS): LiveCue[] {
+  return cues.map((c) =>
+    c.status === "active" && c.type !== "objection" && repLines.filter((n) => n > c.triggerTurn).length >= after ? { ...c, status: "dismissed" as const } : c,
+  );
+}
+
+/**
+ * Orders coach results: each request takes a number when it starts, and a result is applied only if it is newer than
+ * the last one applied. `invalidate` (on reset) drops every result still in flight.
+ */
+export function resultGate() {
+  let issued = 0;
+  let applied = 0;
+  return {
+    issue: () => ++issued,
+    accept: (seq: number) => (seq > applied ? ((applied = seq), true) : false),
+    invalidate: () => void (applied = issued),
+  };
+}
+
 /** One chip per criterion on a line: the newer delta replaces the older one, largest gains first. */
 export function mergeChips(existing: RubricChip[], next: RubricChip[]): RubricChip[] {
   const byId = new Map(existing.map((c) => [c.id, c]));
@@ -86,7 +114,8 @@ export function shiftResult(r: CoachResult, inserts: number[]): CoachResult {
 /**
  * Drives the copilot rail: posts the transcript to /api/coach/turn as the call
  * moves (debounced, one request in flight), keeps the latest live estimate, and
- * collects cues. Cues stay until the rep uses or dismisses them.
+ * collects cues. Objection cues stay until the rep uses or dismisses them; other cues also retire once the rep has
+ * moved past them (retireStaleCues).
  */
 export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], opts: { mode: CoachMode; live: boolean }) {
   const [result, setResultState] = useState<CoachResult | null>(null);
@@ -104,6 +133,7 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
   /** Insert positions of text replies, so results for older snapshots land on the right lines. */
   const inserts = useRef<number[]>([]);
   const resultRef = useRef<CoachResult | null>(null);
+  const gate = useRef(resultGate());
   const turnsRef = useRef(turns);
   turnsRef.current = turns;
 
@@ -113,6 +143,7 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
     setResult(null); setCues([]); setChips({}); setLatencies([]); setError("");
     keys.current = []; prevScores.current = {}; lastCueAt.current = 0;
     base.current = { turn: -1, scores: {} }; inserts.current = [];
+    gate.current.invalidate();
   }, [setResult]);
 
   /**
@@ -134,6 +165,7 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
     const snapshot = turnsRef.current.filter((t) => t.text.trim());
     if (!snapshot.some((t) => t.role === "user")) return;
     inFlight.current = true;
+    const seq = gate.current.issue();
     const mark = inserts.current.length;
     const win = coachWindow(snapshot.map(({ role, text }) => ({ role, text })));
     try {
@@ -153,8 +185,10 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
         setError(res.status === 429 ? data.message || "The coach is taking a breather. It will pick up again shortly." : "The coach couldn't update this turn.");
         return;
       }
-      setError("");
       const raw: CoachResult = await res.json();
+      // One request runs at a time, so results already arrive in order; this also drops one that outlived a reset.
+      if (!gate.current.accept(seq)) return;
+      setError("");
       // Replies inserted while this request was in flight moved later turns down; line numbers follow them.
       const later = inserts.current.slice(mark);
       const r = mergeWindowed(resultRef.current, shiftResult(raw, later), win.offset);
@@ -170,11 +204,12 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
         .filter((c) => c.confirmed)
         .map((c) => ({ id: c.id, name: c.name, delta: Math.round(c.score - (base.current.scores[c.id] ?? 0)) }))
         .filter((d) => d.delta >= 3);
-      // A "next step" cue is stale once that talk-track step is done.
-      setCues((cs) => cs.map((c) => {
+      // A "next step" cue is stale once that talk-track step is done, and any non-objection cue once the rep has moved on.
+      const repLines = snapshot.flatMap((t, i) => (t.role === "user" ? [shiftIndex(i, later) + 1] : []));
+      setCues((cs) => retireStaleCues(cs.map((c) => {
         const step = c.status === "active" && c.key?.startsWith("step:") ? Number(c.key.slice(5)) : NaN;
         return Number.isInteger(step) && r.steps[step] ? { ...c, status: "dismissed" as const } : c;
-      }));
+      }), repLines));
       prevScores.current = Object.fromEntries(r.estimate.criteria.map((c) => [c.id, c.score]));
       if (lastUser !== undefined && deltas.length) setChips((c) => ({ ...c, [lastUser]: mergeChips(c[lastUser] ?? [], deltas) }));
 
@@ -199,6 +234,7 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
       setError("The coach is offline for this turn.");
     } finally {
       inFlight.current = false;
+      // Turns that landed while this request was in flight: the rerun reads turnsRef when it starts, so it coaches the newest snapshot.
       if (pending.current) { pending.current = false; void run(); }
     }
   }, [scenario, opts.mode, setResult]);
