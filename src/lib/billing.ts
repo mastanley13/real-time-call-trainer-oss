@@ -4,16 +4,18 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "./db";
 import { ensureAllowance } from "./usage";
-import { emitBillingLifecycle, emitPremiumEvent, classifyPlanChange, isCalltrainerStripe, setBillingEventSink, type BillingLifecycleEvent, type PlanChange, type PremiumEvent } from "./billingEvents";
-import { ghlBillingSink } from "./ghlWebhook";
+import { emitBillingLifecycle, emitPremiumEvent, classifyPlanChange, isCalltrainerStripe, setBillingEventSink, setPremiumEventSink, type BillingLifecycleEvent, type PlanChange, type PremiumEvent } from "./billingEvents";
+import { ghlBillingSink, ghlPremiumSink } from "./ghlWebhook";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS, isPlanTier, nextAnchorUnix, type PlanTier } from "./usagePlan";
 import { blocksCheckout, isEntitled, nextPastDueSince } from "./subscriptionStatus";
 import { PREMIUM_STATUSES } from "./premiumVoice";
 import { premiumOnSale } from "./serverConfig";
 import { stripeApi, StripeApiError, stripeLiveMode, type StripeParams } from "./stripe";
 
-// The one place the CRM sink is registered. It still sends nothing unless GHL_BILLING_EVENTS=true and GHL_WEBHOOK_URL is set.
+// The one place the CRM sinks are registered. They still send nothing unless GHL_BILLING_EVENTS=true and GHL_WEBHOOK_URL is set.
+// The premium sink forwards only voice_cap_hit. Routes that emit it import this module so the sink is set in their bundle.
 setBillingEventSink(ghlBillingSink);
+setPremiumEventSink(ghlPremiumSink);
 
 /**
  * Checkout parameters and webhook handling. Stripe is the billing source of truth; this module mirrors

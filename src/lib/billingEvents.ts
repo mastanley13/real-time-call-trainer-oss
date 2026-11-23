@@ -1,4 +1,5 @@
 import "server-only";
+import { after } from "next/server";
 import type { PlanTier } from "./usagePlan";
 import type { PremiumEvent } from "./premiumEventTypes";
 
@@ -85,8 +86,8 @@ export async function emitBillingLifecycle(event: BillingLifecycleEvent): Promis
 }
 
 // ---- Premium Voice events --------------------------------------------------------------------------------
-// Same seam, its own sink. Nothing is registered by default and no external telemetry is set up here: a deployment
-// that wants these registers a sink (for example the GHL emitter) with setPremiumEventSink(). Payloads carry ids,
+// Same seam, its own sink. billing.ts registers ghlPremiumSink (src/lib/ghlWebhook.ts), which forwards only voice_cap_hit
+// to the GHL emitter and sends nothing unless GHL events are on; no other telemetry is set up here. Payloads carry ids,
 // plan, units and reasons only, never email, card data, Stripe ids or model ids. The names match the spec:
 // premium_upsell_viewed {surface} comes from the browser (src/lib/premiumEventTypes.ts); the rest are server-side.
 
@@ -107,5 +108,24 @@ export async function emitPremiumEvent(event: PremiumEvent): Promise<void> {
     await premiumSink(event);
   } catch {
     console.error("[billing-events] premium sink failed for", event.name);
+  }
+}
+
+/**
+ * Schedules a premium event without waiting for the sink, for request paths whose answer must not wait on it
+ * (the 402 at a refused voice start, the heartbeat stop). Call it from a route handler: next/server after() runs the
+ * sink once the response is sent and keeps the work alive for the request's lifetime, so neither slow sink work
+ * (synchronous or not) nor a sink that throws can delay or change the response. Outside a request scope (tests,
+ * scripts) after() throws, and the event runs on a later macrotask instead, still after the caller returns.
+ */
+export function queuePremiumEvent(event: PremiumEvent): void {
+  if (!premiumSink) return;
+  // When it happened, not when the sink runs after the response (which can be past midnight UTC).
+  const stamped: PremiumEvent = { ...event, occurredAt: event.occurredAt ?? new Date().toISOString() };
+  const task = () => emitPremiumEvent(stamped).catch(() => {});
+  try {
+    after(task);
+  } catch {
+    setImmediate(() => void task());
   }
 }

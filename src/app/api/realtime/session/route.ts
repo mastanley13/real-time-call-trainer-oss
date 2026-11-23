@@ -6,7 +6,8 @@ import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { meteringEnabled } from "@/lib/serverConfig";
 import { beginCall, endCall, type PremiumMintInfo } from "@/lib/usage";
-import { emitPremiumEvent } from "@/lib/billingEvents";
+import { emitPremiumEvent, queuePremiumEvent } from "@/lib/billingEvents";
+import "@/lib/billing"; // registers the CRM sink that forwards voice_cap_hit
 import { mintVoiceTier } from "@/lib/voiceTier";
 import { capReached, dailySessionLimit, minutesReserved, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
 import { realtimeTranscribeModel, realtimeUpstreamMessage, realtimeVoice } from "@/lib/realtime";
@@ -95,7 +96,11 @@ export async function POST(req: NextRequest) {
       return null;
     });
     if (!begun) return voiceUnavailable();
-    if (!begun.ok && begun.error === "cap_reached") return capReached();
+    if (!begun.ok && begun.error === "cap_reached") {
+      // Ids only, and never awaited: the 402 does not wait on the sink (the GHL sink, when GHL events are on).
+      queuePremiumEvent({ name: "voice_cap_hit", subject: "user", subjectId: auth.id, reason: "cap_reached" });
+      return capReached();
+    }
     if (!begun.ok && begun.error === "minutes_reserved") return minutesReserved();
     if (!begun.ok && begun.error === "voice_blocked") return voiceBlocked(begun.retryAfterSeconds);
     if (!begun.ok && begun.error === "daily_session_limit") return dailySessionLimit();

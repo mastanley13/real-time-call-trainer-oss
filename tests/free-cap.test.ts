@@ -4,7 +4,16 @@ import { createFakePrisma } from "./fakePrisma";
 
 // Free voice is 10 minutes a month, checked only when a call starts. Same fakes as usage-metering.test.ts:
 // the database and the session check are replaced; metering, the ledger and the routes run for real.
-const mocks = vi.hoisted(() => ({ fake: null as unknown as ReturnType<typeof import("./fakePrisma").createFakePrisma>, authId: "u-1" }));
+const mocks = vi.hoisted(() => ({
+  fake: null as unknown as ReturnType<typeof import("./fakePrisma").createFakePrisma>,
+  authId: "u-1",
+  // When set, stands in for next/server after(); otherwise the real after() runs (and throws outside a request scope).
+  after: null as null | ((task: () => unknown) => void),
+}));
+vi.mock("next/server", async (importOriginal) => {
+  const real = await importOriginal<typeof import("next/server")>();
+  return { ...real, after: (task: () => unknown) => (mocks.after ? mocks.after(task) : real.after(task as () => void)) };
+});
 vi.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get: (_t, k) => (mocks.fake.db as Record<string | symbol, unknown>)[k] }) }));
 vi.mock("@/lib/apiAuth", async () => ({
   requireAuth: () => ({ id: mocks.authId, email: `${mocks.authId}@example.test` }),
@@ -13,8 +22,13 @@ vi.mock("@/lib/apiAuth", async () => ({
 
 import { beginCall, checkCap, creditManual, endCall, ensureAllowance, heartbeat, resolveAllowance, usageSummary } from "@/lib/usage";
 import { FREE_MINUTES, MAX_CALL_SECONDS, capFor } from "@/lib/usagePlan";
+import { setPremiumEventSink, type PremiumEvent } from "@/lib/billingEvents";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
+import { GET as elevenLabsToken } from "@/app/api/elevenlabs/token/route";
+import { POST as heartbeatRoute } from "@/app/api/usage/heartbeat/route";
+import { capReached } from "@/lib/usageResponses";
+import { ghlPremiumSink, settleGhlEvents } from "@/lib/ghlWebhook";
 import { POST as saveTranscript } from "@/app/api/transcripts/route";
 import { POST as evaluate } from "@/app/api/evaluate-call/route";
 import { POST as simulate } from "@/app/api/simulate/turn/route";
@@ -68,6 +82,9 @@ beforeEach(() => {
   fake = createFakePrisma();
   mocks.fake = fake;
   mocks.authId = "u-1";
+  mocks.after = null;
+  // billing.ts registers the GHL premium sink on import; tests that check events set their own sink.
+  setPremiumEventSink(null);
   vi.stubEnv("DATABASE_URL", "postgresql://ci:ci@localhost:5432/ci");
   vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
   vi.stubEnv("DEMO_MODE", "");
@@ -339,6 +356,299 @@ describe("a Free call that goes silent keeps the time it was confirmed to have u
     await usageSummary("u-1", at(3 * 3600));
     expect(session(begun.callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
+  });
+});
+
+describe("voice_cap_hit: a used-up allowance is reported with ids only, and never holds up the answer", () => {
+  // Each test below runs as its own user so the per-user mint limits (fixed, on a frozen clock) never carry over.
+  // occurredAt is the frozen clock (T0) at queue time: every route here runs at T0 unless a test moves the clock.
+  const capHit = (userId: string, reason: string, occurredAt = T0.toISOString()): PremiumEvent => ({ name: "voice_cap_hit", subject: "user", subjectId: userId, reason, occurredAt });
+  /** The sink is scheduled after the response is built: let pending microtasks and one macrotask run first. */
+  const flush = () => new Promise<void>((r) => setImmediate(r));
+  const elToken = () => elevenLabsToken(new NextRequest("http://localhost/api/elevenlabs/token?scenarioId=quote-follow-up"));
+  const beat = (callId: string, state: "connected" | "ok") => heartbeatRoute(post("/api/usage/heartbeat", { callId, state }));
+  let events: PremiumEvent[];
+
+  async function freeUser(id: string, used: number) {
+    mocks.authId = id;
+    addUser(id);
+    await ensureAllowance(fake.db as never, { userId: id }, at(0));
+    allowanceOf(id).minutesUsed = used;
+  }
+
+  beforeEach(() => {
+    events = [];
+    setPremiumEventSink((e) => { events.push(e); });
+    vi.stubEnv("OPENAI_API_KEY", "sk-test-not-real");
+    vi.stubEnv("ELEVENLABS_API_KEY", "el-test-not-real");
+    vi.stubEnv("ELEVENLABS_AGENT_ID", "agent-main");
+    vi.stubEnv("ELEVENLABS_AGENT_ID_STANDARD", "agent-std"); // Free calls run on the Standard engine
+    // Test-only: this block mints more often than the per-IP hourly limits allow on a frozen clock. Production limits are unchanged.
+    vi.stubEnv("RATE_LIMIT_TOKEN_MAX", "1000");
+    vi.stubEnv("RATE_LIMIT_REALTIME_MAX", "1000");
+  });
+  afterEach(() => setPremiumEventSink(null));
+
+  it("the realtime route emits one event with ids only when the allowance is used up, and none when a call starts", async () => {
+    await freeUserWith(FREE_MINUTES);
+    const res = await realtimeSession(post("/api/realtime/session", { scenario }));
+    expect(res.status).toBe(402);
+    await flush();
+    expect(events).toEqual([capHit("u-1", "cap_reached")]);
+
+    events.length = 0;
+    allowanceOf("u-1").minutesUsed = 5;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ value: "ek_test", expires_at: 9999999999 }), { status: 200 })));
+    expect((await realtimeSession(post("/api/realtime/session", { scenario }))).status).toBe(200);
+    await flush();
+    expect(events).toEqual([]);
+  });
+
+  it("the ElevenLabs token route emits one event with ids only when the allowance is used up, and none when a call starts", async () => {
+    await freeUser("u-el", FREE_MINUTES);
+    const upstream = vi.fn(async () => new Response(JSON.stringify({ token: "el-conv-token" }), { status: 200 }));
+    vi.stubGlobal("fetch", upstream);
+    const res = await elToken();
+    expect(res.status).toBe(402);
+    expect((await res.json()).error).toBe("cap_reached");
+    expect(upstream).not.toHaveBeenCalled();
+    await flush();
+    expect(events).toEqual([capHit("u-el", "cap_reached")]);
+    // Nothing else rides along: no email, plan, model, agent or call id.
+    expect(Object.keys(events[0]).sort()).toEqual(["name", "occurredAt", "reason", "subject", "subjectId"]);
+
+    events.length = 0;
+    allowanceOf("u-el").minutesUsed = 5;
+    expect((await elToken()).status).toBe(200);
+    await flush();
+    expect(events).toEqual([]);
+  });
+
+  it("a sink that never settles does not delay the 402 or change it", async () => {
+    let called = 0;
+    setPremiumEventSink(() => { called++; return new Promise<void>(() => {}); });
+    await freeUser("u-slow-rt", FREE_MINUTES);
+    let t = performance.now();
+    const rt = await realtimeSession(post("/api/realtime/session", { scenario }));
+    expect(performance.now() - t).toBeLessThan(1000);
+    expect(rt.status).toBe(402);
+    expect((await rt.json()).error).toBe("cap_reached");
+
+    await freeUser("u-slow-el", FREE_MINUTES);
+    t = performance.now();
+    const el = await elToken();
+    expect(performance.now() - t).toBeLessThan(1000);
+    expect(el.status).toBe(402);
+    expect((await el.json()).error).toBe("cap_reached");
+    await flush();
+    expect(called).toBe(2); // the sink was still told, just not waited for
+  });
+
+  it("a sink that throws, or rejects, does not change the 402", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const expected = await capReached().json();
+    for (const [id, sink] of [
+      ["u-throw", () => { throw new Error("sink down"); }],
+      ["u-reject", async () => { throw new Error("sink down"); }],
+    ] as const) {
+      setPremiumEventSink(sink);
+      await freeUser(id, FREE_MINUTES);
+      const res = await elToken();
+      expect(res.status).toBe(402);
+      expect(await res.json()).toEqual(expected);
+      await flush();
+    }
+    // The failure is logged by event name only.
+    expect(errors).toHaveBeenCalledWith("[billing-events] premium sink failed for", "voice_cap_hit");
+    errors.mockRestore();
+  });
+
+  describe("inside a request, the emit is handed to next/server after()", () => {
+    /** Synchronous work the sink does before it returns: the response must not wait for it. */
+    const busy = (ms: number) => { const end = performance.now() + ms; while (performance.now() < end) { /* spin */ } };
+    let scheduled: Array<() => unknown>;
+    beforeEach(() => {
+      scheduled = [];
+      mocks.after = (task) => { scheduled.push(task); }; // deferred, as Next.js runs it after the response is sent
+    });
+
+    it("both mint routes schedule one task via after() and run no sink work before answering", async () => {
+      await freeUser("u-after-rt", FREE_MINUTES);
+      expect((await realtimeSession(post("/api/realtime/session", { scenario }))).status).toBe(402);
+      await freeUser("u-after-el", FREE_MINUTES);
+      expect((await elToken()).status).toBe(402);
+      await flush();
+      expect(scheduled).toHaveLength(2);
+      expect(events).toEqual([]); // nothing ran yet
+      for (const task of scheduled) await task();
+      expect(events).toEqual([capHit("u-after-rt", "cap_reached"), capHit("u-after-el", "cap_reached")]);
+    });
+
+    it("a sink doing slow synchronous work does not delay the 402", async () => {
+      let ran = 0;
+      setPremiumEventSink(() => { busy(400); ran++; });
+      await freeUser("u-busy", FREE_MINUTES);
+      const t = performance.now();
+      const res = await elToken();
+      expect(performance.now() - t).toBeLessThan(200);
+      expect(res.status).toBe(402);
+      expect(ran).toBe(0);
+      for (const task of scheduled) await task();
+      expect(ran).toBe(1);
+    });
+
+    it("a throwing or rejecting sink is swallowed inside the after() task", async () => {
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      for (const [id, sink] of [
+        ["u-after-throw", () => { throw new Error("sink down"); }],
+        ["u-after-reject", async () => { throw new Error("sink down"); }],
+      ] as const) {
+        setPremiumEventSink(sink);
+        await freeUser(id, FREE_MINUTES);
+        expect((await elToken()).status).toBe(402);
+      }
+      expect(scheduled).toHaveLength(2);
+      for (const task of scheduled) await expect(Promise.resolve(task())).resolves.toBeUndefined();
+      expect(errors).toHaveBeenCalledWith("[billing-events] premium sink failed for", "voice_cap_hit");
+      errors.mockRestore();
+    });
+
+    it("through the GHL sink: no lookup or POST before the 402, then one voice_cap_hit POST from the nested after()", async () => {
+      vi.stubEnv("GHL_BILLING_EVENTS", "true");
+      vi.stubEnv("GHL_WEBHOOK_URL", "https://hooks.example.test/hooks/cap-hit");
+      const ghlPosts = vi.fn(async () => new Response("ok", { status: 200 }));
+      vi.stubGlobal("fetch", ghlPosts);
+      setPremiumEventSink(ghlPremiumSink);
+      await freeUser("u-ghl", FREE_MINUTES);
+      const lookups = vi.spyOn(fake.db.user as unknown as { findUnique: (...a: unknown[]) => unknown }, "findUnique");
+
+      expect((await elToken()).status).toBe(402);
+      const lookupsByRoute = lookups.mock.calls.length;
+      await flush();
+      expect(ghlPosts).not.toHaveBeenCalled();
+      expect(scheduled).toHaveLength(1); // the outer after(): the sink has not run yet
+
+      await scheduled[0]();
+      expect(lookups.mock.calls.length).toBeGreaterThan(lookupsByRoute); // the contact lookup ran only now
+      expect(scheduled).toHaveLength(2); // emitGhlEvent handed its work to a nested after()
+      await settleGhlEvents();
+      expect(ghlPosts).toHaveBeenCalledTimes(1);
+      const body = JSON.parse((ghlPosts.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+      expect(body).toMatchObject({ event: "voice_cap_hit", userId: "u-ghl", email: "u-ghl@example.test", plan: "free", reason: "cap_reached", tags: ["app-calltrainer"] });
+    });
+
+    it("a cap hit queued just before UTC midnight and sent just after keeps its own time and day", async () => {
+      vi.stubEnv("GHL_BILLING_EVENTS", "true");
+      vi.stubEnv("GHL_WEBHOOK_URL", "https://hooks.example.test/hooks/cap-hit");
+      const ghlPosts = vi.fn(async () => new Response("ok", { status: 200 }));
+      vi.stubGlobal("fetch", ghlPosts);
+      setPremiumEventSink(ghlPremiumSink);
+      await freeUser("u-midnight", FREE_MINUTES);
+
+      vi.setSystemTime(new Date("2026-10-15T23:59:59.900Z"));
+      expect((await elToken()).status).toBe(402); // queued here
+      vi.setSystemTime(new Date("2026-10-16T00:00:00.100Z"));
+      for (const task of [...scheduled]) if (typeof task === "function") await task(); // sent after midnight
+      await settleGhlEvents();
+
+      expect(ghlPosts).toHaveBeenCalledTimes(1);
+      const body = JSON.parse((ghlPosts.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+      expect(body).toMatchObject({
+        event: "voice_cap_hit",
+        occurredAt: "2026-10-15T23:59:59.900Z",
+        eventId: "voice_cap_hit:u-midnight:cap_reached:2026-10-15",
+      });
+    });
+
+    it("through the GHL sink with GHL events off, nothing is looked up or posted", async () => {
+      const ghlPosts = vi.fn(async () => new Response("ok", { status: 200 }));
+      vi.stubGlobal("fetch", ghlPosts);
+      setPremiumEventSink(ghlPremiumSink);
+      await freeUser("u-ghl-off", FREE_MINUTES);
+      expect((await elToken()).status).toBe(402);
+      for (const task of scheduled) await task();
+      await settleGhlEvents();
+      expect(scheduled).toHaveLength(1); // emitGhlEvent returned before scheduling anything
+      expect(ghlPosts).not.toHaveBeenCalled();
+    });
+
+    it("the heartbeat cap stop is scheduled via after() too", async () => {
+      mocks.authId = "u-after-pro";
+      addUser("u-after-pro", { planTier: "pro" });
+      await ensureAllowance(fake.db as never, { userId: "u-after-pro" }, at(0));
+      allowanceOf("u-after-pro").minutesUsed = 199.5;
+      const begun = await beginCall("u-after-pro", scn, at(0));
+      if (!begun.ok) throw new Error(begun.error);
+      await beat(begun.callId, "connected");
+      vi.setSystemTime(at(70));
+      expect(await (await beat(begun.callId, "ok")).json()).toMatchObject({ stop: true, reason: "cap_reached" });
+      expect(scheduled).toHaveLength(1);
+      await scheduled[0]();
+      expect(events).toEqual([capHit("u-after-pro", "cap_reached_in_call", at(70).toISOString())]);
+    });
+  });
+
+  it("outside a request scope (after() unavailable), slow synchronous sink work still runs only after the 402", async () => {
+    mocks.after = () => { throw new Error("`after` was called outside a request scope"); };
+    let ran = 0;
+    setPremiumEventSink(() => { const end = performance.now() + 400; while (performance.now() < end) { /* spin */ } ran++; });
+    await freeUser("u-fallback", FREE_MINUTES);
+    const t = performance.now();
+    const res = await elToken();
+    expect(performance.now() - t).toBeLessThan(200);
+    expect(res.status).toBe(402);
+    expect(ran).toBe(0);
+    await flush();
+    expect(ran).toBe(1);
+  });
+
+  it("the heartbeat that stops a call at its cap emits cap_reached_in_call once, and the heartbeats before and after emit nothing", async () => {
+    mocks.authId = "u-pro";
+    addUser("u-pro", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-pro" }, at(0));
+    allowanceOf("u-pro").minutesUsed = 199.5;
+    const begun = await beginCall("u-pro", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    expect(begun.maxSeconds).toBe(60);
+
+    expect(await (await beat(begun.callId, "connected")).json()).toMatchObject({ stop: false });
+    vi.setSystemTime(at(30));
+    expect(await (await beat(begun.callId, "ok")).json()).toMatchObject({ stop: false });
+    await flush();
+    expect(events).toEqual([]);
+
+    vi.setSystemTime(at(70));
+    expect(await (await beat(begun.callId, "ok")).json()).toMatchObject({ stop: true, reason: "cap_reached" });
+    vi.setSystemTime(at(80));
+    expect(await (await beat(begun.callId, "ok")).json()).toMatchObject({ stop: true, reason: "ended" });
+    vi.setSystemTime(at(90));
+    await beat(begun.callId, "ok");
+    await flush();
+    // Stamped at the stopping heartbeat (70 s), not at the later "ended" heartbeats or when the sink ran.
+    expect(events).toEqual([capHit("u-pro", "cap_reached_in_call", at(70).toISOString())]);
+  });
+
+  it("a Free call stopped by the call length limit is not a cap hit", async () => {
+    await freeUser("u-long", 0);
+    const begun = await beginCall("u-long", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await beat(begun.callId, "connected");
+    vi.setSystemTime(at(MAX_CALL_SECONDS + 5));
+    expect(await (await beat(begun.callId, "ok")).json()).toMatchObject({ stop: true, reason: "max_duration" });
+    await flush();
+    expect(events).toEqual([]);
+  });
+
+  it("no event when metering is off: the mint is not capped and the heartbeat is not served", async () => {
+    vi.stubEnv("DATABASE_URL", "");
+    await freeUser("u-off", 12);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ value: "ek_test", expires_at: 9999999999 }), { status: 200 })));
+    expect((await realtimeSession(post("/api/realtime/session", { scenario }))).status).toBe(200);
+    const hb = await beat("any-call", "ok");
+    expect(hb.status).toBe(404);
+    expect((await hb.json()).error).toBe("metering_off");
+    await flush();
+    expect(events).toEqual([]);
   });
 });
 
