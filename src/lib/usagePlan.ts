@@ -102,7 +102,7 @@ export const FREE_END_GRACE_SECONDS = 20;
  * that interval plus 5 s of timer and network jitter, and stays under HEARTBEAT_TIMEOUT_SECONDS, so the bill never reaches
  * past the point where the server could already call it silent. The result is rounded up to whole started minutes and
  * clamped to the reservation like any call. Only the first abandoned Free call of a billing period gets it; later ones
- * are billed through the last heartbeat plus at most their reservation (see settle() in usage.ts for why). Pro and Team
+ * are billed their whole reservation, however soon they are reaped (see settle() in usage.ts for why). Pro and Team
  * calls are not affected: a silent paid call is still billed until the server noticed, up to its reservation.
  */
 export const FREE_ABANDON_GRACE_SECONDS = 15;

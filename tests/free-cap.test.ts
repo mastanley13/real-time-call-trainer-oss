@@ -738,8 +738,8 @@ describe("a Free call that goes silent is billed to its last heartbeat plus a sh
   // to whole started minutes and clamped to its reservation, however late the reap. Before, it was billed through the
   // reap, up to the reservation: Funnel's retest call heartbeated for 125 s, was reaped 240 s later and billed 7 minutes.
   // The reduced charge applies to the first abandoned Free call of a billing period only; later ones in the same period
-  // are billed as before it (last heartbeat plus at most the reservation, never past the reap), because a modified client
-  // can stop heartbeating and keep talking. Paid calls and every other way a call ends are unchanged.
+  // are billed their whole reservation whenever they are reaped, because a modified client can stop heartbeating and
+  // keep talking. Paid calls and every other way a call ends are unchanged.
   /**
    * Starts a call at `start` seconds, heartbeats every 10 seconds and once more at `start + lastSec`, then says nothing
    * more. Starting a call reaps this user's earlier silent call (settleStale in beginCall).
@@ -853,37 +853,47 @@ describe("a Free call that goes silent is billed to its last heartbeat plus a sh
     expect(allowanceOf("u-2")).toMatchObject({ minutesUsed: 60, minutesReserved: 0 });
   });
 
-  it("only the first abandoned Free call of a period bills the reduced way; the second bills the old way", async () => {
+  it("only the first abandoned Free call of a period is reduced; the second, reaped 31 s after its last heartbeat, bills its whole reservation", async () => {
     await freeUserWith(0);
     const first = await silentAfterHeartbeat("u-1", 50);
     // Starting the second call reaps the first: the reduced charge, 50 s + 15 s = 65 s, 2 minutes.
     const second = await silentAfterHeartbeat("u-1", 125, 3600);
     expect(session(first.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 65, billedMinutes: 2 });
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 2, minutesReserved: 8 });
-    // Reaped 240 s after its last heartbeat: min(reap, last heartbeat + 8 reserved minutes) = the reap, 365 s, 7 minutes.
-    // The reduced rule would have billed 140 s and 3 minutes.
-    await usageSummary("u-1", at(3600 + 125 + 240));
-    expect(session(second.callId)).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(3600 + 365), billableSeconds: 365, billedMinutes: 7, abuseFlagged: false });
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 9, minutesReserved: 0 });
+    // Reaped as soon as it counts as silent. Billing through the reap would be 156 s (3 minutes), the reduced rule 140 s
+    // (3 minutes); it is billed its whole 8 minute reservation. The row keeps the reap as its end.
+    const reap = 3600 + 125 + HEARTBEAT_TIMEOUT_SECONDS + 1;
+    await usageSummary("u-1", at(reap));
+    expect(session(second.callId)).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(reap), billableSeconds: 480, billedMinutes: 8, abuseFlagged: false });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
+    expect(fake.rows("user")[0].voiceBlockedUntil ?? null).toBeNull();
   });
 
-  it("a second abandoned Free call reaped the next day bills its whole reservation, as before the reduced rule", async () => {
+  it("a second abandoned Free call reaped the next day bills its whole reservation too", async () => {
     await freeUserWith(0);
     await silentAfterHeartbeat("u-1", 50);
     const second = await silentAfterHeartbeat("u-1", 125, 3600); // reaps the first (2 minutes), reserves the other 8
     await usageSummary("u-1", at(24 * 3600));
-    // min(reap, last heartbeat + 8 minutes) = 125 s + 480 s = 605 s, clamped to the 8 minute reservation.
-    expect(session(second.callId)).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(3600 + 605), billableSeconds: 480, billedMinutes: 8, abuseFlagged: false });
+    expect(session(second.callId)).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(24 * 3600), billableSeconds: 480, billedMinutes: 8, abuseFlagged: false });
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
-    expect(fake.rows("user")[0].voiceBlockedUntil ?? null).toBeNull();
+  });
+
+  it("with more Free minutes left, every abandoned call after the first costs its whole reservation", async () => {
+    await freeUserWith(-20); // 30 minutes left (a manual credit)
+    await silentAfterHeartbeat("u-1", 50); // reduced: 2 minutes, it held all 30
+    const second = await silentAfterHeartbeat("u-1", 20, 3600); // reaps the first; reserves the 28 left
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: -18, minutesReserved: 28 });
+    await usageSummary("u-1", at(3600 + 20 + HEARTBEAT_TIMEOUT_SECONDS + 1));
+    expect(session(second.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 28 * 60, billedMinutes: 28 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
   });
 
   it("the next billing period gets one reduced abandoned call again", async () => {
     await freeUserWith(0);
     await silentAfterHeartbeat("u-1", 50); // October: the reduced one (2 minutes)
-    const october = await silentAfterHeartbeat("u-1", 125, 3600); // October: the old way
+    const october = await silentAfterHeartbeat("u-1", 125, 3600); // October: its whole 8 minute reservation
     await usageSummary("u-1", at(3600 + 365));
-    expect(session(october.callId)).toMatchObject({ billableSeconds: 365, billedMinutes: 7 });
+    expect(session(october.callId)).toMatchObject({ billableSeconds: 480, billedMinutes: 8 });
     // The month resets on the 10th at 12:00 UTC, 26 days after T0.
     const nov10 = 26 * 24 * 3600;
     expect(at(nov10).toISOString()).toBe("2026-11-10T12:00:00.000Z");
@@ -915,6 +925,13 @@ describe("a Free call that goes silent is billed to its last heartbeat plus a sh
     expect(session(first.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 365, billedMinutes: 7 });
     expect(session(second.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 365, billedMinutes: 7 });
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 14, minutesReserved: 0 });
+
+    // A third one reaped 31 s after its last heartbeat is still billed only through the reap (the reap-timing weakness
+    // main has for paid calls, left as is): 125 s + 31 s = 156 s, 3 minutes.
+    const third = await silentAfterHeartbeat("u-1", 125, 3600);
+    await usageSummary("u-1", at(3600 + 125 + HEARTBEAT_TIMEOUT_SECONDS + 1));
+    expect(session(third.callId)).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(3600 + 156), billableSeconds: 156, billedMinutes: 3 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 17, minutesReserved: 0 });
   });
 
   it("a call that never sent a heartbeat is closed as failed_connect and bills nothing", async () => {
