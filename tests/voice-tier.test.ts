@@ -266,7 +266,11 @@ describe("mint receipts", () => {
     // Without JWT_SECRET there is no receipt, but a metered call still fills its own row.
     expect(transcriptSaveBody({ ...base, mode: "voice" }, null, undefined, { sessionId: "cm-call-0002", callId: "cm-call-0002" }, 5)).toMatchObject({ sessionId: "cm-call-0002", callId: "cm-call-0002" });
     const text = transcriptSaveBody({ ...base, mode: "text" }, null, undefined, metered, 5);
-    expect(text.sessionId).toBe("text-5");
+    // A fresh random id per call (callSessionId): the server keys a graded row on it.
+    expect(text.sessionId).toMatch(/^text-5-[0-9a-f]{24}$/);
+    expect(transcriptSaveBody({ ...base, mode: "text" }, null, undefined, undefined, 5).sessionId).not.toBe(text.sessionId);
+    // The id the call was graded under wins, so the seal verifies on save.
+    expect(transcriptSaveBody({ ...base, mode: "text" }, null, undefined, undefined, 5, "text-graded-id").sessionId).toBe("text-graded-id");
     expect(text).not.toHaveProperty("callId");
     expect(text).not.toHaveProperty("realtimeReceipt");
   });

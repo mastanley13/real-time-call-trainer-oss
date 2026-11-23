@@ -65,11 +65,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "User or organization not found" }, { status: 404 });
   }
 
-  // Scores feed team KPIs and assignment completion, so only a sealed server grade for exactly this
-  // user, persona and transcript is stored. Anything else is saved ungraded; it can be re-graded later.
-  const sealed = !!body.evaluation && verifySeal({ userId: dbUser.id, scenarioId: body.scenario.id, transcript: body.transcript, evaluation: body.evaluation }, body.seal);
+  // Scores feed team KPIs and assignment completion, so only a sealed server grade for exactly this user, this call
+  // (sessionId), persona and transcript, graded within GRADE_SEAL_MAX_AGE_MS, may be stored, and only once (see
+  // "Single use" below). Anything else is saved ungraded; it can be re-graded later.
+  const sealed = !!body.evaluation && verifySeal({ userId: dbUser.id, sessionId: body.sessionId, scenarioId: body.scenario.id, transcript: body.transcript, evaluation: body.evaluation }, body.seal);
   const grade = sealed ? GradeFields.safeParse(body.evaluation) : null;
+  /** A verified grade this save may store. Whether it is stored is `graded`, decided by the single-use write below. */
   const ev = grade?.success ? grade.data : undefined;
+  let graded = false;
   // Cost log only (not billing; engineTier is). A receipt counts only for the call it was minted for: it must name
   // exactly this sessionId, so a receipt from another call, or on a text save, logs nothing.
   const receiptModel = verifyMintReceipt(body.realtimeReceipt, dbUser.id, body.sessionId);
@@ -81,72 +84,108 @@ export async function POST(req: NextRequest) {
     // never returned.
     const metered = body.callId ? await prisma.trainerSession.findUnique({ where: { id: body.callId }, select: { userId: true, transcript: true, realtimeModel: true } }) : null;
     const fillExisting = !!body.callId && !!metered && metered.userId === dbUser.id && Array.isArray(metered.transcript) && metered.transcript.length === 0;
-    const fields = {
-      realtimeSessionId: body.sessionId,
-      scenarioId: body.scenario.id,
-      scenarioCategory: body.scenario.industry,
-      scenarioDifficulty: body.scenario.difficulty,
-      scenarioTitle: body.scenario.title,
-      durationSeconds: body.durationSeconds ?? 0,
-      transcript: body.transcript as unknown as Prisma.InputJsonValue,
-      evaluation: ev ? (body.evaluation as Prisma.InputJsonValue) : Prisma.JsonNull,
-      overallScore: ev ? Math.round(ev.overallScore) : null,
-      grade: ev?.grade ?? null,
-      goalAchieved: ev?.goalAchievement.achieved ?? null,
+    /** The row's fields, with the verified grade only on the one write that claims it. */
+    const fieldsFor = (withGrade: boolean) => {
+      const g = withGrade ? ev : undefined;
+      return {
+        realtimeSessionId: body.sessionId,
+        scenarioId: body.scenario.id,
+        scenarioCategory: body.scenario.industry,
+        scenarioDifficulty: body.scenario.difficulty,
+        scenarioTitle: body.scenario.title,
+        durationSeconds: body.durationSeconds ?? 0,
+        transcript: body.transcript as unknown as Prisma.InputJsonValue,
+        evaluation: g ? (body.evaluation as Prisma.InputJsonValue) : Prisma.JsonNull,
+        overallScore: g ? Math.round(g.overallScore) : null,
+        grade: g?.grade ?? null,
+        goalAchieved: g?.goalAchievement.achieved ?? null,
+      };
     };
     const owner = { userId: dbUser.id, organizationId: dbUser.organizationId };
     // A row created here is an unmetered save (text, or a voice call with no metering row): it is over the moment it
     // is saved, so endedAt is set and it can never look like an open call to the metering code (settleStale). No
     // voice metering field (allowanceId, connectedAt, heartbeats, billing) is ever written on it.
     const unmetered = { ...owner, endedAt: new Date() };
+    // The row whose primary key is this save's sessionId, if any. A metered voice call's sessionId is its metering call
+    // id, so for a metered call this is the row beginCall created at mint, before any grade or receipt for it existed.
+    // Read only when a verified receipt or grade needs to know where it may land.
+    const sessionRow = !receiptModel && !ev ? null
+      : body.callId === body.sessionId ? metered
+      : await prisma.trainerSession.findUnique({ where: { id: body.sessionId }, select: { userId: true } });
     // Where a verified receipt may log its model. A metered call's receipt is bound to its metering call id, so the
     // model belongs on that call's own row (the one beginCall created) and nowhere else. An unmetered call has no
     // row yet, so it logs on the row whose primary key is receiptRowId(sessionId).
-    const meteredReceiptRow = !receiptModel ? null
-      : body.callId === body.sessionId ? metered
-      : await prisma.trainerSession.findUnique({ where: { id: body.sessionId }, select: { userId: true } });
-    let created: { id: string };
-    if (fillExisting) {
+    const meteredReceiptRow = receiptModel ? sessionRow : null;
+    // Single use of a grade seal: at most one graded row per seal, also under concurrent saves. The seal is bound to
+    // sessionId (gradeSeal.ts), so every graded write below is keyed on sessionId, which makes it one graded row per
+    // call and so one per seal, without a schema change:
+    // - Metered call (a row with id = sessionId exists): the grade may land only on that row, by the fill, and the
+    //   fill that carries a grade is one conditional update that writes only while the row has no score yet. A replay
+    //   finds the row filled (or scored) and is saved ungraded; it can never land on another row, because a seal for
+    //   this sessionId is only ever accepted on the row whose id is sessionId.
+    // - Unmetered call (no such row): the graded row's primary key is receiptRowId(sessionId), the same deterministic
+    //   key the mint receipt claims, so a receipt and a grade for one call share one claim. A second save with the same
+    //   seal (with or without the receipt) hits P2002 and is stored ungraded and without a model. A key made from the
+    //   seal string instead could not share that row with the receipt, and a replay without the receipt would then
+    //   land a second graded row.
+    // The row ids a seal can claim never collide across users in practice: voice ids are server-made, and the client
+    // makes text ids with 96 random bits (sessionStore.ts callSessionId).
+    let created: { id: string } | null = null;
+    let filledOwnRow = false;
+    if (fillExisting && ev && body.callId === body.sessionId) {
       // The model is not part of the fill; it is set once, below, so a fill can never overwrite or repeat it.
-      created = await prisma.trainerSession.update({ where: { id: body.callId }, data: fields });
-    } else if (receiptModel && !meteredReceiptRow) {
-      // Single use: the row's primary key comes from the receipt's call id, so a second save of the same
-      // receipt is a unique violation. That save is kept, without a model.
+      const filled = await prisma.trainerSession.updateMany({ where: { id: body.callId, userId: dbUser.id, overallScore: null }, data: fieldsFor(true) });
+      if (filled.count === 1) {
+        created = { id: body.callId };
+        graded = filledOwnRow = true;
+      }
+      // Otherwise a concurrent save of this call stored its grade first: this one becomes a separate ungraded row below,
+      // so it can't overwrite that grade.
+    } else if (fillExisting) {
+      // No grade to claim, or a seal for another call id (sessionId differs from callId), which never lands here.
+      created = await prisma.trainerSession.update({ where: { id: body.callId }, data: fieldsFor(false) });
+      filledOwnRow = true;
+    } else if ((receiptModel || ev) && !sessionRow) {
+      // Single use: the row's primary key comes from the call id, so a second save of the same receipt or the same
+      // grade seal is a unique violation. That save is kept, without a model and without a grade.
       try {
         // Unmetered calls have no row at mint, so the tier is stored here, mapped from the sealed model on the server
         // when the save lands (within the receipt's lifetime) and never recomputed later.
-        created = await prisma.trainerSession.create({ data: { id: receiptRowId(body.sessionId), ...unmetered, ...fields, realtimeModel: receiptModel, voiceTier: tierOfModel(receiptModel) } });
-        receiptLogged = true;
+        created = await prisma.trainerSession.create({
+          data: { id: receiptRowId(body.sessionId), ...unmetered, ...fieldsFor(!!ev), ...(receiptModel ? { realtimeModel: receiptModel, voiceTier: tierOfModel(receiptModel) } : {}) },
+        });
+        receiptLogged = !!receiptModel;
+        graded = !!ev;
       } catch (e) {
         if (!isReceiptReplay(e)) throw e;
-        created = await prisma.trainerSession.create({ data: { ...unmetered, ...fields } });
       }
-    } else {
-      created = await prisma.trainerSession.create({ data: { ...unmetered, ...fields } });
     }
-    // Activation for the CRM: only a sealed grade counts. Scheduled as soon as the graded row is written, so a failure in
-    // the receipt or audit step below cannot skip it. notifyFirstGradedCall decides in the background, under its own lock
-    // and durable marker, whether the user's first graded call has been announced yet; it never delays this response.
-    if (ev) notifyFirstGradedCall(dbUser.id);
+    // Everything else: an ungraded row of its own. That covers a grade whose call already has a row it did not land on
+    // (a replay, or a seal for a metered call saved without its callId).
+    if (!created) created = await prisma.trainerSession.create({ data: { ...unmetered, ...fieldsFor(false) } });
+    // Activation for the CRM: only a stored sealed grade counts. Scheduled as soon as the graded row is written, so a
+    // failure in the receipt or audit step below cannot skip it. notifyFirstGradedCall decides in the background, under
+    // its own lock and durable marker, whether the user's first graded call has been announced yet; it never delays this response.
+    if (graded) notifyFirstGradedCall(dbUser.id);
     if (receiptModel && meteredReceiptRow && meteredReceiptRow.userId === dbUser.id) {
       // Single use on the metered row: the model is written only while it is still unset, in one conditional
       // update, so a replayed or concurrent save of the same receipt changes nothing.
       const logged = await prisma.trainerSession.updateMany({ where: { id: body.sessionId, userId: dbUser.id, realtimeModel: null }, data: { realtimeModel: receiptModel } });
       // The mint usually logged this call's model already. The save that fills the call's own row with a receipt for
       // that same model is the receipt's one use; any later save (a replay, a save without callId) is not.
-      receiptLogged = logged.count === 1 || (fillExisting && body.callId === body.sessionId && metered?.realtimeModel === receiptModel);
+      receiptLogged = logged.count === 1 || (filledOwnRow && body.callId === body.sessionId && metered?.realtimeModel === receiptModel);
     }
     await prisma.auditEvent.create({
       data: {
         userId: dbUser.id, action: "session.saved", resource: created.id,
         metadata: {
-          scenarioId: body.scenario.id, overallScore: ev?.overallScore ?? null,
-          ...(body.evaluation && !ev ? { gradeRejected: true } : {}),
+          scenarioId: body.scenario.id, overallScore: graded ? ev?.overallScore ?? null : null,
+          ...(body.evaluation && !graded ? { gradeRejected: true } : {}),
           ...(body.realtimeReceipt && !receiptLogged ? { receiptRejected: true } : {}),
         },
       },
     });
-    return NextResponse.json({ id: created.id, graded: !!ev });
+    return NextResponse.json({ id: created.id, graded });
   } catch (error) {
     console.error("[/api/transcripts] error:", error);
     return NextResponse.json({ error: "Failed to save session" }, { status: 500 });

@@ -153,7 +153,7 @@ Roles and personas: `dealership` (`auto-inbound-used-crossover-lead`), `real-est
 ### 15. API sanity
 1. `GET /api/config` returns capability flags and the provider name only, never a key, model id or base URL.
 2. `GET /api/health` reports each dependency. `checks.llm` is `not_configured` with no key, `configured_unverified` until this instance has made a model call, then `ok`, `error_auth`, `error_quota` or `error` from the last real call, with its time in `checks.llmLastCallAt` (`none` before the first). A rejected key (401) shows `error_auth` after the next grade, coach turn or text reply, or after the Models page connection check. `checks.llm` never changes `ok` or the status code.
-3. **Grade seal** (full mode): grade a call with `POST /api/evaluate-call`, then save it with `POST /api/transcripts`, sending the same transcript, the response minus its `seal` as `evaluation`, and the `seal` beside it. That saves with `"graded": true`. Change `overallScore` and save again: it saves with `"graded": false` and no score.
+3. **Grade seal** (full mode): grade a call with `POST /api/evaluate-call`, sending a `sessionId` such as `text-test-0001`, then save it with `POST /api/transcripts` under the same `sessionId`, sending the same transcript, the response minus its `seal` as `evaluation`, and the `seal` beside it. That saves with `"graded": true`. Each of these saves with `"graded": false` and no score: the same body again (a seal stores one grade), the same body under another `sessionId`, a changed `overallScore`, or a seal more than 30 minutes old. A grade request without a `sessionId` returns the grade with no `seal`.
 
 ## Run a scenario end to end
 1. `DEMO_MODE=true npm run dev` and open `/library`.

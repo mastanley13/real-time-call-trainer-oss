@@ -17,6 +17,13 @@ const TurnSchema = z.object({
 const Body = z.object({
   scenario: ScenarioSchema,
   transcript: z.array(TurnSchema).min(1).max(2000),
+  /**
+   * The id the client will save this call under (POST /api/transcripts `sessionId`). The seal is bound to it, so the
+   * grade can be stored only with that call. Without it the grade is still returned, unsealed, and saves ungraded
+   * (the debrief's browser-only re-grade sends none: it never saves to the server). The save keys a graded row on this
+   * id, so it is limited to the characters server-made and client-made call ids use.
+   */
+  sessionId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -55,9 +62,12 @@ export async function POST(request: NextRequest) {
     if (evaluation.llmFailed) console.warn("[/api/evaluate-call] AI grading failed; returned the rules-based estimate");
     const note = gradedNote(evaluation.note, turns.length, body.transcript.length);
     const out = { evaluatedAt: new Date().toISOString(), ...evaluation, ...(note ? { note } : {}) };
-    // The seal lets POST /api/transcripts store this score; a grade the client edits or invents won't verify. Nothing is
-    // stored here, so the CRM activation event (first graded call) is sent by that save, not by this route.
-    const seal = sealEvaluation({ userId: auth.id, scenarioId: scenario.id, transcript: body.transcript, evaluation: out });
+    // The seal lets POST /api/transcripts store this score once, for this call, within GRADE_SEAL_MAX_AGE_MS of
+    // evaluatedAt; a grade the client edits or invents won't verify. Nothing is stored here, so the CRM activation
+    // event (first graded call) is sent by that save, not by this route.
+    const seal = body.sessionId
+      ? sealEvaluation({ userId: auth.id, sessionId: body.sessionId, scenarioId: scenario.id, transcript: body.transcript, evaluation: out })
+      : undefined;
     return NextResponse.json({ ...out, ...(seal ? { seal } : {}) });
   } catch (error) {
     console.error("[/api/evaluate-call] error:", gradingFailureCode(error));
