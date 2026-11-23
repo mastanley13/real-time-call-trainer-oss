@@ -528,6 +528,92 @@ describe("the Free 1 minute warning goes out once per call", () => {
   });
 });
 
+describe("heartbeat lock order: the call-row lock is never held while another row is used", () => {
+  const LOCK_CALL = 'raw:SELECT "id" FROM "TrainerSession" WHERE "id" = ? FOR UPDATE';
+  /** Each transaction that took the call-row lock, with every operation it ran. */
+  const lockTransactions = () => {
+    const txs = new Set(fake.ops.filter((o) => o.op === LOCK_CALL).map((o) => o.tx));
+    return [...txs].map((tx) => ({ tx, ops: fake.ops.filter((o) => o.tx === tx).map((o) => o.op) }));
+  };
+  const onlyTheCallRow = (ops: string[]) =>
+    ops.filter((o) => !["begin", "commit", "rollback", LOCK_CALL].includes(o) && !o.startsWith("trainerSession.") && !/^(lock|wait):trainerSession:/.test(o));
+
+  it("every heartbeat's lock transaction reads and writes only the call row, and the stop settles after it committed", async () => {
+    await freeUserWith(9);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    for (const t of [10, 20, 30, 40, 50, 60, 70]) await heartbeat("u-1", begun.callId, "ok", at(t));
+    const before = fake.ops.length;
+    expect(await heartbeat("u-1", begun.callId, "ok", at(80))).toMatchObject({ stop: true, reason: "cap_reached", freeCap: true });
+    // Well past the reservation: the overrun flag (user and audit writes) also runs outside the lock.
+    expect(await heartbeat("u-1", begun.callId, "ok", at(80 + 61 + 10))).toMatchObject({ stop: true, reason: "ended" });
+    expect(session(begun.callId).abuseFlagged).toBe(true);
+
+    const locked = lockTransactions();
+    expect(locked).toHaveLength(10);
+    for (const { ops } of locked) expect(onlyTheCallRow(ops)).toEqual([]); // no allowance, user, ledger or audit access, no other lock
+
+    // The stopping heartbeat: its lock transaction committed before the settlement touched the allowance and the ledger.
+    const stop = fake.ops.slice(before);
+    const lockTx = stop.find((o) => o.op === LOCK_CALL)!.tx;
+    const committed = stop.findIndex((o) => o.tx === lockTx && o.op === "commit");
+    const settled = stop.findIndex((o) => o.op === "usageAllowance.updateMany");
+    expect(committed).toBeGreaterThanOrEqual(0);
+    expect(settled).toBeGreaterThan(committed);
+    expect(stop[settled].tx).not.toBe(lockTx);
+    expect(stop.filter((o) => o.op === "usageEntry.create").every((o) => o.tx !== lockTx)).toBe(true);
+    expect(session(begun.callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 1, billableSeconds: 60 });
+  });
+
+  it("a rollover that holds the allowance row and then waits for the call row does not deadlock with a stopping heartbeat", async () => {
+    await freeUserWith(9);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    await heartbeat("u-1", begun.callId, "ok", at(70));
+    fake.enableRowLocks();
+    const allowanceId = allowanceOf("u-1").id;
+    const tick = () => new Promise<void>((r) => setImmediate(r));
+
+    // The moment the heartbeat holds the call row, the rollover (already holding the allowance) asks for it too; the
+    // heartbeat goes on only after that request is waiting. This is the interleaving that deadlocked when the settlement
+    // ran inside the locked transaction: heartbeat holds the call and wants the allowance, rollover the reverse.
+    let heartbeatHasCallRow!: () => void;
+    const callRowTaken = new Promise<void>((r) => { heartbeatHasCallRow = r; });
+    const raw = fake.db.$queryRaw;
+    fake.db.$queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const out = await raw(strings, ...values);
+      if (strings.join("?").includes('FROM "TrainerSession"')) { heartbeatHasCallRow(); await tick(); }
+      return out;
+    };
+
+    // The rollover's lock order: the allowance row first, then the call row (where it writes the carry).
+    let rolloverHasAllowance!: () => void;
+    const allowanceTaken = new Promise<void>((r) => { rolloverHasAllowance = r; });
+    const rollover = (fake.db.$transaction as (fn: (tx: typeof fake.db) => Promise<void>) => Promise<void>)(async (tx) => {
+      await tx.usageAllowance.updateMany({ where: { id: allowanceId }, data: { version: { increment: 1 } } });
+      rolloverHasAllowance();
+      await callRowTaken;
+      await tx.trainerSession.updateMany({ where: { id: begun.callId }, data: { carriedMinutes: 0 } });
+    });
+    await allowanceTaken;
+    const stopping = heartbeat("u-1", begun.callId, "ok", at(80));
+
+    await expect(rollover).resolves.toBeUndefined();
+    expect(await stopping).toMatchObject({ found: true, stop: true, reason: "cap_reached", freeCap: true });
+    expect(fake.ops.some((o) => o.op.startsWith("deadlock:"))).toBe(false);
+    // The rollover did wait for the call row while the heartbeat held it, and the heartbeat's lock transaction never
+    // waited for (or touched) the allowance: it committed and let the rollover through, and the stop settled after.
+    const lockTx = lockTransactions().at(-1)!;
+    const waited = fake.ops.findIndex((o) => o.op === `wait:trainerSession:${begun.callId}`);
+    expect(waited).toBeGreaterThanOrEqual(0);
+    expect(fake.ops.findIndex((o) => o.tx === lockTx.tx && o.op === "commit")).toBeGreaterThan(waited);
+    expect(onlyTheCallRow(lockTx.ops)).toEqual([]);
+    expect(session(begun.callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 1, billableSeconds: 60 });
+  });
+});
+
 describe("fractional usage", () => {
   it("any minutes left let a Free call start, and a second start cannot take the same half minute", async () => {
     await freeUserWith(9.5);
