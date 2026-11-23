@@ -5,6 +5,7 @@ import { requireAuth, isDemoUser } from "@/lib/apiAuth";
 import { rateLimit, readJsonLimited } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { verifySeal } from "@/lib/gradeSeal";
+import { hasGradedSibling, lockCallGrade } from "@/lib/callGrade";
 import { isReceiptReplay, receiptRowId, verifyMintReceipt } from "@/lib/mintReceipt";
 import { HAS_TRANSCRIPT } from "@/lib/usage";
 import { tierOfModel } from "@/lib/voiceTierServer";
@@ -130,6 +131,14 @@ export async function POST(req: NextRequest) {
     // makes text ids with 96 random bits (sessionStore.ts callSessionId).
     let created: { id: string } | null = null;
     let filledOwnRow = false;
+    // Every write below that may store a grade runs here: under the call's grade lock, and with the grade only when no
+    // other row of this call (same user and realtimeSessionId = sessionId) already has a score. The same lock and check
+    // guard the PATCH re-grade, so a grade saved here and a re-grade of a sibling row can't both land (src/lib/callGrade.ts).
+    const writeGrade = <T,>(rowId: string, write: (tx: Prisma.TransactionClient, mayGrade: boolean) => Promise<T>) =>
+      prisma.$transaction(async (tx) => {
+        await lockCallGrade(tx, dbUser.id, body.sessionId);
+        return write(tx, !(await hasGradedSibling(tx, dbUser.id, body.sessionId, rowId)));
+      });
     if (fillExisting) {
       // The fill, graded or not, is one conditional update that lands only while the row is still unfilled.
       // "Unfilled" is realtimeSessionId = null: beginCall (src/lib/usage.ts) never sets it, every fill sets it to the
@@ -140,12 +149,14 @@ export async function POST(req: NextRequest) {
       // A seal for another call id (sessionId differs from callId) never lands here. The model is not part of the fill;
       // it is set once, below. No metering field (endedAt, billing, heartbeats) is written, so settleStale and billing
       // see the row exactly as before.
-      const withGrade = !!ev && body.callId === body.sessionId;
-      const filled = await prisma.trainerSession.updateMany({ where: { id: body.callId, userId: dbUser.id, realtimeSessionId: null }, data: fieldsFor(withGrade) });
-      if (filled.count === 1) {
-        created = { id: body.callId! };
+      const callId = body.callId!;
+      const fill = (tx: Prisma.TransactionClient, withGrade: boolean) =>
+        tx.trainerSession.updateMany({ where: { id: callId, userId: dbUser.id, realtimeSessionId: null }, data: fieldsFor(withGrade) }).then((r) => ({ filled: r.count === 1, withGrade }));
+      const result = ev && callId === body.sessionId ? await writeGrade(callId, fill) : await fill(prisma, false);
+      if (result.filled) {
+        created = { id: callId };
         filledOwnRow = true;
-        graded = withGrade;
+        graded = result.withGrade;
       }
       // Otherwise another save of this call filled it first: this one becomes a separate ungraded row below, as any save
       // that doesn't fill the call's row always has.
@@ -154,11 +165,15 @@ export async function POST(req: NextRequest) {
       try {
         // Unmetered calls have no row at mint, so the tier is stored here, mapped from the sealed model on the server
         // when the save lands (within the receipt's lifetime) and never recomputed later.
-        created = await prisma.trainerSession.create({
-          data: { id: rowId, ...unmetered, ...fieldsFor(!!ev), ...(receiptModel ? { realtimeModel: receiptModel, voiceTier: tierOfModel(receiptModel) } : {}) },
-        });
+        // A P2002 inside writeGrade rolls its transaction back and surfaces here unchanged.
+        const insert = (tx: Prisma.TransactionClient, withGrade: boolean) =>
+          tx.trainerSession.create({
+            data: { id: rowId, ...unmetered, ...fieldsFor(withGrade), ...(receiptModel ? { realtimeModel: receiptModel, voiceTier: tierOfModel(receiptModel) } : {}) },
+          }).then((row) => ({ row, withGrade }));
+        const result = ev ? await writeGrade(rowId, insert) : await insert(prisma, false);
+        created = result.row;
         receiptLogged = !!receiptModel;
-        graded = !!ev;
+        graded = result.withGrade;
       } catch (e) {
         if (!isReceiptReplay(e)) throw e;
         // The call's row already exists (P2002 means the other insert committed). It may hold only the receipt's model
@@ -172,8 +187,9 @@ export async function POST(req: NextRequest) {
         // Only rows of this user are touched. Ungraded text saves never claim this row (they have no receipt and no
         // grade), so they can't block a later grade either.
         if (ev) {
-          const claimed = await prisma.trainerSession.updateMany({ where: { id: rowId, userId: dbUser.id, overallScore: null }, data: fieldsFor(true) });
-          if (claimed.count === 1) {
+          const claimed = await writeGrade(rowId, async (tx, mayGrade) =>
+            mayGrade ? (await tx.trainerSession.updateMany({ where: { id: rowId, userId: dbUser.id, overallScore: null }, data: fieldsFor(true) })).count : 0);
+          if (claimed === 1) {
             created = { id: rowId };
             graded = true;
           }
@@ -185,7 +201,8 @@ export async function POST(req: NextRequest) {
       }
     }
     // Everything else: an ungraded row of its own. That covers a grade whose call already has a row it did not land on
-    // (a replay, or a seal for a metered call saved without its callId), and a fill that lost the race.
+    // (a replay, or a seal for a metered call saved without its callId), and a fill that lost the race. Such a row keeps
+    // realtimeSessionId = sessionId, so the PATCH re-grade's sibling check refuses to grade it while the call has a score.
     if (!created) created = await prisma.trainerSession.create({ data: { ...unmetered, ...fieldsFor(false) } });
     // Activation for the CRM: only a stored sealed grade counts. Scheduled as soon as the graded row is written, so a
     // failure in the receipt or audit step below cannot skip it. notifyFirstGradedCall decides in the background, under

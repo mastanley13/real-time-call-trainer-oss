@@ -9,10 +9,12 @@ const mocks = vi.hoisted(() => ({
   fake: null as unknown as ReturnType<typeof import("./fakePrisma").createFakePrisma>,
   authId: "u-1",
   notify: vi.fn(),
+  chat: vi.fn(),
 }));
 vi.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get: (_t, k) => (mocks.fake.db as Record<string | symbol, unknown>)[k] }) }));
 vi.mock("@/lib/apiAuth", () => ({ requireAuth: () => ({ id: mocks.authId, email: `${mocks.authId}@example.test` }), isDemoUser: () => false }));
 vi.mock("@/lib/ghlWebhook", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/ghlWebhook")>()), notifyFirstGradedCall: mocks.notify }));
+vi.mock("@/lib/llm", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/llm")>()), chat: (...args: unknown[]) => mocks.chat(...args) }));
 
 import { GRADE_SEAL_MAX_AGE_MS, sealEvaluation, stableStringify, transcriptDigest } from "@/lib/gradeSeal";
 import { receiptRowId, sealMintReceipt } from "@/lib/mintReceipt";
@@ -22,6 +24,7 @@ import { splitSeal } from "@/lib/sessionStore";
 import type { Evaluation } from "@/lib/grader-types";
 import { POST as saveTranscript } from "@/app/api/transcripts/route";
 import { POST as evaluateCall } from "@/app/api/evaluate-call/route";
+import { PATCH as regrade } from "@/app/api/transcripts/[id]/route";
 
 const KEY = "test-jwt-secret-that-is-long-enough-0123456789";
 const scenario = BUILT_IN_SCENARIOS[0];
@@ -214,17 +217,12 @@ describe("POST /api/transcripts: a seal stores one graded row, for its own call,
     });
 
     it("stores the grade when the receipt-only save commits between the graded save's read and its insert", async () => {
-      // The graded save tries to insert the call's row; just before, the receipt-only save inserts it.
-      const db = fake.db.trainerSession as unknown as { create: (args: { data: Record<string, unknown> }) => Promise<unknown> };
-      const realCreate = db.create.bind(db);
+      // The graded save tries to insert the call's row; just before, the receipt-only save commits it from outside.
       let raced = false;
-      db.create = async (args) => {
-        if (!raced && args.data.id === receiptRowId(SID) && args.data.overallScore != null) {
-          raced = true;
-          expect((await (await save({ sessionId: SID, realtimeReceipt: receipt() })).json()).graded).toBe(false);
-        }
-        return realCreate(args);
-      };
+      fake.interleave("trainerSession", "create", async () => {
+        raced = true;
+        expect((await (await save({ sessionId: SID, realtimeReceipt: receipt() })).json()).graded).toBe(false);
+      }, ({ data }) => data.id === receiptRowId(SID) && data.overallScore != null);
       expect(await (await save({ sessionId: SID, ...sealedGrade(SID) })).json()).toEqual({ id: receiptRowId(SID), graded: true });
       expect(raced).toBe(true);
       expect(sessions()).toHaveLength(1);
@@ -315,6 +313,81 @@ describe("POST /api/transcripts: a seal stores one graded row, for its own call,
       expect(bodies.map((b) => b.graded).sort()).toEqual([false, true]);
       expect(gradedRows()).toHaveLength(1);
     });
+  });
+});
+
+describe("one graded row per call across POST /api/transcripts and the PATCH re-grade", () => {
+  const llmReply = () => JSON.stringify({
+    summary: "You kept the caller talking.",
+    criteria: scenario.rubric.map((c) => ({ id: c.id, score: 72, rationale: "You made a solid attempt.", evidence: [] })),
+    strengths: ["You stayed calm."], improvements: ["Offer a time slot."], goalStatus: "partial", goalExplanation: "You made progress but booked nothing.",
+  });
+  const patch = (id: string) =>
+    regrade(new NextRequest(`http://localhost/api/transcripts/${id}`, { method: "PATCH", body: JSON.stringify({ scenario }), headers: { "content-type": "application/json" } }), { params: Promise.resolve({ id }) });
+  const callRows = (sessionId: string) => sessions().filter((s) => s.realtimeSessionId === sessionId);
+
+  beforeEach(() => {
+    vi.stubEnv("LLM_API_KEY", "test-key");
+    vi.stubEnv("LLM_MODEL", "gpt-test-mini");
+    mocks.chat.mockReset();
+    mocks.chat.mockResolvedValue(llmReply());
+  });
+
+  it("refuses to grade a seal replay's ungraded copy, and still re-grades the graded row and a lone ungraded call", async () => {
+    const sessionId = textId();
+    const grade = sealedGrade(sessionId);
+    expect((await (await save({ sessionId, ...grade })).json()).graded).toBe(true);
+    const replay = (await (await save({ sessionId, ...grade })).json()) as { id: string; graded: boolean };
+    expect(replay.graded).toBe(false);
+    const res = await patch(replay.id);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("conflict");
+    expect(mocks.chat).not.toHaveBeenCalled();
+    expect(callRows(sessionId).filter((s) => s.overallScore != null)).toHaveLength(1);
+
+    // A manager re-grading the graded row itself is still allowed.
+    const managerId = `m-seal-${++n}`;
+    fake.seed("user", { id: managerId, email: `${managerId}@example.test`, organizationId: "org-1", role: "manager" });
+    mocks.authId = managerId;
+    expect((await patch(receiptRowId(sessionId))).status).toBe(200);
+
+    // An ungraded save that is the only row of its call is still re-gradable by its owner.
+    mocks.authId = userId;
+    const lone = (await (await save({ sessionId: textId() })).json()) as { id: string };
+    expect((await patch(lone.id)).status).toBe(200);
+  });
+
+  it("PATCH first, then POST: the later sealed grade for the same call is stored ungraded", async () => {
+    const sessionId = textId();
+    const first = (await (await save({ sessionId })).json()) as { id: string };
+    expect((await patch(first.id)).status).toBe(200);
+    expect(await (await save({ sessionId, ...sealedGrade(sessionId) })).json()).toEqual({ id: receiptRowId(sessionId), graded: false });
+    expect(callRows(sessionId).filter((s) => s.overallScore != null).map((s) => s.id)).toEqual([first.id]);
+  });
+
+  it("POST lands while PATCH is grading: the re-grade is refused at write time and stores nothing", async () => {
+    const sessionId = textId();
+    const first = (await (await save({ sessionId })).json()) as { id: string };
+    let posted: { id: string; graded: boolean } | undefined;
+    mocks.chat.mockImplementationOnce(async () => {
+      posted = await (await save({ sessionId, ...sealedGrade(sessionId) })).json();
+      return llmReply();
+    });
+    const res = await patch(first.id);
+    expect(posted).toEqual({ id: receiptRowId(sessionId), graded: true });
+    expect(res.status).toBe(409);
+    expect(sessions().find((s) => s.id === first.id)).toMatchObject({ overallScore: null });
+    expect(callRows(sessionId).filter((s) => s.overallScore != null).map((s) => s.id)).toEqual([receiptRowId(sessionId)]);
+    expect(fake.rows("auditEvent").some((a) => a.action === "session.regraded")).toBe(false);
+  });
+
+  it("POST and PATCH racing for the call's lock store exactly one grade", async () => {
+    const sessionId = textId();
+    const first = (await (await save({ sessionId })).json()) as { id: string };
+    const [patched, posted] = await Promise.all([patch(first.id), save({ sessionId, ...sealedGrade(sessionId) })]);
+    const graded = callRows(sessionId).filter((s) => s.overallScore != null);
+    expect(graded).toHaveLength(1);
+    expect(patched.status === 200).toBe(!(await posted.json()).graded);
   });
 });
 

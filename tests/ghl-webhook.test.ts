@@ -348,7 +348,7 @@ describe("sending", () => {
  * that matter (create, update, lock, marker check, session lookup, audit inserts). It cannot block, so the advisory lock
  * is recorded, not enforced; tests run one claim at a time.
  */
-type SessionRow = { id: string; userId: string; organizationId: string; scenarioId: string; transcript: unknown; evaluation: unknown; overallScore: number | null; grade: string | null; createdAt: Date; updatedAt: Date };
+type SessionRow = { id: string; userId: string; organizationId: string; scenarioId: string; transcript: unknown; evaluation: unknown; overallScore: number | null; grade: string | null; createdAt: Date; updatedAt: Date; realtimeSessionId?: string | null };
 const T0 = Date.parse("2026-01-01T00:00:00Z");
 function gradeStore() {
   const rows: SessionRow[] = [];
@@ -385,7 +385,13 @@ function gradeStore() {
     Object.assign(r, data, { updatedAt: new Date() });
     return { ...r };
   });
-  mocks.prisma.trainerSession.findFirst.mockImplementation(async ({ where }: { where: { userId: string } }) => {
+  mocks.prisma.trainerSession.findFirst.mockImplementation(async ({ where }: { where: { userId: string; realtimeSessionId?: string; id?: { not: string } } }) => {
+    if (where.realtimeSessionId !== undefined) {
+      // The one-graded-row-per-call check (src/lib/callGrade.ts): another graded row of this user's call.
+      order.push("sibling-check");
+      const s = rows.find((x) => x.userId === where.userId && x.realtimeSessionId === where.realtimeSessionId && x.overallScore !== null && x.id !== where.id?.not);
+      return s ? { id: s.id } : null;
+    }
     order.push("first-session");
     const r = rows.filter((x) => x.userId === where.userId && x.overallScore !== null)
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))[0];
@@ -772,7 +778,8 @@ describe("first graded call from every grading path", () => {
     mocks.chat.mockResolvedValue(llmReply());
   });
   const activations = () => db.activations();
-  const claimed = () => mocks.prisma.$queryRaw.mock.calls.length;
+  // First-graded-call claims only; the per-call grade lock (src/lib/callGrade.ts) is not a claim.
+  const claimed = () => mocks.prisma.$queryRaw.mock.calls.filter((c) => String(c[1]).startsWith("ct-first-grade:")).length;
 
   it("POST: the first graded save schedules the claim and sends ct-activated once; a second graded call does not", async () => {
     on();
@@ -790,9 +797,11 @@ describe("first graded call from every grading path", () => {
     expect(mocks.prisma.trainerSession.create).toHaveBeenCalledWith({ data: expect.objectContaining({ overallScore: 74, grade: "B", goalAchieved: true }) });
     expect(mocks.prisma.trainerSession.update).not.toHaveBeenCalled();
     await settleGhlEvents();
-    expect(db.order[0]).toBe("create");
-    expect(db.order.indexOf("audit:session.saved")).toBeGreaterThan(0);
-    expect(db.order.findIndex((o) => o.startsWith("lock:"))).toBeGreaterThan(0);
+    // The graded create runs under the call's grade lock and sibling check (src/lib/callGrade.ts); the first-graded-call
+    // claim takes its own lock after the create.
+    expect(db.order.slice(0, 3)).toEqual([expect.stringMatching(/^lock:.*ct-call-grade:\["u-1","rt-1"\]$/), "sibling-check", "create"]);
+    expect(db.order.indexOf("audit:session.saved")).toBeGreaterThan(2);
+    expect(db.order.findIndex((o) => o.includes("ct-first-grade:"))).toBeGreaterThan(2);
   });
 
   it("POST: an ungraded save (no grade, or a grade that failed) schedules nothing", async () => {
@@ -863,9 +872,26 @@ describe("first graded call from every grading path", () => {
     mocks.authUser = { id: "m-1", email: "m-1@example.test", role: "manager" };
     db.seed("s-old", "u-1");
     expect((await patch("s-old")).status).toBe(200);
-    expect(mocks.prisma.$transaction.mock.calls[0][0]).toBeInstanceOf(Array);
+    // One interactive transaction now (the call's grade lock and sibling check, then the grade and audit row). A legacy
+    // row with no realtimeSessionId skips the call check.
+    expect(typeof mocks.prisma.$transaction.mock.calls[0][0]).toBe("function");
     await settleGhlEvents();
-    expect(db.order.slice(0, 3)).toEqual(["update", "audit:session.regraded", expect.stringMatching(/^lock:/)]);
+    expect(db.order.slice(0, 3)).toEqual(["update", "audit:session.regraded", expect.stringMatching(/^lock:.*ct-first-grade:/)]);
+  });
+
+  it("PATCH of a row that names its call takes the call's grade lock and sibling check before the grade write", async () => {
+    on();
+    mocks.authUser = { id: "m-1", email: "m-1@example.test", role: "manager" };
+    db.seed("s-call", "u-1");
+    db.rows.find((r) => r.id === "s-call")!.realtimeSessionId = "text-call-1";
+    expect((await patch("s-call")).status).toBe(200);
+    expect(db.order.slice(0, 5)).toEqual([
+      "sibling-check", // the pre-check before the model call
+      expect.stringMatching(/^lock:.*ct-call-grade:\["u-1","text-call-1"\]$/),
+      "sibling-check",
+      "update",
+      "audit:session.regraded",
+    ]);
   });
 
   it("PATCH by a manager: the activation names the trainee, not the manager", async () => {

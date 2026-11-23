@@ -107,6 +107,7 @@ export function createFakePrisma() {
     };
     return {
       findUnique: async (args: { where: Where; include?: { organization?: boolean } }) => { log("findUnique"); return withInclude(find(args.where) ?? null, args); },
+      findFirst: async (args: { where: Where }) => { log("findFirst"); return copy(find(args.where)); },
       findUniqueOrThrow: async (args: { where: Where; include?: { organization?: boolean } }) => {
         log("findUniqueOrThrow");
         const r = find(args.where);
@@ -120,7 +121,8 @@ export function createFakePrisma() {
       },
       count: async (args: { where?: Where } = {}) => rows().filter((r) => matches(r, args.where ?? {})).length,
       create: async (args: { data: Record<string, unknown> }) => {
-        const row = { id: `${name}-${++seq}`, ...DEFAULTS[name](), ...Object.fromEntries(Object.entries(args.data).filter(([, v]) => v !== undefined)) } as Row;
+        await fire(name, "create", { where: {}, data: args.data });
+        const row ={ id: `${name}-${++seq}`, ...DEFAULTS[name](), ...Object.fromEntries(Object.entries(args.data).filter(([, v]) => v !== undefined)) } as Row;
         for (const keys of UNIQUE[name]) {
           if (keys.some((k) => row[k] === null || row[k] === undefined)) continue;
           if (rows().some((r) => keys.every((k) => r[k] === row[k]))) throw dupError();
@@ -172,20 +174,53 @@ export function createFakePrisma() {
       calls.push(`raw:${strings.join("?")}`);
       return [];
     },
-    /** Runs fn on the same store; a throw restores the data as it was, like a rolled-back transaction. */
+    /**
+     * Runs fn on the same store; a throw restores the data as it was, like a rolled-back transaction. Inside it,
+     * pg_advisory_xact_lock really waits: transactions asking for the same key run one after the other, and the lock
+     * is released when the transaction ends. The rollback snapshot is retaken when the lock is granted, so a rollback
+     * does not undo what the transaction it waited for committed. That is right while the lock is the transaction's
+     * first statement, as in every caller (ghlWebhook.ts, callGrade.ts).
+     */
     $transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
       const entry = { snapshot: structuredClone(data) };
+      const releases: (() => void)[] = [];
+      const tx = {
+        ...db,
+        $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          const out = await db.$queryRaw(strings, ...values);
+          if (strings.join("?").includes("pg_advisory_xact_lock")) {
+            releases.push(await acquireAdvisory(String(values[0])));
+            entry.snapshot = structuredClone(data);
+          }
+          return out;
+        },
+      };
       open.push(entry);
       try {
-        return await fn(db);
+        return await fn(tx);
       } catch (e) {
         data = entry.snapshot;
         throw e;
       } finally {
         open.splice(open.indexOf(entry), 1);
+        for (const release of releases) release();
       }
     },
   };
+  /** Advisory lock tails by key: each waiter chains on the previous holder and releases its own turn. */
+  const advisory = new Map<string, Promise<void>>();
+  async function acquireAdvisory(key: string): Promise<() => void> {
+    const prev = advisory.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const mine = new Promise<void>((r) => (release = r));
+    const tail = prev.then(() => mine);
+    advisory.set(key, tail);
+    await prev;
+    return () => {
+      release();
+      if (advisory.get(key) === tail) advisory.delete(key);
+    };
+  }
 
   return {
     db,
@@ -202,7 +237,7 @@ export function createFakePrisma() {
      * Just before the next matching write on `table`, runs `run` as if another connection committed it at that
      * moment. Models the interleavings a real database allows between a transaction's read and its write.
      */
-    interleave: (table: keyof typeof UNIQUE, method: "update" | "updateMany", run: () => Promise<void>, when: (args: { where: Where; data: Record<string, unknown> }) => boolean = () => true) => {
+    interleave: (table: keyof typeof UNIQUE, method: "create" | "update" | "updateMany", run: () => Promise<void>, when: (args: { where: Where; data: Record<string, unknown> }) => boolean = () => true) => {
       hooks.push({ table, method, when, run });
     },
     failNextUpdate: (name: keyof typeof UNIQUE) => { failOnce[name] = 1; },

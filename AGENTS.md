@@ -96,6 +96,7 @@ src/lib/
   team.ts                         Team view logic (pure): KPIs, matrix, queue, assignment progress
   teamSample.ts, assignmentStore.ts    Sample team, and browser-only assignments and notes, for demo mode
   gradeSeal.ts                    HMAC seal on server grades, bound to the call's sessionId, 30-minute max age; POST /api/transcripts stores each sealed score once
+  callGrade.ts                    One graded row per call: per-call advisory lock and sibling check for every grade write (POST save, PATCH re-grade)
 scripts/                          validate-personas.ts, coach-smoke.ts, calibration-check.ts
 tests/                            Vitest suites; server-only-stub.ts. Route tests (notes-route, regrade) mock @/lib/db
 .github/                          workflows/ci.yml, workflows/codex-review.yml (SHA-pinned actions), dependabot.yml

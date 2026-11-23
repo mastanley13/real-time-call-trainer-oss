@@ -226,7 +226,9 @@ describe("PATCH /api/transcripts/[id] (server re-grade)", () => {
     mocks.prisma.trainerSession.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => (where.id === row.id ? row : null));
     mocks.prisma.trainerSession.update.mockImplementation(async (args: unknown) => args);
     mocks.prisma.auditEvent.create.mockImplementation(async (args: unknown) => args);
-    mocks.prisma.$transaction.mockImplementation(async (ops: Promise<unknown>[]) => Promise.all(ops));
+    // The re-grade writes in an interactive transaction (its rows here name no call, so no lock or sibling check runs).
+    mocks.prisma.$transaction.mockImplementation(async (arg: ((tx: typeof mocks.prisma) => Promise<unknown>) | Promise<unknown>[]) =>
+      typeof arg === "function" ? arg(mocks.prisma) : Promise.all(arg));
     mocks.chat.mockResolvedValue(llmReply());
   });
 
