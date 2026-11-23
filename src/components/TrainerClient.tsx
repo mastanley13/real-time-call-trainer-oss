@@ -13,7 +13,7 @@ import type { AgentState } from "@/components/CallOrb";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import Briefing from "@/components/call/Briefing";
 import Deck from "@/components/call/Deck";
-import { CallMeter, CapStopEnd } from "@/lib/callMeter";
+import { CallMeter, CapStopEnd, HEARTBEAT_LOST_MESSAGE } from "@/lib/callMeter";
 import RealtimeVoiceSession, { voiceInfoFrom, type VoiceInfo, type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
@@ -108,6 +108,11 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
           onStop: (m, freeCap) => capStop.stop(m, freeCap, () => { userEndedRef.current = true; endRef.current(); onError(m); }),
           onGiveUp: () => endRef.current(),
           onWarn: (m) => warnRef.current?.(m),
+          // A Free call ends itself when its heartbeats keep failing (see CallMeter): reported as a network drop, then
+          // the session closes and the message says why. A paid call keeps tolerating failed heartbeats.
+          ...(data.freeRule === true ? {
+            onHeartbeatsLost: () => { meterRef.current.end("network_drop"); endRef.current(); latestRef.current.onError(HEARTBEAT_LOST_MESSAGE); },
+          } : {}),
         });
         startSession({
           conversationToken: data.token,

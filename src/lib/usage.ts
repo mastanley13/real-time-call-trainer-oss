@@ -27,8 +27,8 @@ import {
  *
  * Free calls follow the same rule with an end grace: a Free call reserves the Free minutes left when it starts, the
  * heartbeat stops it (cap_reached) at that reservation plus FREE_END_GRACE_SECONDS, and it is billed at most the
- * reservation, so the grace is never charged. A silent Free call is billed through its last heartbeat plus
- * FREE_ABANDON_GRACE_SECONDS, not until it is reaped. The heartbeat also tells a Free call when about a minute is left. A Free
+ * reservation, so the grace is never charged. The first silent Free call of a period is billed through its last
+ * heartbeat plus FREE_ABANDON_GRACE_SECONDS, not until it is reaped (once per period, see settle()). The heartbeat also tells a Free call when about a minute is left. A Free
  * call is not flagged as an overrun when the server settles it (a closed tab reaped later is not abuse), only when the
  * browser keeps reporting after the server already stopped it. (STR-715 let a started Free call run up to 24 hours.)
  */
@@ -376,7 +376,12 @@ export function premiumMintInfo(
 export interface ScenarioInfo { id: string; title?: string; industry?: string; difficulty?: string }
 
 export type BeginResult =
-  | { ok: true; callId: string; remaining: number; pooled: boolean; engine: VoiceEngine; maxSeconds: number; premium: PremiumMintInfo }
+  /**
+   * freeRule: the call is on the Free rule (capEnforced false). The mint routes then tell the client, which ends a Free
+   * call by itself when its heartbeats keep failing (CallMeter), since a silent Free call is billed only up to its last
+   * heartbeat once per period.
+   */
+  | { ok: true; callId: string; remaining: number; pooled: boolean; engine: VoiceEngine; maxSeconds: number; premium: PremiumMintInfo; freeRule: boolean }
   | { ok: false; error: "cap_reached" | "minutes_reserved" | "no_organization" | "user_not_found" | "standard_unavailable" | "daily_session_limit" }
   | { ok: false; error: "voice_blocked"; retryAfterSeconds: number };
 
@@ -487,7 +492,7 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
       // also limited to TRIAL_SAMPLE_SECONDS, and a lower existing deadline still wins.
       const existingMax = callLimitSeconds(reserve, exactStop);
       const maxSeconds = trial ? trialMaxSeconds(existingMax) : existingMax;
-      return { ok: true, callId: session.id, remaining: r.remaining, pooled: r.pooled, engine, maxSeconds, premium } as const;
+      return { ok: true, callId: session.id, remaining: r.remaining, pooled: r.pooled, engine, maxSeconds, premium, freeRule: !exactStop } as const;
     }
     return { ok: false, error: "minutes_reserved" } as const;
   });
@@ -799,6 +804,34 @@ class ConnectedSinceCheckError extends Error {
 }
 
 /**
+ * Whether this user already had the reduced abandoned-call charge in the period this call started in: another call on
+ * the Free rule, from the same allowance and period, that the server settled as heartbeat_timeout. No new column is
+ * needed because the reduced charge always goes to the first such call of a period, so any earlier one means it is
+ * used. (A row settled the old way before this rule existed counts too, which only ever bills more, never less.) A
+ * call from before calls recorded their period (allowancePeriodStart null) is treated as already used.
+ *
+ * Concurrency: the user row is locked first (as for the dropped-call count), so two settlements of this user's calls
+ * run one after the other and the second sees the first one's row. A Free call reserves all the Free minutes left, so
+ * a user rarely has two open Free calls at once anyway. Residual race: a settlement that does not take this path (an
+ * end event) does not lock the user row, but it never writes heartbeat_timeout, so it cannot change this count.
+ */
+async function freeAbandonReducedUsed(tx: Tx, s: OpenSession): Promise<boolean> {
+  if (!s.allowanceId || !s.allowancePeriodStart) return true;
+  await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${s.userId} FOR UPDATE`;
+  const earlier = await tx.trainerSession.count({
+    where: {
+      userId: s.userId,
+      allowanceId: s.allowanceId,
+      allowancePeriodStart: s.allowancePeriodStart,
+      capEnforced: false,
+      endReason: "heartbeat_timeout",
+      id: { not: s.id },
+    },
+  });
+  return earlier > 0;
+}
+
+/**
  * `neverConnectedOnly`: the caller promised to close only a call that never connected (closeNeverConnectedCall). The
  * settlement then writes only while the row it read still has no connectedAt and no heartbeat, and throws
  * ConnectedSinceCheckError instead of settling a call that connected in the meantime.
@@ -821,14 +854,23 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   const reason: CallEndReasonId = connected ? requested : "failed_connect";
 
   // A call on the Free rule (capEnforced false, set from exactCapStop(plan) at mint) that settleStale reaps as silent is
-  // an abandoned call (a closed tab): it is billed through the last heartbeat the server saw plus
-  // FREE_ABANDON_GRACE_SECONDS, however late the reap, never past the reap. Only settleStale asks for heartbeat_timeout
-  // (clients cannot, see CLIENT_END_REASONS). The exact rule (Pro, Team) skips this branch and is billed until the reap,
-  // up to its reservation, exactly as before. Every other end reason skips it too.
+  // an abandoned call (a closed tab). Only settleStale asks for heartbeat_timeout (clients cannot, see
+  // CLIENT_END_REASONS). The exact rule (Pro, Team) skips this branch and is billed until the reap, up to its
+  // reservation, exactly as before. Every other end reason skips it too.
+  //
+  // The first abandoned Free call of a period is billed through the last heartbeat the server saw plus
+  // FREE_ABANDON_GRACE_SECONDS, never past the reap. Every later one in the same period is billed as before this rule:
+  // the confirmed time plus a silent stretch of at most its reservation, never past the reap. Once per period because
+  // the server cannot end the provider session: a modified client can stop heartbeating and keep talking, and repeating
+  // that would otherwise buy unlimited voice at the reduced charge. Residual risk: once per period such a client gets
+  // one call's reservation (at most the Free minutes it had left, as every Free call reserves all of them) while being
+  // charged the reduced amount. An honest client ends the call itself when heartbeats fail (CallMeter), so its reduced
+  // charge matches what it used.
   let billedEnd = naturalEnd;
-  if (!exactStopOf(s) && requested === "heartbeat_timeout") {
+  if (!exactStopOf(s) && requested === "heartbeat_timeout" && connected) {
     const confirmedMs = Math.max(start.getTime(), s.lastHeartbeatAt?.getTime() ?? 0);
-    billedEnd = new Date(Math.min(naturalEnd.getTime(), confirmedMs + FREE_ABANDON_GRACE_SECONDS * 1000));
+    const silentMs = (await freeAbandonReducedUsed(tx, s)) ? s.reservedMinutes * 60 * 1000 : FREE_ABANDON_GRACE_SECONDS * 1000;
+    billedEnd = new Date(Math.min(naturalEnd.getTime(), confirmedMs + silentMs));
   }
   // The reservation then limits what every call is billed, Free included (settleCall below): a Free call's end grace
   // runs past its reserved minutes but is clamped off, so a Free call never adds more than it reserved at its start.
@@ -995,8 +1037,10 @@ export async function endCall(userId: string, callId: string, reason: CallEndRea
  * - A call that proved it connected (provedConnected) and then went silent for more than 30 seconds after its last
  *   heartbeat (rule 3) is settled as heartbeat_timeout. A paid call (exact rule) is billed as if it ran until now, up to
  *   its reservation: the server cannot see the provider connection, so silence is not treated as proof the call
- *   stopped. A call on the Free rule is billed through its last heartbeat plus FREE_ABANDON_GRACE_SECONDS, up to its
- *   reservation, so a closed tab reaped hours later costs what the call used, not every minute it reserved.
+ *   stopped. The first such call on the Free rule in a period is billed through its last heartbeat plus
+ *   FREE_ABANDON_GRACE_SECONDS, up to its reservation, so a closed tab reaped hours later costs what the call used, not
+ *   every minute it reserved. Later ones in the same period are billed through the last heartbeat plus at most their
+ *   reservation (see settle()).
  * - A call that never reported a connection within the 15 minute connect window is closed as failed_connect: 0 seconds,
  *   0 minutes, and its reservation released. It is never billed for its age.
  */

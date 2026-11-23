@@ -737,15 +737,20 @@ describe("a Free call that goes silent is billed to its last heartbeat plus a sh
   // usage read, as heartbeat_timeout. It is billed through its last heartbeat plus FREE_ABANDON_GRACE_SECONDS, rounded up
   // to whole started minutes and clamped to its reservation, however late the reap. Before, it was billed through the
   // reap, up to the reservation: Funnel's retest call heartbeated for 125 s, was reaped 240 s later and billed 7 minutes.
-  // Paid calls and every other way a call ends are unchanged.
-  /** Starts a call, heartbeats every 10 seconds and once more at `lastSec`, then says nothing more. */
-  async function silentAfterHeartbeat(userId: string, lastSec: number) {
-    const begun = await beginCall(userId, scn, at(0));
+  // The reduced charge applies to the first abandoned Free call of a billing period only; later ones in the same period
+  // are billed as before it (last heartbeat plus at most the reservation, never past the reap), because a modified client
+  // can stop heartbeating and keep talking. Paid calls and every other way a call ends are unchanged.
+  /**
+   * Starts a call at `start` seconds, heartbeats every 10 seconds and once more at `start + lastSec`, then says nothing
+   * more. Starting a call reaps this user's earlier silent call (settleStale in beginCall).
+   */
+  async function silentAfterHeartbeat(userId: string, lastSec: number, start = 0) {
+    const begun = await beginCall(userId, scn, at(start));
     if (!begun.ok) throw new Error(begun.error);
-    await heartbeat(userId, begun.callId, "connected", at(0));
-    for (let t = 10; t < lastSec; t += 10) await heartbeat(userId, begun.callId, "ok", at(t));
-    if (lastSec > 0) await heartbeat(userId, begun.callId, "ok", at(lastSec));
-    expect(session(begun.callId).lastHeartbeatAt).toEqual(at(lastSec));
+    await heartbeat(userId, begun.callId, "connected", at(start));
+    for (let t = 10; t < lastSec; t += 10) await heartbeat(userId, begun.callId, "ok", at(start + t));
+    if (lastSec > 0) await heartbeat(userId, begun.callId, "ok", at(start + lastSec));
+    expect(session(begun.callId).lastHeartbeatAt).toEqual(at(start + lastSec));
     return begun;
   }
 
@@ -846,6 +851,70 @@ describe("a Free call that goes silent is billed to its last heartbeat plus a sh
     await usageSummary("u-2", at(24 * 3600));
     expect(session(late.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 3600, billedMinutes: 60, abuseFlagged: true });
     expect(allowanceOf("u-2")).toMatchObject({ minutesUsed: 60, minutesReserved: 0 });
+  });
+
+  it("only the first abandoned Free call of a period bills the reduced way; the second bills the old way", async () => {
+    await freeUserWith(0);
+    const first = await silentAfterHeartbeat("u-1", 50);
+    // Starting the second call reaps the first: the reduced charge, 50 s + 15 s = 65 s, 2 minutes.
+    const second = await silentAfterHeartbeat("u-1", 125, 3600);
+    expect(session(first.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 65, billedMinutes: 2 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 2, minutesReserved: 8 });
+    // Reaped 240 s after its last heartbeat: min(reap, last heartbeat + 8 reserved minutes) = the reap, 365 s, 7 minutes.
+    // The reduced rule would have billed 140 s and 3 minutes.
+    await usageSummary("u-1", at(3600 + 125 + 240));
+    expect(session(second.callId)).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(3600 + 365), billableSeconds: 365, billedMinutes: 7, abuseFlagged: false });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 9, minutesReserved: 0 });
+  });
+
+  it("a second abandoned Free call reaped the next day bills its whole reservation, as before the reduced rule", async () => {
+    await freeUserWith(0);
+    await silentAfterHeartbeat("u-1", 50);
+    const second = await silentAfterHeartbeat("u-1", 125, 3600); // reaps the first (2 minutes), reserves the other 8
+    await usageSummary("u-1", at(24 * 3600));
+    // min(reap, last heartbeat + 8 minutes) = 125 s + 480 s = 605 s, clamped to the 8 minute reservation.
+    expect(session(second.callId)).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(3600 + 605), billableSeconds: 480, billedMinutes: 8, abuseFlagged: false });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
+    expect(fake.rows("user")[0].voiceBlockedUntil ?? null).toBeNull();
+  });
+
+  it("the next billing period gets one reduced abandoned call again", async () => {
+    await freeUserWith(0);
+    await silentAfterHeartbeat("u-1", 50); // October: the reduced one (2 minutes)
+    const october = await silentAfterHeartbeat("u-1", 125, 3600); // October: the old way
+    await usageSummary("u-1", at(3600 + 365));
+    expect(session(october.callId)).toMatchObject({ billableSeconds: 365, billedMinutes: 7 });
+    // The month resets on the 10th at 12:00 UTC, 26 days after T0.
+    const nov10 = 26 * 24 * 3600;
+    expect(at(nov10).toISOString()).toBe("2026-11-10T12:00:00.000Z");
+    const november = await silentAfterHeartbeat("u-1", 125, nov10 + 60);
+    await usageSummary("u-1", at(nov10 + 60 + 365));
+    expect(session(november.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 140, billedMinutes: 3 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 3, minutesReserved: 0 });
+  });
+
+  it("a never-connected call or a hung-up call does not use up the period's reduced abandoned call", async () => {
+    await freeUserWith(0);
+    const never = await beginCall("u-1", scn, at(0));
+    if (!never.ok) throw new Error(never.error);
+    const { callId: hungUp } = await runCall("u-1", { start: 3600, endAt: 60 }); // reaps the never-connected one first
+    expect(session(never.callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0 });
+    expect(session(hungUp)).toMatchObject({ endReason: "user_hangup", billedMinutes: 1 });
+    const abandoned = await silentAfterHeartbeat("u-1", 125, 7200);
+    await usageSummary("u-1", at(7200 + 365));
+    expect(session(abandoned.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 140, billedMinutes: 3 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 4, minutesReserved: 0 });
+  });
+
+  it("paid: every abandoned call in a period is billed through the reap, as before", async () => {
+    addUser("u-1", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
+    const first = await silentAfterHeartbeat("u-1", 125);
+    const second = await silentAfterHeartbeat("u-1", 125, 365); // reaps the first at 365 s
+    await usageSummary("u-1", at(365 + 365));
+    expect(session(first.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 365, billedMinutes: 7 });
+    expect(session(second.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 365, billedMinutes: 7 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 14, minutesReserved: 0 });
   });
 
   it("a call that never sent a heartbeat is closed as failed_connect and bills nothing", async () => {

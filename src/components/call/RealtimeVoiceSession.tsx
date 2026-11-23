@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Scenario } from "@/lib/scenarios";
 import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
-import { CAP_STOP_SPEECH_FLUSH_MS, CallMeter, END_GRACE_MS, type MeterEndReason } from "@/lib/callMeter";
+import { CAP_STOP_SPEECH_FLUSH_MS, CallMeter, END_GRACE_MS, HEARTBEAT_LOST_MESSAGE, type MeterEndReason } from "@/lib/callMeter";
 import { LiveTranscript, applyLiveEvent, type LiveServerEvent } from "@/lib/live";
 import { expireSession, storedSessionKey } from "@/lib/sessionExpiry";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, realtimeAuthRedirect, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
@@ -117,7 +117,7 @@ export class RealtimeCall {
     mic.getAudioTracks().forEach((t) => (t.enabled = !this.view.muted));
     this.set({ phase: "connecting" });
 
-    let secret: { clientSecret?: string; liveTicket?: string; voiceApi?: unknown; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown; maxSeconds?: unknown; error?: unknown };
+    let secret: { clientSecret?: string; liveTicket?: string; voiceApi?: unknown; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown; maxSeconds?: unknown; freeRule?: unknown; error?: unknown };
     try {
       // The rep's Standard or Premium pick is a request; the server rechecks entitlement and decides.
       const session = storedSessionKey();
@@ -152,6 +152,8 @@ export class RealtimeCall {
       },
       onGiveUp: () => this.fail("The voice connection dropped. Check your network. Your transcript so far is kept.", "network_drop"),
       onWarn: (m) => this.h.onCapWarning?.(m),
+      // A Free call ends itself when its heartbeats keep failing (see CallMeter); a paid call keeps tolerating them.
+      ...(secret.freeRule === true ? { onHeartbeatsLost: () => this.fail(HEARTBEAT_LOST_MESSAGE, "network_drop") } : {}),
     });
     if (secret.expiresAt && secret.expiresAt * 1000 <= Date.now()) return this.fail(EXPIRED, "failed_connect");
 

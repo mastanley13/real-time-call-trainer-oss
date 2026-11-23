@@ -86,6 +86,9 @@ export async function POST(req: NextRequest) {
   let callId: string | undefined;
   let maxSeconds = SECRET_TTL_SEC;
   let premium: PremiumMintInfo | undefined;
+  // A Free call: the client ends it by itself when its heartbeats keep failing (src/lib/callMeter.ts). Sent only when
+  // true, so a paid mint answer is unchanged.
+  let freeRule = false;
   if (meteringEnabled()) {
     // A failed lookup refuses voice (fail closed); text practice never reaches this route.
     // offerTrialSample: a Free organization's one Premium trial call may be claimed here, atomically, when
@@ -108,6 +111,7 @@ export async function POST(req: NextRequest) {
     callId = begun.callId;
     maxSeconds = begun.maxSeconds;
     premium = begun.premium;
+    freeRule = begun.freeRule;
   }
 
   // The model, read from the database on every call; the client never chooses it. Premium only when the org is comped
@@ -126,7 +130,7 @@ export async function POST(req: NextRequest) {
   // One id per call, fixed before the secret is minted: the metering call id when metered, else a fresh UUID.
   // The receipt is bound to it and the client saves the call under it, so a receipt can't move to another call.
   const sessionId = callId ?? randomUUID();
-  if (live) return mintLive({ userId: auth.id, callId, sessionId, model, tier, maxSeconds, premium, scenario });
+  if (live) return mintLive({ userId: auth.id, callId, sessionId, model, tier, maxSeconds, premium, scenario, freeRule });
   const voice = realtimeVoice(scenario.aiPersona.realtimeVoice);
   const session = {
     type: "realtime",
@@ -220,7 +224,7 @@ export async function POST(req: NextRequest) {
       {
         clientSecret: data.value, expiresAt, voice, sessionId,
         // Neutral labels only: the tier, whether the next call is Standard, and whether this is the trial call.
-        ...(callId ? { callId, maxSeconds, voiceTier: tier, nextCallStandard: premium?.nextCallStandard ?? false, ...(premium?.source === "trial" ? { voiceTrial: true } : {}) } : {}),
+        ...(callId ? { callId, maxSeconds, voiceTier: tier, nextCallStandard: premium?.nextCallStandard ?? false, ...(premium?.source === "trial" ? { voiceTrial: true } : {}), ...(freeRule ? { freeRule: true } : {}) } : {}),
         ...(receipt ? { receipt } : {}),
       },
       { headers: { "Cache-Control": "no-store" } },
@@ -241,7 +245,7 @@ export async function POST(req: NextRequest) {
  */
 async function mintLive(a: {
   userId: string; callId?: string; sessionId: string; model: string; tier: "premium" | "standard"; maxSeconds: number;
-  premium?: PremiumMintInfo; scenario: z.infer<typeof Body>["scenario"];
+  premium?: PremiumMintInfo; scenario: z.infer<typeof Body>["scenario"]; freeRule: boolean;
 }) {
   const voice = pickLiveVoice(a.scenario.aiPersona, process.env.LIVE_VOICE);
   const ticket = sealLiveTicket(a.userId, a.sessionId, { model: a.model, voice });
@@ -266,7 +270,7 @@ async function mintLive(a: {
   return NextResponse.json(
     {
       voiceApi: "live", liveTicket: ticket, voice, sessionId: a.sessionId,
-      ...(a.callId ? { callId: a.callId, maxSeconds: a.maxSeconds, voiceTier: a.tier, nextCallStandard: a.premium?.nextCallStandard ?? false, ...(a.premium?.source === "trial" ? { voiceTrial: true } : {}) } : {}),
+      ...(a.callId ? { callId: a.callId, maxSeconds: a.maxSeconds, voiceTier: a.tier, nextCallStandard: a.premium?.nextCallStandard ?? false, ...(a.premium?.source === "trial" ? { voiceTrial: true } : {}), ...(a.freeRule ? { freeRule: true } : {}) } : {}),
       ...(receipt ? { receipt } : {}),
     },
     { headers: { "Cache-Control": "no-store" } },

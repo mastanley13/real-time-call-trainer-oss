@@ -14,6 +14,15 @@ const HEARTBEAT_MS = 10_000;
 /** A dropped connection that has not recovered after this long ends the call (rule 3). */
 export const RECOVER_MS = 10_000;
 
+/**
+ * A Free call ends itself after this many heartbeats in a row fail (a fetch error or a non-OK answer): about 30 seconds
+ * without reaching the server, the same as the server's silence timeout. The server bills a silent Free call only up to
+ * its last heartbeat (once per period), so an honest client must not keep the voice session running past that.
+ */
+export const MAX_FAILED_HEARTBEATS = 3;
+/** Shown when a Free call ended because its heartbeats kept failing. */
+export const HEARTBEAT_LOST_MESSAGE = "The connection to the server dropped, so the call ended. Check your network. Your transcript so far is kept.";
+
 /** What one heartbeat answer asks the call to do. */
 export type HeartbeatAnswer = { kind: "stop"; message: string; freeCap: boolean } | { kind: "warn"; message: string } | { kind: "ok" };
 
@@ -40,6 +49,12 @@ export interface MeterHandlers {
   onGiveUp: () => void;
   /** About a minute of a Free call's free minutes is left. Called at most once per call. */
   onWarn?: (message: string) => void;
+  /**
+   * MAX_FAILED_HEARTBEATS heartbeats in a row failed. Set only for a Free call (the mint answer's freeRule); the caller
+   * ends the voice session as a network_drop and shows HEARTBEAT_LOST_MESSAGE. Without it (paid calls) a failed
+   * heartbeat is tolerated as before. Called at most once per call.
+   */
+  onHeartbeatsLost?: () => void;
 }
 
 /** Grace on hang-up (both voice engines) so the trainee's last words still get transcribed before the call closes. */
@@ -114,6 +129,8 @@ export class CallMeter {
   private ended = false;
   private stopped = false;
   private warned = false;
+  private failedBeats = 0;
+  private lost = false;
   private timer?: ReturnType<typeof setInterval>;
   private recoverTimer?: ReturnType<typeof setTimeout>;
 
@@ -146,13 +163,33 @@ export class CallMeter {
   }
 
   private async beat(state: "connected" | "ok" | "recovering") {
+    let res: Response;
     try {
-      const res = await fetch("/api/usage/heartbeat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId: this.callId, state }) });
-      if (!res.ok) return;
+      res = await fetch("/api/usage/heartbeat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId: this.callId, state }) });
+    } catch {
+      return this.failedBeat();
+    }
+    if (!res.ok) return this.failedBeat();
+    this.failedBeats = 0;
+    try {
       this.answer(readHeartbeat(await res.json().catch(() => ({}))));
     } catch {
-      /* a missed heartbeat is tolerated; the server ends the call 30 seconds after the last one */
+      /* as before: a handler that throws does not reject the heartbeat timer's promise */
     }
+  }
+
+  /**
+   * One heartbeat failed. A paid call tolerates it, as before: the server ends a call 30 seconds after the last one. A
+   * Free call (onHeartbeatsLost set) ends after MAX_FAILED_HEARTBEATS in a row, so it never runs on unbilled.
+   */
+  private failedBeat() {
+    this.failedBeats += 1;
+    if (!this.h.onHeartbeatsLost || this.failedBeats < MAX_FAILED_HEARTBEATS) return;
+    if (this.lost || this.ended || this.stopped) return;
+    this.lost = true;
+    clearInterval(this.timer);
+    clearTimeout(this.recoverTimer);
+    this.h.onHeartbeatsLost();
   }
 
   private answer(a: HeartbeatAnswer) {

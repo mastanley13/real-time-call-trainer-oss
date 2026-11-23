@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CAP_STOP_DISCONNECT_MS, CAP_STOP_SPEECH_FLUSH_MS, CallMeter, CapStopEnd, END_GRACE_MS, readHeartbeat } from "@/lib/callMeter";
+import { CAP_STOP_DISCONNECT_MS, CAP_STOP_SPEECH_FLUSH_MS, CallMeter, CapStopEnd, END_GRACE_MS, HEARTBEAT_LOST_MESSAGE, MAX_FAILED_HEARTBEATS, readHeartbeat } from "@/lib/callMeter";
 import { FREE_END_GRACE_SECONDS } from "@/lib/usagePlan";
 import { RealtimeCall } from "@/components/call/RealtimeVoiceSession";
 import { CAP_STOPPED_MESSAGE, FREE_CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE } from "@/lib/billingUi";
@@ -9,15 +9,26 @@ import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 // path as a hang-up. No network: fetch is a stub that answers like /api/usage/heartbeat and /api/usage/end.
 
 type Answer = Record<string, unknown>;
-/** A fetch stub: heartbeats get the next queued answer (or a plain "keep going"), everything else is recorded. */
-function stubServer(answers: Answer[]) {
+/** A heartbeat answer that fails: a network error (fetch rejects) or a non-OK status. */
+const NETWORK_ERROR: Answer = { __fail: "network" };
+const SERVER_ERROR: Answer = { __fail: 503 };
+/**
+ * A fetch stub: heartbeats get the next queued answer (or a plain "keep going"), everything else is recorded. `mint`
+ * adds fields to the /api/realtime/session answer (freeRule: true for a Free call).
+ */
+function stubServer(answers: Answer[], mint: Answer = {}) {
   const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(init.body as string) : {};
     calls.push({ url, body });
-    if (url === "/api/usage/heartbeat") return Response.json(answers.shift() ?? { stop: false, secondsLeft: 300 });
+    if (url === "/api/usage/heartbeat") {
+      const a = answers.shift() ?? { stop: false, secondsLeft: 300 };
+      if (a.__fail === "network") throw new TypeError("Failed to fetch");
+      if (typeof a.__fail === "number") return Response.json({ error: "unavailable" }, { status: a.__fail });
+      return Response.json(a);
+    }
     if (url === "/api/usage/end") return Response.json({ ok: true });
-    if (url === "/api/realtime/session") return Response.json({ clientSecret: "ek_fictional_test_only", callId: "call-1", sessionId: "rt-1", voiceTier: "standard", maxSeconds: 620 });
+    if (url === "/api/realtime/session") return Response.json({ clientSecret: "ek_fictional_test_only", callId: "call-1", sessionId: "rt-1", voiceTier: "standard", maxSeconds: 620, ...mint });
     if (url === "/api/realtime/sdp") return Response.json({ sdp: "v=0 test answer" });
     return Response.json({}, { status: 404 });
   });
@@ -88,6 +99,55 @@ describe("CallMeter", () => {
     meter.end("user_hangup");
     meter.end("user_hangup");
     expect(server.ends()).toEqual([{ url: "/api/usage/end", body: { callId: "call-1", reason: "user_hangup" } }]);
+  });
+
+  /** A connected meter for a Free call (onHeartbeatsLost set, as the voice engines do when the mint says freeRule). */
+  function freeMeter(answers: Answer[]) {
+    const server = stubServer(answers);
+    const h = { onStop: vi.fn(), onGiveUp: vi.fn(), onWarn: vi.fn(), onHeartbeatsLost: vi.fn() };
+    const meter = new CallMeter("call-1", h);
+    meter.open();
+    meter.audio();
+    return { server, h, meter };
+  }
+  /** Lets the next heartbeat go out and its answer land. */
+  const nextBeat = async () => { await vi.advanceTimersByTimeAsync(10_000); await settle(); };
+
+  it("a Free call ends after 3 failed heartbeats in a row, not after 2, and stops heartbeating", async () => {
+    expect(MAX_FAILED_HEARTBEATS).toBe(3);
+    // The connect heartbeat succeeds, then a network error, a 503, and another network error.
+    const { h, server } = freeMeter([{ stop: false, secondsLeft: 300 }, NETWORK_ERROR, SERVER_ERROR, NETWORK_ERROR]);
+    await settle();
+    await nextBeat();
+    await nextBeat();
+    expect(server.heartbeats()).toHaveLength(3);
+    expect(h.onHeartbeatsLost).not.toHaveBeenCalled(); // 2 failures: the call keeps going
+    await nextBeat();
+    expect(h.onHeartbeatsLost).toHaveBeenCalledTimes(1);
+    // No more heartbeats, and the loss is reported once whatever happens next.
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settle();
+    expect(server.heartbeats()).toHaveLength(4);
+    expect(h.onHeartbeatsLost).toHaveBeenCalledTimes(1);
+    expect(h.onStop).not.toHaveBeenCalled();
+    expect(h.onGiveUp).not.toHaveBeenCalled();
+  });
+
+  it("a Free call counts only failures in a row: a good answer starts the count again", async () => {
+    const { h, server } = freeMeter([NETWORK_ERROR, SERVER_ERROR, { stop: false, secondsLeft: 300 }, NETWORK_ERROR, SERVER_ERROR, { stop: false, secondsLeft: 280 }]);
+    await settle();
+    for (let i = 0; i < 5; i++) await nextBeat();
+    expect(server.heartbeats()).toHaveLength(6);
+    expect(h.onHeartbeatsLost).not.toHaveBeenCalled();
+  });
+
+  it("a paid call (no onHeartbeatsLost) keeps tolerating failed heartbeats, as before", async () => {
+    const { h, server } = connectedMeter([NETWORK_ERROR, SERVER_ERROR, NETWORK_ERROR, SERVER_ERROR, NETWORK_ERROR]);
+    await settle();
+    for (let i = 0; i < 5; i++) await nextBeat();
+    expect(server.heartbeats()).toHaveLength(6); // still heartbeating
+    expect(h.onStop).not.toHaveBeenCalled();
+    expect(h.onGiveUp).not.toHaveBeenCalled();
   });
 
   it("does nothing without a callId (demo mode)", async () => {
@@ -226,8 +286,8 @@ describe("RealtimeCall: a cap stop ends the call through the hang-up path", () =
   const handlers = () => ({ onTurn: vi.fn(), onEnded: vi.fn(), onError: vi.fn(), onView: vi.fn(), onMinted: vi.fn(), onVoiceInfo: vi.fn(), onCapWarning: vi.fn() });
 
   /** Starts a call, opens the data channel and reports first audio, so the meter is heartbeating. */
-  async function liveCall(answers: Answer[], beforeAudio?: () => void) {
-    const server = stubServer(answers);
+  async function liveCall(answers: Answer[], beforeAudio?: () => void, mint: Answer = {}) {
+    const server = stubServer(answers, mint);
     const h = handlers();
     const call = new RealtimeCall(scenario, h);
     await call.start();
@@ -239,6 +299,29 @@ describe("RealtimeCall: a cap stop ends the call through the hang-up path", () =
     await settle();
     return { server, h, call };
   }
+
+  it("a Free call whose heartbeats fail 3 times in a row ends as a network drop with the connection message", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const { h, server } = await liveCall([{ stop: false, secondsLeft: 300 }, NETWORK_ERROR, SERVER_ERROR, NETWORK_ERROR], undefined, { freeRule: true });
+    for (let i = 0; i < 2; i++) { await vi.advanceTimersByTimeAsync(10_000); await settle(); }
+    expect(h.onError).not.toHaveBeenCalled(); // 2 failures: still on the call
+    expect(server.ends()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.waitFor(() => expect(h.onError).toHaveBeenCalledWith(HEARTBEAT_LOST_MESSAGE));
+    expect(h.onError).toHaveBeenCalledTimes(1);
+    expect(server.ends()).toEqual([{ url: "/api/usage/end", body: { callId: "call-1", reason: "network_drop" } }]);
+    expect(h.onView.mock.calls.at(-1)?.[0]).toMatchObject({ phase: "closed" });
+  });
+
+  it("a paid call (no freeRule in the mint answer) keeps running through failed heartbeats, as before", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const { h, server, call } = await liveCall([{ stop: false, secondsLeft: 300 }, NETWORK_ERROR, SERVER_ERROR, NETWORK_ERROR, SERVER_ERROR]);
+    for (let i = 0; i < 4; i++) { await vi.advanceTimersByTimeAsync(10_000); await settle(); }
+    expect(server.heartbeats()).toHaveLength(5);
+    expect(h.onError).not.toHaveBeenCalled();
+    expect(server.ends()).toEqual([]);
+    call.close(false);
+  });
 
   it("the warning reaches the trainer once", async () => {
     const { h, call } = await liveCall([{ stop: false, secondsLeft: 75, capWarning: true, message: FREE_CAP_WARNING_MESSAGE }]);

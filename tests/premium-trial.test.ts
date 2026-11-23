@@ -459,7 +459,8 @@ describe("8: neutral labels on the call screen and the session detail, no model 
     // The receipt is opaque random-looking base64url; everything else in the answer is checked as text.
     expect(JSON.stringify({ ...minted.body, receipt: null })).not.toMatch(MODEL_ID);
     expect(typeof minted.body.receipt).toBe("string");
-    expect(Object.keys(minted.body).sort()).toEqual(["callId", "clientSecret", "expiresAt", "maxSeconds", "nextCallStandard", "receipt", "sessionId", "voice", "voiceTier", "voiceTrial"].sort());
+    // freeRule: the trial call is a Free call, so the client ends it itself if its heartbeats keep failing (callMeter.ts).
+    expect(Object.keys(minted.body).sort()).toEqual(["callId", "clientSecret", "expiresAt", "freeRule", "maxSeconds", "nextCallStandard", "receipt", "sessionId", "voice", "voiceTier", "voiceTrial"].sort());
     expect(voiceInfoFrom(minted.body)).toEqual({ tier: "premium", nextCallStandard: true, trial: true, maxSeconds: 300 });
     // Durable provenance on the server: the actual model and the effective tier.
     expect(session(minted.body.callId as string)).toMatchObject({ realtimeModel: "model-premium-test", voiceTier: "premium", premiumTrial: true });
