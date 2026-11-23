@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CAP_STOP_DISCONNECT_MS, CallMeter, CapStopEnd, readHeartbeat } from "@/lib/callMeter";
+import { CAP_STOP_DISCONNECT_MS, CallMeter, CapStopEnd, END_GRACE_MS, readHeartbeat } from "@/lib/callMeter";
+import { FREE_END_GRACE_SECONDS } from "@/lib/usagePlan";
 import { RealtimeCall } from "@/components/call/RealtimeVoiceSession";
 import { CAP_STOPPED_MESSAGE, FREE_CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE } from "@/lib/billingUi";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
@@ -102,67 +103,99 @@ describe("CallMeter", () => {
 });
 
 describe("CapStopEnd: the ElevenLabs session's stop (wired as in TrainerClient's VoiceSession)", () => {
-  beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); });
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] }); });
 
   /**
-   * A stand-in for TrainerClient and an ElevenLabs session. The trainer's onError goes back to the briefing when no rep
-   * turn is in yet (unmounting the session, so later messages are lost); onEnded grades when a rep turn is in. The
-   * session delivers the rep's pending first utterance 200 ms after endSession, then disconnects 100 ms later.
+   * A stand-in for TrainerClient and an ElevenLabs session, in the installed SDK's order: endSession() closes the
+   * connection and onDisconnect fires right away, and nothing arrives after the close. The rep's first utterance is in
+   * flight when the stop lands; its final transcript arrives `transcriptAt` ms later if the session is still open. The
+   * trainer's onError goes back to the briefing when no rep turn is in yet; onEnded grades when one is.
    */
-  function elevenLabsCall(opts: { disconnects?: boolean } = {}) {
-    const t = { turns: [] as string[], phase: "live" as "live" | "idle", graded: false, errors: [] as string[], meterEnds: [] as string[], order: [] as string[] };
+  function elevenLabsCall(opts: { transcriptAt: number; disconnects?: boolean }) {
+    const t = { turns: [] as string[], phase: "live" as "live" | "idle", graded: false, errors: [] as string[], meterEnds: [] as string[], order: [] as string[], muted: false, closedAt: -1 };
+    let open = true;
     let userEnded = false;
+    const t0 = Date.now();
     const onError = (m: string) => { t.errors.push(m); t.order.push("error"); if (!t.turns.length) t.phase = "idle"; };
     const onEnded = () => { t.order.push("ended"); if (t.phase === "live" && t.turns.length) t.graded = true; };
     const meterEnd = (r: string) => { if (!t.meterEnds.length) t.meterEnds.push(r); };
+    // Wired as in VoiceSession.
     const capStop = new CapStopEnd({
+      mute: () => { t.muted = true; },
       hangUp: () => { userEnded = true; endSession(); },
       report: (m) => onError(m),
       ended: () => { meterEnd("user_hangup"); onEnded(); },
     });
     const onDisconnect = () => { meterEnd(userEnded ? "user_hangup" : "network_drop"); if (capStop.disconnected()) return; onEnded(); };
+    const onMessage = (role: "user" | "agent", text: string) => {
+      if (t.phase !== "live") return;
+      t.turns.push(`${role}: ${text}`);
+      t.order.push(`turn:${role}`);
+      if (role === "user") capStop.userTranscript();
+    };
     function endSession() {
-      setTimeout(() => { if (t.phase === "live") { t.turns.push("user: Could you send the quote again?"); t.order.push("turn"); } }, 200);
-      if (opts.disconnects !== false) setTimeout(onDisconnect, 300);
+      if (!open) return;
+      open = false;
+      t.closedAt = Date.now() - t0;
+      if (opts.disconnects !== false) onDisconnect(); // the SDK closes, then calls onDisconnect at once
     }
     // The exact paid lambda from VoiceSession (unchanged from main).
     const onStop = (m: string, freeCap: boolean) => capStop.stop(m, freeCap, () => { userEnded = true; endSession(); onError(m); });
-    return { t, onStop };
+    const stopAndRun = async (m: string, freeCap: boolean) => {
+      setTimeout(() => { if (open) onMessage("user", "Could you send the quote again?"); }, opts.transcriptAt);
+      onStop(m, freeCap);
+      await vi.advanceTimersByTimeAsync(6_000);
+    };
+    return { t, onStop, stopAndRun };
   }
 
-  it("a Free stop while the first utterance is still pending keeps it, then reports the message and grades the call", async () => {
-    const { t, onStop } = elevenLabsCall();
-    onStop(FREE_CAP_STOPPED_MESSAGE, true);
-    expect(t.errors).toEqual([]); // nothing reported while the hang-up is in flight
-    await vi.advanceTimersByTimeAsync(300);
-    expect(t.order).toEqual(["turn", "error", "ended"]);
+  it("the whole Free stop sequence stays well inside the server's end grace", () => {
+    expect(END_GRACE_MS).toBe(1500);
+    expect(END_GRACE_MS + CAP_STOP_DISCONNECT_MS).toBeLessThan(FREE_END_GRACE_SECONDS * 1000 / 2);
+  });
+
+  it("a Free stop while the first utterance is still transcribing: mic muted, the transcript is kept, then the hang-up, message and grading", async () => {
+    const { t, stopAndRun } = elevenLabsCall({ transcriptAt: 800 });
+    await stopAndRun(FREE_CAP_STOPPED_MESSAGE, true);
+    expect(t.muted).toBe(true);
+    expect(t.turns).toEqual(["user: Could you send the quote again?"]);
+    expect(t.order).toEqual(["turn:user", "error", "ended"]);
+    expect(t.closedAt).toBe(800); // hung up as soon as the final transcript landed, not at the end of the window
     expect(t.errors).toEqual([FREE_CAP_STOPPED_MESSAGE]);
     expect(t.graded).toBe(true);
     expect(t.meterEnds).toEqual(["user_hangup"]);
-    // A late duplicate stop or disconnect changes nothing.
-    onStop(FREE_CAP_STOPPED_MESSAGE, true);
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(t.order).toEqual(["turn", "error", "ended"]);
+  });
+
+  it("with no transcript in flight it hangs up when the flush window ends; a transcript after the window is not waited for", async () => {
+    const { t, stopAndRun } = elevenLabsCall({ transcriptAt: END_GRACE_MS + 500 });
+    await stopAndRun(FREE_CAP_STOPPED_MESSAGE, true);
+    expect(t.closedAt).toBe(END_GRACE_MS);
+    expect(t.turns).toEqual([]);
+    expect(t.order).toEqual(["error", "ended"]); // nothing was said, so back to the briefing with the message
+    expect(t.graded).toBe(false);
   });
 
   it("a Free stop whose disconnect never comes still reports and ends after the bounded wait, once", async () => {
-    const { t, onStop } = elevenLabsCall({ disconnects: false });
-    onStop(FREE_CAP_STOPPED_MESSAGE, true);
-    await vi.advanceTimersByTimeAsync(CAP_STOP_DISCONNECT_MS - 1);
-    expect(t.errors).toEqual([]);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(t.order).toEqual(["turn", "error", "ended"]);
+    const { t, stopAndRun, onStop } = elevenLabsCall({ transcriptAt: 400, disconnects: false });
+    await stopAndRun(FREE_CAP_STOPPED_MESSAGE, true);
+    expect(t.closedAt).toBe(400);
+    expect(t.order).toEqual(["turn:user", "error", "ended"]);
     expect(t.graded).toBe(true);
     expect(t.meterEnds).toEqual(["user_hangup"]);
+    // A late duplicate stop changes nothing.
+    onStop(FREE_CAP_STOPPED_MESSAGE, true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(t.order).toEqual(["turn:user", "error", "ended"]);
   });
 
-  it("a paid stop is unchanged from main: the message at once, so a still-pending first utterance is not waited for", async () => {
-    const { t, onStop } = elevenLabsCall();
-    onStop(CAP_STOPPED_MESSAGE, false);
-    expect(t.errors).toEqual([CAP_STOPPED_MESSAGE]); // reported synchronously, as on main
-    await vi.advanceTimersByTimeAsync(300);
-    expect(t.order).toEqual(["error", "ended"]); // main's behavior: back to the briefing, nothing graded
-    expect(t.graded).toBe(false);
+  it("a paid stop is unchanged from main: no mute, no flush, the session closes and the message comes at once", async () => {
+    const { t, stopAndRun } = elevenLabsCall({ transcriptAt: 800 });
+    await stopAndRun(CAP_STOPPED_MESSAGE, false);
+    expect(t.muted).toBe(false);
+    expect(t.closedAt).toBe(0);
+    expect(t.order).toEqual(["ended", "error"]); // main's order: endSession disconnects (onEnded), then onError
+    expect(t.turns).toEqual([]); // the in-flight transcript is lost, as on main
+    expect(t.errors).toEqual([CAP_STOPPED_MESSAGE]);
     expect(t.meterEnds).toEqual(["user_hangup"]);
   });
 });

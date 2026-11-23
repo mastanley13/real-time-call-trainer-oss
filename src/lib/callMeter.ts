@@ -42,28 +42,50 @@ export interface MeterHandlers {
   onWarn?: (message: string) => void;
 }
 
+/** Grace on hang-up (both voice engines) so the trainee's last words still get transcribed before the call closes. */
+export const END_GRACE_MS = 1500;
 /** How long a Free cap stop waits for the voice session to disconnect before it reports and ends the call anyway. */
 export const CAP_STOP_DISCONNECT_MS = 3_000;
 
 /**
- * Ends a voice session that the server stopped. A paid stop runs `paid` right away (the engine's own path, as before). A
- * Free cap stop hangs up the way the rep would, and reports the message and ends the call only once the session has
- * disconnected, so its last transcript turns are already in before the trainer decides between grading and the
- * briefing. If the disconnect never comes, it does both after CAP_STOP_DISCONNECT_MS. Once per call.
+ * Ends a voice session that the server stopped. A paid stop runs `paid` right away (the engine's own path, as before).
+ * A Free cap stop mutes the mic, then waits up to END_GRACE_MS for the rep's in-flight words to come back as a final
+ * transcript (sooner if one lands), then hangs up. Its message is reported and the call ended only once the session
+ * has disconnected, so every rep turn is in before the trainer decides between grading and the briefing. If the
+ * disconnect never comes, both happen CAP_STOP_DISCONNECT_MS after the hang-up. At most 4.5 s in all, well inside the
+ * server's FREE_END_GRACE_SECONDS. Once per call.
  */
 export class CapStopEnd {
   private message?: string;
+  private hungUp = false;
   private done = false;
+  private flushTimer?: ReturnType<typeof setTimeout>;
   private timer?: ReturnType<typeof setTimeout>;
 
-  constructor(private h: { hangUp: () => void; report: (message: string) => void; ended: () => void }, private timeoutMs = CAP_STOP_DISCONNECT_MS) {}
+  constructor(
+    private h: { mute?: () => void; hangUp: () => void; report: (message: string) => void; ended: () => void },
+    private o: { flushMs?: number; timeoutMs?: number } = {},
+  ) {}
 
   stop(message: string, freeCap: boolean, paid: (message: string) => void) {
     if (!freeCap) return paid(message);
     if (this.message !== undefined) return;
     this.message = message;
+    this.h.mute?.();
+    this.flushTimer = setTimeout(() => this.hangUpNow(), this.o.flushMs ?? END_GRACE_MS);
+  }
+
+  /** A final rep transcript arrived (call after recording the turn). During a Free stop's flush window it hangs up now. */
+  userTranscript() {
+    if (this.message !== undefined) this.hangUpNow();
+  }
+
+  private hangUpNow() {
+    if (this.hungUp || this.done) return;
+    this.hungUp = true;
+    clearTimeout(this.flushTimer);
     this.h.hangUp();
-    this.timer = setTimeout(() => this.disconnected(), this.timeoutMs);
+    this.timer = setTimeout(() => this.disconnected(), this.o.timeoutMs ?? CAP_STOP_DISCONNECT_MS);
   }
 
   /** The session disconnected. True when this ended a Free cap stop, so the caller must not end the call again. */
@@ -71,6 +93,7 @@ export class CapStopEnd {
     if (this.message === undefined) return false;
     if (this.done) return true;
     this.done = true;
+    clearTimeout(this.flushTimer);
     clearTimeout(this.timer);
     this.h.report(this.message);
     this.h.ended();

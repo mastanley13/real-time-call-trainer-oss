@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Scenario } from "@/lib/scenarios";
 import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
-import { CallMeter, type MeterEndReason } from "@/lib/callMeter";
+import { CallMeter, END_GRACE_MS, type MeterEndReason } from "@/lib/callMeter";
 import { LiveTranscript, applyLiveEvent, type LiveServerEvent } from "@/lib/live";
 import { expireSession, storedSessionKey } from "@/lib/sessionExpiry";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, realtimeAuthRedirect, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
@@ -52,8 +52,6 @@ export function voiceInfoFrom(data: { voiceTier?: unknown; nextCallStandard?: un
 }
 
 const EXPIRED = "The voice session expired before it connected. Start the call again.";
-/** Grace period on hang-up so the trainee's last words still get transcribed. */
-const END_GRACE_MS = 1500;
 
 /**
  * One OpenAI Realtime call over WebRTC (https://developers.openai.com/api/docs/guides/realtime-webrtc).

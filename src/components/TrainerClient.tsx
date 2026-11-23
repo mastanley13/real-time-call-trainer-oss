@@ -65,6 +65,8 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
       // ElevenLabs has no packet-level event; the first agent message is the first remote audio.
       if (role !== "user") meterRef.current.audio();
       onTurn({ role: role === "user" ? "user" : "assistant", text: message });
+      // A rep's final transcript during a Free cap stop's flush window: it is recorded above, so hang up now.
+      if (role === "user") capStopRef.current?.userTranscript();
     },
     onError: (m: unknown) => { meterRef.current.end("provider_error"); onError(typeof m === "string" ? m : "Voice connection error"); },
     onDisconnect: () => {
@@ -76,6 +78,8 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
   const { startSession, endSession, status, isSpeaking, isMuted, setMuted, getInputVolume, getOutputVolume } = conv;
   const startedRef = useRef(false);
   useEffect(() => { endRef.current = () => { void endSession(); }; }, [endSession]);
+  const muteRef = useRef<() => void>(() => {});
+  useEffect(() => { muteRef.current = () => setMuted(true); }, [setMuted]);
 
   useEffect(() => registerEnd(() => { userEndedRef.current = true; endSession(); }), [endSession, registerEnd]);
 
@@ -91,14 +95,16 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
         const info = voiceInfoFrom(data);
         if (info) onVoiceInfo?.(info);
         const capStop = new CapStopEnd({
+          mute: () => muteRef.current(),
           hangUp: () => { userEndedRef.current = true; endRef.current(); },
           report: (m) => latestRef.current.onError(m),
           ended: () => { meterRef.current.end("user_hangup"); latestRef.current.onEnded(); },
         });
         capStopRef.current = capStop;
         meterRef.current = new CallMeter(data.callId, {
-          // The server has already stopped and billed the call. A paid stop ends as before. A Free cap stop ends like a
-          // hang-up and says why only after the disconnect, so a first utterance still arriving is saved and graded.
+          // The server has already stopped and billed the call. A paid stop ends as before. A Free cap stop mutes the mic,
+          // waits briefly for the rep's last transcript, then hangs up and says why only after the disconnect, so a first
+          // utterance still in flight is saved and graded.
           onStop: (m, freeCap) => capStop.stop(m, freeCap, () => { userEndedRef.current = true; endRef.current(); onError(m); }),
           onGiveUp: () => endRef.current(),
           onWarn: (m) => warnRef.current?.(m),
