@@ -53,6 +53,10 @@ const ALLOWED = [
   "/x/%2E%2E/apis/y",
   "/api/../trainer",
   "/trainer?q=%ZZ", // the query is not decoded, so a malformed escape there is left alone
+  "/trainer/%20x", // single-encoded page paths are ordinary
+  "/scenarios/caf%C3%A9",
+  "/x/%252520y", // triple-encoded still resolves within the three passes
+  "/trainer?q=%25252561pi", // depth limit applies to the path only
   "/trainer?scenario=auto-inbound-used-crossover-lead&mode=text",
 ];
 
@@ -88,6 +92,24 @@ const MALFORMED = [
 
 describe("safeNextPath rejects malformed percent escapes in the path", () => {
   it.each(MALFORMED)("rejects %j", (bad) => {
+    expect(safeNextPath(bad)).toBe("/trainer");
+    expect(safeNextPath(bad, "/dashboard")).toBe("/dashboard");
+    expect(validNextPath(bad)).toBeNull();
+    expect(loginDestination(bad)).toBe("/trainer");
+    expect(signInHref(bad)).toBe("/login");
+  });
+});
+
+// Encoded more deeply than the decode pass limit (3): any "%" left after the last pass falls back, so a fourth
+// decode can never reveal an API path or a malformed escape.
+const TOO_DEEP = [
+  "/%25252561pi/x", // "/%61pi/x" after three passes, "/api/x" after four
+  "/x/%252525ZZ", // "/x/%ZZ" after three passes, malformed on the fourth
+  "/x/%25252520y", // harmless after four, but still holds a "%" after three
+];
+
+describe("safeNextPath rejects paths encoded beyond the decode limit", () => {
+  it.each(TOO_DEEP)("rejects %j", (bad) => {
     expect(safeNextPath(bad)).toBe("/trainer");
     expect(safeNextPath(bad, "/dashboard")).toBe("/dashboard");
     expect(validNextPath(bad)).toBeNull();
