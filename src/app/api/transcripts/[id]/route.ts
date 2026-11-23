@@ -12,6 +12,7 @@ import { canRegrade, gradable, gradedNote, isAiGrade, withoutModelId } from "@/l
 import { getCapabilities, llmGradingModel, llmKey } from "@/lib/serverConfig";
 import { SESSION_VIEW_SELECT, sessionView } from "@/lib/sessionView";
 import { notifyFirstGradedCall } from "@/lib/ghlWebhook";
+import { hasCallRow, hasGradedSibling, isCallRow, lockCall } from "@/lib/callRow";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -56,6 +57,8 @@ const REGRADE_WINDOW_MS = 10 * 60_000;
 const fail = (status: number, error: string, message: string, extra?: Record<string, unknown>) =>
   NextResponse.json({ error, message, ...extra }, { status });
 const notAllowed = () => fail(403, "regrade_not_allowed", "This call already has an AI grade. Ask your manager if you think it is wrong.");
+/** A legacy copy's grade would give its call a second graded row (src/lib/callRow.ts); answered like notAllowed. */
+class SecondGrade extends Error {}
 
 /**
  * Re-grade a stored session with the configured AI model and save the new grade. Managers/owners of the
@@ -104,6 +107,15 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   // Team views and assignment completion read this score, so nobody re-rolls an AI grade on their own call (a manager,
   // owner or platform admin included); a manager or owner of the org, or a platform admin, can re-grade anyone else's.
   if (!canRegrade({ managesOrg, ownsSession }, session.evaluation)) return notAllowed();
+  // One graded row per call (src/lib/callRow.ts), for everyone, platform admins included. Only the call's own row is
+  // re-graded: a copy of the call (a replay, a fill that lost a race) gets the same refusal while the call has its own
+  // row. A copy can never gain a grade, so this needs no lock. A legacy call (saved before call rows existed, so it has
+  // only copies) keeps the old rules, but never gains a second graded row: checked now, so no model call is spent, and
+  // again under the call's lock when the grade is written.
+  const callKey = session.realtimeSessionId;
+  const legacyCopy = !!callKey && !isCallRow(id, callKey);
+  if (legacyCopy && (await hasCallRow(prisma, session.userId, callKey))) return notAllowed();
+  if (callKey && session.overallScore === null && (await hasGradedSibling(prisma, session.userId, callKey, id))) return notAllowed();
 
   // Library personas come from the server's own copy, so a client can't loosen the rubric it is graded on.
   const libraryScenario = LIBRARY.find((s) => s.id === session.scenarioId);
@@ -141,43 +153,57 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const note = gradedNote(evaluation.note, graded.length, turns.length);
   const stored: Evaluation = { ...withoutModelId(evaluation), ...(note ? { note } : {}), evaluatedAt: new Date().toISOString() };
   const previous = session.evaluation as { method?: string; model?: string } | null;
+  const update = {
+    // Re-grading your own call passed canRegrade on the row as read before the model call (the call had no AI grade).
+    // That write lands only if the row is unchanged since (Prisma throws P2025 otherwise), so re-grades sent at once
+    // can't all pass and replace each other's AI grade. This holds for managers, owners and admins on their own calls too.
+    where: ownsSession ? { id, updatedAt: session.updatedAt } : { id },
+    data: {
+      evaluation: stored as unknown as Prisma.InputJsonValue,
+      overallScore: stored.overallScore,
+      grade: stored.grade,
+      goalAchieved: stored.goalAchievement.achieved,
+    },
+  } satisfies Prisma.TrainerSessionUpdateArgs;
+  const audit = {
+    data: {
+      userId: auth.id,
+      action: "session.regraded",
+      resource: id,
+      ip: clientIp(req),
+      userAgent: req.headers.get("user-agent")?.slice(0, 300) ?? null,
+      metadata: {
+        trainee: session.userId,
+        scenarioId: scenario.id,
+        scenarioSource: libraryScenario ? "library" : "client",
+        previousScore: session.overallScore,
+        previousMethod: previous?.method ?? null,
+        previousModel: previous?.model ?? null,
+        overallScore: stored.overallScore,
+        // Server-side audit only: the operator can still see which model graded, the browser never does.
+        model: llmGradingModel(),
+        graderVersion: stored.graderVersion ?? null,
+      } satisfies Prisma.InputJsonValue,
+    },
+  } satisfies Prisma.AuditEventCreateArgs;
   try {
-    await prisma.$transaction([
-      prisma.trainerSession.update({
-        // Re-grading your own call passed canRegrade on the row as read before the model call (the call had no AI grade).
-        // That write lands only if the row is unchanged since (Prisma throws P2025 otherwise), so re-grades sent at once
-        // can't all pass and replace each other's AI grade. This holds for managers, owners and admins on their own calls too.
-        where: ownsSession ? { id, updatedAt: session.updatedAt } : { id },
-        data: {
-          evaluation: stored as unknown as Prisma.InputJsonValue,
-          overallScore: stored.overallScore,
-          grade: stored.grade,
-          goalAchieved: stored.goalAchievement.achieved,
-        },
-      }),
-      prisma.auditEvent.create({
-        data: {
-          userId: auth.id,
-          action: "session.regraded",
-          resource: id,
-          ip: clientIp(req),
-          userAgent: req.headers.get("user-agent")?.slice(0, 300) ?? null,
-          metadata: {
-            trainee: session.userId,
-            scenarioId: scenario.id,
-            scenarioSource: libraryScenario ? "library" : "client",
-            previousScore: session.overallScore,
-            previousMethod: previous?.method ?? null,
-            previousModel: previous?.model ?? null,
-            overallScore: stored.overallScore,
-            // Server-side audit only: the operator can still see which model graded, the browser never does.
-            model: llmGradingModel(),
-            graderVersion: stored.graderVersion ?? null,
-          } satisfies Prisma.InputJsonValue,
-        },
-      }),
-    ]);
+    if (legacyCopy && callKey) {
+      // A legacy copy: under the call's lock, the call still has no own row (a save never adds one to a legacy call) and,
+      // while this row has no score, no other row of the call has one. Re-grades of two copies, or a re-grade and a
+      // save, run one after the other, so the second sees the first's committed grade and nothing in it commits.
+      await prisma.$transaction(async (tx) => {
+        await lockCall(tx, session.userId, callKey);
+        const current = await tx.trainerSession.findUnique({ where: { id }, select: { overallScore: true } });
+        if (await hasCallRow(tx, session.userId, callKey)) throw new SecondGrade();
+        if (current?.overallScore == null && (await hasGradedSibling(tx, session.userId, callKey, id))) throw new SecondGrade();
+        await tx.trainerSession.update(update);
+        await tx.auditEvent.create(audit);
+      });
+    } else {
+      await prisma.$transaction([prisma.trainerSession.update(update), prisma.auditEvent.create(audit)]);
+    }
   } catch (error) {
+    if (error instanceof SecondGrade) return notAllowed();
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
       // Usually the trainee's own re-grade from another tab saved first; then this one gets the answer a later request would.
       const current = await prisma.trainerSession.findUnique({ where: { id }, select: { evaluation: true } });

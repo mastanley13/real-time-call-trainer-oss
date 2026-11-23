@@ -9,10 +9,26 @@ const mocks = vi.hoisted(() => ({
   fake: null as unknown as ReturnType<typeof import("./fakePrisma").createFakePrisma>,
   authId: "u-1",
   notify: vi.fn(),
+  /** When set, the grader returns this AI grade (the PATCH re-grade's model call) after `gate` resolves. */
+  ai: null as null | { overallScore: number },
+  gate: Promise.resolve(),
+  aiCalls: 0,
 }));
 vi.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get: (_t, k) => (mocks.fake.db as Record<string | symbol, unknown>)[k] }) }));
 vi.mock("@/lib/apiAuth", () => ({ requireAuth: () => ({ id: mocks.authId, email: `${mocks.authId}@example.test` }), isDemoUser: () => false }));
 vi.mock("@/lib/ghlWebhook", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/ghlWebhook")>()), notifyFirstGradedCall: mocks.notify }));
+vi.mock("@/lib/grader", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/grader")>();
+  return {
+    ...actual,
+    evaluateCall: async (...args: Parameters<typeof actual.evaluateCall>) => {
+      if (!mocks.ai) return actual.evaluateCall(...args);
+      mocks.aiCalls += 1;
+      await mocks.gate;
+      return { method: "llm", graderVersion: "llm-test", overallScore: mocks.ai.overallScore, grade: "B", goalAchievement: { achieved: true }, criteria: [] } as unknown as Awaited<ReturnType<typeof actual.evaluateCall>>;
+    },
+  };
+});
 
 import { GRADE_SEAL_MAX_AGE_MS, sealEvaluation, stableStringify, transcriptDigest } from "@/lib/gradeSeal";
 import { receiptRowId, sealMintReceipt } from "@/lib/mintReceipt";
@@ -21,6 +37,7 @@ import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { splitSeal } from "@/lib/sessionStore";
 import type { Evaluation } from "@/lib/grader-types";
 import { POST as saveTranscript } from "@/app/api/transcripts/route";
+import { PATCH as regradePATCH } from "@/app/api/transcripts/[id]/route";
 import { POST as evaluateCall } from "@/app/api/evaluate-call/route";
 
 const KEY = "test-jwt-secret-that-is-long-enough-0123456789";
@@ -56,6 +73,9 @@ beforeEach(() => {
   fake = createFakePrisma();
   mocks.fake = fake;
   mocks.notify.mockReset();
+  mocks.ai = null;
+  mocks.gate = Promise.resolve();
+  mocks.aiCalls = 0;
   // A fresh user per test, so the per-account save limit never carries over.
   userId = mocks.authId = `u-seal-${++n}`;
   if (!fake.rows("organization").some((o) => o.id === "org-1")) fake.seed("organization", { id: "org-1", code: "123" });
@@ -214,16 +234,18 @@ describe("POST /api/transcripts: a seal stores one graded row, for its own call,
     });
 
     it("stores the grade when the receipt-only save commits between the graded save's read and its insert", async () => {
-      // The graded save tries to insert the call's row; just before, the receipt-only save inserts it.
-      const db = fake.db.trainerSession as unknown as { create: (args: { data: Record<string, unknown> }) => Promise<unknown> };
-      const realCreate = db.create.bind(db);
+      // The graded save reads where the call's row is (no row has id = sessionId); just after, before it takes the call's
+      // lock and inserts, the receipt-only save inserts the call's row. The insert is then a P2002 and the grade claims it.
+      const db = fake.db.trainerSession as unknown as { findUnique: (args: { where: { id: string } }) => Promise<unknown> };
+      const realFind = db.findUnique.bind(db);
       let raced = false;
-      db.create = async (args) => {
-        if (!raced && args.data.id === receiptRowId(SID) && args.data.overallScore != null) {
+      db.findUnique = async (args) => {
+        const out = await realFind(args);
+        if (!raced && args.where.id === SID) {
           raced = true;
           expect((await (await save({ sessionId: SID, realtimeReceipt: receipt() })).json()).graded).toBe(false);
         }
-        return realCreate(args);
+        return out;
       };
       expect(await (await save({ sessionId: SID, ...sealedGrade(SID) })).json()).toEqual({ id: receiptRowId(SID), graded: true });
       expect(raced).toBe(true);
@@ -384,5 +406,152 @@ describe("POST /api/evaluate-call binds the seal to the call's sessionId and cal
     expect(unsealed.seal).toBeUndefined();
     expect((await (await save({ sessionId: textId(), evaluation: unsealed.evaluation })).json()).graded).toBe(false);
     expect(gradedRows()).toHaveLength(1);
+  });
+});
+
+describe("PATCH /api/transcripts/[id]: one graded row per call (src/lib/callRow.ts)", () => {
+  const NOT_ALLOWED = { error: "regrade_not_allowed", message: "This call already has an AI grade. Ask your manager if you think it is wrong." };
+  const patch = (id: string) =>
+    regradePATCH(new NextRequest(`http://localhost/api/transcripts/${id}`, { method: "PATCH", body: JSON.stringify({ scenario }), headers: { "content-type": "application/json" } }), { params: Promise.resolve({ id }) });
+  const as = (id: string) => { mocks.authId = id; };
+  let trainee: string;
+  let manager: string;
+  let admin: string;
+  const callRows = (sessionId: string) => sessions().filter((s) => s.realtimeSessionId === sessionId);
+  /** Holds every model call until `count` have started, so each re-grade passes its pre-checks before any writes. */
+  const holdGrades = (count: number) => {
+    let release!: () => void;
+    mocks.gate = new Promise<void>((r) => (release = r));
+    const started = setInterval(() => { if (mocks.aiCalls >= count) { clearInterval(started); release(); } }, 0);
+  };
+
+  beforeEach(() => {
+    vi.stubEnv("LLM_API_KEY", "test-key");
+    mocks.ai = { overallScore: 88 };
+    trainee = userId;
+    manager = `${userId}-manager`;
+    admin = `${userId}-admin`;
+    fake.seed("user", { id: manager, email: `${manager}@example.test`, organizationId: "org-1", role: "manager" });
+    fake.seed("user", { id: admin, email: `${admin}@example.test`, organizationId: "org-2", isPlatformAdmin: true });
+  });
+
+  /** A call saved twice with the same sealed rules-based grade: the call's own row, graded, and an ungraded replay copy. */
+  const savedWithReplay = async () => {
+    mocks.ai = null;
+    const sessionId = textId();
+    const grade = sealedGrade(sessionId);
+    const own = (await (await save({ sessionId, ...grade })).json()) as { id: string; graded: boolean };
+    const copy = (await (await save({ sessionId, ...grade })).json()) as { id: string; graded: boolean };
+    mocks.ai = { overallScore: 88 };
+    expect(own).toEqual({ id: receiptRowId(sessionId), graded: true });
+    expect(copy.graded).toBe(false);
+    return { sessionId, own: own.id, copy: copy.id };
+  };
+
+  it("refuses to re-grade a replay copy, for the owner, their manager and a platform admin, without a model call", async () => {
+    const { sessionId, copy } = await savedWithReplay();
+    for (const who of [trainee, manager, admin]) {
+      as(who);
+      const res = await patch(copy);
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual(NOT_ALLOWED);
+    }
+    expect(mocks.aiCalls).toBe(0);
+    expect(callRows(sessionId).filter((s) => s.overallScore != null)).toHaveLength(1);
+  });
+
+  it("still re-grades the call's own row: the owner on a rules-based grade, a manager on an AI grade", async () => {
+    const { sessionId, own } = await savedWithReplay();
+    as(trainee);
+    expect((await patch(own)).status).toBe(200);
+    expect(sessions().find((s) => s.id === own)).toMatchObject({ overallScore: 88, evaluation: expect.objectContaining({ method: "llm" }) });
+    // Now an AI grade: the owner may not re-roll it; their manager may.
+    expect(await (await patch(own)).json()).toEqual(NOT_ALLOWED);
+    as(manager);
+    expect((await patch(own)).status).toBe(200);
+    expect(callRows(sessionId).filter((s) => s.overallScore != null).map((s) => s.id)).toEqual([own]);
+  });
+
+  it("lands an ungraded first save on the call's own row, so it can be re-graded; its replay copy can't", async () => {
+    const sessionId = textId();
+    const first = (await (await save({ sessionId })).json()) as { id: string; graded: boolean };
+    expect(first).toEqual({ id: receiptRowId(sessionId), graded: false });
+    const copy = (await (await save({ sessionId })).json()) as { id: string };
+    expect(copy.id).not.toBe(first.id);
+    as(trainee);
+    expect(await (await patch(copy.id)).json()).toEqual(NOT_ALLOWED);
+    expect((await patch(first.id)).status).toBe(200);
+    expect(callRows(sessionId).filter((s) => s.overallScore != null).map((s) => s.id)).toEqual([first.id]);
+  });
+
+  it("re-grades a metered call's own row and refuses its copy", async () => {
+    const CALL = "cm-call-regrade-01";
+    fake.seed("trainerSession", { id: CALL, userId, organizationId: "org-1", transcript: [], evaluation: null, overallScore: null, grade: null, goalAchieved: null });
+    expect(await (await save({ sessionId: CALL, callId: CALL })).json()).toEqual({ id: CALL, graded: false });
+    const copy = (await (await save({ sessionId: CALL, callId: CALL })).json()) as { id: string };
+    as(trainee);
+    expect(await (await patch(copy.id)).json()).toEqual(NOT_ALLOWED);
+    expect((await patch(CALL)).status).toBe(200);
+    expect(callRows(CALL).filter((s) => s.overallScore != null).map((s) => s.id)).toEqual([CALL]);
+  });
+
+  it("concurrent re-grades of the original and its replay copy leave one graded row", async () => {
+    const sessionId = textId();
+    const first = (await (await save({ sessionId })).json()) as { id: string };
+    const copy = (await (await save({ sessionId })).json()) as { id: string };
+    as(manager);
+    const [a, b] = await Promise.all([patch(first.id), patch(copy.id)]);
+    expect([a.status, b.status]).toEqual([200, 403]);
+    expect(callRows(sessionId).filter((s) => s.overallScore != null).map((s) => s.id)).toEqual([first.id]);
+  });
+
+  describe("legacy call (saved before call rows existed: only copies, under random row ids)", () => {
+    const LEGACY = "text-1761559200000";
+    const seedLegacy = (id: string, score: number | null = null) =>
+      fake.seed("trainerSession", { id, userId, organizationId: "org-1", scenarioId: scenario.id, transcript, realtimeSessionId: LEGACY, evaluation: score == null ? null : { method: "heuristic", overallScore: score }, overallScore: score, grade: score == null ? null : "C", goalAchieved: null });
+    const graded = () => callRows(LEGACY).filter((s) => s.overallScore != null).map((s) => s.id).sort();
+
+    it("keeps the old rules on a lone legacy row: the owner re-grades it while it has no AI grade", async () => {
+      seedLegacy("legacy-a");
+      as(trainee);
+      expect((await patch("legacy-a")).status).toBe(200);
+      expect(graded()).toEqual(["legacy-a"]);
+      expect(await (await patch("legacy-a")).json()).toEqual(NOT_ALLOWED);
+    });
+
+    it("refuses a legacy copy while another row of the call has a score, but lets a graded one be re-graded", async () => {
+      seedLegacy("legacy-a", 55);
+      seedLegacy("legacy-b");
+      as(manager);
+      expect(await (await patch("legacy-b")).json()).toEqual(NOT_ALLOWED);
+      expect(mocks.aiCalls).toBe(0);
+      expect((await patch("legacy-a")).status).toBe(200);
+      expect(graded()).toEqual(["legacy-a"]);
+    });
+
+    it("concurrent re-grades of two ungraded legacy copies store one grade (the second is refused under the call's lock)", async () => {
+      seedLegacy("legacy-a");
+      seedLegacy("legacy-b");
+      as(manager);
+      holdGrades(2);
+      const results = await Promise.all([patch("legacy-a"), patch("legacy-b")]);
+      expect(mocks.aiCalls).toBe(2);
+      expect(results.map((r) => r.status).sort()).toEqual([200, 403]);
+      expect(graded()).toHaveLength(1);
+      expect(fake.rawQueries.filter((q) => q.sql.includes("pg_advisory_xact_lock") && String(q.values[0]).includes(LEGACY))).toHaveLength(2);
+    });
+
+    it("never gives a legacy call its own row: a new sealed grade for it is saved as an ungraded copy, also while a re-grade runs", async () => {
+      seedLegacy("legacy-a");
+      as(trainee);
+      holdGrades(1);
+      const [regrade, saved] = await Promise.all([patch("legacy-a"), save({ sessionId: LEGACY, ...sealedGrade(LEGACY) })]);
+      expect(regrade.status).toBe(200);
+      const body = (await saved.json()) as { id: string; graded: boolean };
+      expect(body.graded).toBe(false);
+      expect(body.id).not.toBe(receiptRowId(LEGACY));
+      expect(sessions().some((s) => s.id === receiptRowId(LEGACY))).toBe(false);
+      expect(graded()).toEqual(["legacy-a"]);
+    });
   });
 });

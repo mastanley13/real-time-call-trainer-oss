@@ -107,6 +107,7 @@ export function createFakePrisma() {
     };
     return {
       findUnique: async (args: { where: Where; include?: { organization?: boolean } }) => { log("findUnique"); return withInclude(find(args.where) ?? null, args); },
+      findFirst: async (args: { where: Where }) => { log("findFirst"); return copy(find(args.where)); },
       findUniqueOrThrow: async (args: { where: Where; include?: { organization?: boolean } }) => {
         log("findUniqueOrThrow");
         const r = find(args.where);
@@ -172,20 +173,63 @@ export function createFakePrisma() {
       calls.push(`raw:${strings.join("?")}`);
       return [];
     },
-    /** Runs fn on the same store; a throw restores the data as it was, like a rolled-back transaction. */
-    $transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    /**
+     * Runs fn on the same store; a throw restores the data as it was, like a rolled-back transaction. Inside it,
+     * pg_advisory_xact_lock really waits: transactions asking for the same key run one after the other, and the lock
+     * is released when the transaction ends. The rollback snapshot is retaken when the lock is granted, so a rollback
+     * does not undo what the transaction it waited for committed. That is right while the lock is the transaction's
+     * first statement, as in every caller (ghlWebhook.ts, callRow.ts).
+     */
+    $transaction: async <T>(fn: ((tx: unknown) => Promise<T>) | Promise<unknown>[]): Promise<T> => {
+      // The array form: its operations already ran, in order, on the same store (no rollback is modelled for it).
+      if (Array.isArray(fn)) return (await Promise.all(fn)) as T;
       const entry = { snapshot: structuredClone(data) };
+      const releases: (() => void)[] = [];
+      // A transaction that throws before it wrote anything has nothing to undo, and restoring the snapshot would drop
+      // what concurrent requests committed meanwhile; so only a transaction that wrote is rolled back.
+      let wrote = false;
+      const WRITES = new Set(["create", "update", "updateMany", "deleteMany"]);
+      const tracked = Object.fromEntries(Object.entries(db).map(([k, v]) => [k, typeof v === "object" && v
+        // A write that throws (P2002, not found) changed nothing, so only a write that returned counts.
+        ? Object.fromEntries(Object.entries(v).map(([m, f]) => [m, WRITES.has(m) && typeof f === "function" ? async (...a: unknown[]) => { const r = await (f as (...x: unknown[]) => Promise<unknown>)(...a); wrote = true; return r; } : f]))
+        : v]));
+      const tx = {
+        ...tracked,
+        $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          const out = await db.$queryRaw(strings, ...values);
+          if (strings.join("?").includes("pg_advisory_xact_lock")) {
+            releases.push(await acquireAdvisory(String(values[0])));
+            entry.snapshot = structuredClone(data);
+          }
+          return out;
+        },
+      };
       open.push(entry);
       try {
-        return await fn(db);
+        return await fn(tx);
       } catch (e) {
-        data = entry.snapshot;
+        if (wrote) data = entry.snapshot;
         throw e;
       } finally {
         open.splice(open.indexOf(entry), 1);
+        for (const release of releases) release();
       }
     },
   };
+  /** Advisory lock tails by key: each waiter chains on the previous holder and releases its own turn. */
+  const advisory = new Map<string, Promise<void>>();
+  async function acquireAdvisory(key: string): Promise<() => void> {
+    const prev = advisory.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const mine = new Promise<void>((r) => (release = r));
+    const tail = prev.then(() => mine);
+    advisory.set(key, tail);
+    await prev;
+    return () => {
+      release();
+      if (advisory.get(key) === tail) advisory.delete(key);
+    };
+  }
 
   return {
     db,

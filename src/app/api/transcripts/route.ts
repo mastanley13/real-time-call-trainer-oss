@@ -6,6 +6,7 @@ import { rateLimit, readJsonLimited } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { verifySeal } from "@/lib/gradeSeal";
 import { isReceiptReplay, receiptRowId, verifyMintReceipt } from "@/lib/mintReceipt";
+import { isLegacyCall, lockCall } from "@/lib/callRow";
 import { HAS_TRANSCRIPT } from "@/lib/usage";
 import { tierOfModel } from "@/lib/voiceTierServer";
 import { sessionListItem } from "@/lib/sessionView";
@@ -108,9 +109,8 @@ export async function POST(req: NextRequest) {
     const unmetered = { ...owner, endedAt: new Date() };
     // The row whose primary key is this save's sessionId, if any. A metered voice call's sessionId is its metering call
     // id, so for a metered call this is the row beginCall created at mint, before any grade or receipt for it existed.
-    // Read only when a verified receipt or grade needs to know where it may land.
-    const sessionRow = !receiptModel && !ev ? null
-      : body.callId === body.sessionId ? metered
+    // Read for every save: it decides where the call's own row is (src/lib/callRow.ts).
+    const sessionRow = body.callId === body.sessionId ? metered
       : await prisma.trainerSession.findUnique({ where: { id: body.sessionId }, select: { userId: true } });
     // Where a verified receipt may log its model. A metered call's receipt is bound to its metering call id, so the
     // model belongs on that call's own row (the one beginCall created) and nowhere else. An unmetered call has no
@@ -149,16 +149,28 @@ export async function POST(req: NextRequest) {
       }
       // Otherwise another save of this call filled it first: this one becomes a separate ungraded row below, as any save
       // that doesn't fill the call's row always has.
-    } else if ((receiptModel || ev) && !sessionRow) {
+    } else if (!sessionRow) {
+      // The call's own row (src/lib/callRow.ts). Every unmetered save claims it, graded or not, so the first save of a
+      // call always lands there and a later re-grade of that save is allowed; copies are not re-gradable.
       const rowId = receiptRowId(body.sessionId);
       try {
         // Unmetered calls have no row at mint, so the tier is stored here, mapped from the sealed model on the server
         // when the save lands (within the receipt's lifetime) and never recomputed later.
-        created = await prisma.trainerSession.create({
-          data: { id: rowId, ...unmetered, ...fieldsFor(!!ev), ...(receiptModel ? { realtimeModel: receiptModel, voiceTier: tierOfModel(receiptModel) } : {}) },
+        // Under the call's lock, and never for a legacy call (only copies, saved before call rows existed): a legacy
+        // copy may be re-graded under the same lock, so its call must not gain a second gradable row here. A P2002 rolls
+        // the transaction back and surfaces below unchanged.
+        const row = await prisma.$transaction(async (tx) => {
+          await lockCall(tx, dbUser.id, body.sessionId);
+          if (await isLegacyCall(tx, dbUser.id, body.sessionId)) return null;
+          return tx.trainerSession.create({
+            data: { id: rowId, ...unmetered, ...fieldsFor(!!ev), ...(receiptModel ? { realtimeModel: receiptModel, voiceTier: tierOfModel(receiptModel) } : {}) },
+          });
         });
-        receiptLogged = !!receiptModel;
-        graded = !!ev;
+        if (row) {
+          created = row;
+          receiptLogged = !!receiptModel;
+          graded = !!ev;
+        }
       } catch (e) {
         if (!isReceiptReplay(e)) throw e;
         // The call's row already exists (P2002 means the other insert committed). It may hold only the receipt's model
@@ -169,8 +181,8 @@ export async function POST(req: NextRequest) {
         //   The save's own fields (with the sealed transcript) go with it, so the row holds what was graded.
         // - model: lands only while the row has none (realtimeModel = null), the same rule as the metered row below,
         //   so a receipt is still logged on exactly one row, once.
-        // Only rows of this user are touched. Ungraded text saves never claim this row (they have no receipt and no
-        // grade), so they can't block a later grade either.
+        // Only rows of this user are touched. An ungraded save that created this row first leaves overallScore null,
+        // so it can't block a later grade either.
         if (ev) {
           const claimed = await prisma.trainerSession.updateMany({ where: { id: rowId, userId: dbUser.id, overallScore: null }, data: fieldsFor(true) });
           if (claimed.count === 1) {
@@ -184,8 +196,9 @@ export async function POST(req: NextRequest) {
         }
       }
     }
-    // Everything else: an ungraded row of its own. That covers a grade whose call already has a row it did not land on
-    // (a replay, or a seal for a metered call saved without its callId), and a fill that lost the race.
+    // Everything else: an ungraded copy (src/lib/callRow.ts). That covers a grade whose call already has a row it did not
+    // land on (a replay, or a seal for a metered call saved without its callId), a fill that lost the race, and a save of
+    // a legacy call. PATCH /api/transcripts/[id] doesn't re-grade a copy while the call has its own row.
     if (!created) created = await prisma.trainerSession.create({ data: { ...unmetered, ...fieldsFor(false) } });
     // Activation for the CRM: only a stored sealed grade counts. Scheduled as soon as the graded row is written, so a
     // failure in the receipt or audit step below cannot skip it. notifyFirstGradedCall decides in the background, under
