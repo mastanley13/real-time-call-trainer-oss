@@ -299,6 +299,26 @@ describe("POST /api/realtime/sdp", () => {
     expect(init.body).toBe("v=0 offer sdp");
   });
 
+  it("aborts the upstream call when the browser aborts its request", async () => {
+    vi.stubEnv("DEMO_MODE", "true");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let upstream: AbortSignal | undefined;
+    vi.stubGlobal("fetch", vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      upstream = init?.signal ?? undefined;
+      upstream?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    })));
+    const browser = new AbortController();
+    const pending = sdpPOST(new NextRequest("http://localhost/api/realtime/sdp", {
+      method: "POST", headers: { "content-type": "application/json" }, signal: browser.signal,
+      body: JSON.stringify({ clientSecret: "ek_abc123456789", sdp: "v=0 offer sdp" }),
+    }));
+    await vi.waitFor(() => expect(upstream).toBeDefined());
+    expect(upstream!.aborted).toBe(false);
+    browser.abort();
+    expect(upstream!.aborted).toBe(true);
+    expect((await pending).status).toBe(502);
+  });
+
   it("refuses anything that is not an ephemeral secret", async () => {
     vi.stubEnv("DEMO_MODE", "true");
     const fetchMock = vi.fn();

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, VoiceAttempts, callClockSeconds, elevenLabsConnectTimeout, elevenLabsHangUp, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoicePhase } from "@/lib/callStatus";
+import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, DISCONNECTED_BEFORE_CONNECT_MESSAGE, VoiceAttempts, callClockSeconds, elevenLabsConnectTimeout, elevenLabsDisconnect, elevenLabsHangUp, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoicePhase } from "@/lib/callStatus";
 import { CallMeter } from "@/lib/callMeter";
 
 const src = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
@@ -318,6 +318,43 @@ describe("hang-up and timeout right after onConnect, before the connected render
   });
 });
 
+describe("ElevenLabs disconnect before onConnect (Codex re-review)", () => {
+  const trainer = src("src/components/TrainerClient.tsx");
+  const sdk = trainer.slice(trainer.indexOf("const conv = useConversation({"), trainer.indexOf("const { startSession, endSession"));
+  const bound = () => { const a = new VoiceAttempts(); a.bind(a.begin()); return a; };
+
+  it("is a failed connect: settled as failed_connect, reported once with the connect error, never graded", () => {
+    const a = bound();
+    expect(elevenLabsDisconnect(a, { failed: false, userEnded: false })).toEqual({ meter: "failed_connect", then: "report_connect_failure" });
+    expect(elevenLabsDisconnect(a, { failed: false, userEnded: true })).toEqual({ meter: "failed_connect", then: "report_connect_failure" });
+    // An SDK error already reported the connect failure: the disconnect after it adds nothing.
+    expect(elevenLabsDisconnect(a, { failed: true, userEnded: false })).toEqual({ meter: "failed_connect", then: "nothing" });
+  });
+
+  it("a retry whose seeded rep turns would otherwise be graded goes back to the briefing with Retry voice and Switch to text", () => {
+    const a = bound();
+    const d = elevenLabsDisconnect(a, { failed: false, userEnded: false });
+    expect(d.then).not.toBe("grade");
+    // The trainer leaves the call for any connect failure, even when seeded rep turns exist (repSpoke true).
+    expect(leavesCallOnError({ connectFailed: true }, true)).toBe(true);
+    expect(DISCONNECTED_BEFORE_CONNECT_MESSAGE).toMatch(/retry voice or switch to text/);
+    expect(DISCONNECTED_BEFORE_CONNECT_MESSAGE).not.toContain(EM_DASH);
+  });
+
+  it("after onConnect it settles as a hang-up or a drop and grades, as before", () => {
+    const a = bound();
+    a.connect();
+    expect(elevenLabsDisconnect(a, { failed: false, userEnded: true })).toEqual({ meter: "user_hangup", then: "grade" });
+    expect(elevenLabsDisconnect(a, { failed: false, userEnded: false })).toEqual({ meter: "network_drop", then: "grade" });
+  });
+
+  it("onDisconnect follows it: grades only on grade, else reports the connect failure with the flag", () => {
+    expect(sdk).toMatch(/onDisconnect: \(\) => \{\s*if \(!live\(\)\) return;/);
+    expect(sdk).toContain("meterRef.current.end(d.meter);");
+    expect(sdk).toContain('else if (d.then === "report_connect_failure") { connectFailedRef.current = true; onError(DISCONNECTED_BEFORE_CONNECT_MESSAGE, { connectFailed: true }); }');
+  });
+});
+
 describe("connect timeout", () => {
   it("is a fixed 20 second limit", () => {
     expect(CONNECT_TIMEOUT_MS).toBe(20_000);
@@ -362,7 +399,7 @@ describe("a failed connect on a retry with prior turns (SAL-1039 round 3)", () =
   it("ElevenLabs flags a token failure and the timeout, and the disconnect after a timeout does not grade", () => {
     const trainer = src("src/components/TrainerClient.tsx");
     expect(trainer).toContain('onError(e instanceof Error ? e.message : "Failed to start the call.", { connectFailed: true });');
-    expect(trainer).toContain("if (!connectFailedRef.current) onEnded();");
+    expect(trainer).toContain("elevenLabsDisconnect(attempts, { failed: connectFailedRef.current, userEnded: userEndedRef.current });");
     expect(trainer).toMatch(/userEndedRef\.current = false;\s*connectFailedRef\.current = false;/);
   });
 
@@ -371,7 +408,9 @@ describe("a failed connect on a retry with prior turns (SAL-1039 round 3)", () =
     const sdk = trainer.slice(trainer.indexOf("const conv = useConversation({"), trainer.indexOf("const { startSession, endSession"));
     expect(sdk).toMatch(/attempts\.connect\(\); setWasConnected\(true\); meterRef\.current\.open\(\);\s*\},/);
     expect(sdk).toMatch(/const beforeConnect = !attempts\.connected\(\);\s*if \(beforeConnect\) connectFailedRef\.current = true;\s*onError\([^;]*beforeConnect \? \{ connectFailed: true \} : undefined\);/);
-    expect(sdk).toContain("if (!connectFailedRef.current) onEnded();");
+    // The disconnect grades only when elevenLabsDisconnect says so (connected, and no earlier failure).
+    expect(sdk).toContain('if (d.then === "grade") onEnded();');
+    expect(sdk.match(/onEnded\(\)/g)).toHaveLength(1);
     // Each attempt starts not failed, and not connected until its own session binds and connects (VoiceAttempts).
     expect(trainer).toMatch(/userEndedRef\.current = false;\s*connectFailedRef\.current = false;/);
     expect(trainer).toMatch(/attempts\.bind\(attempt\);\s*startSession\(\{/);

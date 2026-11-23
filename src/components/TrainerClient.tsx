@@ -14,7 +14,7 @@ import { PageSkeleton } from "@/components/ui/Skeleton";
 import Briefing from "@/components/call/Briefing";
 import Deck from "@/components/call/Deck";
 import { CallMeter } from "@/lib/callMeter";
-import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, VoiceAttempts, elevenLabsConnectTimeout, elevenLabsHangUp, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoiceErrorInfo } from "@/lib/callStatus";
+import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, DISCONNECTED_BEFORE_CONNECT_MESSAGE, VoiceAttempts, elevenLabsConnectTimeout, elevenLabsDisconnect, elevenLabsHangUp, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoiceErrorInfo } from "@/lib/callStatus";
 import RealtimeVoiceSession, { voiceInfoFrom, type VoiceInfo, type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
@@ -90,8 +90,11 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onCancelled,
     },
     onDisconnect: () => {
       if (!live()) return;
-      meterRef.current.end(userEndedRef.current ? "user_hangup" : "network_drop");
-      if (!connectFailedRef.current) onEnded();
+      // Before onConnect this is a failed connect: back to the briefing with the connect error, nothing graded.
+      const d = elevenLabsDisconnect(attempts, { failed: connectFailedRef.current, userEnded: userEndedRef.current });
+      meterRef.current.end(d.meter);
+      if (d.then === "grade") onEnded();
+      else if (d.then === "report_connect_failure") { connectFailedRef.current = true; onError(DISCONNECTED_BEFORE_CONNECT_MESSAGE, { connectFailed: true }); }
     },
   });
   const { startSession, endSession, status, isSpeaking, isMuted, setMuted, getInputVolume, getOutputVolume } = conv;

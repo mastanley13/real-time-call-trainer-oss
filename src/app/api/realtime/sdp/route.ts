@@ -33,12 +33,15 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // The browser aborting this request (timeout, hang-up, unmount) cancels the upstream call too. If OpenAI already
+    // created the session, the answer goes nowhere: the browser closed its peer connection, so the session ends on its
+    // own ICE timeout, and the call was settled as failed_connect, so it bills 0.
     const res = await fetch("https://api.openai.com/v1/realtime/calls", {
       method: "POST",
       headers: { Authorization: `Bearer ${body.clientSecret}`, "Content-Type": "application/sdp" },
       body: body.sdp,
       cache: "no-store",
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.any([req.signal, AbortSignal.timeout(15_000)]),
     });
     if (!res.ok) {
       console.error("[realtime/sdp] upstream status", res.status);

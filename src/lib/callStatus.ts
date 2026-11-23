@@ -4,7 +4,7 @@
  * (SAL-1039: the footer said "Mic is live" while the header was still waiting for the mic). Pure and client-safe.
  */
 
-import { CallMeter } from "./callMeter";
+import { CallMeter, type MeterEndReason } from "./callMeter";
 
 /** Sent with a voice error. connectFailed: the call never connected, so the trainer returns to the briefing even when a retry seeded rep turns. */
 export interface VoiceErrorInfo { connectFailed?: boolean }
@@ -70,6 +70,19 @@ export function elevenLabsHangUp(a: VoiceAttempts, d: AttemptEndDeps): "ended" |
   d.failAttempt();
   d.endSession();
   return "cancelled";
+}
+
+/** The SDK closed the call before it connected, with no error of its own. Offered with Retry voice and Switch to text. */
+export const DISCONNECTED_BEFORE_CONNECT_MESSAGE = "The voice call closed before it connected. Check your mic and network, then retry voice or switch to text.";
+
+/**
+ * The ElevenLabs onDisconnect for the current attempt. Once connected it settles the meter as a hang-up or a drop and
+ * grades. Before onConnect it is a failed connect, never graded (a retry may have seeded rep turns): settled as
+ * failed_connect and reported once with the connect error, unless an earlier error already reported it (`failed`).
+ */
+export function elevenLabsDisconnect(a: VoiceAttempts, s: { failed: boolean; userEnded: boolean }): { meter: MeterEndReason; then: "grade" | "report_connect_failure" | "nothing" } {
+  if (!a.connected()) return { meter: "failed_connect", then: s.failed ? "nothing" : "report_connect_failure" };
+  return { meter: s.userEnded ? "user_hangup" : "network_drop", then: s.failed ? "nothing" : "grade" };
 }
 
 /**
