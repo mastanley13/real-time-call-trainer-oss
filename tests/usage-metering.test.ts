@@ -296,17 +296,25 @@ describe("billing a call", () => {
     expect(await endCall("u-1", begun.callId, "network_drop", at(0.9))).toMatchObject({ outcome: "billed", billedMinutes: 1 });
   });
 
-  it("a drop settlement locks the user row before counting; other endings take no lock (each mint takes one)", async () => {
+  it("every settlement transaction locks the user row as its first statement, before the drop count and any allowance write", async () => {
     addUser("u-1");
-    await runCall("u-1", { endAt: 20, reason: "user_hangup", beats: false });
-    expect(fake.rawQueries).toHaveLength(1); // the mint's lock only
-    const { callId } = await runCall("u-1", { endAt: 20, reason: "network_drop", start: 100, beats: false });
-    expect(fake.rawQueries).toHaveLength(3); // + the second mint's lock + the drop's lock
+    const LOCK_USER = 'raw:SELECT "id" FROM "User" WHERE "id" = ? FOR UPDATE';
+    const firstCall = async (run: () => Promise<unknown>) => {
+      const from = fake.calls.length;
+      await run();
+      return fake.calls[from];
+    };
+    const begun = await beginCall("u-1", scn, at(100));
+    if (!begun.ok) throw new Error(begun.error);
+    expect(await firstCall(() => heartbeat("u-1", begun.callId, "connected", at(100)))).toBe(LOCK_USER);
+    expect(await firstCall(() => endCall("u-1", begun.callId, "network_drop", at(120)))).toBe(LOCK_USER);
+    expect(await firstCall(() => usageSummary("u-1", at(130)))).toBe(LOCK_USER);
     for (const q of fake.rawQueries) {
       expect(q.sql).toContain("FOR UPDATE");
       expect(q.values).toEqual(["u-1"]);
     }
-    expect(session(callId).billedMinutes).toBe(0);
+    expect(session(begun.callId).billedMinutes).toBe(0); // the drop credit still applies
+    expect(fake.lockOrderViolations).toEqual([]);
   });
 
   it("a mint locks the user row before it counts the day's sessions, so concurrent mints cannot overshoot the cap", async () => {

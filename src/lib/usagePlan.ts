@@ -38,6 +38,13 @@ export const DAILY_SESSION_MINT_CAP = 20;
 export const HEARTBEAT_TIMEOUT_SECONDS = 30;
 /** How long a client has to open the data channel after the server minted the session. */
 export const CONNECT_WINDOW_SECONDS = 15 * 60;
+/**
+ * Only when the same user starts a NEW voice call: an open call minted longer ago than this that never sent a heartbeat
+ * and has no connectedAt is closed as failed_connect (0 s, 0 min, reservation released), so a rep whose first connect
+ * failed can retry at once. A slow but real connect sends its first heartbeat at 20 to 30 s; 45 s leaves margin.
+ * Usage reads and every other stale check keep CONNECT_WINDOW_SECONDS, so a long mic prompt is never cut short by them.
+ */
+export const NEVER_CONNECTED_RECLAIM_SECONDS = 45;
 
 /**
  * The billing clock starts at the server's mint time plus at most this long, however late (or never) the

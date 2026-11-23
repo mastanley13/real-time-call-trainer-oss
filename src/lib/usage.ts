@@ -6,7 +6,7 @@ import { storedPlanEntitled } from "./subscriptionStatus";
 import { premiumMinutesCapFor, premiumMinutesLeft, premiumSeatsForUnits } from "./premiumVoice";
 import { trialDeadlineBinds, trialMaxSeconds, trialSampleEligible } from "./premiumTrial";
 import {
-  CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, MAX_CONNECT_LAG_SECONDS, MAX_RESERVE_MINUTES,
+  CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, NEVER_CONNECTED_RECLAIM_SECONDS, MAX_CALL_SECONDS, MAX_CONNECT_LAG_SECONDS, MAX_RESERVE_MINUTES,
   DAILY_SESSION_MINT_CAP, MIN_PREMIUM_SECONDS, OVERRUN_GRACE_SECONDS, PREMIUM_MINUTES_PER_UNIT, VOICE_BLOCK_SECONDS,
   capFor, effectivePlan, maxMinutesAfter, midCallCapApplies, periodFor, settleCall, splitAcrossBoundary,
   type CallEndReasonId, type CallOutcome, type PlanTier,
@@ -42,6 +42,19 @@ export class StaleAllowanceError extends Error {
 }
 
 const TX_ATTEMPTS = 4;
+
+/**
+ * Lock order for every metering transaction that may settle a call or write a user's call rows: the user row FIRST
+ * (this lock, before any allowance or call-row read-for-write or write), then the allowance, then call rows. A
+ * settlement may need the user row later (the drop-credit count, flagOverrun, stampPastDue), so a transaction that
+ * locked the allowance first and then waited for the user row could deadlock with a start (beginCall) that holds the
+ * user row and waits for the allowance. Taking the user row first in beginCall, heartbeat, endCall, usageSummary,
+ * closeNeverConnectedCall (through settle) and the repair credit makes that cycle impossible. Re-entrant in Postgres:
+ * a second FOR UPDATE on the same row in the same transaction returns at once.
+ */
+async function lockUserFirst(tx: Tx, userId: string): Promise<void> {
+  await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+}
 
 async function runMetered<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   for (let attempt = 1; ; attempt++) {
@@ -401,16 +414,20 @@ const RESERVE_ATTEMPTS = 5;
  */
 export async function beginCall(userId: string, scenario: ScenarioInfo, now = new Date(), opts: { standardAvailable?: boolean; compedPremium?: boolean; offerTrialSample?: boolean; preferStandard?: boolean } = {}): Promise<BeginResult> {
   return runMetered(async (tx) => {
-    await settleStale(tx, userId, now);
+    // The user row is locked first and held until this transaction commits, so concurrent starts for one user (two
+    // tabs, a double click) run one after the other: each sees what the earlier one settled, reclaimed and created, so
+    // neither the daily mint cap nor the minutes can be overshot. The allowance and the call rows come after it.
+    await lockUserFirst(tx, userId);
+    // A new start also reclaims this user's never-connected calls older than NEVER_CONNECTED_RECLAIM_SECONDS.
+    await settleStale(tx, userId, now, { reclaimNeverConnected: true });
     const user = await tx.user.findUnique({ where: { id: userId }, select: { organizationId: true, voiceBlockedUntil: true } });
     if (!user) return { ok: false, error: "user_not_found" } as const;
     if (user.voiceBlockedUntil && user.voiceBlockedUntil.getTime() > now.getTime()) {
       return { ok: false, error: "voice_blocked", retryAfterSeconds: Math.ceil((user.voiceBlockedUntil.getTime() - now.getTime()) / 1000) } as const;
     }
     // Per-user daily mint cap on the server clock. Only voice sessions count (they carry an allowance; saved text
-    // transcripts do not). Mints that fail upstream count too, so retrying a failing mint cannot dodge the cap.    // The user row is locked until this transaction commits, so concurrent mints for one user run one after the
-    // other: each sees the sessions the earlier ones created and the cap cannot be overshot.
-    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+    // transcripts do not). Mints that fail upstream count too, so retrying a failing mint cannot dodge the cap.
+    // The user row lock above makes concurrent mints see each other's sessions.
     const minted = await tx.trainerSession.count({
       where: { userId, createdAt: { gte: new Date(now.getTime() - 24 * 60 * 60 * 1000) }, allowanceId: { not: null } },
     });
@@ -557,6 +574,8 @@ export type HeartbeatResult =
  */
 export async function heartbeat(userId: string, callId: string, state: HeartbeatState, now = new Date()): Promise<HeartbeatResult> {
   return runMetered(async (tx) => {
+    // Before the call-row write below: a stop settles the call and flagOverrun writes the user row (lockUserFirst).
+    await lockUserFirst(tx, userId);
     const s = await tx.trainerSession.findUnique({ where: { id: callId } });
     if (!s || s.userId !== userId) return { found: false } as const;
     if (s.endedAt) {
@@ -684,6 +703,9 @@ interface SettleOpts { neverConnectedOnly?: boolean }
 
 async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId, now: Date, opts: SettleOpts = {}): Promise<CallResult | null> {
   if (opts.neverConnectedOnly && (original.connectedAt || original.lastHeartbeatAt)) throw new ConnectedSinceCheckError();
+  // User row first, before chargeTarget/ensureAllowance touch the allowance (see lockUserFirst). Every caller already
+  // took it as its transaction's first statement, so this is a re-entrant no-op that keeps the order for any new caller.
+  await lockUserFirst(tx, original.userId);
   const target = await chargeTarget(tx, original, now);
   if (!target) return null;
   const { allowance, samePeriod } = target;
@@ -710,12 +732,12 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   const endedAt = connected ? billedEnd : now;
   // The connect heartbeat sets lastHeartbeatAt to the start itself, so only a later one proves the client kept running.
   const heartbeatSeen = !!s.lastHeartbeatAt && s.lastHeartbeatAt.getTime() > start.getTime();
-  // Only a drop that could still be credited needs the 24 hour count (DAILY_DROP_CREDIT_CAP). The user row is locked
-  // first, so two of this user's calls settle one after the other and the second sees the first one's credit. A
-  // credited drop is a drop reason with 0 billed minutes, zero-second drops included: an uncredited drop bills at least 1.
+  // Only a drop that could still be credited needs the 24 hour count (DAILY_DROP_CREDIT_CAP). The user row was locked
+  // at the start of this transaction, so two of this user's calls settle one after the other and the second sees the
+  // first one's credit. A credited drop is a drop reason with 0 billed minutes, zero-second drops included: an
+  // uncredited drop bills at least 1.
   let recentCreditedDrops = 0;
   if (connected && !heartbeatSeen && DROP_REASONS.includes(reason)) {
-    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${s.userId} FOR UPDATE`;
     recentCreditedDrops = await tx.trainerSession.count({
       where: {
         userId: s.userId,
@@ -846,6 +868,8 @@ function storedResult(s: OpenSession): CallResult {
  */
 export async function endCall(userId: string, callId: string, reason: CallEndReasonId, now = new Date()): Promise<CallResult | null> {
   return runMetered(async (tx) => {
+    // Before chargeTarget/ensureAllowance (a rollover writes the allowance) and the drop-credit count (lockUserFirst).
+    await lockUserFirst(tx, userId);
     const s = await tx.trainerSession.findUnique({ where: { id: callId } });
     if (!s || s.userId !== userId) return null;
     if (s.endedAt) {
@@ -869,10 +893,36 @@ export async function endCall(userId: string, callId: string, reason: CallEndRea
  *   server cannot see the provider connection, so silence is not treated as proof the call stopped.
  * - A call that never reported a connection within the 15 minute connect window is closed as failed_connect: 0 seconds,
  *   0 minutes, and its reservation released. It is never billed for its age.
+ * - `reclaimNeverConnected` (only beginCall, a new start by the same user, passes it): a call with no heartbeat and no
+ *   connectedAt is closed the same way once it is older than NEVER_CONNECTED_RECLAIM_SECONDS (45 s), so a failed first
+ *   connect does not hold the reservation for 15 minutes. Usage reads leave it on the 15 minute window, so a read during
+ *   a long mic prompt never ends a live attempt. A call with any heartbeat or connectedAt is never touched by this rule.
  */
-export async function settleStale(tx: Tx, userId: string, now: Date): Promise<void> {
+export async function settleStale(tx: Tx, userId: string, now: Date, opts: { reclaimNeverConnected?: boolean } = {}): Promise<void> {
   const open = await tx.trainerSession.findMany({ where: { userId, endedAt: null, allowanceId: { not: null } } });
-  for (const s of open) await settleIfStale(tx, s, now);
+  for (const s of open) {
+    if (opts.reclaimNeverConnected && await reclaimNeverConnected(tx, s, now)) continue;
+    await settleIfStale(tx, s, now);
+  }
+}
+
+/**
+ * The new-start rule (see settleStale): closes `s` as failed_connect when it never connected and is older than
+ * NEVER_CONNECTED_RECLAIM_SECONDS. The settlement writes only while the row still has no heartbeat and no connectedAt
+ * (neverConnectedOnly). A first heartbeat that commits in between wins: the settlement writes nothing, the call stays
+ * open and keeps its reservation. True when the call was handled here (closed, or found connected since the read).
+ */
+async function reclaimNeverConnected(tx: Tx, s: OpenSession, now: Date): Promise<boolean> {
+  if (!s.allowanceId || s.endedAt || s.connectedAt || s.lastHeartbeatAt) return false;
+  if (now.getTime() - s.createdAt.getTime() <= NEVER_CONNECTED_RECLAIM_SECONDS * 1000) return false;
+  try {
+    await settle(tx, s, "failed_connect", now, { neverConnectedOnly: true });
+  } catch (e) {
+    // settle() refuses before any settlement write (call row, ledger or reservation; only the allowance upkeep that
+    // beginCall runs anyway may have happened), so the start carries on with the call left open and still reserved.
+    if (!(e instanceof ConnectedSinceCheckError)) throw e;
+  }
+  return true;
 }
 
 /** One open metered call: settled when stale (see settleStale), left alone otherwise. The settlement when this closed it. */
@@ -933,6 +983,8 @@ export async function creditTextBillingRefund(entryId: string, now = new Date())
   return runMetered(async (tx) => {
     const plan = await planTextBillingRefundIn(tx, entryId);
     if (!plan.ok) return plan;
+    // Reads only so far; the user row is locked before the allowance is touched (lockUserFirst).
+    await lockUserFirst(tx, plan.userId);
     const allowance = await ensureAllowanceById(tx, plan.allowanceId, now);
     if (!allowance) return { ok: false, entryId, error: "allowance_not_found" } as const;
     const note = `${TEXT_BILLING_TICKET}: credit for text session ${plan.trainerSessionId} wrongly billed as a voice call (original entry ${entryId})`;
@@ -1045,6 +1097,8 @@ export interface UsageSummary {
 /** What the usage panel shows. Everything comes from the allowance row and this user's ledger entries. */
 export async function usageSummary(userId: string, now = new Date()): Promise<UsageSummary | null> {
   return runMetered(async (tx) => {
+    // settleStale may settle and flag an overrun (a user-row write) after allowance writes (lockUserFirst).
+    await lockUserFirst(tx, userId);
     await settleStale(tx, userId, now);
     const r = await resolveAllowance(tx, userId, now);
     if (!r) return null;

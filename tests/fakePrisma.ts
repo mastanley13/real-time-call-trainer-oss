@@ -32,6 +32,11 @@ const DEFAULTS: Record<string, () => Record<string, unknown>> = {
 
 const isDate = (v: unknown): v is Date => v instanceof Date;
 
+/** A transaction asked for a user row lock after updating allowance or call rows: the order that can deadlock. */
+export class LockOrderError extends Error {
+  constructor(key: string) { super(`lock order: ${key} locked after this transaction updated allowance or call rows; lock the user row first`); }
+}
+
 function matches(row: Row, where: Where): boolean {
   return Object.entries(where).every(([k, v]) => {
     const have = row[k] ?? null;
@@ -70,14 +75,22 @@ export function createFakePrisma() {
    */
   async function commitElsewhere(run: () => Promise<void>) {
     const live = data;
-    for (const t of open) {
-      data = t.snapshot;
+    // The hook's transactions model work that already committed at this point, so they never wait on a row lock that
+    // the interrupted transaction holds (in a real database they would have run before it took the lock).
+    hookDepth += 1;
+    try {
+      for (const t of open) {
+        data = t.snapshot;
+        await run();
+        t.snapshot = data;
+      }
+      data = live;
       await run();
-      t.snapshot = data;
+    } finally {
+      hookDepth -= 1;
     }
-    data = live;
-    await run();
   }
+  let hookDepth = 0;
   async function fire(tableName: string, method: string, args: { where: Where; data: Record<string, unknown> }) {
     const i = hooks.findIndex((h) => h.table === tableName && h.method === method && h.when(args));
     if (i < 0) return;
@@ -188,27 +201,60 @@ export function createFakePrisma() {
      * is released when the transaction ends. The rollback snapshot is retaken when the lock is granted, so a rollback
      * does not undo what the transaction it waited for committed. That is right while the lock is the transaction's
      * first statement, as in every caller (ghlWebhook.ts, callRow.ts).
+     *
+     * `SELECT ... FROM "User" WHERE "id" = ? FOR UPDATE` is modelled the same way: a real row lock that waits for another
+     * transaction holding the same user row, re-entrant within one transaction (as in Postgres), released at the end.
+     * Lock-order audit: asking for a user row lock for the first time after this transaction has updated an existing
+     * allowance or call row throws LockOrderError. That is the order that can deadlock in Postgres (allowance or call
+     * rows locked, then a wait for the user row while another transaction holds the user row and waits for those rows),
+     * so every metering transaction must take the user row first (src/lib/usage.ts lockUserFirst).
      */
     $transaction: async <T>(fn: ((tx: unknown) => Promise<T>) | Promise<unknown>[]): Promise<T> => {
       // The array form: its operations already ran, in order, on the same store (no rollback is modelled for it).
       if (Array.isArray(fn)) return (await Promise.all(fn)) as T;
       const entry = { snapshot: structuredClone(data) };
       const releases: (() => void)[] = [];
+      const heldUsers = new Set<string>();
+      const inHook = hookDepth > 0;
       // A transaction that throws before it wrote anything has nothing to undo, and restoring the snapshot would drop
       // what concurrent requests committed meanwhile; so only a transaction that wrote is rolled back.
       let wrote = false;
+      // Row locks a metering transaction can hold: updates of existing allowance or call rows (new rows lock nothing
+      // another transaction waits for). Asking for the user row after one of these is the deadlock-prone order.
+      let lockedMeteringRows = false;
       const WRITES = new Set(["create", "update", "updateMany", "deleteMany"]);
+      const ROW_LOCKING = new Set(["update", "updateMany", "deleteMany"]);
       const tracked = Object.fromEntries(Object.entries(db).map(([k, v]) => [k, typeof v === "object" && v
         // A write that throws (P2002, not found) changed nothing, so only a write that returned counts.
-        ? Object.fromEntries(Object.entries(v).map(([m, f]) => [m, WRITES.has(m) && typeof f === "function" ? async (...a: unknown[]) => { const r = await (f as (...x: unknown[]) => Promise<unknown>)(...a); wrote = true; return r; } : f]))
+        ? Object.fromEntries(Object.entries(v).map(([m, f]) => [m, WRITES.has(m) && typeof f === "function" ? async (...a: unknown[]) => {
+          const r = await (f as (...x: unknown[]) => Promise<unknown>)(...a);
+          wrote = true;
+          if (ROW_LOCKING.has(m) && (k === "usageAllowance" || k === "trainerSession")) lockedMeteringRows = true;
+          return r;
+        } : f]))
         : v]));
       const tx = {
         ...tracked,
         $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
           const out = await db.$queryRaw(strings, ...values);
-          if (strings.join("?").includes("pg_advisory_xact_lock")) {
+          const sql = strings.join("?");
+          if (sql.includes("pg_advisory_xact_lock")) {
             releases.push(await acquireAdvisory(String(values[0])));
             entry.snapshot = structuredClone(data);
+          }
+          if (sql.includes('FROM "User"') && sql.includes("FOR UPDATE")) {
+            const key = `user:${String(values[0])}`;
+            if (heldUsers.has(key)) return out; // re-entrant
+            if (lockedMeteringRows) {
+              lockOrderViolations.push(key);
+              throw new LockOrderError(key);
+            }
+            heldUsers.add(key);
+            if (!inHook) {
+              releases.push(await acquireAdvisory(key));
+              // Retaken only while nothing was written yet, so a rollback still undoes this transaction's own writes.
+              if (!wrote) entry.snapshot = structuredClone(data);
+            }
           }
           return out;
         },
@@ -225,6 +271,7 @@ export function createFakePrisma() {
       }
     },
   };
+  const lockOrderViolations: string[] = [];
   /** Advisory lock tails by key: each waiter chains on the previous holder and releases its own turn. */
   const advisory = new Map<string, Promise<void>>();
   async function acquireAdvisory(key: string): Promise<() => void> {
@@ -244,6 +291,8 @@ export function createFakePrisma() {
     db,
     rawQueries,
     calls,
+    /** User row locks that were asked for after the transaction had written rows (see $transaction). Should stay empty. */
+    lockOrderViolations,
     /** Direct access to rows for arranging and asserting. */
     rows: (name: keyof typeof UNIQUE) => data[name],
     seed: (name: keyof typeof UNIQUE, row: Record<string, unknown>) => {
