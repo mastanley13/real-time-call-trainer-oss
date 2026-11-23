@@ -13,7 +13,8 @@ const mocks = vi.hoisted(() => ({
   beginCall: vi.fn(),
   endCall: vi.fn(),
   prisma: {
-    trainerSession: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    // findMany is the re-grade's graded-duplicate check (src/lib/transcriptGrade.ts): no other graded rows here.
+    trainerSession: { findUnique: vi.fn(), findMany: vi.fn(async () => []), update: vi.fn(), updateMany: vi.fn() },
     user: { findUnique: vi.fn() },
     auditEvent: { create: vi.fn() },
     $transaction: vi.fn(),

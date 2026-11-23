@@ -97,6 +97,7 @@ src/lib/
   teamSample.ts, assignmentStore.ts    Sample team, and browser-only assignments and notes, for demo mode
   gradeSeal.ts                    HMAC seal on server grades, bound to the call's sessionId and callId, 30-minute max age; POST /api/transcripts stores each sealed score once
   callRow.ts                      The call's own row (id = sessionId, or receiptRowId(sessionId)): the only row a save grades or a PATCH re-grades
+  transcriptGrade.ts              One graded row per transcript (user, org, persona): duplicate check and lock, taken after callRow's lock
 scripts/                          validate-personas.ts, coach-smoke.ts, calibration-check.ts
 tests/                            Vitest suites; server-only-stub.ts. Route tests (notes-route, regrade) mock @/lib/db
 .github/                          workflows/ci.yml, workflows/codex-review.yml (SHA-pinned actions), dependabot.yml
