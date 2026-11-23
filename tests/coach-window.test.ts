@@ -77,6 +77,17 @@ describe("mergeWindowed", () => {
   it("returns the new result as is when nothing was left out", () => {
     const next = result();
     expect(mergeWindowed(result({ steps: [true, true] }), next, 0)).toBe(next);
+    expect(mergeWindowed(result({ steps: [true, true] }), result({ windowStart: 1 }), 0).steps).toEqual([false, false]);
+  });
+
+  it("keeps evidence from lines the server's prompt window left out, even when the client sent them", () => {
+    // Client sent the whole call (offset 0); the LLM only read from line 31, so line 12's evidence stays.
+    const prev = result({ steps: [true, false], estimate: { overall: 0, criteria: [{ id: "a", name: "A", weight: 50, score: 55, confirmed: true, evidenceLine: 12 }, { id: "b", name: "B", weight: 50, score: 40, confirmed: true, evidenceLine: 40 }] } });
+    const next = result({ windowStart: 31, estimate: { overall: 0, criteria: [{ id: "a", name: "A", weight: 50, score: 20, confirmed: false }, { id: "b", name: "B", weight: 50, score: 15, confirmed: false }] } });
+    const merged = mergeWindowed(prev, next, 0);
+    // a's evidence (line 12) is before the window and is kept; b's (line 40) was in view, so the new score stands.
+    expect(merged.estimate.criteria.map((c) => c.score)).toEqual([55, 15]);
+    expect(merged.steps).toEqual([true, false]);
   });
 });
 
@@ -101,5 +112,7 @@ describe("shiftIndex and shiftResult", () => {
     expect(shifted.cue?.triggerTurn).toBe(3);
     expect(shifted.estimate.criteria[1].evidenceLine).toBe(301);
     expect(shiftResult(r, [])).toBe(r);
+    expect(shiftResult(result({ windowStart: 5 }), [1]).windowStart).toBe(6);
+    expect(shiftResult(result({ windowStart: 5 }), [7]).windowStart).toBe(5);
   });
 });

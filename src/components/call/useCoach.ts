@@ -44,10 +44,12 @@ export function coachWindow(turns: { role: StoredTurn["role"]; text: string }[],
  * counts: a criterion confirmed earlier keeps its higher score, and finished talk-track steps stay done.
  */
 export function mergeWindowed(prev: CoachResult | null, next: CoachResult, offset: number): CoachResult {
-  if (!prev || offset <= 0) return next;
+  // The server may read fewer turns than were sent (the LLM prompt keeps only recent lines): use whichever start is later.
+  const unseen = Math.max(offset, (next.windowStart ?? 1) - 1);
+  if (!prev || unseen <= 0) return next;
   const criteria = next.estimate.criteria.map((c) => {
     const p = prev.estimate.criteria.find((x) => x.id === c.id);
-    return p?.confirmed && (p.evidenceLine ?? 0) <= offset && p.score > c.score ? p : c;
+    return p?.confirmed && (p.evidenceLine ?? 0) <= unseen && p.score > c.score ? p : c;
   });
   const total = criteria.reduce((a, c) => a + c.weight, 0) || 1;
   return {
@@ -77,6 +79,7 @@ export function shiftResult(r: CoachResult, inserts: number[]): CoachResult {
     ...r,
     estimate: { ...r.estimate, criteria: r.estimate.criteria.map((c) => (c.evidenceLine ? { ...c, evidenceLine: line(c.evidenceLine) } : c)) },
     cue: r.cue ? { ...r.cue, triggerTurn: line(r.cue.triggerTurn) } : null,
+    ...(r.windowStart ? { windowStart: line(r.windowStart) } : {}),
   };
 }
 

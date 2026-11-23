@@ -8,7 +8,7 @@ import { z } from "zod";
  * carry only a safe code. No network: fetch is stubbed, keys are fixtures.
  */
 
-import { COACH_JSON_SCHEMA, COACH_MAX_TOKENS, COACH_RETRY_MAX_TOKENS, COACH_RETRY_MIN_MS, coachFailureCode, coachTurn, parseCoachReply, type CoachTurnInput } from "@/lib/coach";
+import { COACH_JSON_SCHEMA, COACH_MAX_TOKENS, COACH_PROMPT_CHARS, COACH_PROMPT_TURNS,COACH_RETRY_MAX_TOKENS, COACH_RETRY_MIN_MS, coachFailureCode, coachTurn, parseCoachReply, type CoachTurnInput } from "@/lib/coach";
 import { chatFull, parseFirstJsonObject } from "@/lib/llm";
 import { OPENAI_KEY_SLOT_VARS, resetOpenAiKeyState } from "@/lib/openaiKeys";
 import { BUILT_IN_SCENARIOS, talkTrackSteps } from "@/lib/scenarios";
@@ -477,6 +477,68 @@ describe("coach retry", () => {
     replies(() => completion(validReply()));
     expect((await run()).source).toBe("heuristic");
     expect(sent).toHaveLength(0);
+  });
+});
+
+describe("coach prompt window on a long call", () => {
+  const OFFSET = 100;
+  const OLD_QUOTE = "our maintenance plan covers the annual tune-up";
+  const NEW_QUOTE = "the diagnostic visit is eighty-nine dollars";
+  // 80 turns after 100 that were already left out by the client: lines 101 to 180.
+  const longCall: CoachTurnInput[] = Array.from({ length: 80 }, (_, i) => {
+    const role = i % 2 ? "user" : "assistant";
+    const text = i === 9 ? `Sure, ${OLD_QUOTE}.` : i === 69 ? `Good question, ${NEW_QUOTE}.` : role === "user" ? `Okay, noted point ${i}.` : `Fine, go on ${i}.`;
+    return { role, text };
+  });
+  const lineOf = (i: number) => OFFSET + i + 1;
+  const firstSeen = lineOf(80 - COACH_PROMPT_TURNS);
+  const reply = () =>
+    JSON.stringify({
+      criteria: scenario.rubric.map((c, i) => ({ id: c.id, score: 60, quote: i === 0 ? NEW_QUOTE : i === 1 ? OLD_QUOTE : null })),
+      steps: Array.from({ length: STEP_COUNT }, () => false),
+      cue: { type: "next_question", title: "Ask about timing", message: "Ask when they need it done.", suggestedLine: null, triggerTurn: 105, criterionId: null, key: "next_question:timing" },
+    });
+  const runLong = () => coachTurn(scenario, longCall, { allowCue: true, lineOffset: OFFSET });
+  const promptOf = (s: Sent) => (s.body.messages as { role: string; content: string }[]).find((m) => m.role === "user")!.content;
+
+  it("sends only the most recent lines, numbered absolutely", async () => {
+    replies(() => completion(reply()));
+    await runLong();
+    const prompt = promptOf(sent[0]);
+    expect(prompt).toContain(`lines 1-${firstSeen - 1} happened earlier and are not shown`);
+    expect(prompt).toContain(`[${firstSeen}] `);
+    expect(prompt).toContain(`[${lineOf(79)}] `);
+    expect(prompt).not.toContain(`[${firstSeen - 1}] `);
+    expect(prompt).not.toContain(OLD_QUOTE);
+    expect(prompt.match(/^\[\d+\] (TRAINEE|CALLER): /gm)).toHaveLength(COACH_PROMPT_TURNS);
+  });
+
+  it("caps the prompt transcript by characters as well", async () => {
+    const wordy = longCall.map((t) => ({ ...t, text: t.text.padEnd(1000, ".") }));
+    replies(() => completion(reply()));
+    await coachTurn(scenario, wordy, { allowCue: true, lineOffset: OFFSET });
+    const lines = promptOf(sent[0]).match(/^\[\d+\] (TRAINEE|CALLER): .*$/gm) ?? [];
+    expect(lines.length).toBe(Math.floor(COACH_PROMPT_CHARS / 1000));
+    expect(lines[lines.length - 1]).toMatch(new RegExp(`^\\[${lineOf(79)}\\]`));
+  });
+
+  it("verifies evidence and triggerTurn against the lines the model saw, and reports where they start", async () => {
+    replies(() => completion(reply()));
+    const r = await runLong();
+    expect(r.source).toBe("llm");
+    expect(r.windowStart).toBe(firstSeen);
+    const [seenCriterion, oldCriterion] = r.estimate.criteria;
+    expect(seenCriterion).toMatchObject({ confirmed: true, evidenceLine: lineOf(69), score: 60 });
+    // A quote the model could not have seen is not trusted; the client keeps the older evidence (mergeWindowed).
+    expect(oldCriterion).toMatchObject({ confirmed: false, evidenceLine: undefined });
+    expect(r.cue?.triggerTurn).toBe(firstSeen);
+  });
+
+  it("keeps the heuristic fallback on the whole transcript the route received", async () => {
+    replies(() => errorResponse(500, { error: { message: CANARY } }));
+    const r = await runLong();
+    expect(r.source).toBe("heuristic");
+    expect(r.windowStart).toBeUndefined();
   });
 });
 

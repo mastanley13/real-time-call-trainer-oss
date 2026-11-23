@@ -72,6 +72,14 @@ export const COACH_RETRY_MAX_TOKENS = 4000;
 export const COACH_RETRY_MIN_MS = 6000;
 /** Low reasoning effort keeps hidden reasoning (and latency) small; the coach's job is pattern-matching, not proofs. */
 const COACH_REASONING_EFFORT = "low" as const;
+/**
+ * The LLM prompt carries at most this much of the transcript (the most recent lines, absolute line numbers kept).
+ * Reasoning and latency grew with the call; a live cue only needs the last few exchanges. The heuristic fallback
+ * and talkRatio still use everything the route received, and the client keeps evidence from earlier lines
+ * (mergeWindowed, via CoachResult.windowStart).
+ */
+export const COACH_PROMPT_TURNS = 30;
+export const COACH_PROMPT_CHARS = 6000;
 
 // ---------------------------------------------------------------------------
 // Text helpers (same normalisation as grader.ts, reimplemented so grader stays untouched)
@@ -683,7 +691,7 @@ function buildPrompt(scenario: Scenario, spoken: Line[], steps: string[], rubric
     `RECENT CUE KEYS: ${recent.length ? recent.join(", ") : "(none)"}`,
     `CUE ALLOWED: ${opts.allowCue ? "yes" : "no"}`,
     // A long call arrives as its most recent lines; say so, or the model reads the window as the whole call.
-    `${(spoken[0]?.line ?? 1) > 1 ? `TRANSCRIPT, most recent lines only (lines 1-${spoken[0].line - 1} happened earlier and are not shown; line numbers in brackets)` : "TRANSCRIPT (line numbers in brackets)"}:\n${spoken.map((t) => `[${t.line}] ${t.role === "user" ? "TRAINEE" : "CALLER"}: ${t.text}`).join("\n")}`,
+    `${(spoken[0]?.line ?? 1) > 1 ? `TRANSCRIPT, most recent lines only (lines 1-${spoken[0].line - 1} happened earlier and are not shown, and progress in them is tracked separately; line numbers in brackets)` : "TRANSCRIPT (line numbers in brackets)"}:\n${spoken.map((t) => `[${t.line}] ${t.role === "user" ? "TRAINEE" : "CALLER"}: ${t.text}`).join("\n")}`,
   ].join("\n\n");
   return { system, user };
 }
@@ -732,7 +740,10 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptions): Promise<Omit<CoachResult, "latencyMs">> {
   const rubric = normalizeWeights(scenario.rubric);
   const steps = talkTrackSteps(scenario.callScript);
-  const { system, user } = buildPrompt(scenario, spoken, steps, rubric, opts);
+  // Only the recent lines go to the model. Quotes and triggerTurn are checked against what it saw, in absolute lines.
+  const trimmed = trailingWindow(spoken, COACH_PROMPT_TURNS, COACH_PROMPT_CHARS).turns;
+  const seen = trimmed.length ? trimmed : spoken.slice(-1);
+  const { system, user } = buildPrompt(scenario, seen, steps, rubric, opts);
   const messages: ChatMessage[] = [
     { role: "system", content: system },
     { role: "user", content: user },
@@ -775,13 +786,13 @@ async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptio
 
   const criteria: CriterionEstimate[] = rubric.map((c) => {
     const r = out.criteria.find((x) => x.id === c.id);
-    const evidenceLine = verifyQuote(r?.quote, spoken);
+    const evidenceLine = verifyQuote(r?.quote, seen);
     const confirmed = evidenceLine !== undefined;
     const raw = Math.max(0, Math.min(100, Math.round(Number.isFinite(r?.score) ? (r?.score as number) : 0)));
     return { id: c.id, name: c.name, weight: c.weight, score: confirmed ? raw : Math.min(raw, PROVISIONAL_MAX), confirmed, evidenceLine };
   });
   const flags = steps.map((_, i) => out.steps[i] === true);
-  const picked = opts.allowCue ? parseLlmCue(out.cue, spoken, rubric, new Set(opts.recentCueKeys ?? [])) : null;
+  const picked = opts.allowCue ? parseLlmCue(out.cue, seen, rubric, new Set(opts.recentCueKeys ?? [])) : null;
 
   return {
     estimate: { overall: weightedOverall(criteria), criteria },
@@ -790,6 +801,7 @@ async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptio
     cueKey: picked?.key,
     talkRatio: talkRatioOf(spoken),
     source: "llm",
+    windowStart: seen[0].line,
   };
 }
 
