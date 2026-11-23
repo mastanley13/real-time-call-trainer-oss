@@ -155,10 +155,12 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const stored: Evaluation = { ...withoutModelId(evaluation), ...(note ? { note } : {}), evaluatedAt: new Date().toISOString() };
   const previous = session.evaluation as { method?: string; model?: string } | null;
   const update = {
-    // Re-grading your own call passed canRegrade on the row as read before the model call (the call had no AI grade).
-    // That write lands only if the row is unchanged since (Prisma throws P2025 otherwise), so re-grades sent at once
-    // can't all pass and replace each other's AI grade. This holds for managers, owners and admins on their own calls too.
-    where: ownsSession ? { id, updatedAt: session.updatedAt } : { id },
+    // The grade is of the transcript as read before the model call, so it lands only if the row is unchanged since
+    // (Prisma throws P2025 otherwise), for everyone. On your own call that also keeps re-grades sent at once from all
+    // passing canRegrade and replacing each other's AI grade; for a manager or admin it keeps a save that replaced the
+    // row's transcript and grade meanwhile (the receipt-row claim in POST /api/transcripts) from being overwritten by a
+    // grade of the old transcript.
+    where: { id, updatedAt: session.updatedAt },
     data: {
       evaluation: stored as unknown as Prisma.InputJsonValue,
       overallScore: stored.overallScore,
@@ -205,9 +207,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   } catch (error) {
     if (error instanceof SecondGrade) return notAllowed();
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
-      // Usually the trainee's own re-grade from another tab saved first; then this one gets the answer a later request would.
+      // On your own call, usually your re-grade from another tab saved first; then this one gets the answer a later
+      // request would. A manager or admin re-grading someone else's call is told to reload (canRegrade allows them).
       const current = await prisma.trainerSession.findUnique({ where: { id }, select: { evaluation: true } });
-      if (isAiGrade(current?.evaluation)) return notAllowed();
+      if (ownsSession && isAiGrade(current?.evaluation)) return notAllowed();
       return fail(409, "conflict", "This call changed while it was being re-graded, so the new grade wasn't saved. Reload the page and try again.");
     }
     console.error("[/api/transcripts/[id]] regrade save error:", error);

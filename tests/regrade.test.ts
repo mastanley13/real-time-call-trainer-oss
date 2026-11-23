@@ -225,13 +225,16 @@ describe("PATCH /api/transcripts/[id] (server re-grade)", () => {
     expect(audits).toHaveLength(0);
   });
 
-  it("lets a manager's re-grade save even when the call changed after it was read", async () => {
+  it("doesn't save a manager's re-grade when the call changed after it was read, and says to reload", async () => {
     actAs("manager", "org-1");
     holdGrades(2);
+    const before = row.updatedAt;
     const results = await Promise.all([patch(), patch()]);
-    expect(results.map((r) => r.status)).toEqual([200, 200]);
-    expect(mocks.prisma.trainerSession.update.mock.calls.map(([args]) => args.where)).toEqual([{ id: row.id }, { id: row.id }]);
-    expect(audits).toHaveLength(2);
+    // Both graded the transcript as read; the first saves, the second finds the row changed (409, not the trainee's 403).
+    expect(results.map((r) => r.status)).toEqual([200, 409]);
+    expect((await results[1].json()).error).toBe("conflict");
+    expect(mocks.prisma.trainerSession.update.mock.calls.map(([args]) => args.where)).toEqual([{ id: row.id, updatedAt: before }, { id: row.id, updatedAt: before }]);
+    expect(audits).toHaveLength(1);
   });
 
   it("lets managers and owners of the same org, and platform admins, re-grade an AI grade", async () => {
@@ -282,12 +285,13 @@ describe("PATCH /api/transcripts/[id] (server re-grade)", () => {
     expect(audits).toHaveLength(1);
   });
 
-  it("still lets a manager re-grade a member's AI-graded call, without the lock", async () => {
+  it("still lets a manager re-grade a member's AI-graded call, on the same unchanged-row write", async () => {
     actAs("manager", "org-1");
     row.evaluation = AI_GRADE;
+    const before = row.updatedAt;
     const res = await patch();
     expect(res.status).toBe(200);
-    expect(mocks.prisma.trainerSession.update.mock.lastCall![0].where).toEqual({ id: row.id });
+    expect(mocks.prisma.trainerSession.update.mock.lastCall![0].where).toEqual({ id: row.id, updatedAt: before });
   });
 
   it("keeps everyone else out with the plain 403", async () => {

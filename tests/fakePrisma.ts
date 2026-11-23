@@ -52,6 +52,12 @@ function matches(row: Row, where: Where): boolean {
 
 export function createFakePrisma() {
   let seq = 0;
+  // Strictly increasing write stamps, so two writes in the same (possibly faked) millisecond still differ.
+  let lastStamp = 0;
+  const nextStamp = () => {
+    lastStamp = Math.max(Date.now(), lastStamp + 1);
+    return new Date(lastStamp);
+  };
   let data: Record<string, Row[]> = Object.fromEntries(Object.keys(UNIQUE).map((t) => [t, []]));
   const failOnce: Record<string, number> = {};
   // Open transaction snapshots, innermost last, and one-shot hooks that run another writer's committed work.
@@ -97,6 +103,8 @@ export function createFakePrisma() {
     };
     const find = (where: Where) => rows().find((r) => matches(r, where));
     const apply = (r: Row, patch: Record<string, unknown>) => {
+      // TrainerSession.updatedAt is @updatedAt: every update and updateMany sets it, as Prisma does.
+      if (name === "trainerSession" && !("updatedAt" in patch)) r.updatedAt = nextStamp();
       for (const [k, v] of Object.entries(patch)) {
         if (v === undefined) continue;
         if (v && typeof v === "object" && !isDate(v) && ("increment" in v || "decrement" in v)) {
@@ -121,7 +129,7 @@ export function createFakePrisma() {
       },
       count: async (args: { where?: Where } = {}) => rows().filter((r) => matches(r, args.where ?? {})).length,
       create: async (args: { data: Record<string, unknown> }) => {
-        const row = { id: `${name}-${++seq}`, ...DEFAULTS[name](), ...Object.fromEntries(Object.entries(args.data).filter(([, v]) => v !== undefined)) } as Row;
+        const row = { id: `${name}-${++seq}`, ...DEFAULTS[name](), ...(name === "trainerSession" ? { updatedAt: nextStamp() } : {}), ...Object.fromEntries(Object.entries(args.data).filter(([, v]) => v !== undefined)) } as Row;
         for (const keys of UNIQUE[name]) {
           if (keys.some((k) => row[k] === null || row[k] === undefined)) continue;
           if (rows().some((r) => keys.every((k) => r[k] === row[k]))) throw dupError();
@@ -134,7 +142,8 @@ export function createFakePrisma() {
         await fire(name, "update", args);
         if (failOnce[name] > 0) { failOnce[name] -= 1; throw new Error("injected failure"); }
         const r = find(args.where);
-        if (!r) throw new Error(`${name} not found`);
+        // Like Prisma: an update whose where matches no row (missing, or changed since read) is P2025.
+        if (!r) throw new Prisma.PrismaClientKnownRequestError(`${name} not found`, { code: "P2025", clientVersion: "test" });
         apply(r, args.data);
         return { ...r };
       },
@@ -238,7 +247,7 @@ export function createFakePrisma() {
     /** Direct access to rows for arranging and asserting. */
     rows: (name: keyof typeof UNIQUE) => data[name],
     seed: (name: keyof typeof UNIQUE, row: Record<string, unknown>) => {
-      const r = { id: `${name}-${++seq}`, ...DEFAULTS[name](), ...row } as Row;
+      const r = { id: `${name}-${++seq}`, ...DEFAULTS[name](), ...(name === "trainerSession" ? { updatedAt: nextStamp() } : {}), ...row } as Row;
       data[name].push(r);
       return r;
     },

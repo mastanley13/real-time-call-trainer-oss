@@ -6,7 +6,7 @@ import { rateLimit, readJsonLimited } from "@/lib/rateLimit";
 import { prisma } from "@/lib/db";
 import { verifySeal } from "@/lib/gradeSeal";
 import { isReceiptReplay, receiptRowId, verifyMintReceipt } from "@/lib/mintReceipt";
-import { isLegacyCall, lockCall } from "@/lib/callRow";
+import { hasGradedSibling, isLegacyCall, lockCall } from "@/lib/callRow";
 import { HAS_TRANSCRIPT } from "@/lib/usage";
 import { tierOfModel } from "@/lib/voiceTierServer";
 import { sessionListItem } from "@/lib/sessionView";
@@ -131,6 +131,14 @@ export async function POST(req: NextRequest) {
     // makes text ids with 96 random bits (sessionStore.ts callSessionId).
     let created: { id: string } | null = null;
     let filledOwnRow = false;
+    // A grade claim on the call's own row `rowId` (the metered fill, or the receipt-row claim below) runs under the call's
+    // lock, the one PATCH takes for legacy copies, and stores the grade only while no other row of the call has a score
+    // (src/lib/callRow.ts). A graded copy can only be legacy, so otherwise the save is stored ungraded, like a replay.
+    const underCallLock = <T,>(rowId: string, write: (tx: Prisma.TransactionClient, mayGrade: boolean) => Promise<T>) =>
+      prisma.$transaction(async (tx) => {
+        await lockCall(tx, dbUser.id, body.sessionId);
+        return write(tx, !(await hasGradedSibling(tx, dbUser.id, body.sessionId, rowId)));
+      });
     if (fillExisting) {
       // The fill, graded or not, is one conditional update that lands only while the row is still unfilled.
       // "Unfilled" is realtimeSessionId = null: beginCall (src/lib/usage.ts) never sets it, every fill sets it to the
@@ -141,12 +149,16 @@ export async function POST(req: NextRequest) {
       // Only a save whose sessionId is this callId gets here (fillExisting). The model is not part of the fill;
       // it is set once, below. No metering field (endedAt, billing, heartbeats) is written, so settleStale and billing
       // see the row exactly as before.
-      const withGrade = !!ev;
-      const filled = await prisma.trainerSession.updateMany({ where: { id: body.callId, userId: dbUser.id, realtimeSessionId: null }, data: fieldsFor(withGrade) });
-      if (filled.count === 1) {
-        created = { id: body.callId! };
+      // A graded fill is ungraded instead when another row of the call already has a score (underCallLock).
+      const callId = body.callId!;
+      const fill = (db: Pick<Prisma.TransactionClient, "trainerSession">, withGrade: boolean) =>
+        db.trainerSession.updateMany({ where: { id: callId, userId: dbUser.id, realtimeSessionId: null }, data: fieldsFor(withGrade) })
+          .then((r) => ({ filled: r.count === 1, withGrade }));
+      const result = ev ? await underCallLock(callId, fill) : await fill(prisma, false);
+      if (result.filled) {
+        created = { id: callId };
         filledOwnRow = true;
-        graded = withGrade;
+        graded = result.withGrade;
       }
       // Otherwise another save of this call filled it first: this one becomes a separate ungraded row below, as any save
       // that doesn't fill the call's row always has.
@@ -183,10 +195,12 @@ export async function POST(req: NextRequest) {
         // - model: lands only while the row has none (realtimeModel = null), the same rule as the metered row below,
         //   so a receipt is still logged on exactly one row, once.
         // Only rows of this user are touched. An ungraded save that created this row first leaves overallScore null,
-        // so it can't block a later grade either.
+        // so it can't block a later grade either. The grade claim also needs no other row of the call to have a score
+        // (underCallLock); otherwise this save is an ungraded copy.
         if (ev) {
-          const claimed = await prisma.trainerSession.updateMany({ where: { id: rowId, userId: dbUser.id, overallScore: null }, data: fieldsFor(true) });
-          if (claimed.count === 1) {
+          const claimed = await underCallLock(rowId, async (tx, mayGrade) =>
+            mayGrade ? (await tx.trainerSession.updateMany({ where: { id: rowId, userId: dbUser.id, overallScore: null }, data: fieldsFor(true) })).count : 0);
+          if (claimed === 1) {
             created = { id: rowId };
             graded = true;
           }

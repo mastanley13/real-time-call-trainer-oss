@@ -509,6 +509,47 @@ describe("PATCH /api/transcripts/[id]: one graded row per call (src/lib/callRow.
     expect(sessions().find((s) => s.id === CALL)).toMatchObject({ overallScore: 88 });
   });
 
+  it("stores a graded metered fill ungraded when a legacy copy of the call already has a score", async () => {
+    const CALL = "cm-call-regrade-03";
+    fake.seed("trainerSession", { id: CALL, userId, organizationId: "org-1", transcript: [], realtimeSessionId: null, evaluation: null, overallScore: null, grade: null, goalAchieved: null });
+    fake.seed("trainerSession", { id: "legacy-graded", userId, organizationId: "org-1", scenarioId: scenario.id, transcript, realtimeSessionId: CALL, evaluation: { method: "heuristic", overallScore: 50 }, overallScore: 50, grade: "D" });
+    expect(await (await save({ sessionId: CALL, callId: CALL, ...sealedGrade(CALL, { callId: CALL }) })).json()).toEqual({ id: CALL, graded: false });
+    expect(sessions().find((s) => s.id === CALL)).toMatchObject({ transcript, overallScore: null, realtimeSessionId: CALL });
+    expect(callRows(CALL).filter((s) => s.overallScore != null).map((s) => s.id)).toEqual(["legacy-graded"]);
+    expect(mocks.notify).not.toHaveBeenCalled();
+  });
+
+  it("stores a graded save as an ungraded copy when the call's ungraded receipt row and a graded legacy copy coexist", async () => {
+    const sessionId = textId();
+    expect(await (await save({ sessionId })).json()).toEqual({ id: receiptRowId(sessionId), graded: false });
+    fake.seed("trainerSession", { id: "legacy-graded", userId, organizationId: "org-1", scenarioId: scenario.id, transcript, realtimeSessionId: sessionId, evaluation: { method: "heuristic", overallScore: 50 }, overallScore: 50, grade: "D" });
+    const body = (await (await save({ sessionId, ...sealedGrade(sessionId) })).json()) as { id: string; graded: boolean };
+    expect(body.graded).toBe(false);
+    expect(body.id).not.toBe(receiptRowId(sessionId));
+    expect(sessions().find((s) => s.id === receiptRowId(sessionId))).toMatchObject({ overallScore: null });
+    expect(callRows(sessionId).filter((s) => s.overallScore != null).map((s) => s.id)).toEqual(["legacy-graded"]);
+  });
+
+  it("doesn't let a manager's re-grade overwrite a sealed save that replaced the row's transcript and grade meanwhile", async () => {
+    const sessionId = textId();
+    const oldTranscript = [{ role: "assistant", text: "Hello?" }, { role: "user", text: "Hi, it's a different call." }];
+    expect(await (await save({ sessionId, transcript: oldTranscript })).json()).toEqual({ id: receiptRowId(sessionId), graded: false });
+    // The manager's model call is held until the sealed save has claimed the row.
+    let release!: () => void;
+    mocks.gate = new Promise<void>((r) => (release = r));
+    as(manager);
+    const regrade = patch(receiptRowId(sessionId));
+    while (mocks.aiCalls < 1) await new Promise((r) => setTimeout(r, 0));
+    as(trainee);
+    expect(await (await save({ sessionId, ...sealedGrade(sessionId) })).json()).toEqual({ id: receiptRowId(sessionId), graded: true });
+    release();
+    const res = await regrade;
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("conflict");
+    // The row keeps the sealed save's transcript and grade, not a grade of the old transcript.
+    expect(sessions().find((s) => s.id === receiptRowId(sessionId))).toMatchObject({ transcript, overallScore: 62 });
+  });
+
   it("concurrent re-grades of the original and its replay copy leave one graded row", async () => {
     const sessionId = textId();
     const first = (await (await save({ sessionId })).json()) as { id: string };
