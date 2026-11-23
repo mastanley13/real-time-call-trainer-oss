@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useCallback, useContext, useState, useEffect } from "react";
 import { isTokenFresh } from "@/lib/clientSession";
+import { clearStoredSession, installSessionExpiryGuard, markNewSession, storedSessionKey } from "@/lib/sessionExpiry";
 
 export interface LoginCredentials {
   email: string;
@@ -79,6 +80,20 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// The cookie, not localStorage, authenticates API calls. When a same-origin API call says the session is gone,
+// clear the client session and send the user to sign in again (src/lib/sessionExpiry.ts). Installed at module
+// load in the browser, before any component mounts, so requests from child mount effects are covered too.
+let demoModeActive = false;
+let clearActiveSession: (() => void) | null = null;
+
+if (typeof window !== "undefined") {
+  installSessionExpiryGuard(window, {
+    currentSession: storedSessionKey,
+    isDemo: () => demoModeActive,
+    onExpired: () => (clearActiveSession ?? clearStoredSession)(),
+  });
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
@@ -95,6 +110,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       .then((caps: Capabilities | null) => {
         setCapabilities(caps);
         setCapabilitiesFailed(caps === null);
+        demoModeActive = !!caps?.demoMode;
         if (caps?.demoMode) {
           setUser({ id: "demo-user", email: "demo@example.local", firstName: "Demo", lastName: "User", role: "owner" });
           setIsAuthenticated(true);
@@ -133,16 +149,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const persistSession = (sessionUser: User, token: string) => {
     localStorage.setItem("authToken", token);
     localStorage.setItem("userData", JSON.stringify(sessionUser));
+    // Login, MFA, register and Google completion all land here: a new generation tells this session from any earlier one.
+    markNewSession();
     setUser(sessionUser);
     setIsAuthenticated(true);
   };
 
-  const clearSession = () => {
-    localStorage.removeItem("authToken");
-    localStorage.removeItem("userData");
+  const clearSession = useCallback(() => {
+    clearStoredSession();
     setUser(null);
     setIsAuthenticated(false);
-  };
+  }, []);
+
+  // Lets the guard above also reset this provider's state. 401s are handled after the response arrives, by
+  // which time this has run; without it the guard still clears storage before the full-page redirect.
+  useEffect(() => {
+    clearActiveSession = clearSession;
+    return () => {
+      if (clearActiveSession === clearSession) clearActiveSession = null;
+    };
+  }, [clearSession]);
 
   const login = async (
     credentials: LoginCredentials,

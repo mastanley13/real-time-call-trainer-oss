@@ -542,7 +542,8 @@ describe("Realtime connect sequence stops once closed (round 5)", () => {
     expect(guard).toBeGreaterThan(-1);
     expect(guard).toBeLessThan(realtime.indexOf('fetch("/api/live/sdp"'));
     expect(guard).toBeLessThan(realtime.indexOf('fetch("/api/realtime/sdp"'));
-    expect(realtime).toMatch(/await iceGathered\(pc\);\s*if \(this\.closed\) return;\s*const res = await fetch\("\/api\/live\/sdp"/);
+    // main's session key (storedSessionKey, for the stale-session 401) is read between the guard and the request.
+    expect(realtime).toMatch(/await iceGathered\(pc\);\s*if \(this\.closed\) return;\s*const liveSession = storedSessionKey\(\);\s*const res = await fetch\("\/api\/live\/sdp"/);
   });
 
   it("checks closed after each SDP answer, before setRemoteDescription", () => {

@@ -8,6 +8,7 @@ import AuthShell from "@/components/AuthShell";
 import GoogleButton, { GOOGLE_ERRORS } from "@/components/GoogleButton";
 import LegalLinks from "@/components/LegalLinks";
 import { loginDestination, validNextPath } from "@/lib/safeNext";
+import { EXPIRED_REASON } from "@/lib/sessionExpiry";
 
 export default function LoginPage() {
   // useSearchParams needs a Suspense boundary in the App Router.
@@ -24,6 +25,8 @@ function LoginForm() {
   // The current ?next=, read on every render. The Google return effect below keeps a safe one in the URL.
   const nextParam = useSearchParams().get("next");
   const destination = loginDestination(nextParam);
+  // Set by the stale-session redirect in src/lib/sessionExpiry.ts. Only the exact value shows the notice.
+  const sessionExpired = useSearchParams().get("reason") === EXPIRED_REASON;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
@@ -80,6 +83,9 @@ function LoginForm() {
       )}
       {resetDone && !challenge && (
         <div role="status" className="banner-ok mb-4">Your password was reset. Sign in with your new password.</div>
+      )}
+      {sessionExpired && !resetDone && !challenge && (
+        <div role="status" className="banner-warn mb-4">Your session expired. Sign in again.</div>
       )}
       {!challenge && <GoogleButton next={validNextPath(nextParam) ?? undefined} />}
       <form onSubmit={onSubmit} className="space-y-4">
