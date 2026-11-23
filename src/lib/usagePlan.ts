@@ -110,9 +110,11 @@ export function callLimitSeconds(reservedMinutes: number, exactStop = true): num
 }
 
 /**
- * Whether the heartbeat should carry the Free 1 minute warning, from the seconds the server says the call has left
+ * Whether a heartbeat is inside the Free 1 minute warning window, from the seconds the server says the call has left
  * (which include the end grace). True from FREE_CAP_WARNING_SECONDS of Free minutes left until the stop, so a heartbeat
- * that lands inside the grace still warns. Only for a call on the Free rule whose Free minutes are what end it.
+ * that lands inside the grace is still inside it. Only for a call on the Free rule whose Free minutes are what end it.
+ * The heartbeat sends the warning once per call, on the heartbeat that crosses into this window (see heartbeat() in
+ * usage.ts).
  */
 export function freeCapWarning(secondsLeft: number): boolean {
   return secondsLeft > 0 && secondsLeft - FREE_END_GRACE_SECONDS <= FREE_CAP_WARNING_SECONDS;

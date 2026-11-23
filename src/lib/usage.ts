@@ -549,7 +549,10 @@ const SERVER_ENDED: ReadonlySet<string> = new Set(["cap_reached", "max_duration"
 export type HeartbeatState = "connected" | "ok" | "recovering";
 export type HeartbeatResult =
   | { found: false }
-  /** capWarning: a Free call has about a minute of Free minutes left (freeCapWarning). secondsLeft includes the end grace. */
+  /**
+   * capWarning: a Free call has about a minute of Free minutes left (freeCapWarning). Set once per call, on the heartbeat
+   * that crosses into the warning window. secondsLeft includes the end grace.
+   */
   | { found: true; stop: false; secondsLeft: number; capWarning?: true }
   /** freeCap: a cap_reached stop of a call on the Free rule, so the answer can use the Free wording. */
   | { found: true; stop: true; reason: "cap_reached" | "max_duration" | "ended"; settlement: CallResult | null; freeCap?: true };
@@ -572,6 +575,9 @@ function endedAnswer(s: Pick<OpenSession, "endReason" | "capEnforced">): Heartbe
     ? { found: true, stop: true, reason: "ended", settlement: null, freeCap: true }
     : { found: true, stop: true, reason: "ended", settlement: null };
 }
+
+/** Compare-and-set tries for one heartbeat's write before it records itself unconditionally (see heartbeat()). */
+const HEARTBEAT_WRITE_ATTEMPTS = 3;
 
 export async function heartbeat(userId: string, callId: string, state: HeartbeatState, now = new Date()): Promise<HeartbeatResult> {
   return runMetered(async (tx) => {
@@ -598,23 +604,47 @@ export async function heartbeat(userId: string, callId: string, state: Heartbeat
     // Written only while the call is still open. A settlement (settleStale, closeNeverConnectedCall, an end event) that
     // committed since the read above has closed the row and released its reservation: the heartbeat then records
     // nothing, no connection included, and tells the client to stop.
-    const written = await tx.trainerSession.updateMany({ where: { id: s.id, endedAt: null }, data });
-    if (written.count === 0) {
+    // The write also requires lastHeartbeatAt to still be the value read (compare and set), so a write that lands knows
+    // exactly which heartbeat it follows, which is what makes the Free warning below go out once. When an overlapping
+    // heartbeat landed first, this one no longer matches (Postgres re-checks the condition after the other commits): the
+    // row is read again and the write retried against the new value.
+    let prev = { at: s.lastHeartbeatAt, connectedAt: s.connectedAt };
+    let landed = false;
+    for (let attempt = 0; attempt < HEARTBEAT_WRITE_ATTEMPTS; attempt++) {
+      const written = await tx.trainerSession.updateMany({ where: { id: s.id, endedAt: null, lastHeartbeatAt: prev.at ?? null }, data });
+      if (written.count > 0) { landed = true; break; }
+      const current = await tx.trainerSession.findUnique({
+        where: { id: s.id }, select: { endedAt: true, endReason: true, capEnforced: true, lastHeartbeatAt: true, connectedAt: true },
+      });
       // Often an overlapping heartbeat that just stopped the call: read how it ended so a Free cap stop keeps its flag.
-      const closed = await tx.trainerSession.findUnique({ where: { id: s.id }, select: { endReason: true, capEnforced: true } });
-      return endedAnswer(closed ?? s);
+      if (!current || current.endedAt) return endedAnswer(current ?? s);
+      prev = { at: current.lastHeartbeatAt, connectedAt: current.connectedAt };
+    }
+    if (!landed) {
+      // Still overlapping after every attempt: record the heartbeat as before, and claim no warning with it.
+      const written = await tx.trainerSession.updateMany({ where: { id: s.id, endedAt: null }, data });
+      if (written.count === 0) {
+        const closed = await tx.trainerSession.findUnique({ where: { id: s.id }, select: { endReason: true, capEnforced: true } });
+        return endedAnswer(closed ?? s);
+      }
     }
 
     const { limit, exactStop, trialBound } = await limitSeconds(tx, s, now);
+    const leftAt = (t: Date, from: Date) => Math.min(limit, MAX_CALL_SECONDS) - Math.max(0, Math.floor((t.getTime() - from.getTime()) / 1000));
     const start = billingStart({ createdAt: s.createdAt, connectedAt });
-    const elapsed = Math.max(0, Math.floor((now.getTime() - start.getTime()) / 1000));
-    const left = Math.min(limit, MAX_CALL_SECONDS) - elapsed;
+    const left = leftAt(now, start);
     if (left > 0) {
       // The Free warning comes from the call's own reservation on the server clock, never from a client timer. Not on a
-      // trial call whose 300 second deadline ends it first: that one ends as max_duration with its own notice.
-      const warn = !exactStop && !trialBound && freeCapWarning(left);
+      // trial call whose 300 second deadline ends it first: that one ends as max_duration with its own notice. Once per
+      // call: only the heartbeat that crosses into the warning window warns, i.e. the one whose write replaced a
+      // heartbeat that was still outside it (its time, measured from the billing start the row had then). A call with no
+      // heartbeat yet has warned nobody, so a call that starts inside the window warns on its first heartbeat. Two
+      // overlapping heartbeats cannot both replace the same one, so they cannot both warn.
+      const warnedBefore = !!prev.at && freeCapWarning(leftAt(prev.at, billingStart({ createdAt: s.createdAt, connectedAt: prev.connectedAt })));
+      const warn = landed && !exactStop && !trialBound && freeCapWarning(left) && !warnedBefore;
       return warn ? { found: true, stop: false, secondsLeft: left, capWarning: true } as const : { found: true, stop: false, secondsLeft: left } as const;
     }
+    const elapsed = Math.max(0, Math.floor((now.getTime() - start.getTime()) / 1000));
     // Free and paid calls stop the same way when their minutes run out (cap_reached); Free only gets its end grace
     // first. A trial call that reaches its trial deadline ends the normal way (max_duration), never with a quota error.
     const reason = trialBound ? "max_duration" : limit - elapsed <= 0 ? "cap_reached" : "max_duration";

@@ -80,7 +80,7 @@ async function runCall(userId: string, o: { endAt: number; start?: number }) {
 async function callUntilStopped(userId: string, o: { endAt: number }) {
   const begun = await beginCall(userId, scn, at(0));
   if (!begun.ok) throw new Error(begun.error);
-  await heartbeat(userId, begun.callId, "connected", at(0));
+  const connected = await heartbeat(userId, begun.callId, "connected", at(0));
   const answers: Array<Awaited<ReturnType<typeof heartbeat>> & { t: number }> = [];
   let t = 10;
   for (; t < o.endAt; t += 10) {
@@ -90,10 +90,10 @@ async function callUntilStopped(userId: string, o: { endAt: number }) {
   }
   const result = await endCall(userId, begun.callId, "user_hangup", at(Math.min(t, o.endAt)));
   const stop = answers.find((a) => a.found && a.stop);
-  return { begun, callId: begun.callId, answers, stop, result: result! };
+  return { begun, callId: begun.callId, connected, answers, stop, result: result! };
 }
 
-const post = (url: string, body: unknown) => new NextRequest(`http://localhost${url}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+const post =(url: string, body: unknown) => new NextRequest(`http://localhost${url}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
 const scenario = BUILT_IN_SCENARIOS[0];
 const transcript = [
   { role: "assistant", text: "Hello, this is Dana." },
@@ -201,13 +201,15 @@ describe("a running Free call is stopped at its Free minutes plus the end grace"
     await freeUserWith(9.5);
     const start = await resolveAllowance(fake.db as never, "u-1", at(0));
     expect(start).toMatchObject({ remaining: 0.5, available: 0.5 });
-    const { begun, callId, answers, stop, result } = await callUntilStopped("u-1", { endAt: 180 });
+    const { begun, callId, connected, answers, stop, result } = await callUntilStopped("u-1", { endAt: 180 });
 
     // Reservations are whole minutes, so half a minute left holds (and may use) one minute, plus the end grace.
     expect(begun.maxSeconds).toBe(60 + FREE_END_GRACE_SECONDS);
     expect(stop).toMatchObject({ t: 60 + FREE_END_GRACE_SECONDS, found: true, stop: true, reason: "cap_reached", freeCap: true });
-    // The warning came first: under a minute of Free minutes was left from the start.
-    expect(answers[0]).toMatchObject({ found: true, stop: false, capWarning: true });
+    // The warning came first, once: under a minute of Free minutes was left from the start, so the first heartbeat
+    // (the "connected" one) carried it and no later one did.
+    expect(connected).toMatchObject({ found: true, stop: false, capWarning: true });
+    expect(answers.filter((a) => "capWarning" in a)).toEqual([]);
     // The grace is not billed: 80 s ran, 60 s and 1 minute are charged.
     expect(result).toMatchObject({ endReason: "cap_reached", billedMinutes: 1, creditedMinutes: 0, billableSeconds: 60 });
     expect(session(callId)).toMatchObject({ endReason: "cap_reached", billableSeconds: 60, billedMinutes: 1, abuseFlagged: false });
@@ -283,8 +285,8 @@ describe("a running Free call is stopped at its Free minutes plus the end grace"
     expect(early).toEqual({ found: true, stop: false, secondsLeft: limit - 530 });
     // 540 s in: 60 s of Free minutes left (80 s with the grace).
     expect(await heartbeat("u-1", begun.callId, "ok", at(540))).toEqual({ found: true, stop: false, secondsLeft: limit - 540, capWarning: true });
-    // Inside the grace (allowance already at 0) the warning still rides along until the stop.
-    expect(await heartbeat("u-1", begun.callId, "ok", at(610))).toEqual({ found: true, stop: false, secondsLeft: limit - 610, capWarning: true });
+    // Sent once: the later heartbeats, inside the window and inside the grace (allowance already at 0), carry no warning.
+    for (const t of [550, 600, 610]) expect(await heartbeat("u-1", begun.callId, "ok", at(t))).toEqual({ found: true, stop: false, secondsLeft: limit - t });
     const stopped = await heartbeat("u-1", begun.callId, "ok", at(limit));
     expect(stopped).toMatchObject({ found: true, stop: true, reason: "cap_reached", freeCap: true });
     expect(session(begun.callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 10, billableSeconds: 600 });
@@ -396,6 +398,80 @@ describe("a running Free call is stopped at its Free minutes plus the end grace"
     await endCall("u-1", begun.callId, "user_hangup", at(601));
     expect(session(begun.callId)).toMatchObject({ billedMinutes: 1, abuseFlagged: false });
     expect(fake.rows("user")[0].voiceBlockedUntil ?? null).toBeNull();
+  });
+});
+
+describe("the Free 1 minute warning goes out once per call", () => {
+  const limit = 600 + FREE_END_GRACE_SECONDS;
+  const warned = (answers: Array<Awaited<ReturnType<typeof heartbeat>>>) => answers.filter((a) => a.found && !a.stop && a.capWarning);
+
+  it("a whole call heartbeating every 10 s gets the warning on the crossing heartbeat only", async () => {
+    await freeUserWith(0);
+    const { connected, answers, stop } = await callUntilStopped("u-1", { endAt: 40 * 60 });
+    expect(connected).toEqual({ found: true, stop: false, secondsLeft: limit });
+    expect(stop).toMatchObject({ t: limit, reason: "cap_reached", freeCap: true });
+    // 540 s in is the first heartbeat inside the window (60 s of Free minutes left); nothing before or after it warns.
+    expect(answers.filter((a) => "capWarning" in a).map((a) => a.t)).toEqual([540]);
+    expect(answers.filter((a) => a.found && !a.stop && a.t > 540).length).toBeGreaterThan(0);
+  });
+
+  it("a call that starts inside the window warns once, on its first heartbeat", async () => {
+    await freeUserWith(9); // 1 Free minute left: 60 s plus the grace, inside the window from the start
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    const answers = [await heartbeat("u-1", begun.callId, "connected", at(0))];
+    for (const t of [10, 20, 30, 40, 50, 60, 70]) answers.push(await heartbeat("u-1", begun.callId, "ok", at(t)));
+    expect(answers[0]).toEqual({ found: true, stop: false, secondsLeft: 80, capWarning: true });
+    expect(warned(answers)).toHaveLength(1);
+    expect(await heartbeat("u-1", begun.callId, "ok", at(80))).toMatchObject({ stop: true, reason: "cap_reached", freeCap: true });
+  });
+
+  it("two overlapping heartbeats that read the same previous one give one warning", async () => {
+    await freeUserWith(0);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    expect(await heartbeat("u-1", begun.callId, "ok", at(530))).toEqual({ found: true, stop: false, secondsLeft: limit - 530 });
+
+    // The 541 s heartbeat reads the row (previous heartbeat 530 s), then the 545 s one commits before its write.
+    const overlapping: Array<Awaited<ReturnType<typeof heartbeat>>> = [];
+    fake.interleave("trainerSession", "updateMany", async () => { overlapping.push(await heartbeat("u-1", begun.callId, "ok", at(545))); },
+      (args) => args.where.id === begun.callId);
+    const late = await heartbeat("u-1", begun.callId, "ok", at(541));
+    // The interleaved commit is replayed into each open snapshot; it is one heartbeat, and it warned.
+    expect(overlapping.at(-1)).toEqual({ found: true, stop: false, secondsLeft: limit - 545, capWarning: true });
+    // The overlapped one no longer matched the previous heartbeat it read: it was recorded after the 545 s one, no warning.
+    expect(late).toEqual({ found: true, stop: false, secondsLeft: limit - 541 });
+    expect(await heartbeat("u-1", begun.callId, "ok", at(560))).toEqual({ found: true, stop: false, secondsLeft: limit - 560 });
+  });
+
+  it("a crossing heartbeat overtaken by one still outside the window keeps the warning", async () => {
+    await freeUserWith(0);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    await heartbeat("u-1", begun.callId, "ok", at(520));
+
+    const overlapping: Array<Awaited<ReturnType<typeof heartbeat>>> = [];
+    fake.interleave("trainerSession", "updateMany", async () => { overlapping.push(await heartbeat("u-1", begun.callId, "ok", at(535))); },
+      (args) => args.where.id === begun.callId);
+    const crossing = await heartbeat("u-1", begun.callId, "ok", at(541));
+    expect(overlapping.at(-1)).toEqual({ found: true, stop: false, secondsLeft: limit - 535 }); // outside the window
+    // Its write was retried against the 535 s heartbeat, still outside the window, so it is the crossing one.
+    expect(crossing).toEqual({ found: true, stop: false, secondsLeft: limit - 541, capWarning: true });
+    expect(await heartbeat("u-1", begun.callId, "ok", at(551))).toEqual({ found: true, stop: false, secondsLeft: limit - 551 });
+  });
+
+  it("paid calls never warn, from the first heartbeat to the stop", async () => {
+    addUser("u-1", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
+    allowanceOf("u-1").minutesUsed = 199; // 1 Pro minute left: inside the Free window, were it a Free call
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    const answers = [await heartbeat("u-1", begun.callId, "connected", at(0))];
+    for (const t of [10, 20, 30, 40, 50]) answers.push(await heartbeat("u-1", begun.callId, "ok", at(t)));
+    expect(answers.filter((a) => "capWarning" in a)).toEqual([]);
+    expect(await heartbeat("u-1", begun.callId, "ok", at(60))).toEqual(expect.objectContaining({ stop: true, reason: "cap_reached" }));
   });
 });
 
@@ -873,6 +949,9 @@ describe("voice_cap_hit: a used-up allowance is reported with ids only, and neve
     expect(await (await beat(begun.callId, "ok")).json()).toEqual({ stop: false, secondsLeft: limit - 300 });
     vi.setSystemTime(at(550));
     expect(await (await beat(begun.callId, "ok")).json()).toEqual({ stop: false, secondsLeft: limit - 550, capWarning: true, message: FREE_CAP_WARNING_MESSAGE });
+    // The route sends the warning once: the next heartbeat in the window answers without it.
+    vi.setSystemTime(at(560));
+    expect(await (await beat(begun.callId, "ok")).json()).toEqual({ stop: false, secondsLeft: limit - 560 });
     await flush();
     expect(events).toEqual([]); // the warning is not a cap hit
 
