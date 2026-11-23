@@ -479,22 +479,37 @@ describe("the Free 1 minute warning goes out once per call", () => {
     expect(await heartbeat("u-1", begun.callId, "ok", at(555))).toEqual({ found: true, stop: false, secondsLeft: limit - 555 });
   });
 
-  it("a crossing heartbeat overtaken by one still outside the window leaves the warning to the next heartbeat", async () => {
+  it("an older heartbeat that commits first: the newer one retries from the fresh row, lands, and is the crossing one", async () => {
     await freeUserWith(0);
     const begun = await beginCall("u-1", scn, at(0));
     if (!begun.ok) throw new Error(begun.error);
     await heartbeat("u-1", begun.callId, "connected", at(0));
     await heartbeat("u-1", begun.callId, "ok", at(520));
 
+    // The 541 s heartbeat reads the row (520 s), then the 535 s one commits before its write.
     const overlapping: Array<Awaited<ReturnType<typeof heartbeat>>> = [];
     fake.interleave("trainerSession", "updateMany", async () => { overlapping.push(await heartbeat("u-1", begun.callId, "ok", at(535))); },
       (args) => args.where.id === begun.callId);
-    const overtaken = await heartbeat("u-1", begun.callId, "ok", at(541));
+    const newer = await heartbeat("u-1", begun.callId, "ok", at(541));
     expect(overlapping.at(-1)).toEqual({ found: true, stop: false, secondsLeft: limit - 535 }); // outside the window
-    // Not recorded, so it claims nothing; the next recorded heartbeat replaces 535 s and is the crossing one.
-    expect(overtaken).toEqual({ found: true, stop: false, secondsLeft: limit - 541 });
-    expect(await heartbeat("u-1", begun.callId, "ok", at(551))).toEqual({ found: true, stop: false, secondsLeft: limit - 551, capWarning: true });
+    // Retried against the 535 s row, which is still outside the window: it lands and warns.
+    expect(newer).toEqual({ found: true, stop: false, secondsLeft: limit - 541, capWarning: true });
+    expect(session(begun.callId).lastHeartbeatAt).toEqual(at(541)); // the newest heartbeat received, not the older one
+    expect(await heartbeat("u-1", begun.callId, "ok", at(551))).toEqual({ found: true, stop: false, secondsLeft: limit - 551 });
     expect(await heartbeat("u-1", begun.callId, "ok", at(561))).toEqual({ found: true, stop: false, secondsLeft: limit - 561 });
+  });
+
+  it("a connected heartbeat that loses to an earlier non-connected one still records connectedAt", async () => {
+    await freeUserWith(0);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    // The 5 s "connected" heartbeat reads the call unconnected, then an "ok" at 3 s commits before its write.
+    fake.interleave("trainerSession", "updateMany", async () => { await heartbeat("u-1", begun.callId, "ok", at(3)); },
+      (args) => args.where.id === begun.callId);
+    expect(await heartbeat("u-1", begun.callId, "connected", at(5))).toEqual({ found: true, stop: false, secondsLeft: limit });
+    expect(session(begun.callId)).toMatchObject({ connectedAt: at(5), lastHeartbeatAt: at(5) });
+    // Billed from the connection, not from the mint-time cutoff.
+    expect(await heartbeat("u-1", begun.callId, "ok", at(15))).toEqual({ found: true, stop: false, secondsLeft: limit - 10 });
   });
 
   it("a connecting heartbeat that loses to another one keeps the recorded connection time and its deadline", async () => {
@@ -507,9 +522,9 @@ describe("the Free 1 minute warning goes out once per call", () => {
       (args) => args.where.id === begun.callId);
     const second = await heartbeat("u-1", begun.callId, "connected", at(5));
     expect(overlapping.at(-1)).toEqual({ found: true, stop: false, secondsLeft: limit });
-    // Answered from the fresh row: billed from 3 s, not from its own 5 s and not from the mint-time cutoff.
+    // Retried from the fresh row: recorded as the latest heartbeat, but the connection stays at 3 s, not its own 5 s.
     expect(second).toEqual({ found: true, stop: false, secondsLeft: limit - 2 });
-    expect(session(begun.callId)).toMatchObject({ connectedAt: at(3), lastHeartbeatAt: at(3) });
+    expect(session(begun.callId)).toMatchObject({ connectedAt: at(3), lastHeartbeatAt: at(5) });
     expect(await heartbeat("u-1", begun.callId, "ok", at(13))).toEqual({ found: true, stop: false, secondsLeft: limit - 10 });
     expect(session(begun.callId).connectedAt).toEqual(at(3));
     // The stop lands at the deadline from the recorded connection time.

@@ -576,6 +576,9 @@ function endedAnswer(s: Pick<OpenSession, "endReason" | "capEnforced">): Heartbe
     : { found: true, stop: true, reason: "ended", settlement: null };
 }
 
+/** Conditional write tries for one heartbeat; each retry needs a strictly newer recorded heartbeat (see heartbeat()). */
+const HEARTBEAT_WRITE_ATTEMPTS = 5;
+
 export async function heartbeat(userId: string, callId: string, state: HeartbeatState, now = new Date()): Promise<HeartbeatResult> {
   return runMetered(async (tx) => {
     const s = await tx.trainerSession.findUnique({ where: { id: callId } });
@@ -587,45 +590,48 @@ export async function heartbeat(userId: string, callId: string, state: Heartbeat
       return endedAnswer(s);
     }
 
-    // Everything this heartbeat writes is worked out from the row `s` as read, and the write lands only while the row is
-    // still that row (see below), so nothing here is ever applied over a newer state.
-    const data: Prisma.TrainerSessionUpdateManyMutationInput = { lastHeartbeatAt: now };
-    const establishes = !s.connectedAt && state === "connected" && now.getTime() - s.createdAt.getTime() <= CONNECT_WINDOW_SECONDS * 1000;
-    if (establishes) data.connectedAt = now;
-    if (state === "recovering") {
-      if (!s.degradedAt) data.degradedAt = now;
-    } else if (s.degradedAt) {
-      data.degradedAt = null;
-    }
-    // Monotonic claim. The write lands only while the call is open (endedAt null) and lastHeartbeatAt is still the value
-    // read in `s`, and only when that value is null or strictly before `now`. Heartbeats are the only writers of
-    // lastHeartbeatAt, connectedAt and degradedAt (a settlement closes the row instead, which endedAt null catches), and
-    // every landed write moves lastHeartbeatAt strictly forward, so an unchanged lastHeartbeatAt means the row is exactly
-    // the snapshot this heartbeat computed from. Of two overlapping heartbeats that read the same row, Postgres lets the
-    // first write land and re-checks the second's condition after that commit, so the second no longer matches; two with
-    // the same `now` cannot both land, and an older heartbeat that arrives after a newer one never lands.
-    // So lastHeartbeatAt never moves backward or repeats: it is always the latest heartbeat the server recorded. That is
+    // Monotonic claim. Each write is worked out entirely from one row snapshot and lands only while the call is open
+    // (endedAt null) and lastHeartbeatAt is still that snapshot's value, and only when that value is null or strictly
+    // before `now`. Heartbeats are the only writers of lastHeartbeatAt, connectedAt and degradedAt (a settlement closes
+    // the row instead, which endedAt null catches), and every landed write moves lastHeartbeatAt strictly forward, so an
+    // unchanged lastHeartbeatAt means the row is exactly the snapshot the write was computed from. Of two overlapping
+    // heartbeats that read the same row, Postgres lets the first write land and re-checks the second's condition after
+    // that commit, so the second no longer matches; two with the same `now` cannot both land.
+    // A heartbeat whose write did not land reads the row again. Ended: the ended answer. Still recorded earlier than
+    // `now` (an older heartbeat got in first): the write is recomputed from that fresh row and tried again, so the newest
+    // heartbeat the server received is the one recorded. Recorded at or after `now` (a newer or same-time heartbeat got
+    // in first): nothing to record, answered from the fresh row. Every retry needs lastHeartbeatAt to have strictly
+    // increased, so it is bounded; after HEARTBEAT_WRITE_ATTEMPTS the answer comes from the latest row without a write.
+    // So lastHeartbeatAt never moves backward or repeats, and it is the latest heartbeat the server received. That is
     // what abandoned-call billing reads (the silence timeout in settleStale, the last confirmed time in billedEnd), and
-    // neither is loosened: the value is always the time of a heartbeat that really arrived, never later than the newest
-    // one and never earlier than one already recorded. Only an older heartbeat that lost the race goes unrecorded, and
-    // the newer one it lost to already proves the client was alive later than it did.
-    const claimable = !s.lastHeartbeatAt || s.lastHeartbeatAt.getTime() < now.getTime();
-    const written = claimable
-      ? await tx.trainerSession.updateMany({
-        where: { id: s.id, endedAt: null, lastHeartbeatAt: s.lastHeartbeatAt ?? null, ...(establishes ? { connectedAt: null } : {}) },
+    // neither is loosened: the value is always the time of a heartbeat that really arrived, never earlier than one
+    // already recorded, and a newer heartbeat is not lost to an older one that committed first. Only a heartbeat no
+    // newer than one already recorded goes unrecorded, and that one already proves the client was alive at least as late.
+    let row: OpenSession = s;
+    for (let attempt = 0; attempt < HEARTBEAT_WRITE_ATTEMPTS; attempt++) {
+      if (row.lastHeartbeatAt && row.lastHeartbeatAt.getTime() >= now.getTime()) break;
+      const data: Prisma.TrainerSessionUpdateManyMutationInput = { lastHeartbeatAt: now };
+      const establishes = !row.connectedAt && state === "connected" && now.getTime() - row.createdAt.getTime() <= CONNECT_WINDOW_SECONDS * 1000;
+      if (establishes) data.connectedAt = now;
+      if (state === "recovering") {
+        if (!row.degradedAt) data.degradedAt = now;
+      } else if (row.degradedAt) {
+        data.degradedAt = null;
+      }
+      const written = await tx.trainerSession.updateMany({
+        where: { id: row.id, endedAt: null, lastHeartbeatAt: row.lastHeartbeatAt ?? null, ...(establishes ? { connectedAt: null } : {}) },
         data,
-      })
-      : { count: 0 };
-
-    if (written.count === 0) {
-      // Not recorded. The row changed since the read: a settlement closed it, or another heartbeat landed (or this one is
-      // older than the last one recorded). Answer from the row as it is now, with no write and no warning.
+      });
+      if (written.count > 0) {
+        return answerOrStop(tx, { ...row, ...(establishes ? { connectedAt: now } : {}), lastHeartbeatAt: now, degradedAt: null }, now, true, row);
+      }
       const fresh = await tx.trainerSession.findUnique({ where: { id: s.id } });
       // Often an overlapping heartbeat that just stopped the call: read how it ended so a Free cap stop keeps its flag.
       if (!fresh || fresh.endedAt) return endedAnswer(fresh ?? s);
-      return answerOrStop(tx, fresh, now, false);
+      row = fresh;
     }
-    return answerOrStop(tx, { ...s, ...(establishes ? { connectedAt: now } : {}), lastHeartbeatAt: now, degradedAt: null }, now, true, s);
+    // Not recorded: a heartbeat at or after `now` already is (or the attempts ran out). No write and no warning.
+    return answerOrStop(tx, row, now, false);
   });
 }
 
