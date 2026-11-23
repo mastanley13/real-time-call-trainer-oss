@@ -159,14 +159,77 @@ describe("POST /api/transcripts: a seal stores one graded row, for its own call,
     expect(mocks.notify).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses a seal replayed with a receipt after it was stored without one", async () => {
+  it("refuses a seal replayed with a receipt after it was stored without one; the unused receipt still logs once", async () => {
     const sessionId = "uuid-0000-0000-0002";
     const grade = sealedGrade(sessionId);
+    const receipt = sealMintReceipt(userId, sessionId, PREMIUM_REALTIME_MODEL)!;
     expect((await (await save({ sessionId, ...grade })).json()).graded).toBe(true);
-    const res = await save({ sessionId, ...grade, realtimeReceipt: sealMintReceipt(userId, sessionId, PREMIUM_REALTIME_MODEL)! });
+    const res = await save({ sessionId, ...grade, realtimeReceipt: receipt });
     expect((await res.json()).graded).toBe(false);
     expect(gradedRows()).toHaveLength(1);
-    expect(audits()[1].metadata).toMatchObject({ gradeRejected: true, receiptRejected: true });
+    // The receipt had not been used, so it claims the call's row's empty model slot; the grade is not stored again.
+    expect(sessions().find((s) => s.id === receiptRowId(sessionId))).toMatchObject({ realtimeModel: PREMIUM_REALTIME_MODEL, overallScore: 62 });
+    expect(audits()[1].metadata).toEqual({ scenarioId: scenario.id, overallScore: null, gradeRejected: true });
+    // A third save with the same receipt logs nothing more.
+    await save({ sessionId, realtimeReceipt: receipt });
+    expect(sessions().filter((s) => s.realtimeModel != null)).toHaveLength(1);
+    expect(audits()[2].metadata).toMatchObject({ receiptRejected: true });
+    expect(mocks.notify).toHaveBeenCalledTimes(1);
+  });
+
+  describe("unmetered voice call whose row a receipt-only save claimed first", () => {
+    const SID = "uuid-0000-0000-0003";
+    const receipt = () => sealMintReceipt(userId, SID, PREMIUM_REALTIME_MODEL)!;
+
+    it("lets a later fresh sealed grade claim that row once", async () => {
+      expect(await (await save({ sessionId: SID, realtimeReceipt: receipt() })).json()).toEqual({ id: receiptRowId(SID), graded: false });
+      const grade = sealedGrade(SID);
+      expect(await (await save({ sessionId: SID, ...grade })).json()).toEqual({ id: receiptRowId(SID), graded: true });
+      expect(sessions()).toHaveLength(1);
+      expect(sessions()[0]).toMatchObject({ id: receiptRowId(SID), realtimeModel: PREMIUM_REALTIME_MODEL, overallScore: 62, transcript, endedAt: expect.any(Date) });
+      expect(mocks.notify).toHaveBeenCalledTimes(1);
+      // The same seal, or another fresh seal for the call, doesn't grade it again.
+      expect((await (await save({ sessionId: SID, ...grade })).json()).graded).toBe(false);
+      expect((await (await save({ sessionId: SID, ...sealedGrade(SID, { score: 99 }) })).json()).graded).toBe(false);
+      expect(gradedRows()).toHaveLength(1);
+      expect(sessions()[0].overallScore).toBe(62);
+      expect(mocks.notify).toHaveBeenCalledTimes(1);
+    });
+
+    it("lets the grade claim the row after a receipt save whose grade didn't verify", async () => {
+      const { evaluation } = sealedGrade(SID);
+      expect((await (await save({ sessionId: SID, realtimeReceipt: receipt(), evaluation: { ...evaluation, overallScore: 100 }, seal: sealedGrade(SID).seal })).json()).graded).toBe(false);
+      expect(await (await save({ sessionId: SID, ...sealedGrade(SID) })).json()).toEqual({ id: receiptRowId(SID), graded: true });
+      expect(gradedRows()).toHaveLength(1);
+    });
+
+    it("stores one graded row and one model whichever of the receipt-only and graded saves lands first", async () => {
+      const grade = sealedGrade(SID);
+      const bodies = await Promise.all([save({ sessionId: SID, realtimeReceipt: receipt() }), save({ sessionId: SID, ...grade }), save({ sessionId: SID, ...grade })].map(async (p) => (await p).json()));
+      expect(bodies.filter((b) => b.graded)).toEqual([{ id: receiptRowId(SID), graded: true }]);
+      expect(gradedRows()).toHaveLength(1);
+      expect(sessions().find((s) => s.id === receiptRowId(SID))).toMatchObject({ realtimeModel: PREMIUM_REALTIME_MODEL, overallScore: 62 });
+      expect(sessions().filter((s) => s.realtimeModel != null)).toHaveLength(1);
+      expect(mocks.notify).toHaveBeenCalledTimes(1);
+    });
+
+    it("stores the grade when the receipt-only save commits between the graded save's read and its insert", async () => {
+      // The graded save tries to insert the call's row; just before, the receipt-only save inserts it.
+      const db = fake.db.trainerSession as unknown as { create: (args: { data: Record<string, unknown> }) => Promise<unknown> };
+      const realCreate = db.create.bind(db);
+      let raced = false;
+      db.create = async (args) => {
+        if (!raced && args.data.id === receiptRowId(SID) && args.data.overallScore != null) {
+          raced = true;
+          expect((await (await save({ sessionId: SID, realtimeReceipt: receipt() })).json()).graded).toBe(false);
+        }
+        return realCreate(args);
+      };
+      expect(await (await save({ sessionId: SID, ...sealedGrade(SID) })).json()).toEqual({ id: receiptRowId(SID), graded: true });
+      expect(raced).toBe(true);
+      expect(sessions()).toHaveLength(1);
+      expect(sessions()[0]).toMatchObject({ realtimeModel: PREMIUM_REALTIME_MODEL, overallScore: 62 });
+    });
   });
 
   describe("metered voice call (its row exists from mint, id = sessionId = callId)", () => {
@@ -197,7 +260,7 @@ describe("POST /api/transcripts: a seal stores one graded row, for its own call,
       seedCall();
       fake.interleave("trainerSession", "updateMany", async () => {
         const row = fake.rows("trainerSession").find((s) => s.id === CALL)!;
-        Object.assign(row, { overallScore: 80, grade: "B", transcript });
+        Object.assign(row, { overallScore: 80, grade: "B", transcript, realtimeSessionId: CALL });
       });
       const res = await save({ sessionId: CALL, callId: CALL, ...sealedGrade(CALL) });
       const body = await res.json();
@@ -205,6 +268,44 @@ describe("POST /api/transcripts: a seal stores one graded row, for its own call,
       expect(body.id).not.toBe(CALL);
       expect(sessions().find((s) => s.id === CALL)).toMatchObject({ overallScore: 80, grade: "B" });
       expect(mocks.notify).not.toHaveBeenCalled();
+    });
+
+    // Both saves read the empty row first; the hook runs the other save to completion just before this one's fill.
+    const raceFills = async (first: Record<string, unknown>, second: Record<string, unknown>) => {
+      let firstRes: { id: string; graded: boolean } | undefined;
+      fake.interleave("trainerSession", "updateMany", async () => {
+        firstRes = await (await save({ sessionId: CALL, callId: CALL, ...first })).json();
+      });
+      const secondRes = (await (await save({ sessionId: CALL, callId: CALL, ...second })).json()) as { id: string; graded: boolean };
+      return { first: firstRes!, second: secondRes };
+    };
+
+    it("an ungraded fill that read the empty row can't erase the grade a concurrent graded fill just stored", async () => {
+      seedCall();
+      const { first, second } = await raceFills(sealedGrade(CALL), {});
+      expect(first).toEqual({ id: CALL, graded: true });
+      expect(second).toEqual({ id: expect.any(String), graded: false });
+      expect(second.id).not.toBe(CALL);
+      expect(sessions().find((s) => s.id === CALL)).toMatchObject({ overallScore: 62, grade: "C", realtimeSessionId: CALL, transcript });
+      expect(gradedRows().map((s) => s.id)).toEqual([CALL]);
+      expect(mocks.notify).toHaveBeenCalledTimes(1);
+    });
+
+    it("a graded fill that loses to an ungraded fill is stored ungraded and schedules nothing", async () => {
+      seedCall();
+      const { first, second } = await raceFills({}, sealedGrade(CALL));
+      expect(first).toEqual({ id: CALL, graded: false });
+      expect(second).toEqual({ id: expect.any(String), graded: false });
+      expect(second.id).not.toBe(CALL);
+      expect(gradedRows()).toHaveLength(0);
+      expect(mocks.notify).not.toHaveBeenCalled();
+    });
+
+    it("leaves the metering fields alone when it fills", async () => {
+      const row = seedCall();
+      Object.assign(row, { endedAt: null, billedMinutes: 0, allowanceId: "allow-1", reservedMinutes: 5 });
+      expect((await (await save({ sessionId: CALL, callId: CALL, ...sealedGrade(CALL) })).json()).graded).toBe(true);
+      expect(sessions().find((s) => s.id === CALL)).toMatchObject({ endedAt: null, billedMinutes: 0, allowanceId: "allow-1", reservedMinutes: 5 });
     });
 
     it("stores one graded row when the call is saved twice at once", async () => {

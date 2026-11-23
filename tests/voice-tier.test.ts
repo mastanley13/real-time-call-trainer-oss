@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
     user: { findUnique: vi.fn() },
     organization: { findUnique: vi.fn(), update: vi.fn() },
     auditEvent: { create: vi.fn() },
-    trainerSession: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+    trainerSession: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
   },
 }));
 vi.mock("@/lib/db", () => ({ prisma: mocks.prisma }));
@@ -99,6 +99,12 @@ beforeEach(() => {
     const row = { ...data, id: where.id };
     mocks.saved.push(row);
     return Promise.resolve(row);
+  });
+  // Conditional claims on a saved row (scalar equality only, null for unset), like Prisma's updateMany.
+  mocks.prisma.trainerSession.updateMany.mockImplementation(({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+    const hit = mocks.saved.filter((r) => Object.entries(where).every(([k, v]) => (r[k] ?? null) === v));
+    for (const r of hit) Object.assign(r, data);
+    return Promise.resolve({ count: hit.length });
   });
   mocks.prisma.trainerSession.findUnique.mockResolvedValue(null);
   as({});

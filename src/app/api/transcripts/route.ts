@@ -118,50 +118,74 @@ export async function POST(req: NextRequest) {
     const meteredReceiptRow = receiptModel ? sessionRow : null;
     // Single use of a grade seal: at most one graded row per seal, also under concurrent saves. The seal is bound to
     // sessionId (gradeSeal.ts), so every graded write below is keyed on sessionId, which makes it one graded row per
-    // call and so one per seal, without a schema change:
-    // - Metered call (a row with id = sessionId exists): the grade may land only on that row, by the fill, and the
-    //   fill that carries a grade is one conditional update that writes only while the row has no score yet. A replay
-    //   finds the row filled (or scored) and is saved ungraded; it can never land on another row, because a seal for
-    //   this sessionId is only ever accepted on the row whose id is sessionId.
-    // - Unmetered call (no such row): the graded row's primary key is receiptRowId(sessionId), the same deterministic
-    //   key the mint receipt claims, so a receipt and a grade for one call share one claim. A second save with the same
-    //   seal (with or without the receipt) hits P2002 and is stored ungraded and without a model. A key made from the
-    //   seal string instead could not share that row with the receipt, and a replay without the receipt would then
-    //   land a second graded row.
+    // call and so one per seal, without a schema change. Every claim is one conditional write that the database
+    // applies atomically, so of two saves racing for the same claim exactly one wins:
+    // - Metered call (a row with id = sessionId exists): the grade may land only on that row, by the fill. A seal for
+    //   this sessionId is only ever accepted on the row whose id is sessionId, so it can never land on another row.
+    // - Unmetered call (no such row): the grade lands on the row whose primary key is receiptRowId(sessionId), the same
+    //   deterministic key the mint receipt claims, so a receipt and a grade for one call share one row. A key made from
+    //   the seal string could not share that row with the receipt, and a replay without the receipt would then land a
+    //   second graded row.
     // The row ids a seal can claim never collide across users in practice: voice ids are server-made, and the client
     // makes text ids with 96 random bits (sessionStore.ts callSessionId).
     let created: { id: string } | null = null;
     let filledOwnRow = false;
-    if (fillExisting && ev && body.callId === body.sessionId) {
-      // The model is not part of the fill; it is set once, below, so a fill can never overwrite or repeat it.
-      const filled = await prisma.trainerSession.updateMany({ where: { id: body.callId, userId: dbUser.id, overallScore: null }, data: fieldsFor(true) });
+    if (fillExisting) {
+      // The fill, graded or not, is one conditional update that lands only while the row is still unfilled.
+      // "Unfilled" is realtimeSessionId = null: beginCall (src/lib/usage.ts) never sets it, every fill sets it to the
+      // save's sessionId (required, at least one character), and nothing else writes it. It is a plain scalar column,
+      // so the condition is exact in Postgres (unlike a JSON comparison on the transcript). Two saves that both read the
+      // empty row can't both fill it: the second finds realtimeSessionId set and changes nothing, so an ungraded fill
+      // can never erase a grade another save just stored, and a grade lands on this row at most once, ever.
+      // A seal for another call id (sessionId differs from callId) never lands here. The model is not part of the fill;
+      // it is set once, below. No metering field (endedAt, billing, heartbeats) is written, so settleStale and billing
+      // see the row exactly as before.
+      const withGrade = !!ev && body.callId === body.sessionId;
+      const filled = await prisma.trainerSession.updateMany({ where: { id: body.callId, userId: dbUser.id, realtimeSessionId: null }, data: fieldsFor(withGrade) });
       if (filled.count === 1) {
-        created = { id: body.callId };
-        graded = filledOwnRow = true;
+        created = { id: body.callId! };
+        filledOwnRow = true;
+        graded = withGrade;
       }
-      // Otherwise a concurrent save of this call stored its grade first: this one becomes a separate ungraded row below,
-      // so it can't overwrite that grade.
-    } else if (fillExisting) {
-      // No grade to claim, or a seal for another call id (sessionId differs from callId), which never lands here.
-      created = await prisma.trainerSession.update({ where: { id: body.callId }, data: fieldsFor(false) });
-      filledOwnRow = true;
+      // Otherwise another save of this call filled it first: this one becomes a separate ungraded row below, as any save
+      // that doesn't fill the call's row always has.
     } else if ((receiptModel || ev) && !sessionRow) {
-      // Single use: the row's primary key comes from the call id, so a second save of the same receipt or the same
-      // grade seal is a unique violation. That save is kept, without a model and without a grade.
+      const rowId = receiptRowId(body.sessionId);
       try {
         // Unmetered calls have no row at mint, so the tier is stored here, mapped from the sealed model on the server
         // when the save lands (within the receipt's lifetime) and never recomputed later.
         created = await prisma.trainerSession.create({
-          data: { id: receiptRowId(body.sessionId), ...unmetered, ...fieldsFor(!!ev), ...(receiptModel ? { realtimeModel: receiptModel, voiceTier: tierOfModel(receiptModel) } : {}) },
+          data: { id: rowId, ...unmetered, ...fieldsFor(!!ev), ...(receiptModel ? { realtimeModel: receiptModel, voiceTier: tierOfModel(receiptModel) } : {}) },
         });
         receiptLogged = !!receiptModel;
         graded = !!ev;
       } catch (e) {
         if (!isReceiptReplay(e)) throw e;
+        // The call's row already exists (P2002 means the other insert committed). It may hold only the receipt's model
+        // (a receipt-only save, or one whose grade didn't verify) or only a grade (a graded save without the receipt).
+        // Each may still claim what the row lacks, once, by a conditional update on that column:
+        // - grade: lands only while the row has no score (overallScore = null). Every stored grade sets overallScore
+        //   (GradeFields requires it), so a second grade for this call, a replay or a race loser, changes nothing.
+        //   The save's own fields (with the sealed transcript) go with it, so the row holds what was graded.
+        // - model: lands only while the row has none (realtimeModel = null), the same rule as the metered row below,
+        //   so a receipt is still logged on exactly one row, once.
+        // Only rows of this user are touched. Ungraded text saves never claim this row (they have no receipt and no
+        // grade), so they can't block a later grade either.
+        if (ev) {
+          const claimed = await prisma.trainerSession.updateMany({ where: { id: rowId, userId: dbUser.id, overallScore: null }, data: fieldsFor(true) });
+          if (claimed.count === 1) {
+            created = { id: rowId };
+            graded = true;
+          }
+        }
+        if (receiptModel) {
+          const logged = await prisma.trainerSession.updateMany({ where: { id: rowId, userId: dbUser.id, realtimeModel: null }, data: { realtimeModel: receiptModel, voiceTier: tierOfModel(receiptModel) } });
+          receiptLogged = logged.count === 1;
+        }
       }
     }
     // Everything else: an ungraded row of its own. That covers a grade whose call already has a row it did not land on
-    // (a replay, or a seal for a metered call saved without its callId).
+    // (a replay, or a seal for a metered call saved without its callId), and a fill that lost the race.
     if (!created) created = await prisma.trainerSession.create({ data: { ...unmetered, ...fieldsFor(false) } });
     // Activation for the CRM: only a stored sealed grade counts. Scheduled as soon as the graded row is written, so a
     // failure in the receipt or audit step below cannot skip it. notifyFirstGradedCall decides in the background, under
