@@ -18,6 +18,7 @@
  */
 
 import { OPENAI_DEFAULT_BASE_URL, isOpenAiBaseUrl } from "./openaiHost";
+import { isSessionExpiryBody } from "./sessionExpiry";
 
 export type VoiceEngine = "openai" | "elevenlabs";
 
@@ -248,8 +249,11 @@ export function realtimeUpstreamMessage(status: number): string {
  * A same-origin 401 is an app sign-in/access failure, not a voice-provider
  * failure (provider failures are mapped to 502 by the routes). A full page
  * navigation resets stale client auth state without weakening server checks.
+ * Only requireAuth's two session errors mean sign in again, the same check the
+ * session guard uses; any other 401 body is an ordinary failure (null).
  */
 export function realtimeAuthRedirect(status: number, error: unknown): "/login" | "/access" | null {
   if (status !== 401) return null;
-  return error === "access_code_required" ? "/access" : "/login";
+  if (error === "access_code_required") return "/access";
+  return isSessionExpiryBody({ error }) ? "/login" : null;
 }

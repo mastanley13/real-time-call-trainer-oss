@@ -6,6 +6,7 @@ import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
 import { CallMeter, type MeterEndReason } from "@/lib/callMeter";
 import { LiveTranscript, applyLiveEvent, type LiveServerEvent } from "@/lib/live";
+import { expireSession, storedSessionKey } from "@/lib/sessionExpiry";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, realtimeAuthRedirect, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
 
 /** Same render-prop contract as the ElevenLabs VoiceSession in TrainerClient. */
@@ -111,11 +112,12 @@ export class RealtimeCall {
     let secret: { clientSecret?: string; liveTicket?: string; voiceApi?: unknown; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown; maxSeconds?: unknown; error?: unknown };
     try {
       // The rep's Standard or Premium pick is a request; the server rechecks entitlement and decides.
+      const session = storedSessionKey();
       const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario, ...(this.voiceTier ? { voiceTier: this.voiceTier } : {}) }) });
       secret = await res.json().catch(() => ({}));
       if (this.closed) return;
       const redirect = realtimeAuthRedirect(res.status, secret.error);
-      if (redirect) return this.signInAgain(redirect);
+      if (redirect) return this.signInAgain(redirect, session);
       if (!res.ok || !(secret.clientSecret || secret.liveTicket)) return this.fail(secret.message || "Could not start the voice call. Try again, or switch to Text.");
     } catch {
       return this.fail("Could not reach the server to start the voice call. Check your connection, then try again.");
@@ -174,21 +176,23 @@ export class RealtimeCall {
         // GPT-Live: the server starts the session with the full offer (src/app/api/live/sdp/route.ts).
         await iceGathered(pc);
         if (this.closed) return;
+        const liveSession = storedSessionKey();
         const res = await fetch("/api/live/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ liveTicket: secret.liveTicket, sessionId: secret.sessionId, scenario: this.scenario, sdp: pc.localDescription?.sdp ?? offer.sdp }) });
         const data = await res.json().catch(() => ({}));
         if (this.closed) return;
         const redirect = data.error === "realtime_secret_expired" ? null : realtimeAuthRedirect(res.status, data.error);
-        if (redirect) return this.signInAgain(redirect);
+        if (redirect) return this.signInAgain(redirect, liveSession);
         if (!res.ok || typeof data.sdp !== "string") return this.fail(data.error === "realtime_secret_expired" ? EXPIRED : data.message || "OpenAI could not connect the voice call. Try again, or switch to Text.", "failed_connect");
         await pc.setRemoteDescription({ type: "answer", sdp: data.sdp });
         return;
       }
       // Same-origin relay of the documented SDP exchange; see src/app/api/realtime/sdp/route.ts.
+      const sdpSession = storedSessionKey();
       const res = await fetch("/api/realtime/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientSecret: secret.clientSecret, sdp: offer.sdp }) });
       const data = await res.json().catch(() => ({}));
       if (this.closed) return;
       const redirect = realtimeAuthRedirect(res.status, data.error);
-      if (redirect) return this.signInAgain(redirect);
+      if (redirect) return this.signInAgain(redirect, sdpSession);
       if (!res.ok || typeof data.sdp !== "string") return this.fail(data.error === "realtime_secret_expired" ? EXPIRED : data.message || "OpenAI could not connect the voice call. Try again, or switch to Text.", "failed_connect");
       await pc.setRemoteDescription({ type: "answer", sdp: data.sdp });
     } catch {
@@ -333,22 +337,18 @@ export class RealtimeCall {
     this.close(repSpoke);
   }
 
-  private signInAgain(path: "/login" | "/access") {
+  /** `session` is the client session key (storedSessionKey) read when the rejected request started. */
+  private signInAgain(path: "/login" | "/access", session: string | null) {
     // No call has connected yet. Stop the microphone and release peer resources
     // before leaving; do not submit an empty practice session for grading.
     // A minted call that never connected is settled as a failed connect, not a hang-up.
     this.meter?.end("failed_connect");
     this.close(false);
-    if (path === "/login") {
-      // The server may reject a cookie while the cached token still looks fresh
-      // (for example, after a signing-key change or a removed cookie). Otherwise
-      // LoginPage restores that cached state and immediately returns to /trainer.
-      try {
-        localStorage.removeItem("authToken");
-        localStorage.removeItem("userData");
-      } catch { /* AuthContext also treats unavailable storage as signed out. */ }
-    }
-    window.location.assign(path);
+    if (path === "/access") return window.location.assign(path);
+    // The shared guard clears the cached session (it can look fresh while the server rejects the cookie) and
+    // makes the one redirect to /login?next=&reason=expired. It leaves a newer sign-in alone; then this
+    // request was stale, so let the rep start again.
+    if (expireSession(session) === "stale") this.h.onError("Could not start the voice call. Try again, or switch to Text.");
   }
 
   /** Releases everything exactly once. notify=false is for unmounts, which must not trigger grading. */

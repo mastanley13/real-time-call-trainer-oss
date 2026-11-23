@@ -163,8 +163,11 @@ describe("small helpers", () => {
   it("recovers app authentication failures without misclassifying provider errors", () => {
     expect(realtimeAuthRedirect(401, "Invalid or expired session")).toBe("/login");
     expect(realtimeAuthRedirect(401, "Authentication required")).toBe("/login");
-    expect(realtimeAuthRedirect(401, undefined)).toBe("/login");
     expect(realtimeAuthRedirect(401, "access_code_required")).toBe("/access");
+    // Only the session errors mean sign in again; any other or missing 401 body is an ordinary failure.
+    expect(realtimeAuthRedirect(401, undefined)).toBeNull();
+    expect(realtimeAuthRedirect(401, "invalid_credentials")).toBeNull();
+    expect(realtimeAuthRedirect(401, { error: "Invalid or expired session" })).toBeNull();
     expect(realtimeAuthRedirect(502, "realtime_secret_expired")).toBeNull();
     expect(realtimeAuthRedirect(502, "realtime_upstream_error")).toBeNull();
     expect(realtimeAuthRedirect(429, "rate_limited")).toBeNull();
