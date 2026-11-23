@@ -1,12 +1,13 @@
 /**
  * Client side of voice metering, shared by both voice engines. It only reports events; the server decides
- * what a call costs from its own clock. Every method is a no-op without a callId (demo mode, no database).
+ * what a call costs from its own clock. Nothing is sent without a callId (demo mode, no database).
  *
  * Connected means the data channel is open AND the first remote audio arrived. Call `open()` and `audio()`
  * as each happens; the first heartbeat is sent when both have.
  *
  * Before that first heartbeat, any end is reported as failed_connect (the server settles it that way anyway: 0 s,
- * reservation released), and leaving the page reports it too, so a failed first try never holds the rep's minutes.
+ * reservation released). Every exit before connect is handled by VoiceAttempt (src/lib/voiceAttempt.ts), which owns
+ * the meter of its attempt.
  */
 
 import { CAP_STOPPED_MESSAGE } from "./billingUi";
@@ -17,35 +18,13 @@ const HEARTBEAT_MS = 10_000;
 /** A dropped connection that has not recovered after this long ends the call (rule 3). */
 export const RECOVER_MS = 10_000;
 
-/** Shown if the page comes back (the back/forward cache) after it was hidden while the call was still connecting. */
-export const LEFT_BEFORE_CONNECT_MESSAGE = "The call stopped because you left the page before it connected. Start the call again.";
-
 export interface MeterHandlers {
   /** The server says the allowance ran out. */
   onStop: (message: string) => void;
   /** The connection did not recover in time. */
   onGiveUp: () => void;
-  /**
-   * The page was hidden before the call connected, and the meter has just reported failed_connect. The owner must cancel
-   * the connection attempt for good (provider connection, mic, call screen): if the page comes back from the
-   * back/forward cache, nothing from this attempt may resume, since the server has closed it at 0 seconds.
-   */
-  onAbandon?: () => void;
-}
-
-/**
- * Calls `fn` when the page is hidden for good (tab closed, navigated away, or put in the back/forward cache). Returns
- * the unsubscribe. A no-op outside a browser.
- *
- * Used while a mint request is pending, when there is no callId to report yet: if the answer still reaches this page,
- * the minted call is ended at once as failed_connect. If the page is gone before the answer arrives, nothing can report
- * it; the server's safety net then closes it on the user's next voice start once it is over
- * NEVER_CONNECTED_RECLAIM_SECONDS (45 s) old with no heartbeat (failed_connect, 0 s, 0 minutes).
- */
-export function onPageHide(fn: () => void): () => void {
-  if (typeof window === "undefined" || typeof window.addEventListener !== "function") return () => {};
-  window.addEventListener("pagehide", fn);
-  return () => { if (typeof window.removeEventListener === "function") window.removeEventListener("pagehide", fn); };
+  /** The call just connected (isConnected became true). */
+  onConnected?: () => void;
 }
 
 export class CallMeter {
@@ -56,41 +35,23 @@ export class CallMeter {
   private ended = false;
   private timer?: ReturnType<typeof setInterval>;
   private recoverTimer?: ReturnType<typeof setTimeout>;
-  private unlistenPageHide: () => void = () => {};
 
-  constructor(private callId: string | undefined, private h: MeterHandlers) {
-    // Closing the tab or navigating away before the call connected: report it now, with a keepalive request, and have
-    // the owner cancel the attempt so a page restored from the back/forward cache cannot connect it unmetered.
-    if (callId) this.unlistenPageHide = onPageHide(() => this.pageHidden());
-  }
-
-  private pageHidden() {
-    if (this.ended || this.connected) return;
-    this.end("failed_connect");
-    this.h.onAbandon?.();
-  }
+  constructor(private callId: string | undefined, private h: MeterHandlers) {}
 
   /**
    * The call connected: the data channel (or SDK) is open AND the first remote audio arrived, which is when the first
-   * heartbeat is sent. Both engines use this one definition: before it, every exit (hang-up, page hide, unmount) is a
-   * pre-connect exit that cancels the attempt. Tracked without a callId too (demo mode), where nothing is sent.
+   * heartbeat is sent. Both engines use this one definition of connected. Tracked without a callId too (demo mode),
+   * where nothing is sent.
    */
   get isConnected() { return this.connected; }
 
   open() { this.opened = true; this.maybeConnect(); }
   audio() { this.heard = true; this.maybeConnect(); }
 
-  /**
-   * The call is going away (unmount) without a reason of its own. Before it connected, that is a failed
-   * connect and is reported now. A connected call is left to its own end event or the server's heartbeat timeout.
-   */
-  abandon() {
-    if (!this.connected) this.end("failed_connect");
-  }
-
   private maybeConnect() {
     if (this.ended || this.connected || !this.opened || !this.heard) return;
     this.connected = true;
+    this.h.onConnected?.();
     if (!this.callId) return;
     void this.beat("connected");
     this.timer = setInterval(() => void this.beat(this.recovering ? "recovering" : "ok"), HEARTBEAT_MS);
@@ -133,7 +94,6 @@ export class CallMeter {
     clearInterval(this.timer);
     clearTimeout(this.recoverTimer);
     if (!this.callId) return;
-    this.unlistenPageHide();
     const sent: MeterEndReason = this.connected ? reason : "failed_connect";
     void fetch("/api/usage/end", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId: this.callId, reason: sent }), keepalive: true }).catch(() => {});
   }

@@ -34,7 +34,7 @@ const missingNotice = (asked: string | null, picked: Scenario) =>
   asked && picked.id !== asked ? `That persona isn't in this browser's library, so we opened ${picked.aiPersona.name} instead. Pick another in the Library.` : "";
 
 /** Rendered inside ConversationProvider; owns the ElevenLabs session and feeds the shared deck. */
-function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onVoiceInfo, registerEnd, render, voiceTier }: {
+function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onCancelled, onVoiceInfo, registerEnd, render, voiceTier }: {
   scenario: Scenario;
   /** The setup's Standard or Premium pick, sent as a request with the token. */
   voiceTier?: "premium" | "standard";
@@ -43,16 +43,17 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
   onTurn: (t: StoredTurn) => void;
   onEnded: () => void;
   onError: (msg: string) => void;
+  /** The attempt ended before it connected: back to the briefing with the message, nothing graded. */
+  onCancelled: (msg: string) => void;
   onVoiceInfo?: (info: VoiceInfo) => void;
   registerEnd: (fn: () => void) => void;
   render: (v: { orbState: AgentState; status: { label: string; tone: "ok" | "signal" | "caution" }; muted: boolean; toggleMute: () => void; end: () => void; getInputVolume: () => number; getOutputVolume: () => number }) => React.ReactNode;
 }) {
-  const cbRef = useRef({ onEnded, onError, onTurn });
-  useEffect(() => { cbRef.current = { onEnded, onError, onTurn }; });
+  const cbRef = useRef({ onEnded, onError, onCancelled, onTurn });
+  useEffect(() => { cbRef.current = { onEnded, onError, onCancelled, onTurn }; });
   const endRef = useRef<() => void>(() => {});
-  // Server-side voice metering (see lib/callMeter.ts), every exit before the call connects, and ending the call screen
-  // exactly once (see elevenLabsStart.ts).
-  const [call] = useState(() => new ElevenLabsStart({ onEnded: () => cbRef.current.onEnded(), onError: (m) => cbRef.current.onError(m), endSession: () => endRef.current() }));
+  // Server-side voice metering (see lib/callMeter.ts) and every exit before the call connects (see lib/voiceAttempt.ts).
+  const [call] = useState(() => new ElevenLabsStart({ onEnded: () => cbRef.current.onEnded(), onError: (m) => cbRef.current.onError(m), onCancelled: (m) => cbRef.current.onCancelled(m), endSession: () => endRef.current() }));
   const userEndedRef = useRef(false);
   // No callbacks here: each attempt passes its own to startSession, bound to its id, so a cancelled attempt is ignored.
   const conv = useConversation();
@@ -93,10 +94,8 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
         });
       } catch (e) {
         startedRef.current = false;
-        // A failed mint was already closed by the token route; a start that failed after the mint is reported here.
-        call.failed();
-        if (call.isCancelled) return;
-        onError(e instanceof Error ? e.message : "Failed to start the call.");
+        // A failed mint (the token route already closed it) or startSession throwing after it: one pre-connect cancel.
+        call.failed(e instanceof Error ? e.message : "Failed to start the call.");
       }
     })();
   }, [active, scenario, startSession, onError, onVoiceInfo, voiceTier, call]);
@@ -476,6 +475,9 @@ export default function TrainerClient() {
       scenario, active: live, grading, onTurn: addTurn, onEnded: onVoiceEnded, onVoiceInfo, voiceTier: callTier,
       // With nothing from the rep there is nothing to grade: go back to the briefing, where the error explains what happened.
       onError: (m: string) => { setError(m); if (!turnsRef.current.some((t) => t.role === "user" && t.text.trim())) setPhase("idle"); },
+      // The attempt ended before it connected (src/lib/voiceAttempt.ts): back to the briefing with the reason. Nothing is
+      // graded or saved, whatever arrived before connect.
+      onCancelled: (m: string) => { mintedCallRef.current = null; setError(m); setPhase("idle"); },
       registerEnd: (fn: () => void) => { endVoice.current = fn; },
       render: (v: VoiceRender) => (
         <Deck {...shared} orbState={v.orbState} status={grading ? { label: "Grading…", tone: "signal" } : v.status} onEnd={v.end}

@@ -12,7 +12,7 @@ const removeItem = vi.fn();
 const getItem = vi.fn((k: string) => (k === "authToken" ? "header.payload.signature" : null));
 const track = { enabled: true, stop };
 const mic = { getTracks: () => [track], getAudioTracks: () => [track] };
-const handlers = () => ({ onTurn: vi.fn(), onEnded: vi.fn(), onError: vi.fn(), onView: vi.fn(), onMinted: vi.fn(), onVoiceInfo: vi.fn() });
+const handlers = () => ({ onTurn: vi.fn(), onEnded: vi.fn(), onError: vi.fn(), onCancelled: vi.fn(), onView: vi.fn(), onMinted: vi.fn(), onVoiceInfo: vi.fn() });
 const LOGIN_EXPIRED = `/login?next=${encodeURIComponent("/trainer?scenario=x")}&reason=expired`;
 
 function stubMedia() {
@@ -61,6 +61,7 @@ describe("voice startup session recovery", () => {
     expect(assign).toHaveBeenCalledWith(destination);
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(h.onError).not.toHaveBeenCalled();
+    expect(h.onCancelled).not.toHaveBeenCalled(); // it navigates; no screen message
     expect(h.onEnded).not.toHaveBeenCalled();
   });
 
@@ -121,8 +122,10 @@ describe("voice startup session recovery", () => {
     expect(urls[urls.length - 1]).toBe(_label.includes("Live") ? "/api/live/sdp" : _label.includes("SDP") ? "/api/realtime/sdp" : "/api/realtime/session");
     expect(assign).not.toHaveBeenCalled();
     expect(removeItem).not.toHaveBeenCalled();
-    expect(h.onError).toHaveBeenCalledOnce();
-    expect(h.onError).not.toHaveBeenCalledWith(expect.stringMatching(/sign in/i));
+    // Before connect, an error goes back to the briefing through the attempt's one cancel (src/lib/voiceAttempt.ts).
+    expect(h.onCancelled).toHaveBeenCalledOnce();
+    expect(h.onCancelled).not.toHaveBeenCalledWith(expect.stringMatching(/sign in/i));
+    expect(h.onError).not.toHaveBeenCalled();
     expect(stop).toHaveBeenCalledOnce();
   });
 
@@ -131,7 +134,7 @@ describe("voice startup session recovery", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "realtime_upstream_error", message: "Voice is temporarily unavailable." }, { status: 502 })));
     await new RealtimeCall(scenario, h).start();
     expect(assign).not.toHaveBeenCalled();
-    expect(h.onError).toHaveBeenCalledWith("Voice is temporarily unavailable.");
+    expect(h.onCancelled).toHaveBeenCalledWith("Voice is temporarily unavailable.");
     expect(stop).toHaveBeenCalledOnce();
   });
 });
@@ -172,6 +175,7 @@ describe("voice 401 handoff to the installed session guard", () => {
     expect(store.has("authToken")).toBe(false);
     expect(store.has("userData")).toBe(false);
     expect(h.onError).not.toHaveBeenCalled();
+    expect(h.onCancelled).not.toHaveBeenCalled();
     expect(h.onEnded).not.toHaveBeenCalled();
     expect(stop).toHaveBeenCalledOnce();
   });
@@ -190,6 +194,6 @@ describe("voice 401 handoff to the installed session guard", () => {
     expect(store.get("authToken")).toBe("header.new-payload.signature");
     expect(store.has("userData")).toBe(true);
     expect(stop).toHaveBeenCalledOnce();
-    expect(h.onError).toHaveBeenCalledWith("Could not start the voice call. Try again, or switch to Text.");
+    expect(h.onCancelled).toHaveBeenCalledWith("Could not start the voice call. Try again, or switch to Text.");
   });
 });
