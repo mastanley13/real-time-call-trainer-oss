@@ -1,18 +1,31 @@
+const MAX_DECODE_PASSES = 3;
+
 /**
- * True when a parsed pathname is "/api" or under "/api/". The first segment is percent-decoded (a malformed
- * escape keeps it raw) and lowercased, so "/API/x" and "/%61pi/x" count; a decoded "/" inside it is treated as
- * a separator, so "/%2Fapi" and "/api%2Fx" count too. Look-alikes such as "/apix" and "/api-docs" do not.
+ * True when a parsed pathname is "/api" or under "/api/", judged the way a lenient server might read it. The
+ * whole pathname is percent-decoded repeatedly until stable (at most MAX_DECODE_PASSES; a malformed escape keeps
+ * the last good value), lowercased, split on "/" and "\", and resolved: empty and "." segments drop, ".." pops
+ * (never above the root). So "/API/x", "/%61pi/x", "/%2F/api/x", "/%252Fapi/x" and "/x/%2E%2E/api/y" all count.
+ * Look-alikes such as "/apix" and "/api-docs" do not.
  */
 function isApiPathname(pathname: string): boolean {
-  const first = pathname.split("/")[1] ?? "";
-  let decoded = first;
-  try {
-    decoded = decodeURIComponent(first);
-  } catch {
-    // Malformed escape: compare the raw segment.
+  let decoded = pathname;
+  for (let i = 0; i < MAX_DECODE_PASSES; i++) {
+    let next: string;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      break;
+    }
+    if (next === decoded) break;
+    decoded = next;
   }
-  const head = decoded.toLowerCase().split("/").find((s) => s !== "");
-  return head === "api";
+  const segments: string[] = [];
+  for (const seg of decoded.toLowerCase().split(/[/\\]/)) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") segments.pop();
+    else segments.push(seg);
+  }
+  return segments[0] === "api";
 }
 
 /**
@@ -20,8 +33,8 @@ function isApiPathname(pathname: string): boolean {
  * Only same-site page paths pass: no control characters (the URL parser drops tabs and newlines, so "/<TAB>/host"
  * would become "//host"), no backslashes, the parsed result must stay on the same origin, and its normalized
  * pathname must not be an API route ("/api" or anything under "/api/", in any case or percent-encoding, after
- * dot segments resolve, so "/foo/../api/x" and "/api?x=1" fail). The query and fragment are not inspected, so
- * "/trainer?from=/api/x" passes.
+ * dot segments and encoded separators resolve, so "/foo/../api/x", "/%2F/api/x" and "/api?x=1" fail). The query
+ * and fragment are not inspected, so "/trainer?from=/api/x" passes.
  */
 export function safeNextPath(raw: string | null | undefined, fallback = "/trainer"): string {
   if (!raw || raw.length > 200) return fallback;

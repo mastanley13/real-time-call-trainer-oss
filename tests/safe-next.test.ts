@@ -24,6 +24,18 @@ const API_NEXTS = [
   "/%2Fapi",
   "/%2fapi/x",
   "/api%2Fx",
+  // Encoded separators and dot segments anywhere in the path (whole-path decode, then resolve).
+  "/%2F/api/x",
+  "/%2f%2fapi",
+  "//%2Fapi",
+  "/%252Fapi/x",
+  "/x/%2E%2E/api/y",
+  "/%2E/api",
+  "/%2561pi/x",
+  "/%5Capi/x",
+  "/..%2Fapi",
+  "/x/..%2F..%2Fapi",
+  "/%2E%2E%2F%2E%2E%2Fapi%2Fme",
 ];
 
 // Ordinary page paths that only look similar keep passing.
@@ -36,8 +48,12 @@ const ALLOWED = [
   "/trainer/api/x",
   "/trainer?from=/api/x",
   "/trainer#/api/x",
-  "/%2561pi/x",
   "/%E0/x",
+  "/%E0/api",
+  "/%2F/apix",
+  "/%252Fapi-docs",
+  "/x/%2E%2E/apis/y",
+  "/api/../trainer",
   "/trainer?scenario=auto-inbound-used-crossover-lead&mode=text",
 ];
 
