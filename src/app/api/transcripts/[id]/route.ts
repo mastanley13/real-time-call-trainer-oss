@@ -59,8 +59,9 @@ const notAllowed = () => fail(403, "regrade_not_allowed", "This call already has
 
 /**
  * Re-grade a stored session with the configured AI model and save the new grade. Managers/owners of the
- * session's org and platform admins can re-grade any library-persona call (custom personas need the
- * scenario from the client); the trainee only while it has no AI grade.
+ * session's org and platform admins can re-grade other members' library-persona calls (custom personas need
+ * the scenario from the client). Whoever made the call, whatever their role, can re-grade it only while it
+ * has no AI grade (canRegrade).
  */
 export async function PATCH(req: NextRequest, { params }: Params) {
   const auth = requireAuth(req);
@@ -100,7 +101,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const ownsSession = session.userId === auth.id;
   const managesOrg = await managesOrgOf(auth.id, session);
   if (!ownsSession && !managesOrg) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  // Team views and assignment completion read this score, so a trainee can't re-roll an AI grade; their manager can.
+  // Team views and assignment completion read this score, so nobody re-rolls an AI grade on their own call (a manager,
+  // owner or platform admin included); a manager or owner of the org, or a platform admin, can re-grade anyone else's.
   if (!canRegrade({ managesOrg, ownsSession }, session.evaluation)) return notAllowed();
 
   // Library personas come from the server's own copy, so a client can't loosen the rubric it is graded on.
@@ -142,9 +144,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   try {
     await prisma.$transaction([
       prisma.trainerSession.update({
-        // The trainee passed canRegrade on the row as read before the model call. Their write lands only if the row is
-        // unchanged since (Prisma throws P2025 otherwise), so re-grades sent at once can't all pass and replace each other's AI grade.
-        where: managesOrg ? { id } : { id, updatedAt: session.updatedAt },
+        // Re-grading your own call passed canRegrade on the row as read before the model call (the call had no AI grade).
+        // That write lands only if the row is unchanged since (Prisma throws P2025 otherwise), so re-grades sent at once
+        // can't all pass and replace each other's AI grade. This holds for managers, owners and admins on their own calls too.
+        where: ownsSession ? { id, updatedAt: session.updatedAt } : { id },
         data: {
           evaluation: stored as unknown as Prisma.InputJsonValue,
           overallScore: stored.overallScore,
