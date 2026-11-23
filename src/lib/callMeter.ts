@@ -1,9 +1,17 @@
 /**
  * Client side of voice metering, shared by both voice engines. It only reports events; the server decides
- * what a call costs from its own clock. Every method is a no-op without a callId (demo mode, no database).
+ * what a call costs from its own clock. Nothing is sent without a callId (demo mode, no database).
  *
  * Connected means the data channel is open AND the first remote audio arrived. Call `open()` and `audio()`
  * as each happens; the first heartbeat is sent when both have.
+ *
+ * Before that first heartbeat, any end is reported as failed_connect (the server settles it that way anyway: 0 s,
+ * reservation released). Every exit before connect is handled by VoiceAttempt (src/lib/voiceAttempt.ts), which owns
+ * the meter of its attempt.
+ *
+ * Heartbeats start only at connect, so a Free call's heartbeat-loss shutdown (onHeartbeatsLost) can only happen after
+ * it. It then goes through the engine's connected-call end path: VoiceAttempt.cancel() refuses once the meter is
+ * connected, and end() sends once per meter, so the call's end is reported to the server exactly once.
  */
 
 import { CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE } from "./billingUi";
@@ -60,6 +68,8 @@ export interface MeterHandlers {
    * heartbeat is tolerated as before. Called at most once per call.
    */
   onHeartbeatsLost?: () => void;
+  /** The call just connected (isConnected became true). VoiceAttempt uses it to drop its pre-connect page-hide observer. */
+  onConnected?: () => void;
 }
 
 /** Grace on hang-up (both voice engines) so the trainee's last words still get transcribed before the call closes. */
@@ -144,12 +154,21 @@ export class CallMeter {
 
   constructor(private callId: string | undefined, private h: MeterHandlers) {}
 
+  /**
+   * The call connected: the data channel (or SDK) is open AND the first remote audio arrived, which is when the first
+   * heartbeat is sent. Both engines use this one definition of connected. Tracked without a callId too (demo mode),
+   * where nothing is sent.
+   */
+  get isConnected() { return this.connected; }
+
   open() { this.opened = true; this.maybeConnect(); }
   audio() { this.heard = true; this.maybeConnect(); }
 
   private maybeConnect() {
-    if (!this.callId || this.connected || !this.opened || !this.heard) return;
+    if (this.ended || this.connected || !this.opened || !this.heard) return;
     this.connected = true;
+    this.h.onConnected?.();
+    if (!this.callId) return;
     void this.beat("connected");
     this.timer = setInterval(() => void this.beat(this.recovering ? "recovering" : "ok"), HEARTBEAT_MS);
   }
@@ -282,7 +301,10 @@ export class CallMeter {
     }
   }
 
-  /** Stops the timers and tells the server why the call ended. Safe to call more than once. */
+  /**
+   * Stops the timers and tells the server why the call ended. Safe to call more than once: only the first call sends.
+   * Before the first heartbeat the reason sent is failed_connect, whatever ended it (a hang-up, a drop, a provider error).
+   */
   end(reason: MeterEndReason) {
     if (this.ended) return;
     this.ended = true;
@@ -290,6 +312,7 @@ export class CallMeter {
     clearTimeout(this.recoverTimer);
     this.cancelPending();
     if (!this.callId) return;
-    void fetch("/api/usage/end", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId: this.callId, reason }), keepalive: true }).catch(() => {});
+    const sent: MeterEndReason = this.connected ? reason : "failed_connect";
+    void fetch("/api/usage/end", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId: this.callId, reason: sent }), keepalive: true }).catch(() => {});
   }
 }

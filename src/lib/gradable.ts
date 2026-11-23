@@ -49,10 +49,12 @@ export function withoutModelId<T>(evaluation: T): T {
 }
 
 /**
- * Managers and owners of the session's org, and platform admins, can always re-grade it.
- * The session's own trainee can re-grade only while it has no AI grade, so a rep can't
- * re-roll an AI score that team views and assignment completion read.
+ * Nobody re-rolls an AI grade on their own call: whoever made the call (trainee, manager, owner or platform admin)
+ * can re-grade it only while it has no AI grade, because team views, assignment completion and a solo rep's own
+ * progress read that score (solo reps are the owner of their own workspace). Managers and owners of the session's
+ * org, and platform admins, can always re-grade other people's calls.
  */
 export function canRegrade(actor: { managesOrg: boolean; ownsSession: boolean }, evaluation: unknown): boolean {
-  return actor.managesOrg || (actor.ownsSession && !isAiGrade(evaluation));
+  if (actor.ownsSession) return !isAiGrade(evaluation);
+  return actor.managesOrg;
 }

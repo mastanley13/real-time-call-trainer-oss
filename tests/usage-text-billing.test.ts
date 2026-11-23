@@ -239,7 +239,7 @@ describe("POST /api/transcripts", () => {
     addUser("u-1");
     const c = await mint("u-1", 0);
     await heartbeat("u-1", c.callId, "connected", at(0));
-    const res = await save({ sessionId: "voice-1", callId: c.callId, transcript, durationSeconds: 30, scenario: { id: "quote-follow-up" } });
+    const res = await save({ sessionId: c.callId, callId: c.callId, transcript, durationSeconds: 30, scenario: { id: "quote-follow-up" } });
     expect(res.status).toBe(200);
     expect(fake.rows("trainerSession")).toHaveLength(1);
     expect(session(c.callId).endedAt).toBeNull();

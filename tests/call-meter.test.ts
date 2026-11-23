@@ -429,7 +429,7 @@ describe("RealtimeCall: a cap stop ends the call through the hang-up path", () =
     });
   });
 
-  const handlers = () => ({ onTurn: vi.fn(), onEnded: vi.fn(), onError: vi.fn(), onView: vi.fn(), onMinted: vi.fn(), onVoiceInfo: vi.fn(), onCapWarning: vi.fn() });
+  const handlers = () => ({ onTurn: vi.fn(), onEnded: vi.fn(), onError: vi.fn(), onCancelled: vi.fn(), onView: vi.fn(), onMinted: vi.fn(), onVoiceInfo: vi.fn(), onCapWarning: vi.fn() });
 
   /** Starts a call, opens the data channel and reports first audio, so the meter is heartbeating. */
   async function liveCall(answers: Answer[], beforeAudio?: () => void, mint: Answer = {}) {
@@ -439,7 +439,7 @@ describe("RealtimeCall: a cap stop ends the call through the hang-up path", () =
     await call.start();
     channel.onopen?.();
     beforeAudio?.();
-    (call as unknown as { meter: CallMeter }).meter.audio();
+    (call as unknown as { attempt: { meter: CallMeter } }).attempt.meter.audio();
     await settle();
     await vi.waitFor(() => expect(server.heartbeats().length).toBeGreaterThan(0));
     await settle();

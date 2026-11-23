@@ -96,6 +96,10 @@ describe("gradable", () => {
     expect(canRegrade({ managesOrg: false, ownsSession: true }, null)).toBe(true);
     expect(canRegrade({ managesOrg: true, ownsSession: false }, AI_GRADE)).toBe(true);
     expect(canRegrade({ managesOrg: false, ownsSession: false }, RULES_GRADE)).toBe(false);
+    // A manager, owner or platform admin re-grading their own call follows the trainee rule.
+    expect(canRegrade({ managesOrg: true, ownsSession: true }, AI_GRADE)).toBe(false);
+    expect(canRegrade({ managesOrg: true, ownsSession: true }, RULES_GRADE)).toBe(true);
+    expect(canRegrade({ managesOrg: true, ownsSession: true }, null)).toBe(true);
   });
 });
 
@@ -221,13 +225,16 @@ describe("PATCH /api/transcripts/[id] (server re-grade)", () => {
     expect(audits).toHaveLength(0);
   });
 
-  it("lets a manager's re-grade save even when the call changed after it was read", async () => {
+  it("doesn't save a manager's re-grade when the call changed after it was read, and says to reload", async () => {
     actAs("manager", "org-1");
     holdGrades(2);
+    const before = row.updatedAt;
     const results = await Promise.all([patch(), patch()]);
-    expect(results.map((r) => r.status)).toEqual([200, 200]);
-    expect(mocks.prisma.trainerSession.update.mock.calls.map(([args]) => args.where)).toEqual([{ id: row.id }, { id: row.id }]);
-    expect(audits).toHaveLength(2);
+    // Both graded the transcript as read; the first saves, the second finds the row changed (409, not the trainee's 403).
+    expect(results.map((r) => r.status)).toEqual([200, 409]);
+    expect((await results[1].json()).error).toBe("conflict");
+    expect(mocks.prisma.trainerSession.update.mock.calls.map(([args]) => args.where)).toEqual([{ id: row.id, updatedAt: before }, { id: row.id, updatedAt: before }]);
+    expect(audits).toHaveLength(1);
   });
 
   it("lets managers and owners of the same org, and platform admins, re-grade an AI grade", async () => {
@@ -238,6 +245,53 @@ describe("PATCH /api/transcripts/[id] (server re-grade)", () => {
     const audit = audits[0];
     expect(audit).toMatchObject({ action: "session.regraded", resource: row.id });
     expect(audit.metadata).toMatchObject({ trainee, previousMethod: "llm", previousModel: "gpt-test-mini" });
+  });
+
+  /** Self re-grades: the caller is the call's own maker, with this role (owner is what a solo rep is since #100). */
+  const SELF = [["manager", "org-1", false], ["owner", "org-1", false], ["trainee", null, true]] as const;
+
+  it("refuses a manager, an owner or a platform admin re-grading their own AI-graded call", async () => {
+    for (const [role, org, isPlatformAdmin] of SELF) {
+      actAs(role, org, { isPlatformAdmin, self: true });
+      row.evaluation = AI_GRADE;
+      const res = await patch();
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: "regrade_not_allowed", message: NOT_ALLOWED });
+    }
+    expect(mocks.chat).not.toHaveBeenCalled();
+    expect(mocks.prisma.trainerSession.update).not.toHaveBeenCalled();
+    expect(audits).toHaveLength(0);
+  });
+
+  it("lets them re-grade their own ungraded or rules-based call, on the trainee's optimistic-lock write", async () => {
+    // Three calls, all as the same user: the per-account re-grade limit is 5 per 10 minutes.
+    for (const [i, [role, org, isPlatformAdmin]] of SELF.entries()) {
+      actAs(role, org, { isPlatformAdmin, self: true });
+      row.evaluation = i % 2 ? RULES_GRADE : null;
+      const before = row.updatedAt;
+      const res = await patch();
+      expect(res.status).toBe(200);
+      expect(Object.keys(await res.json()).sort()).toEqual(["evaluation", "id"]);
+      expect(mocks.prisma.trainerSession.update.mock.lastCall![0].where).toEqual({ id: row.id, updatedAt: before });
+    }
+  });
+
+  it("saves only one of several re-grades an owner sends at once on their own call", async () => {
+    actAs("owner", "org-1", { self: true });
+    row.evaluation = RULES_GRADE;
+    holdGrades(3);
+    const results = await Promise.all([patch(), patch(), patch()]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 403, 403]);
+    expect(audits).toHaveLength(1);
+  });
+
+  it("still lets a manager re-grade a member's AI-graded call, on the same unchanged-row write", async () => {
+    actAs("manager", "org-1");
+    row.evaluation = AI_GRADE;
+    const before = row.updatedAt;
+    const res = await patch();
+    expect(res.status).toBe(200);
+    expect(mocks.prisma.trainerSession.update.mock.lastCall![0].where).toEqual({ id: row.id, updatedAt: before });
   });
 
   it("keeps everyone else out with the plain 403", async () => {

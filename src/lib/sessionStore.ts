@@ -107,8 +107,22 @@ function saveLocal(s: Omit<StoredSession, "id" | "createdAt">): string {
 export interface MintedCall { sessionId: string; receipt?: string; callId?: string }
 
 /**
+ * The id a call is graded and saved under. /api/evaluate-call binds its grade seal to this id and POST /api/transcripts
+ * stores the grade only under the same id, so the caller makes it once, before grading, and passes it to both. A minted
+ * voice call uses its server-fixed sessionId. Anything else gets a fresh id with 96 random bits, so no two calls (of any
+ * user) share one: the server keys a graded row on it. getRandomValues works outside secure contexts too.
+ */
+export function callSessionId(mode: StoredSession["mode"], call: MintedCall | undefined, now = Date.now()): string {
+  const voice = mode === "voice" ? call : undefined;
+  if (voice?.sessionId) return voice.sessionId;
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return `${mode}-${now}-${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
  * The POST /api/transcripts body. A minted voice call is saved under its server-fixed sessionId with its receipt;
  * a metered one also names its callId. Only a voice save carries any of them; text saves name themselves.
+ * Pass the `sessionId` the call was graded under (callSessionId), or its seal won't verify.
  */
 export function transcriptSaveBody(
   s: Omit<StoredSession, "id" | "createdAt">,
@@ -116,10 +130,11 @@ export function transcriptSaveBody(
   seal: string | undefined,
   call: MintedCall | undefined,
   now = Date.now(),
+  sessionId = callSessionId(s.mode, call, now),
 ) {
   const voice = s.mode === "voice" ? call : undefined;
   return {
-    sessionId: voice?.sessionId ?? `${s.mode}-${now}`,
+    sessionId,
     ...(voice?.callId ? { callId: voice.callId } : {}),
     transcript: s.transcript,
     durationSeconds: s.durationSeconds,
@@ -135,15 +150,16 @@ export function transcriptSaveBody(
  * `meta.call` identifies the voice call /api/realtime/session minted. The call is saved under its sessionId with
  * its receipt, which the server checks before it logs the model inside it, and a metered call also sends its
  * callId so the transcript fills that call's own row. Opaque here and never stored in the browser.
+ * `meta.sessionId` is the id the call was graded under (callSessionId); the grade's seal verifies only under it.
  */
-export async function saveSession(s: Omit<StoredSession, "id" | "createdAt">, useServer: boolean, meta: { call?: MintedCall } = {}): Promise<string> {
+export async function saveSession(s: Omit<StoredSession, "id" | "createdAt">, useServer: boolean, meta: { call?: MintedCall; sessionId?: string } = {}): Promise<string> {
   const { evaluation, seal } = splitSeal(s.evaluation);
   if (useServer) {
     try {
       const res = await fetch("/api/transcripts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(transcriptSaveBody(s, evaluation, seal, meta.call)),
+        body: JSON.stringify(transcriptSaveBody(s, evaluation, seal, meta.call, Date.now(), meta.sessionId)),
       });
       if (res.ok) return (await res.json()).id as string;
     } catch {

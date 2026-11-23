@@ -24,7 +24,7 @@ vi.mock("@/lib/apiAuth", async () => ({
 }));
 
 import { FREE_ABANDON_REDUCED_MARKER, beginCall, checkCap, creditManual, endCall, ensureAllowance, freeAbandonClaimKey, heartbeat, resolveAllowance, usageSummary } from "@/lib/usage";
-import { FREE_ABANDON_GRACE_SECONDS, FREE_ABANDON_REDUCED_PER_PERIOD, FREE_CAP_WARNING_SECONDS, FREE_END_GRACE_SECONDS, FREE_MINUTES, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, callLimitSeconds, capFor, endGraceSeconds, exactCapStop, freeCapWarning, freeCapWarningReached } from "@/lib/usagePlan";
+import { FREE_ABANDON_GRACE_SECONDS, FREE_ABANDON_REDUCED_PER_PERIOD, FREE_CAP_WARNING_SECONDS, FREE_END_GRACE_SECONDS, FREE_MINUTES, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, NEVER_CONNECTED_RECLAIM_SECONDS, callLimitSeconds, capFor, endGraceSeconds, exactCapStop, freeCapWarning, freeCapWarningReached } from "@/lib/usagePlan";
 import { CAP_STOPPED_MESSAGE, FREE_CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE, isCapMessage } from "@/lib/billingUi";
 import { setPremiumEventSink, type PremiumEvent } from "@/lib/billingEvents";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
@@ -223,7 +223,7 @@ describe("a running Free call is stopped at its Free minutes plus the end grace"
     expect(graded.status).toBe(200);
     const evaluation = await graded.json();
     expect(typeof evaluation.overallScore).toBe("number");
-    const saved = await saveTranscript(post("/api/transcripts", { sessionId: "voice-1", callId, transcript, durationSeconds: 80, scenario: { id: scenario.id }, evaluation }));
+    const saved = await saveTranscript(post("/api/transcripts", { sessionId: callId, callId, transcript, durationSeconds: 80, scenario: { id: scenario.id }, evaluation }));
     expect(saved.status).toBe(200);
     expect(session(callId).transcript).toHaveLength(transcript.length);
     expect(session(callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 1 });
@@ -756,7 +756,7 @@ describe("settling a silent Free call locks the user row first, in a voice start
     expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 55, billedMinutes: 1 });
   });
 
-  it("a paid call reaped across the boundary keeps main's lock order: no user row lock in its settlement", async () => {
+  it("a paid call reaped across the boundary locks the user row first too, and bills as on main", async () => {
     const nov10 = 26 * 24 * 3600;
     addUser("u-1", { planTier: "pro" });
     await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
@@ -764,10 +764,13 @@ describe("settling a silent Free call locks the user row first, in a voice start
     if (!begun.ok) throw new Error(begun.error);
     await heartbeat("u-1", begun.callId, "connected", at(nov10 - 100));
     await heartbeat("u-1", begun.callId, "ok", at(nov10 - 60));
-    const before = fake.rawQueries.length;
+    const before = fake.calls.length;
     await usageSummary("u-1", at(nov10 + 60));
-    expect(fake.rawQueries.slice(before).filter((q) => q.sql.includes('FROM "User"'))).toEqual([]);
+    // Every metering transaction takes the user row first (lockUserFirst), paid calls included.
+    expect(fake.calls[before]).toBe('raw:SELECT "id" FROM "User" WHERE "id" = ? FOR UPDATE');
+    expect(fake.lockOrderViolations).toEqual([]);
     expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 160, billedMinutes: 3 });
+    expect(fake.rows("auditEvent").filter((e) => e.action === FREE_ABANDON_REDUCED_MARKER)).toEqual([]);
   });
 
   /**
@@ -839,19 +842,25 @@ describe("settling a silent Free call locks the user row first, in a voice start
         : { endReason: "heartbeat_timeout", billableSeconds: 1000, billedMinutes: 17 });
       expect(session(freeId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 15, billedMinutes: 1 });
       expect(fake.rows("auditEvent").filter((e) => e.action === FREE_ABANDON_REDUCED_MARKER)).toHaveLength(1);
-      // The voice start's own call is still open, holding its reservation.
-      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: -170 + (first === "paid" ? 17 : 0) + 1, minutesReserved: 60 });
+      // The reap took the user row first (usageSummary, lockUserFirst) before it read the open calls, so it ran after the
+      // voice start committed and saw its call too: minted at 40 s, never connected, 960 s old at the reap, so the 15
+      // minute connect window closes it as failed_connect, 0 billed, its reservation released and no silent-call marker.
+      const startedCall = started.status === "fulfilled" && started.value.ok ? started.value.callId : "";
+      expect(session(startedCall)).toMatchObject({ endReason: "failed_connect", billableSeconds: 0, billedMinutes: 0 });
+      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: -170 + (first === "paid" ? 17 : 0) + 1, minutesReserved: 0 });
     });
   }
 
-  it("a batch with no Free silent call takes no user row lock in settleStale, as before", async () => {
+  it("a batch with no Free silent call also locks the user row first, and its never-connected call bills 0 with no marker", async () => {
     await freeUserWith(-170);
     const a = await beginCall("u-1", scn, at(0)); // never connects
     if (!a.ok) throw new Error(a.error);
-    const before = fake.rawQueries.length;
+    const before = fake.calls.length;
     await usageSummary("u-1", at(1000));
-    expect(session(a.callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0 });
-    expect(fake.rawQueries.slice(before).filter((q) => q.sql.includes('FROM "User"'))).toEqual([]);
+    expect(session(a.callId)).toMatchObject({ endReason: "failed_connect", billableSeconds: 0, billedMinutes: 0 });
+    expect(fake.calls[before]).toBe('raw:SELECT "id" FROM "User" WHERE "id" = ? FOR UPDATE');
+    expect(fake.lockOrderViolations).toEqual([]);
+    expect(fake.rows("auditEvent").filter((e) => e.action === FREE_ABANDON_REDUCED_MARKER)).toEqual([]);
   });
 });
 
@@ -1133,6 +1142,92 @@ describe("a Free call that goes silent is billed to its last heartbeat plus a sh
     await usageSummary("u-1", at(24 * 3600));
     expect(session(ids[3])).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(24 * 3600), billableSeconds: 240, billedMinutes: 4, abuseFlagged: false });
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
+  });
+
+  // ---- Never-connected calls (no heartbeat, no connectedAt) never use a silent-call slot ----------------------------
+
+  it("a never-connected call reclaimed by a new start at 46 s bills 0 with no marker, and all 3 reduced silent calls are still available", async () => {
+    await freeUserWith(-50); // 60 Free minutes left: the never-connected call reserves all of them
+    const ghost = await beginCall("u-1", scn, at(0)); // never sends a heartbeat
+    if (!ghost.ok) throw new Error(ghost.error);
+    expect(allowanceOf("u-1").minutesReserved).toBe(60);
+    // At 45 s it is not reclaimed yet, so the start finds nothing free.
+    expect(NEVER_CONNECTED_RECLAIM_SECONDS).toBe(45);
+    expect(await beginCall("u-1", scn, at(45))).toEqual({ ok: false, error: "minutes_reserved" });
+    // At 46 s the next start reclaims it (failed_connect, 0) and can reserve; then 3 silent calls follow.
+    const ids = await silentCalls(3, 46);
+    expect(session(ghost.callId)).toMatchObject({ endReason: "failed_connect", billableSeconds: 0, billedMinutes: 0, connectedAt: null, lastHeartbeatAt: null });
+    expect(markers().some((m) => (m.metadata as { trainerSessionId?: string }).trainerSessionId === ghost.callId)).toBe(false);
+    await usageSummary("u-1", at(46 + 2 * 3600 + 81));
+    // All three got the reduced charge (50 s + 15 s, 2 minutes each), one marker each, none for the reclaimed call.
+    expect(ids.map((id) => session(id))).toEqual(ids.map(() => expect.objectContaining({ endReason: "heartbeat_timeout", billableSeconds: 65, billedMinutes: 2 })));
+    expect(markers().map((m) => (m.metadata as { trainerSessionId: string }).trainerSessionId)).toEqual(ids);
+    // Only now are the slots used up: the 4th silent call bills its whole reservation.
+    const [fourth] = await silentCalls(1, 4 * 3600);
+    const reserved = session(fourth).reservedMinutes as number;
+    await usageSummary("u-1", at(4 * 3600 + 81));
+    expect(session(fourth)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: reserved, billableSeconds: reserved * 60 });
+    expect(markers()).toHaveLength(3);
+  });
+
+  it("a never-connected call closed by the 15 minute window on a usage read bills 0 with no marker, and does not count toward the 3", async () => {
+    await freeUserWith(-50);
+    const ghost = await beginCall("u-1", scn, at(0));
+    if (!ghost.ok) throw new Error(ghost.error);
+    // A usage read never uses the 45 s reclaim: at 46 s and at 900 s the call stays open and reserved.
+    await usageSummary("u-1", at(46));
+    await usageSummary("u-1", at(900));
+    expect(session(ghost.callId).endedAt ?? null).toBeNull();
+    expect(allowanceOf("u-1").minutesReserved).toBe(60);
+    await usageSummary("u-1", at(901));
+    expect(session(ghost.callId)).toMatchObject({ endReason: "failed_connect", billableSeconds: 0, billedMinutes: 0 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: -50, minutesReserved: 0 });
+    expect(markers()).toEqual([]);
+    // The 3 reduced silent calls are all still there.
+    const ids = await silentCalls(3, 1000);
+    await usageSummary("u-1", at(1000 + 2 * 3600 + 81));
+    expect(ids.map((id) => session(id).billedMinutes)).toEqual([2, 2, 2]);
+    expect(markers()).toHaveLength(3);
+  });
+
+  it("one start that reclaims a never-connected call and settles a silent Free call takes the user row first: one marker, only for the Free call", async () => {
+    await freeUserWith(-110); // 120 Free minutes: two calls of 60 reserved minutes each
+    // The never-connected call comes first in the batch, so its settlement (which can lock the allowance) runs first.
+    const ghost = await beginCall("u-1", scn, at(0));
+    if (!ghost.ok) throw new Error(ghost.error);
+    const free = await beginCall("u-1", scn, at(10));
+    if (!free.ok) throw new Error(free.error);
+    await heartbeat("u-1", free.callId, "connected", at(10));
+    await heartbeat("u-1", free.callId, "ok", at(20)); // then silent
+    fake.enableRowLocks();
+
+    // The start at 100 s (ghost 100 s old, Free call silent 80 s) races a usage read at the same moment.
+    const opsFrom = fake.ops.length;
+    const [started, read] = await Promise.allSettled([beginCall("u-1", scn, at(100)), usageSummary("u-1", at(100))]);
+    expect(started.status).toBe("fulfilled");
+    expect(started.status === "fulfilled" && started.value).toMatchObject({ ok: true });
+    expect(read.status).toBe("fulfilled");
+    expect(fake.ops.some((o) => o.op.startsWith("deadlock:"))).toBe(false);
+    expect(fake.lockOrderViolations).toEqual([]);
+
+    // Every transaction of the race asked for the user row before anything else, and before any allowance or call row lock.
+    const raced = fake.ops.slice(opsFrom);
+    // A real race: one of the two waited for the other's user row lock.
+    expect(raced.some((o) => o.op === "wait:user:u-1")).toBe(true);
+    for (const tx of new Set(raced.map((o) => o.tx).filter((n): n is number => n !== null))) {
+      const mine = raced.filter((o) => o.tx === tx).map((o) => o.op);
+      expect(mine[0]).toBe("begin");
+      expect(mine[1]).toBe('raw:SELECT "id" FROM "User" WHERE "id" = ? FOR UPDATE');
+      const userLock = mine.findIndex((op) => op === "lock:user:u-1");
+      expect(userLock).toBeGreaterThan(0);
+      for (const [i, op] of mine.entries()) if (/^lock:(usageAllowance|trainerSession):/.test(op)) expect(i).toBeGreaterThan(userLock);
+    }
+
+    // Billing: the reclaimed call 0 and no marker; the Free call reduced (connected at 10 s, last heartbeat 20 s, plus 15 s).
+    expect(session(ghost.callId)).toMatchObject({ endReason: "failed_connect", billableSeconds: 0, billedMinutes: 0 });
+    expect(session(free.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 25, billedMinutes: 1 });
+    expect(markers().map((m) => (m.metadata as { trainerSessionId: string }).trainerSessionId)).toEqual([free.callId]);
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: -109, minutesReserved: 60 });
   });
 
   it("the next billing period gets 3 reduced silent calls again", async () => {

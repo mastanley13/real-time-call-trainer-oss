@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Scenario } from "@/lib/scenarios";
 import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
-import { CAP_STOP_SPEECH_FLUSH_MS, CallMeter, END_GRACE_MS, HEARTBEAT_LOST_MESSAGE, type MeterEndReason } from "@/lib/callMeter";
+import { CAP_STOP_SPEECH_FLUSH_MS, END_GRACE_MS, HEARTBEAT_LOST_MESSAGE, type MeterEndReason } from "@/lib/callMeter";
+import { DROPPED_BEFORE_CONNECT_MESSAGE, VoiceAttempt } from "@/lib/voiceAttempt";
 import { LiveTranscript, applyLiveEvent, type LiveServerEvent } from "@/lib/live";
 import { expireSession, storedSessionKey } from "@/lib/sessionExpiry";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, realtimeAuthRedirect, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
@@ -26,6 +27,8 @@ interface Handlers {
   onTurn: (t: AssembledTurn) => void;
   onEnded: () => void;
   onError: (msg: string) => void;
+  /** The attempt ended before it connected (src/lib/voiceAttempt.ts): back to the briefing with the message, no grading. */
+  onCancelled: (msg: string) => void;
   onView: (v: CallView) => void;
   /**
    * Which call the server minted: its sessionId, the receipt bound to it, and the metering callId when metered.
@@ -57,6 +60,10 @@ const EXPIRED = "The voice session expired before it connected. Start the call a
  * One OpenAI Realtime call over WebRTC (https://developers.openai.com/api/docs/guides/realtime-webrtc).
  * Kept outside React so StrictMode remounts and re-renders never touch the live connection;
  * each mount owns exactly one call and closes it exactly once.
+ *
+ * Each call is one VoiceAttempt (src/lib/voiceAttempt.ts): every exit before the call connects goes through the
+ * attempt's one cancel(), whose teardown() here aborts a pending SDP request and closes the peer connection and mic. See
+ * the table at the top of voiceAttempt.ts for each path. After connect, the connected-call paths below are unchanged.
  */
 export class RealtimeCall {
   private view: CallView = { phase: "mic", speaking: false, muted: false };
@@ -84,8 +91,13 @@ export class RealtimeCall {
   private flushTimer?: ReturnType<typeof setInterval>;
   private endTimer?: ReturnType<typeof setTimeout>;
   private audioTimer?: ReturnType<typeof setInterval>;
-  /** Reports connect, heartbeats and the end to the server, which meters the call. A no-op without a callId. */
-  private meter?: CallMeter;
+  /**
+   * This call's attempt: its meter reports connect, heartbeats and the end to the server (nothing without a callId), and
+   * its page-hide observer runs from here, before the mic prompt, until the call connects.
+   */
+  private attempt: VoiceAttempt;
+  /** Aborts a pending SDP request when the call closes, so a closed call never finishes its connection. */
+  private abort = new AbortController();
   /** Why the server stopped a Free call, reported once the hang-up path has flushed the last turns. */
   private stopMessage?: string;
   /**
@@ -95,7 +107,9 @@ export class RealtimeCall {
   private repSpeech: "idle" | "speaking" | "stopped" = "idle";
   private capTimer?: ReturnType<typeof setTimeout>;
 
-  constructor(private scenario: Scenario, private h: Handlers, private voiceTier?: "premium" | "standard") {}
+  constructor(private scenario: Scenario, private h: Handlers, private voiceTier?: "premium" | "standard") {
+    this.attempt = new VoiceAttempt({ teardown: () => this.teardown(), onCancelled: (m) => this.h.onCancelled(m) });
+  }
 
   private set(p: Partial<CallView>) {
     this.view = { ...this.view, ...p };
@@ -110,8 +124,9 @@ export class RealtimeCall {
     try {
       mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     } catch (e) {
-      return this.fail(micErrorMessage(e));
+      return this.fail(micErrorMessage(e)); // row 4
     }
+    // Hung up, unmounted or page hidden during the mic prompt (row 5): stop the stream that arrived, and never mint.
     if (this.closed) { mic.getTracks().forEach((t) => t.stop()); return; }
     this.mic = mic;
     mic.getAudioTracks().forEach((t) => (t.enabled = !this.view.muted));
@@ -123,7 +138,26 @@ export class RealtimeCall {
       const session = storedSessionKey();
       const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario, ...(this.voiceTier ? { voiceTier: this.voiceTier } : {}) }) });
       secret = await res.json().catch(() => ({}));
-      if (this.closed) return;
+      // The meter exists as soon as the server answers, so every exit from here on reports the end. An attempt cancelled
+      // while the mint was pending reports this callId now and goes no further (row 7). Without a callId (unmetered) the
+      // meter sends nothing, but it still says when the call connected.
+      const stillLive = this.attempt.minted(typeof secret.callId === "string" ? secret.callId : undefined, {
+        // The server has already stopped and billed the call; this ends the client side. A Free cap stop ends exactly like
+        // a hang-up and says why only after the last turns are flushed (see close), so a first utterance still being
+        // transcribed is kept, saved and graded. Other stops end as before.
+        onStop: (m, freeCap) => {
+          if (!freeCap) return this.fail(m, "user_hangup");
+          this.stopMessage = m;
+          this.endAfterSpeech();
+        },
+        onGiveUp: () => this.dropped("The voice connection dropped. Check your network. Your transcript so far is kept."),
+        onWarn: (m) => this.h.onCapWarning?.(m),
+        // A Free call ends itself when its heartbeats keep failing (see CallMeter); a paid call keeps tolerating them.
+        // Heartbeats start only at connect, so this is always the connected-call end (fail: the attempt's cancel
+        // refuses once connected, and the meter reports the end once).
+        ...(secret.freeRule === true ? { onHeartbeatsLost: () => this.fail(HEARTBEAT_LOST_MESSAGE, "network_drop") } : {}),
+      });
+      if (!stillLive || this.closed) return;
       const redirect = realtimeAuthRedirect(res.status, secret.error);
       if (redirect) return this.signInAgain(redirect, session);
       if (!res.ok || !(secret.clientSecret || secret.liveTicket)) return this.fail(secret.message || "Could not start the voice call. Try again, or switch to Text.");
@@ -141,20 +175,6 @@ export class RealtimeCall {
     }
     const info = voiceInfoFrom(secret);
     if (info) this.h.onVoiceInfo(info);
-    this.meter = new CallMeter(secret.callId, {
-      // The server has already stopped and billed the call; this ends the client side. A Free cap stop ends exactly like
-      // a hang-up and says why only after the last turns are flushed (see close), so a first utterance still being
-      // transcribed is kept, saved and graded. Other stops end as before.
-      onStop: (m, freeCap) => {
-        if (!freeCap) return this.fail(m, "user_hangup");
-        this.stopMessage = m;
-        this.endAfterSpeech();
-      },
-      onGiveUp: () => this.fail("The voice connection dropped. Check your network. Your transcript so far is kept.", "network_drop"),
-      onWarn: (m) => this.h.onCapWarning?.(m),
-      // A Free call ends itself when its heartbeats keep failing (see CallMeter); a paid call keeps tolerating them.
-      ...(secret.freeRule === true ? { onHeartbeatsLost: () => this.fail(HEARTBEAT_LOST_MESSAGE, "network_drop") } : {}),
-    });
     if (secret.expiresAt && secret.expiresAt * 1000 <= Date.now()) return this.fail(EXPIRED, "failed_connect");
 
     try {
@@ -175,17 +195,17 @@ export class RealtimeCall {
         this.watchFirstAudio(pc);
       };
       pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "failed") this.fail("The voice connection dropped. Check your network. Your transcript so far is kept.", "network_drop");
+        if (pc.connectionState === "failed") this.dropped("The voice connection dropped. Check your network. Your transcript so far is kept.");
         // A disconnect gets 10 seconds to recover; the same call and the same rounding continue if it does.
-        else if (pc.connectionState === "disconnected") this.meter?.trouble();
-        else if (pc.connectionState === "connected") this.meter?.recovered();
+        else if (pc.connectionState === "disconnected") this.attempt.meter.trouble();
+        else if (pc.connectionState === "connected") this.attempt.meter.recovered();
       };
       mic.getAudioTracks().forEach((t) => pc.addTrack(t, mic));
       const dc = pc.createDataChannel("oai-events");
       this.dc = dc;
       dc.onopen = () => this.opened();
       dc.onmessage = (e) => this.message(e.data);
-      dc.onclose = () => { if (!this.closed && !this.ending) this.fail("The voice session closed unexpectedly. Your transcript so far is kept.", "network_drop"); };
+      dc.onclose = () => { if (!this.closed && !this.ending) this.dropped("The voice session closed unexpectedly. Your transcript so far is kept."); };
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -194,7 +214,7 @@ export class RealtimeCall {
         await iceGathered(pc);
         if (this.closed) return;
         const liveSession = storedSessionKey();
-        const res = await fetch("/api/live/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ liveTicket: secret.liveTicket, sessionId: secret.sessionId, scenario: this.scenario, sdp: pc.localDescription?.sdp ?? offer.sdp }) });
+        const res = await fetch("/api/live/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ liveTicket: secret.liveTicket, sessionId: secret.sessionId, scenario: this.scenario, sdp: pc.localDescription?.sdp ?? offer.sdp }), signal: this.abort.signal });
         const data = await res.json().catch(() => ({}));
         if (this.closed) return;
         const redirect = data.error === "realtime_secret_expired" ? null : realtimeAuthRedirect(res.status, data.error);
@@ -205,7 +225,7 @@ export class RealtimeCall {
       }
       // Same-origin relay of the documented SDP exchange; see src/app/api/realtime/sdp/route.ts.
       const sdpSession = storedSessionKey();
-      const res = await fetch("/api/realtime/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientSecret: secret.clientSecret, sdp: offer.sdp }) });
+      const res = await fetch("/api/realtime/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientSecret: secret.clientSecret, sdp: offer.sdp }), signal: this.abort.signal });
       const data = await res.json().catch(() => ({}));
       if (this.closed) return;
       const redirect = realtimeAuthRedirect(res.status, data.error);
@@ -227,7 +247,7 @@ export class RealtimeCall {
         stats.forEach((r) => {
           if (r.type === "inbound-rtp" && r.kind === "audio" && r.packetsReceived > 0) {
             clearInterval(this.audioTimer);
-            this.meter?.audio();
+            this.attempt.meter.audio();
           }
         });
       } catch { /* stats unavailable; try again on the next tick */ }
@@ -263,7 +283,7 @@ export class RealtimeCall {
   private opened() {
     if (this.closed) return;
     this.set({ phase: "connected" });
-    this.meter?.open();
+    this.attempt.meter.open();
     this.flushTimer = setInterval(() => this.release(), 1000);
     // GPT-Live: the opening line was given at startup (session.input) and the persona decides when to speak.
     if (this.live) return;
@@ -287,7 +307,10 @@ export class RealtimeCall {
       case "output_audio_buffer.cleared": this.set({ speaking: false }); break;
       case "error":
         // Most realtime errors are per-event and non-fatal (e.g. cancelling an idle response). Expiry ends the call.
-        if (ev.error?.code === "session_expired") return this.fail("The voice session reached OpenAI's time limit. Your transcript so far is kept.", "provider_error");
+        if (ev.error?.code === "session_expired") {
+          if (this.attempt.cancel("error", EXPIRED)) return; // row 12: before connect
+          return this.fail("The voice session reached OpenAI's time limit. Your transcript so far is kept.", "provider_error");
+        }
         console.warn("[realtime]", ev.error?.code ?? ev.error?.type ?? "error");
         return;
     }
@@ -305,7 +328,7 @@ export class RealtimeCall {
         break;
       case "session.closed":
         // Connection loss, safety termination or a server limit. A hang-up we started is already closing.
-        if (!this.ending) return this.fail("The voice session ended. Your transcript so far is kept.", ev.reason === "close_requested" ? "user_hangup" : "provider_error");
+        if (!this.ending) return this.dropped("The voice session ended. Your transcript so far is kept.", ev.reason === "close_requested" ? "user_hangup" : "provider_error");
         return;
       case "error":
         // Errors on a running Live session are per command or a moderation cut-off of one reply; the session continues.
@@ -352,8 +375,9 @@ export class RealtimeCall {
   /** Hang up: stop the mic and the persona now, wait briefly for the last transcript, then close and report. */
   end = () => {
     if (this.closed || this.ending) return;
+    // Before connect (row 1): the attempt's one cancel, at once, no grace; back to the briefing.
+    if (this.attempt.cancel("hang_up")) return;
     this.ending = true;
-    if (this.view.phase !== "connected") return this.close(true);
     this.mic?.getAudioTracks().forEach((t) => (t.enabled = false));
     if (this.audio) this.audio.muted = true;
     this.set({ phase: "ending", speaking: false });
@@ -366,9 +390,11 @@ export class RealtimeCall {
     wait();
   };
 
+  /** Before connect: the attempt's one cancel with `msg` (rows 4, 6, 10, 11, 12). After: the connected-call failure. */
   private fail(msg: string, reason: MeterEndReason = "failed_connect") {
     if (this.closed) return;
-    this.meter?.end(reason);
+    if (this.attempt.cancel("error", msg)) return;
+    this.attempt.meter.end(reason);
     this.release(true);
     const repSpoke = this.emittedUser > 0;
     this.h.onError(msg);
@@ -376,27 +402,50 @@ export class RealtimeCall {
     this.close(repSpoke);
   }
 
-  /** `session` is the client session key (storedSessionKey) read when the rejected request started. */
-  private signInAgain(path: "/login" | "/access", session: string | null) {
-    // No call has connected yet. Stop the microphone and release peer resources
-    // before leaving; do not submit an empty practice session for grading.
-    // A minted call that never connected is settled as a failed connect, not a hang-up.
-    this.meter?.end("failed_connect");
-    this.close(false);
-    if (path === "/access") return window.location.assign(path);
-    // The shared guard clears the cached session (it can look fresh while the server rejects the cookie) and
-    // makes the one redirect to /login?next=&reason=expired. It leaves a newer sign-in alone; then this
-    // request was stale, so let the rep start again.
-    if (expireSession(session) === "stale") this.h.onError("Could not start the voice call. Try again, or switch to Text.");
+  /** The transport closed. Before connect: row 13, with its own message. After: the connected-call failure, as before. */
+  private dropped(connectedMessage: string, reason: MeterEndReason = "network_drop") {
+    if (this.closed) return;
+    if (this.attempt.cancel("error", DROPPED_BEFORE_CONNECT_MESSAGE)) return;
+    this.fail(connectedMessage, reason);
   }
 
-  /** Releases everything exactly once. notify=false is for unmounts, which must not trigger grading. */
+  /**
+   * Row 9. `session` is the client session key (storedSessionKey) read when the rejected request started. Nothing has
+   * connected: the attempt's cancel reports a minted call as failed_connect and stops the mic and peer before leaving,
+   * and nothing is graded.
+   */
+  private signInAgain(path: "/login" | "/access", session: string | null) {
+    this.attempt.cancel("sign_in", () => {
+      if (path === "/access") { window.location.assign(path); return null; }
+      // The shared guard clears the cached session (it can look fresh while the server rejects the cookie) and
+      // makes the one redirect to /login?next=&reason=expired. It leaves a newer sign-in alone; then this
+      // request was stale, so let the rep start again.
+      return expireSession(session) === "stale" ? "Could not start the voice call. Try again, or switch to Text." : null;
+    });
+  }
+
+  /**
+   * Hang-up grace ran out (notify=true) or unmount (notify=false, which must not trigger grading). Before connect this
+   * is the attempt's one cancel (rows 1 and 3); after, the connected call ends and is reported as before.
+   */
   close(notify: boolean) {
     if (this.closed) return;
-    // Hang-up, unmount or a hang-up grace that ran out. A failure already reported its own reason (the meter ignores a second end).
-    this.meter?.end("user_hangup");
+    if (this.attempt.cancel(notify ? "hang_up" : "unmount")) return;
+    // A failure already reported its own reason (the meter ignores a second end).
+    this.attempt.meter.end("user_hangup");
+    this.attempt.finish();
     if (notify) this.release(true);
+    this.teardown();
+    // After the flush above, so the trainer sees every rep turn before it decides between grading and the briefing.
+    if (notify && this.stopMessage) this.h.onError(this.stopMessage);
+    if (notify) this.h.onEnded();
+  }
+
+  /** Releases everything exactly once: the attempt's teardown, and the end of a connected call. */
+  private teardown() {
+    if (this.closed) return;
     this.closed = true;
+    this.abort.abort();
     clearInterval(this.flushTimer);
     clearInterval(this.audioTimer);
     clearTimeout(this.endTimer);
@@ -410,9 +459,6 @@ export class RealtimeCall {
     if (this.audio) { this.audio.pause(); this.audio.srcObject = null; }
     if (this.ctx && this.ctx.state !== "closed") void this.ctx.close().catch(() => {});
     this.set({ phase: "closed", speaking: false });
-    // After the flush above, so the trainer sees every rep turn before it decides between grading and the briefing.
-    if (notify && this.stopMessage) this.h.onError(this.stopMessage);
-    if (notify) this.h.onEnded();
   }
 }
 
@@ -428,7 +474,7 @@ function iceGathered(pc: RTCPeerConnection, timeoutMs = 3000): Promise<void> {
 }
 
 /** Voice session on the OpenAI Realtime API, or GPT-Live when the server sets OPENAI_VOICE_API=live. Drop-in for the ElevenLabs VoiceSession. */
-export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onMinted, onVoiceInfo, onCapWarning, registerEnd, render, voiceTier }: {
+export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onCancelled, onMinted, onVoiceInfo, onCapWarning, registerEnd, render, voiceTier }: {
   scenario: Scenario;
   /** The setup's Standard or Premium pick for this call, sent as a request. Read when the call starts. */
   voiceTier?: "premium" | "standard";
@@ -437,6 +483,8 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   onTurn: (t: StoredTurn) => void;
   onEnded: () => void;
   onError: (msg: string) => void;
+  /** The attempt ended before it connected: back to the briefing with the message, nothing graded. */
+  onCancelled: (msg: string) => void;
   onMinted?: (c: MintedCall) => void;
   onVoiceInfo?: (info: VoiceInfo) => void;
   onCapWarning?: (message: string) => void;
@@ -446,8 +494,8 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   const [view, setView] = useState<CallView>({ phase: "mic", speaking: false, muted: false });
   const callRef = useRef<RealtimeCall | null>(null);
   // Latest callbacks without restarting the call when the parent re-renders.
-  const cb = useRef({ onTurn, onEnded, onError, onMinted, onVoiceInfo, onCapWarning });
-  useEffect(() => { cb.current = { onTurn, onEnded, onError, onMinted, onVoiceInfo, onCapWarning }; });
+  const cb = useRef({ onTurn, onEnded, onError, onCancelled, onMinted, onVoiceInfo, onCapWarning });
+  useEffect(() => { cb.current = { onTurn, onEnded, onError, onCancelled, onMinted, onVoiceInfo, onCapWarning }; });
   // The pick at the moment the call starts; changing it later never restarts or switches a running call.
   const tierRef = useRef(voiceTier);
   useEffect(() => { tierRef.current = voiceTier; });
@@ -458,6 +506,7 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
       onTurn: (t) => cb.current.onTurn(t),
       onEnded: () => cb.current.onEnded(),
       onError: (m) => cb.current.onError(m),
+      onCancelled: (m) => cb.current.onCancelled(m),
       onView: (v) => { if (callRef.current === call) setView(v); },
       onMinted: (c) => cb.current.onMinted?.(c),
       onVoiceInfo: (i) => cb.current.onVoiceInfo?.(i),

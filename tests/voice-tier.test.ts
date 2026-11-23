@@ -17,7 +17,9 @@ const mocks = vi.hoisted(() => ({
     user: { findUnique: vi.fn() },
     organization: { findUnique: vi.fn(), update: vi.fn() },
     auditEvent: { create: vi.fn() },
-    trainerSession: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+    trainerSession: { create: vi.fn(), findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    $queryRaw: vi.fn(),
+    $transaction: vi.fn(),
   },
 }));
 vi.mock("@/lib/db", () => ({ prisma: mocks.prisma }));
@@ -64,7 +66,10 @@ beforeEach(() => {
   vi.stubEnv("REALTIME_MODEL_STANDARD", "");
   vi.stubEnv("REALTIME_MODEL_PREMIUM", "");
   vi.stubEnv("JWT_SECRET", TEST_KEY);
-  for (const group of Object.values(mocks.prisma)) for (const fn of Object.values(group)) fn.mockReset();
+  for (const group of Object.values(mocks.prisma)) {
+    if (typeof group === "function") group.mockReset();
+    else for (const fn of Object.values(group)) fn.mockReset();
+  }
   mocks.orgs = new Map<string, Org>([
     ["o-1", { id: "o-1", code: "329927", voiceModelTier: null, voiceModelComped: true }],
     ["o-2", { id: "o-2", code: "555", voiceModelTier: null, voiceModelComped: null }],
@@ -100,7 +105,28 @@ beforeEach(() => {
     mocks.saved.push(row);
     return Promise.resolve(row);
   });
-  mocks.prisma.trainerSession.findUnique.mockResolvedValue(null);
+  // Conditional claims on a saved row (scalar equality only, null for unset), like Prisma's updateMany.
+  mocks.prisma.trainerSession.updateMany.mockImplementation(({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+    const hit = mocks.saved.filter((r) => Object.entries(where).every(([k, v]) => (r[k] ?? null) === v));
+    for (const r of hit) Object.assign(r, data);
+    return Promise.resolve({ count: hit.length });
+  });
+  // Rows saved here by id (the call's own row lookup in src/lib/callRow.ts); no other row exists in this mock.
+  mocks.prisma.trainerSession.findUnique.mockImplementation(({ where }: { where: { id: string } }) => Promise.resolve(mocks.saved.find((r) => r.id === where.id) ?? null));
+  // The call-row checks (src/lib/callRow.ts) over the saved rows: scalar equality, { not }, and { in }.
+  mocks.prisma.trainerSession.findFirst.mockImplementation(({ where }: { where: Record<string, unknown> }) => {
+    const ok = (r: Record<string, unknown>) => Object.entries(where).every(([k, v]) => {
+      const have = r[k] ?? null;
+      if (v && typeof v === "object" && "not" in v) return have !== (v as { not: unknown }).not;
+      if (v && typeof v === "object" && "in" in v) return (v as { in: unknown[] }).in.includes(have);
+      return have === v;
+    });
+    const hit = mocks.saved.find(ok);
+    return Promise.resolve(hit ? { id: hit.id } : null);
+  });
+  // The save's own-row claim runs in an interactive transaction under an advisory lock; one request at a time here.
+  mocks.prisma.$queryRaw.mockResolvedValue([]);
+  mocks.prisma.$transaction.mockImplementation((fn: (tx: typeof mocks.prisma) => Promise<unknown>) => fn(mocks.prisma));
   as({});
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -266,7 +292,11 @@ describe("mint receipts", () => {
     // Without JWT_SECRET there is no receipt, but a metered call still fills its own row.
     expect(transcriptSaveBody({ ...base, mode: "voice" }, null, undefined, { sessionId: "cm-call-0002", callId: "cm-call-0002" }, 5)).toMatchObject({ sessionId: "cm-call-0002", callId: "cm-call-0002" });
     const text = transcriptSaveBody({ ...base, mode: "text" }, null, undefined, metered, 5);
-    expect(text.sessionId).toBe("text-5");
+    // A fresh random id per call (callSessionId): the server keys a graded row on it.
+    expect(text.sessionId).toMatch(/^text-5-[0-9a-f]{24}$/);
+    expect(transcriptSaveBody({ ...base, mode: "text" }, null, undefined, undefined, 5).sessionId).not.toBe(text.sessionId);
+    // The id the call was graded under wins, so the seal verifies on save.
+    expect(transcriptSaveBody({ ...base, mode: "text" }, null, undefined, undefined, 5, "text-graded-id").sessionId).toBe("text-graded-id");
     expect(text).not.toHaveProperty("callId");
     expect(text).not.toHaveProperty("realtimeReceipt");
   });
@@ -547,10 +577,10 @@ describe("POST /api/transcripts logs the voice model", () => {
       expect(lastAudit()).toMatchObject({ receiptRejected: true });
       await save({ sessionId: a.sessionId, realtimeReceipt: b.receipt });
       expect(loggedModel()).toBeNull();
-      // Each with its own id still logs, once.
+      // Each with its own id still logs, once, on the call's own row (claimed by the earlier save of that id).
       await saveCall(a);
       await saveCall(b);
-      expect(withModel().map((r) => r.id)).toEqual([receiptRowId(a.sessionId), receiptRowId(b.sessionId)]);
+      expect(withModel().map((r) => r.id).sort()).toEqual([receiptRowId(a.sessionId), receiptRowId(b.sessionId)].sort());
     });
 
     it("does not log a voice receipt on a text save", async () => {
@@ -620,9 +650,10 @@ describe("POST /api/transcripts logs the voice model", () => {
     await save({ sessionId: minted.sessionId, realtimeModel: PREMIUM_REALTIME_MODEL });
     expect(loggedModel()).toBeNull();
 
-    // The client claims Premium next to its genuine Standard receipt.
+    // The client claims Premium next to its genuine Standard receipt. The first save above claimed the call's own row
+    // (src/lib/callRow.ts), so the receipt logs its model there, by the conditional claim.
     await saveCall(minted, { realtimeModel: PREMIUM_REALTIME_MODEL });
-    expect(loggedModel()).toBe(STANDARD_REALTIME_MODEL);
+    expect(withModel().map((r) => [r.id, r.realtimeModel])).toEqual([[receiptRowId(minted.sessionId), STANDARD_REALTIME_MODEL]]);
   });
 
   it("does not accept another user's Premium receipt, even under that call's own id", async () => {
