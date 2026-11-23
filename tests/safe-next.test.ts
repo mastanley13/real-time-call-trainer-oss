@@ -48,12 +48,11 @@ const ALLOWED = [
   "/trainer/api/x",
   "/trainer?from=/api/x",
   "/trainer#/api/x",
-  "/%E0/x",
-  "/%E0/api",
   "/%2F/apix",
   "/%252Fapi-docs",
   "/x/%2E%2E/apis/y",
   "/api/../trainer",
+  "/trainer?q=%ZZ", // the query is not decoded, so a malformed escape there is left alone
   "/trainer?scenario=auto-inbound-used-crossover-lead&mode=text",
 ];
 
@@ -72,6 +71,28 @@ describe("safeNextPath rejects API routes", () => {
     expect(signInHref(reported)).toBe("/login");
     // Arriving as /login?next=<encoded> decodes to the same string.
     expect(loginDestination(new URLSearchParams("next=%2Fapi%2Fauth%2Fgoogle%2Fcallback%3Fcode%3Dx").get("next"))).toBe("/trainer");
+  });
+});
+
+// A malformed percent escape anywhere in the pathname, at any decode pass, falls back. A real page link never
+// carries one, and stopping the decode there would hide an API path in front of it.
+const MALFORMED = [
+  "/%61pi/%ZZ",
+  "/trainer/%ZZ",
+  "/%E0%A4%A",
+  "/%E0/x",
+  "/%E0/api",
+  "/library/%",
+  "/%25ZZ", // decodes to "/%ZZ" on the first pass, then fails on the second
+];
+
+describe("safeNextPath rejects malformed percent escapes in the path", () => {
+  it.each(MALFORMED)("rejects %j", (bad) => {
+    expect(safeNextPath(bad)).toBe("/trainer");
+    expect(safeNextPath(bad, "/dashboard")).toBe("/dashboard");
+    expect(validNextPath(bad)).toBeNull();
+    expect(loginDestination(bad)).toBe("/trainer");
+    expect(signInHref(bad)).toBe("/login");
   });
 });
 
