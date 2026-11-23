@@ -58,7 +58,15 @@ export interface ChatOptions {
    * finish reason (reasoning tokens can use up the budget and leave no content). A missing message still throws.
    */
   nullContentAsEmpty?: boolean;
+  /**
+   * Sent as `reasoning_effort` on the OpenAI base only; any other host never sees it. Lower effort spends fewer hidden
+   * reasoning tokens (which count against maxTokens) and answers sooner. A 400 that mentions reasoning is retried once
+   * on the same key without it.
+   */
+  reasoningEffort?: ReasoningEffort;
 }
+
+export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
 
 /** Like chat(), but also reports whether the model stopped because it hit max_tokens. */
 export async function chatFull(messages: ChatMessage[], opts: ChatOptions = {}): Promise<{ text: string; truncated: boolean }> {
@@ -71,13 +79,17 @@ export async function chatFull(messages: ChatMessage[], opts: ChatOptions = {}):
   // never send it there and rely on extractJson() + the prompt instead.
   const sendJsonFormat = opts.json && !/anthropic\.com/i.test(base);
   const sendJsonSchema = Boolean(sendJsonFormat && opts.jsonSchema && isOpenAiBaseUrl(base));
+  const sendReasoning = Boolean(opts.reasoningEffort && isOpenAiBaseUrl(base));
   /** Called before every request: once the caller's signal fires, nothing new goes to the provider. */
   const checkAborted = () => {
     if (opts.signal?.aborted) throw new Error("LLM_ABORTED");
   };
-  /** One request on one key, with same-key retries without temperature and without json_schema. `pinned` refuses redirects. */
+  /**
+   * One request on one key, with same-key retries without temperature, without reasoning_effort and without
+   * json_schema. `pinned` refuses redirects.
+   */
   const send = async (key: string, pinned: boolean) => {
-    const call = (withTemperature: boolean, withSchema: boolean) =>
+    const call = (withTemperature: boolean, withSchema: boolean, withReasoning: boolean) =>
       fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
@@ -87,6 +99,7 @@ export async function chatFull(messages: ChatMessage[], opts: ChatOptions = {}):
           ...(withTemperature ? { temperature: opts.temperature ?? 0.4 } : {}),
           // OpenAI GPT-5+/6 models reject max_tokens and need max_completion_tokens; other hosts keep max_tokens.
           ...(isOpenAiBaseUrl(base) ? { max_completion_tokens: opts.maxTokens ?? 1800 } : { max_tokens: opts.maxTokens ?? 1800 }),
+          ...(withReasoning ? { reasoning_effort: opts.reasoningEffort } : {}),
           ...(withSchema && opts.jsonSchema
             ? { response_format: { type: "json_schema", json_schema: { name: opts.jsonSchema.name, strict: true, schema: opts.jsonSchema.schema } } }
             : sendJsonFormat
@@ -100,19 +113,22 @@ export async function chatFull(messages: ChatMessage[], opts: ChatOptions = {}):
     if (process.env.NODE_ENV !== "test") console.info("[llm] model", opts.model ?? llmModel());
     let withTemperature = true;
     let withSchema = sendJsonSchema;
+    let withReasoning = sendReasoning;
     checkAborted();
-    let res = await call(withTemperature, withSchema);
+    let res = await call(withTemperature, withSchema, withReasoning);
     let detail: string | undefined;
-    // At most one retry per adjustment. The body is only inspected (bounded), never logged.
-    for (let i = 0; i < 2 && !res.ok && res.status === 400; i++) {
+    // At most one retry per adjustment (three adjustments). The body is only inspected (bounded), never logged.
+    for (let i = 0; i < 3 && !res.ok && res.status === 400; i++) {
       detail = await readBoundedBody(res);
       // Some newer models reject `temperature`; retry once without it.
       if (withTemperature && /temperature/i.test(detail.slice(0, 300))) withTemperature = false;
+      // A model without reasoning_effort, or without the value asked for: retry once with the provider's default.
+      else if (withReasoning && /reasoning/i.test(detail)) withReasoning = false;
       // A model or deployment without structured outputs: retry once with plain json_object.
       else if (withSchema && /response_format|json_schema/i.test(detail)) withSchema = false;
       else break;
       checkAborted();
-      res = await call(withTemperature, withSchema);
+      res = await call(withTemperature, withSchema, withReasoning);
       detail = undefined;
     }
     return { res, detail };

@@ -247,6 +247,57 @@ describe("chatFull null content", () => {
   });
 });
 
+describe("chatFull reasoning_effort", () => {
+  const ask = (opts: Parameters<typeof chatFull>[1]) => chatFull([{ role: "user", content: "hi" }], opts);
+  const reasoningError = () =>
+    errorResponse(400, { error: { message: `Unsupported value: 'reasoning_effort' does not support 'low' with this model. ${CANARY}`, type: "invalid_request_error", param: "reasoning_effort" } });
+
+  it("is sent on the OpenAI base only when the caller asks for it", async () => {
+    replies(() => completion("ok"));
+    await ask({ reasoningEffort: "low" });
+    await ask({});
+    expect(sent[0].body.reasoning_effort).toBe("low");
+    expect("reasoning_effort" in sent[1].body).toBe(false);
+  });
+
+  it("is never sent to a custom base", async () => {
+    vi.stubEnv("LLM_BASE_URL", CUSTOM_BASE);
+    replies(() => completion("ok"));
+    await ask({ reasoningEffort: "low" });
+    expect("reasoning_effort" in sent[0].body).toBe(false);
+  });
+
+  it("retries a 400 about reasoning_effort once on the same key without it, logging no body", async () => {
+    replies(reasoningError, () => completion("ok"));
+    await expect(ask({ reasoningEffort: "low", temperature: 0.2, json: true })).resolves.toEqual({ text: "ok", truncated: false });
+    expect(sent).toHaveLength(2);
+    expect(sent[0].body.reasoning_effort).toBe("low");
+    expect("reasoning_effort" in sent[1].body).toBe(false);
+    expect(sent[1].auth).toBe(sent[0].auth);
+    expect(sent[1].body.temperature).toBe(0.2);
+  });
+
+  it("does not retry the same adjustment twice", async () => {
+    replies(reasoningError);
+    await expect(ask({ reasoningEffort: "low" })).rejects.toThrow("LLM_HTTP_400");
+    expect(sent).toHaveLength(2);
+  });
+
+  it("can drop temperature, reasoning_effort and json_schema in turn, one retry each", async () => {
+    replies(
+      () => errorResponse(400, { error: { message: "Unsupported value: 'temperature'", param: "temperature" } }),
+      reasoningError,
+      () => errorResponse(400, { error: { message: "'response_format' of type 'json_schema' is not supported", param: "response_format" } }),
+      () => completion("{}"),
+    );
+    await expect(ask({ reasoningEffort: "low", json: true, jsonSchema: COACH_JSON_SCHEMA })).resolves.toEqual({ text: "{}", truncated: false });
+    expect(sent).toHaveLength(4);
+    expect(sent[3].body).not.toHaveProperty("temperature");
+    expect(sent[3].body).not.toHaveProperty("reasoning_effort");
+    expect(sent[3].body.response_format).toEqual({ type: "json_object" });
+  });
+});
+
 describe("coachFailureCode", () => {
   it("passes our codes through and reduces anything else to its class", () => {
     expect(coachFailureCode(new Error("LLM_HTTP_500"))).toBe("LLM_HTTP_500");
