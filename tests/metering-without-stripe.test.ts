@@ -18,7 +18,7 @@ import MinutesLeft from "@/components/call/MinutesLeft";
 import { CAP_REACHED_MESSAGE, VOICE_UNAVAILABLE_MESSAGE, usageSnapshotFromUsage } from "@/lib/billingUi";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { beginCall, ensureAllowance, heartbeat, endCall, resolveAllowance } from "@/lib/usage";
-import { FREE_MINUTES, effectivePlan } from "@/lib/usagePlan";
+import { FREE_END_GRACE_SECONDS, FREE_MINUTES, effectivePlan } from "@/lib/usagePlan";
 import { GET as usageRoute } from "@/app/api/usage/route";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
 import { POST as simulate } from "@/app/api/simulate/turn/route";
@@ -150,17 +150,20 @@ describe("voice at and under the cap with no Stripe key", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("a call started under the cap is allowed to finish past it, and the next start is refused", async () => {
+  it("a call started under the cap is stopped at its Free minutes plus the end grace, and the next start is refused", async () => {
+    // Before the Free mid-call cap this call was allowed to run 10 minutes past the cap. Now it holds one minute and is
+    // stopped at that minute plus FREE_END_GRACE_SECONDS, billed the one minute.
     await usedMinutes(9.5);
     const res = await mint();
     expect(res.status).toBe(200);
-    const { callId } = await res.json();
+    const { callId, maxSeconds } = await res.json();
     expect(callId).toBeTruthy();
+    expect(maxSeconds).toBe(60 + FREE_END_GRACE_SECONDS);
     expect(Date.now()).toBe(T0.getTime());
     await heartbeat("u-1", callId, "connected", at(0));
     vi.setSystemTime(at(10 * 60));
     const beat = await heartbeat("u-1", callId, "ok", new Date());
-    expect(beat).toMatchObject({ found: true, stop: false });
+    expect(beat).toMatchObject({ found: true, stop: true, reason: "cap_reached" });
     await endCall("u-1", callId, "user_hangup", new Date());
     vi.setSystemTime(at(11 * 60));
     expect(await beginCall("u-1", scn, at(11 * 60))).toEqual({ ok: false, error: "cap_reached" });

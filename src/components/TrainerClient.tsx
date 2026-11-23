@@ -34,7 +34,7 @@ const missingNotice = (asked: string | null, picked: Scenario) =>
   asked && picked.id !== asked ? `That persona isn't in this browser's library, so we opened ${picked.aiPersona.name} instead. Pick another in the Library.` : "";
 
 /** Rendered inside ConversationProvider; owns the ElevenLabs session and feeds the shared deck. */
-function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onVoiceInfo, registerEnd, render, voiceTier }: {
+function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onVoiceInfo, onCapWarning, registerEnd, render, voiceTier }: {
   scenario: Scenario;
   /** The setup's Standard or Premium pick, sent as a request with the token. */
   voiceTier?: "premium" | "standard";
@@ -44,6 +44,8 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
   onEnded: () => void;
   onError: (msg: string) => void;
   onVoiceInfo?: (info: VoiceInfo) => void;
+  /** About a minute of a Free call's free minutes is left (from the server's heartbeat). Called at most once per call. */
+  onCapWarning?: (message: string) => void;
   registerEnd: (fn: () => void) => void;
   render: (v: { orbState: AgentState; status: { label: string; tone: "ok" | "signal" | "caution" }; muted: boolean; toggleMute: () => void; end: () => void; getInputVolume: () => number; getOutputVolume: () => number }) => React.ReactNode;
 }) {
@@ -51,6 +53,8 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
   const meterRef = useRef<CallMeter>(new CallMeter(undefined, { onStop: () => {}, onGiveUp: () => {} }));
   const userEndedRef = useRef(false);
   const endRef = useRef<() => void>(() => {});
+  const warnRef = useRef(onCapWarning);
+  useEffect(() => { warnRef.current = onCapWarning; });
   const conv = useConversation({
     onConnect: () => meterRef.current.open(),
     onMessage: ({ message, role }) => {
@@ -79,9 +83,11 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
         const info = voiceInfoFrom(data);
         if (info) onVoiceInfo?.(info);
         meterRef.current = new CallMeter(data.callId, {
-          // The server has already stopped and billed the call.
+          // The server has already stopped and billed the call. Ended exactly like a hang-up (user_hangup), so the
+          // transcript is saved, graded and sent to the debrief.
           onStop: (m) => { userEndedRef.current = true; endRef.current(); onError(m); },
           onGiveUp: () => endRef.current(),
+          onWarn: (m) => warnRef.current?.(m),
         });
         startSession({
           conversationToken: data.token,
@@ -136,6 +142,9 @@ export default function TrainerClient() {
   /** The voice tier this call was minted on (a static label for the whole call) and the next-call notice. */
   const [voiceInfo, setVoiceInfo] = useState<VoiceInfo | null>(null);
   const onVoiceInfo = useCallback((info: VoiceInfo) => setVoiceInfo(info), []);
+  /** The Free 1 minute warning for the running call, once the server sent it. Empty otherwise. */
+  const [capWarning, setCapWarning] = useState("");
+  const onCapWarning = useCallback((m: string) => setCapWarning(m), []);
   /** The setup's Standard or Premium pick, and what was actually requested for the running call (fixed at Start). */
   const [voiceChoice, setVoiceChoiceState] = useState<VoiceChoice>("premium");
   const [callTier, setCallTier] = useState<VoiceChoice | undefined>(undefined);
@@ -370,6 +379,7 @@ export default function TrainerClient() {
     finishing.current = false;
     mintedCallRef.current = null;
     setVoiceInfo(null);
+    setCapWarning("");
     // Sent only when the setup offered the choice; otherwise the server decides alone, as before.
     setCallTier(premiumChoiceAvailable(premium) ? voiceChoice : undefined);
     setReplyTalking(false);
@@ -466,13 +476,13 @@ export default function TrainerClient() {
 
   if (mode === "voice" && engine) {
     const voiceProps = {
-      scenario, active: live, grading, onTurn: addTurn, onEnded: onVoiceEnded, onVoiceInfo, voiceTier: callTier,
+      scenario, active: live, grading, onTurn: addTurn, onEnded: onVoiceEnded, onVoiceInfo, onCapWarning, voiceTier: callTier,
       // With nothing from the rep there is nothing to grade: go back to the briefing, where the error explains what happened.
       onError: (m: string) => { setError(m); if (!turnsRef.current.some((t) => t.role === "user" && t.text.trim())) setPhase("idle"); },
       registerEnd: (fn: () => void) => { endVoice.current = fn; },
       render: (v: VoiceRender) => (
         <Deck {...shared} orbState={v.orbState} status={grading ? { label: "Grading…", tone: "signal" } : v.status} onEnd={v.end}
-          voice={{ engine, muted: v.muted, onToggleMute: v.toggleMute, getInputVolume: v.getInputVolume, getOutputVolume: v.getOutputVolume, tier: voiceInfo?.tier, nextCallStandard: voiceInfo?.nextCallStandard, trial: voiceInfo?.trial, maxSeconds: voiceInfo?.maxSeconds }} />
+          voice={{ engine, muted: v.muted, onToggleMute: v.toggleMute, getInputVolume: v.getInputVolume, getOutputVolume: v.getOutputVolume, tier: voiceInfo?.tier, nextCallStandard: voiceInfo?.nextCallStandard, trial: voiceInfo?.trial, maxSeconds: voiceInfo?.maxSeconds, capWarning }} />
       ),
     };
     // Coach cues stay on the trainee's screen: neither engine is ever sent coach output.

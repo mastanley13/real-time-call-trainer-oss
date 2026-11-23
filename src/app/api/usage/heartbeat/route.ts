@@ -4,7 +4,7 @@ import { requireAuth } from "@/lib/apiAuth";
 import { ipLimitResponse, userLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { meteringEnabled } from "@/lib/serverConfig";
 import { heartbeat } from "@/lib/usage";
-import { CAP_STOPPED_MESSAGE } from "@/lib/billingUi";
+import { CAP_STOPPED_MESSAGE, FREE_CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE } from "@/lib/billingUi";
 import { queuePremiumEvent } from "@/lib/billingEvents";
 import "@/lib/billing"; // registers the CRM sink that forwards voice_cap_hit
 
@@ -39,16 +39,18 @@ export async function POST(req: NextRequest) {
   const r = await heartbeat(auth.id, body.callId, body.state);
   if (!r.found) return NextResponse.json({ error: "not_found", message: "That call was not found." }, { status: 404 });
   if (r.stop) {
-    // The allowance ran out during the call. Only the stop itself says cap_reached; every heartbeat after it answers
-    // "ended", so this fires once per call. Free calls never stop on the cap (only on the call length limit), so they
-    // never emit here. Ids only, and never awaited.
+    // The allowance ran out during the call, on any plan (Free stops at its free minutes plus the end grace). Only the
+    // stop itself says cap_reached; every heartbeat after it answers "ended", so this fires once per call. Ids only,
+    // and never awaited.
     if (r.reason === "cap_reached") {
       queuePremiumEvent({ name: "voice_cap_hit", subject: "user", subjectId: auth.id, reason: "cap_reached_in_call" });
     }
-    const message = r.reason === "cap_reached" ? CAP_STOPPED_MESSAGE
+    const message = r.reason === "cap_reached" ? (r.freeCap ? FREE_CAP_STOPPED_MESSAGE : CAP_STOPPED_MESSAGE)
       : r.reason === "max_duration" ? "This call reached the maximum call length."
       : undefined;
     return NextResponse.json({ stop: true, reason: r.reason, message });
   }
+  // capWarning: about a minute of a Free call's free minutes is left, worked out on the server (see heartbeat()).
+  if (r.capWarning) return NextResponse.json({ stop: false, secondsLeft: r.secondsLeft, capWarning: true, message: FREE_CAP_WARNING_MESSAGE });
   return NextResponse.json({ stop: false, secondsLeft: r.secondsLeft });
 }

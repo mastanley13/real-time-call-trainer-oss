@@ -6,7 +6,7 @@
  * as each happens; the first heartbeat is sent when both have.
  */
 
-import { CAP_STOPPED_MESSAGE } from "./billingUi";
+import { CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE } from "./billingUi";
 
 export type MeterEndReason = "user_hangup" | "network_drop" | "provider_error" | "server_error" | "failed_connect";
 
@@ -14,17 +14,45 @@ const HEARTBEAT_MS = 10_000;
 /** A dropped connection that has not recovered after this long ends the call (rule 3). */
 export const RECOVER_MS = 10_000;
 
+/** What one heartbeat answer asks the call to do. */
+export type HeartbeatAnswer = { kind: "stop"; message: string } | { kind: "warn"; message: string } | { kind: "ok" };
+
+/**
+ * Reads a /api/usage/heartbeat answer. stop: the server has stopped and billed the call. warn: a Free call has about a
+ * minute of free minutes left (the server decides that from the call's reservation; the client keeps no timer of its own).
+ */
+export function readHeartbeat(data: unknown): HeartbeatAnswer {
+  const d = (data ?? {}) as { stop?: unknown; capWarning?: unknown; message?: unknown };
+  const message = typeof d.message === "string" && d.message ? d.message : undefined;
+  if (d.stop === true) return { kind: "stop", message: message ?? CAP_STOPPED_MESSAGE };
+  if (d.capWarning === true) return { kind: "warn", message: message ?? FREE_CAP_WARNING_MESSAGE };
+  return { kind: "ok" };
+}
+
+export interface MeterHandlers {
+  /**
+   * The server stopped the call (its minutes ran out, or the call length limit). Called once per call. The caller ends
+   * the call the same way as a hang-up, so the transcript is saved and graded.
+   */
+  onStop: (message: string) => void;
+  /** The connection did not recover in time. */
+  onGiveUp: () => void;
+  /** About a minute of a Free call's free minutes is left. Called at most once per call. */
+  onWarn?: (message: string) => void;
+}
+
 export class CallMeter {
   private opened = false;
   private heard = false;
   private connected = false;
   private recovering = false;
   private ended = false;
+  private stopped = false;
+  private warned = false;
   private timer?: ReturnType<typeof setInterval>;
   private recoverTimer?: ReturnType<typeof setTimeout>;
 
-  /** onStop: the server says the allowance ran out. onGiveUp: the connection did not recover in time. */
-  constructor(private callId: string | undefined, private h: { onStop: (message: string) => void; onGiveUp: () => void }) {}
+  constructor(private callId: string | undefined, private h: MeterHandlers) {}
 
   open() { this.opened = true; this.maybeConnect(); }
   audio() { this.heard = true; this.maybeConnect(); }
@@ -56,10 +84,24 @@ export class CallMeter {
     try {
       const res = await fetch("/api/usage/heartbeat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId: this.callId, state }) });
       if (!res.ok) return;
-      const data = (await res.json().catch(() => ({}))) as { stop?: boolean; message?: string };
-      if (data.stop && !this.ended) this.h.onStop(data.message || CAP_STOPPED_MESSAGE);
+      this.answer(readHeartbeat(await res.json().catch(() => ({}))));
     } catch {
       /* a missed heartbeat is tolerated; the server ends the call 30 seconds after the last one */
+    }
+  }
+
+  private answer(a: HeartbeatAnswer) {
+    if (this.ended || this.stopped) return;
+    if (a.kind === "stop") {
+      // Stop heartbeating at once: the server has settled the call, and a browser that keeps reporting after the stop
+      // looks like a call that outlived its limit. end() still reports the end when the call closes.
+      this.stopped = true;
+      clearInterval(this.timer);
+      clearTimeout(this.recoverTimer);
+      this.h.onStop(a.message);
+    } else if (a.kind === "warn" && !this.warned) {
+      this.warned = true;
+      this.h.onWarn?.(a.message);
     }
   }
 

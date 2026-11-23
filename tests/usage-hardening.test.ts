@@ -15,7 +15,7 @@ import { elevenLabsAgentFor } from "@/lib/serverConfig";
 import { resolveTierModel } from "@/lib/voiceModels";
 import { verifyMintReceipt } from "@/lib/mintReceipt";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
-import { MAX_CALL_SECONDS } from "@/lib/usagePlan";
+import { FREE_END_GRACE_SECONDS, MAX_CALL_SECONDS } from "@/lib/usagePlan";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
 import { POST as saveTranscript } from "@/app/api/transcripts/route";
 import { transcriptSaveBody } from "@/lib/sessionStore";
@@ -551,10 +551,12 @@ describe("heartbeat trust: usage is settled from the server's mint time", () => 
       expect(bodies[0].expires_after.seconds).toBe(600);
     });
 
-    it("a Free call is not limited by the plan cap: only the call length limit, and the secret lifetime stays 10 minutes", async () => {
+    it("a Free call is limited to its Free minutes plus the end grace, and the secret lifetime stays 10 minutes", async () => {
       addUser("u-1");
       const body = await (await mint()).json();
-      expect(body.maxSeconds).toBe(MAX_CALL_SECONDS);
+      // Was MAX_CALL_SECONDS before the Free mid-call cap (a Free call could run 24 hours).
+      expect(body.maxSeconds).toBe(10 * 60 + FREE_END_GRACE_SECONDS);
+      expect(body.maxSeconds).toBeLessThan(MAX_CALL_SECONDS);
       expect(bodies[0].expires_after.seconds).toBe(600);
       expect(allowanceOf("u-1").minutesReserved).toBe(10);
     });
@@ -567,7 +569,7 @@ describe("reservations", () => {
   it("a second call cannot take minutes the first call holds, and gets them back when it ends", async () => {
     addUser("u-1");
     const a = await begin("u-1");
-    expect(a.maxSeconds).toBe(MAX_CALL_SECONDS); // Free: the reservation gates starts, it does not limit the running call
+    expect(a.maxSeconds).toBe(10 * 60 + FREE_END_GRACE_SECONDS); // Free: the reservation limits the running call, plus the end grace
     expect(allowanceOf("u-1").minutesReserved).toBe(10);
     expect(await beginCall("u-1", scn, at(1))).toEqual({ ok: false, error: "minutes_reserved" });
 

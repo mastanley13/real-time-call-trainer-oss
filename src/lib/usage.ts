@@ -8,7 +8,7 @@ import { trialDeadlineBinds, trialMaxSeconds, trialSampleEligible } from "./prem
 import {
   CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, MAX_CONNECT_LAG_SECONDS, MAX_RESERVE_MINUTES,
   DAILY_SESSION_MINT_CAP, MIN_PREMIUM_SECONDS, OVERRUN_GRACE_SECONDS, PREMIUM_MINUTES_PER_UNIT, VOICE_BLOCK_SECONDS,
-  capFor, effectivePlan, maxMinutesAfter, midCallCapApplies, periodFor, settleCall, splitAcrossBoundary,
+  callLimitSeconds, capFor, effectivePlan, exactCapStop, freeCapWarning, maxMinutesAfter, periodFor, settleCall, splitAcrossBoundary,
   type CallEndReasonId, type CallOutcome, type PlanTier,
 } from "./usagePlan";
 
@@ -25,10 +25,11 @@ import {
  * Neither voice provider is ended from here (the browser holds the connection), so the reservation is a
  * billing clamp, not a hard stop. Calls that visibly outlive it are flagged (see `flagOverrun`).
  *
- * Free is the exception: its cap is checked only when a call starts. The reservation still stops two calls from
- * starting on the same last minutes, but it is not a limit on the running call: no heartbeat stop, no billing
- * clamp, no overrun flag. The call runs to its normal end (or the 24 hour length limit) and every minute it used
- * counts toward the month, which can leave minutesUsed above the cap. The next voice start is then refused.
+ * Free calls follow the same rule with an end grace: a Free call reserves the Free minutes left when it starts, the
+ * heartbeat stops it (cap_reached) at that reservation plus FREE_END_GRACE_SECONDS, and it is billed at most the
+ * reservation, so the grace is never charged. The heartbeat also tells a Free call when about a minute is left. A Free
+ * call is not flagged as an overrun when the server settles it (a closed tab reaped later is not abuse), only when the
+ * browser keeps reporting after the server already stopped it. (STR-715 let a started Free call run up to 24 hours.)
  */
 
 type Tx = Prisma.TransactionClient;
@@ -276,8 +277,8 @@ const roundMinutes = (n: number) => Math.round(n * 100) / 100;
 /**
  * The cap check (rule 11), the same for every plan: any minutes left let a call start, even half of one. What the
  * screen shows as "0.5 voice minutes left" is what this enforces. 9.5 of 10 used starts, 10 or more does not.
- * A Free call then runs to its end. A Pro or Team call holds a whole minute, because reservations are whole minutes
- * and every started minute counts, so it can end at most half a minute over its plan.
+ * Every call holds a whole minute (Free included), because reservations are whole minutes and every started minute
+ * counts, so a call that starts on a fractional remainder can end at most that fraction of a minute over its plan.
  */
 export function checkCap(r: Pick<Resolved, "remaining">): { ok: true } | { ok: false; error: "cap_reached" } {
   return r.remaining > 0 ? { ok: true } : { ok: false, error: "cap_reached" };
@@ -421,7 +422,8 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
       const check = checkCap(r);
       if (!check.ok) return check;
       if (!user.organizationId) return { ok: false, error: "no_organization" } as const;
-      const capApplies = midCallCapApplies(r.plan);
+      // Pro and Team stop exactly at their reservation; Free stops at it plus the end grace (stored as capEnforced).
+      const exactStop = exactCapStop(r.plan);
       // Any minutes not held by another start let this one begin, on every plan.
       if (r.available <= 0) return { ok: false, error: "minutes_reserved" } as const;
 
@@ -472,16 +474,17 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
           // The realtime mint route confirms it with the model it actually minted (src/lib/voiceMintLog.ts).
           voiceTier: comped || trial || engine === "premium" ? "premium" : "standard",
           premiumTrial: trial,
-          capEnforced: capApplies,
+          capEnforced: exactStop,
         },
       });
       if (trial) {
         // Which call used the trial, on the organization. Only the claim this transaction just made is stamped.
         await tx.organization.updateMany({ where: { id: user.organizationId, premiumTrialCallSessionId: null }, data: { premiumTrialCallSessionId: session.id } });
       }
-      // Free calls are not limited by the plan cap once started, only by the call length limit. The trial call is
+      // The call may use its reservation: what the plan had left at this start (whole minutes, at most
+      // MAX_RESERVE_MINUTES), plus FREE_END_GRACE_SECONDS on Free, never over the call length limit. The trial call is
       // also limited to TRIAL_SAMPLE_SECONDS, and a lower existing deadline still wins.
-      const existingMax = capApplies ? reserve * 60 : MAX_CALL_SECONDS;
+      const existingMax = callLimitSeconds(reserve, exactStop);
       const maxSeconds = trial ? trialMaxSeconds(existingMax) : existingMax;
       return { ok: true, callId: session.id, remaining: r.remaining, pooled: r.pooled, engine, maxSeconds, premium } as const;
     }
@@ -515,45 +518,48 @@ export function provedConnected(s: Pick<OpenSession, "allowanceId" | "connectedA
 
 /**
  * True when the call is still alive, as far as the server can tell, well past the end of its limit:
- * `now` is beyond the billing start plus the call's maximum length plus the grace period. For a call the plan
- * cap applies to, that length is its reservation; for a Free call it is the 24 hour length limit.
+ * `now` is beyond the billing start plus the call's maximum length plus the overrun grace. That length is its
+ * reservation, plus the end grace for a Free call (callLimitSeconds).
  */
-function pastReservation(s: Pick<OpenSession, "createdAt" | "connectedAt" | "reservedMinutes" | "allowanceId" | "premiumTrial">, now: Date, capApplies: boolean): boolean {
+function pastReservation(s: Pick<OpenSession, "createdAt" | "connectedAt" | "reservedMinutes" | "allowanceId" | "premiumTrial" | "capEnforced" | "endedAt">, now: Date): boolean {
   if (!s.allowanceId) return false;
-  const base = maxSecondsOf(s.reservedMinutes, capApplies);
+  const exactStop = exactStopOf(s);
+  const base = callLimitSeconds(s.reservedMinutes, exactStop);
   // A trial call's limit is its trial deadline, so a browser that keeps the Premium session past it is flagged too.
-  const end = billingStart(s).getTime() + (s.premiumTrial ? trialMaxSeconds(base) : base) * 1000;
+  let end = billingStart(s).getTime() + (s.premiumTrial ? trialMaxSeconds(base) : base) * 1000;
+  // A Free call is also measured from when the server actually settled it: one whose stop landed late (heartbeats lost,
+  // or a call minted before the Free mid-call cap) and that then hangs up at once kept nothing running past the stop.
+  if (!exactStop && s.endedAt) end = Math.max(end, s.endedAt.getTime());
   return now.getTime() - end > OVERRUN_GRACE_SECONDS * 1000;
 }
 
 /**
- * Whether the plan cap limits this running call: the rule it was started under, stored on the call at mint.
- * A plan change mid-call does not change it. Calls from before the column existed default to capped.
+ * Whether this call stops exactly at its reservation (Pro, Team) or at it plus the Free end grace: the rule it was
+ * started under, stored on the call at mint. A plan change mid-call does not change it. Calls from before the column
+ * existed default to the exact stop. Free calls minted before the Free mid-call cap (capEnforced false, which then meant
+ * "never stopped by the cap") get the Free rule from their next heartbeat.
  */
-const callCapApplies = (s: Pick<OpenSession, "capEnforced">): boolean => s.capEnforced !== false;
+const exactStopOf = (s: Pick<OpenSession, "capEnforced">): boolean => s.capEnforced !== false;
 
 /** End reasons of a call the server settled: the reservation clamped it, or nobody reported its end. */
 const SERVER_ENDED: ReadonlySet<string> = new Set(["cap_reached", "max_duration", "heartbeat_timeout"]);
-
-/**
- * The most seconds this call may run: what it reserved at mint time, and never more than the 24 hour limit.
- * A call the plan cap does not apply to (Free) has only the 24 hour limit.
- */
-const maxSecondsOf = (reservedMinutes: number, capApplies = true) => (capApplies ? Math.min(reservedMinutes * 60, MAX_CALL_SECONDS) : MAX_CALL_SECONDS);
 
 // ---- During a call ----------------------------------------------------------------------------
 
 export type HeartbeatState = "connected" | "ok" | "recovering";
 export type HeartbeatResult =
   | { found: false }
-  | { found: true; stop: false; secondsLeft: number }
-  | { found: true; stop: true; reason: "cap_reached" | "max_duration" | "ended"; settlement: CallResult | null };
+  /** capWarning: a Free call has about a minute of Free minutes left (freeCapWarning). secondsLeft includes the end grace. */
+  | { found: true; stop: false; secondsLeft: number; capWarning?: true }
+  /** freeCap: a cap_reached stop of a call on the Free rule, so the answer can use the Free wording. */
+  | { found: true; stop: true; reason: "cap_reached" | "max_duration" | "ended"; settlement: CallResult | null; freeCap?: true };
 
 /**
  * Client heartbeat. The first "connected" fixes connectedAt on the server clock; "recovering" marks the
  * start of a network wobble (cleared by the next "ok"). Answers stop=true once the call's reserved
- * minutes or the 24 hour limit are used up, and settles the call right then. The clock runs from the
- * server's mint time whether or not the client ever says "connected".
+ * minutes (plus the end grace on Free) or the 24 hour limit are used up, and settles the call right then. The clock
+ * runs from the server's mint time whether or not the client ever says "connected". Only the heartbeat that stops the
+ * call answers cap_reached or max_duration; every later one answers "ended".
  */
 export async function heartbeat(userId: string, callId: string, state: HeartbeatState, now = new Date()): Promise<HeartbeatResult> {
   return runMetered(async (tx) => {
@@ -562,7 +568,7 @@ export async function heartbeat(userId: string, callId: string, state: Heartbeat
     if (s.endedAt) {
       // The server already settled this call. Still heartbeating well past the end of its reservation means the
       // browser kept the provider session running, whether the server clamped it or reaped it as silent.
-      if (SERVER_ENDED.has(s.endReason ?? "") && pastReservation(s, now, callCapApplies(s))) await flagOverrun(tx, s, now);
+      if (SERVER_ENDED.has(s.endReason ?? "") && pastReservation(s, now)) await flagOverrun(tx, s, now);
       return { found: true, stop: true, reason: "ended", settlement: null } as const;
     }
 
@@ -583,32 +589,38 @@ export async function heartbeat(userId: string, callId: string, state: Heartbeat
     const written = await tx.trainerSession.updateMany({ where: { id: s.id, endedAt: null }, data });
     if (written.count === 0) return { found: true, stop: true, reason: "ended", settlement: null } as const;
 
-    const { limit, capApplies, trialBound } = await limitSeconds(tx, s, now);
+    const { limit, exactStop, trialBound } = await limitSeconds(tx, s, now);
     const start = billingStart({ createdAt: s.createdAt, connectedAt });
     const elapsed = Math.max(0, Math.floor((now.getTime() - start.getTime()) / 1000));
     const left = Math.min(limit, MAX_CALL_SECONDS) - elapsed;
-    if (left > 0) return { found: true, stop: false, secondsLeft: left } as const;
-    // A Free call can only be stopped by the call length limit, never by the plan cap. A trial call that reaches its
-    // trial deadline ends the same normal way (max_duration), never with a quota error.
-    const reason = trialBound ? "max_duration" : capApplies && limit - elapsed <= 0 ? "cap_reached" : "max_duration";
+    if (left > 0) {
+      // The Free warning comes from the call's own reservation on the server clock, never from a client timer. Not on a
+      // trial call whose 300 second deadline ends it first: that one ends as max_duration with its own notice.
+      const warn = !exactStop && !trialBound && freeCapWarning(left);
+      return warn ? { found: true, stop: false, secondsLeft: left, capWarning: true } as const : { found: true, stop: false, secondsLeft: left } as const;
+    }
+    // Free and paid calls stop the same way when their minutes run out (cap_reached); Free only gets its end grace
+    // first. A trial call that reaches its trial deadline ends the normal way (max_duration), never with a quota error.
+    const reason = trialBound ? "max_duration" : limit - elapsed <= 0 ? "cap_reached" : "max_duration";
     const settlement = await settle(tx, { ...s, connectedAt, lastHeartbeatAt: now, degradedAt: null }, reason, now);
-    return { found: true, stop: true, reason, settlement } as const;
+    return reason === "cap_reached" && !exactStop
+      ? { found: true, stop: true, reason, settlement, freeCap: true } as const
+      : { found: true, stop: true, reason, settlement } as const;
   });
 }
 
 /**
- * Seconds a call may run in total, and whether the plan cap is what sets that. A call from before reservations
- * existed uses what the allowance has left. Free calls get only the 24 hour call length limit.
+ * Seconds a call may run in total, and which stop rule it is on: its reservation, plus the end grace on the Free rule
+ * (callLimitSeconds). A call from before reservations existed uses what the allowance has left.
  */
-async function limitSeconds(tx: Tx, s: OpenSession, now: Date): Promise<{ limit: number; capApplies: boolean; trialBound: boolean }> {
-  const capApplies = callCapApplies(s);
-  let base: number;
-  if (!capApplies) base = MAX_CALL_SECONDS;
-  else if (s.allowanceId) base = maxSecondsOf(s.reservedMinutes);
-  else base = ((await resolveAllowance(tx, s.userId, now))?.remaining ?? 0) * 60;
+async function limitSeconds(tx: Tx, s: OpenSession, now: Date): Promise<{ limit: number; exactStop: boolean; trialBound: boolean }> {
+  const exactStop = exactStopOf(s);
+  const base = s.allowanceId
+    ? callLimitSeconds(s.reservedMinutes, exactStop)
+    : ((await resolveAllowance(tx, s.userId, now))?.remaining ?? 0) * 60;
   // The organization's trial call: min(existing deadline, 300 s). trialBound says the trial cap is the binding one.
-  if (s.premiumTrial) return { limit: trialMaxSeconds(base), capApplies, trialBound: trialDeadlineBinds(base) };
-  return { limit: base, capApplies, trialBound: false };
+  if (s.premiumTrial) return { limit: trialMaxSeconds(base), exactStop, trialBound: trialDeadlineBinds(base) };
+  return { limit: base, exactStop, trialBound: false };
 }
 
 // ---- Ending a call ----------------------------------------------------------------------------
@@ -697,17 +709,9 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   const connected = provedConnected(s);
   const reason: CallEndReasonId = connected ? requested : "failed_connect";
 
-  // The reservation limits what a capped call (Pro, Team) is billed. A Free call is billed for every minute it ran.
-  const bounded = callCapApplies(s);
-  // A Free call reaped as silent keeps everything it was confirmed to have used: its time is counted through the last
-  // heartbeat the server saw. Only the silent stretch after that is bounded, by the call's reservation, because the
-  // server cannot tell how long a silent call really ran and must not bill a closed browser tab for a day.
-  let billedEnd = naturalEnd;
-  if (!bounded && requested === "heartbeat_timeout") {
-    const confirmedMs = Math.max(start.getTime(), s.lastHeartbeatAt?.getTime() ?? 0);
-    billedEnd = new Date(Math.min(naturalEnd.getTime(), confirmedMs + s.reservedMinutes * 60 * 1000));
-  }
-  const endedAt = connected ? billedEnd : now;
+  // The reservation limits what every call is billed, Free included (settleCall below): a Free call's end grace runs
+  // past its reserved minutes but is clamped off, so a Free call never adds more than it reserved at its start.
+  const endedAt = connected ? naturalEnd : now;
   // The connect heartbeat sets lastHeartbeatAt to the start itself, so only a later one proves the client kept running.
   const heartbeatSeen = !!s.lastHeartbeatAt && s.lastHeartbeatAt.getTime() > start.getTime();
   // Only a drop that could still be credited needs the 24 hour count (DAILY_DROP_CREDIT_CAP). The user row is locked
@@ -725,7 +729,7 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
       },
     });
   }
-  const st = settleCall({ connectedAt: connected ? start : null, endedAt, reason, remainingMinutes: bounded ? target.remaining : Number.POSITIVE_INFINITY, heartbeatSeen, recentCreditedDrops });
+  const st = settleCall({ connectedAt: connected ? start : null, endedAt, reason, remainingMinutes: target.remaining, heartbeatSeen, recentCreditedDrops });
   // A stale call keeps its own reason when the reservation is what clamped it.
   let endReason: CallEndReasonId = requested === "heartbeat_timeout" && st.endReason === "cap_reached" ? "heartbeat_timeout" : st.endReason;
 
@@ -746,7 +750,7 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
     const split = splitAcrossBoundary({ startMs: start.getTime(), billableSeconds: st.billableSeconds, boundaryMs: boundary.getTime(), grossMinutes: st.grossMinutes });
     const credited = st.creditMinutes > 0;
     const inCurrent = boundary.getTime() === allowance.periodStart.getTime();
-    const newGross = inCurrent ? (bounded ? Math.min(split.newMinutes, s.carriedMinutes) : split.newMinutes) : 0;
+    const newGross = inCurrent ? Math.min(split.newMinutes, s.carriedMinutes) : 0;
     const clamped = inCurrent && newGross < split.newMinutes;
     if (clamped) endReason = "cap_reached";
     const lost = inCurrent ? 0 : split.newMinutes;
@@ -806,7 +810,10 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   }
   // A client that reports the end long after the reservation ran out kept the provider session open.
   // A silent call reaped after its reservation ran out counts too: the server cannot tell it from a live one.
-  if (connected && hasReservation && SERVER_ENDED.has(b.endReason) && pastReservation({ ...s, connectedAt: start }, now, callCapApplies(s))) {
+  // Not on the Free rule: a Free tab closed mid-call and reaped at the next visit must not block the next call, and a
+  // Free call minted before the Free mid-call cap is stopped late once, by its first heartbeat after the change. A Free
+  // browser that keeps reporting after the server stopped it is still flagged (the heartbeat and endCall checks).
+  if (connected && hasReservation && exactStopOf(s) && SERVER_ENDED.has(b.endReason) && pastReservation({ ...s, connectedAt: start }, now)) {
     await flagOverrun(tx, s, now);
   }
   return { outcome: st.outcome, endReason: b.endReason, billableSeconds: b.billableSeconds, billedMinutes: b.net + b.priorNet, creditedMinutes: st.creditMinutes };
@@ -850,7 +857,7 @@ export async function endCall(userId: string, callId: string, reason: CallEndRea
     if (!s || s.userId !== userId) return null;
     if (s.endedAt) {
       // An end event for a call the server already settled, arriving after its reservation ran out.
-      if (SERVER_ENDED.has(s.endReason ?? "") && pastReservation(s, now, callCapApplies(s))) await flagOverrun(tx, s, now);
+      if (SERVER_ENDED.has(s.endReason ?? "") && pastReservation(s, now)) await flagOverrun(tx, s, now);
       return storedResult(s);
     }
     const done = await settle(tx, s, reason, now);

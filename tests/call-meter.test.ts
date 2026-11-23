@@ -1,0 +1,170 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CallMeter, readHeartbeat } from "@/lib/callMeter";
+import { RealtimeCall } from "@/components/call/RealtimeVoiceSession";
+import { CAP_STOPPED_MESSAGE, FREE_CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE } from "@/lib/billingUi";
+import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
+
+// The client side of the Free mid-call cap: the warning is shown once, and a stop ends the call once, through the same
+// path as a hang-up. No network: fetch is a stub that answers like /api/usage/heartbeat and /api/usage/end.
+
+type Answer = Record<string, unknown>;
+/** A fetch stub: heartbeats get the next queued answer (or a plain "keep going"), everything else is recorded. */
+function stubServer(answers: Answer[]) {
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    const body = init?.body ? JSON.parse(init.body as string) : {};
+    calls.push({ url, body });
+    if (url === "/api/usage/heartbeat") return Response.json(answers.shift() ?? { stop: false, secondsLeft: 300 });
+    if (url === "/api/usage/end") return Response.json({ ok: true });
+    if (url === "/api/realtime/session") return Response.json({ clientSecret: "ek_fictional_test_only", callId: "call-1", sessionId: "rt-1", voiceTier: "standard", maxSeconds: 620 });
+    if (url === "/api/realtime/sdp") return Response.json({ sdp: "v=0 test answer" });
+    return Response.json({}, { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return { calls, heartbeats: () => calls.filter((c) => c.url === "/api/usage/heartbeat"), ends: () => calls.filter((c) => c.url === "/api/usage/end") };
+}
+/** Lets the pending fetch promises and their .json() reads settle. */
+const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
+
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+describe("readHeartbeat", () => {
+  it("reads a stop, a Free warning and a plain answer, with the server's message or the fallback copy", () => {
+    expect(readHeartbeat({ stop: true, reason: "cap_reached", message: FREE_CAP_STOPPED_MESSAGE })).toEqual({ kind: "stop", message: FREE_CAP_STOPPED_MESSAGE });
+    expect(readHeartbeat({ stop: true, reason: "ended" })).toEqual({ kind: "stop", message: CAP_STOPPED_MESSAGE });
+    expect(readHeartbeat({ stop: false, secondsLeft: 70, capWarning: true, message: FREE_CAP_WARNING_MESSAGE })).toEqual({ kind: "warn", message: FREE_CAP_WARNING_MESSAGE });
+    expect(readHeartbeat({ stop: false, secondsLeft: 70, capWarning: true })).toEqual({ kind: "warn", message: FREE_CAP_WARNING_MESSAGE });
+    // secondsLeft alone is never a warning: the client keeps no timer of its own, the server decides.
+    expect(readHeartbeat({ stop: false, secondsLeft: 30 })).toEqual({ kind: "ok" });
+    expect(readHeartbeat(null)).toEqual({ kind: "ok" });
+    expect(readHeartbeat({ stop: "yes", capWarning: "true" })).toEqual({ kind: "ok" });
+  });
+});
+
+describe("CallMeter", () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] }); });
+
+  function connectedMeter(answers: Answer[]) {
+    const server = stubServer(answers);
+    const h = { onStop: vi.fn(), onGiveUp: vi.fn(), onWarn: vi.fn() };
+    const meter = new CallMeter("call-1", h);
+    meter.open();
+    meter.audio();
+    return { server, h, meter };
+  }
+
+  it("shows the Free warning once, however many heartbeats carry it", async () => {
+    const warn = { stop: false, secondsLeft: 70, capWarning: true, message: FREE_CAP_WARNING_MESSAGE };
+    const { h, server } = connectedMeter([{ stop: false, secondsLeft: 200 }, warn, warn, warn]);
+    await settle();
+    expect(h.onWarn).not.toHaveBeenCalled();
+    for (let i = 0; i < 3; i++) { await vi.advanceTimersByTimeAsync(10_000); await settle(); }
+    expect(server.heartbeats()).toHaveLength(4);
+    expect(h.onWarn).toHaveBeenCalledTimes(1);
+    expect(h.onWarn).toHaveBeenCalledWith(FREE_CAP_WARNING_MESSAGE);
+    expect(h.onStop).not.toHaveBeenCalled();
+  });
+
+  it("on a stop it calls onStop once and stops heartbeating, and the end is still reported once", async () => {
+    const { h, server, meter } = connectedMeter([
+      { stop: false, secondsLeft: 15, capWarning: true, message: FREE_CAP_WARNING_MESSAGE },
+      { stop: true, reason: "cap_reached", message: FREE_CAP_STOPPED_MESSAGE },
+      { stop: true, reason: "ended" },
+    ]);
+    await settle();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settle();
+    expect(h.onStop).toHaveBeenCalledTimes(1);
+    expect(h.onStop).toHaveBeenCalledWith(FREE_CAP_STOPPED_MESSAGE);
+    // No more heartbeats after the stop, so the browser never looks like it outlived the server's stop.
+    await vi.advanceTimersByTimeAsync(60_000);
+    await settle();
+    expect(server.heartbeats()).toHaveLength(2);
+    expect(h.onStop).toHaveBeenCalledTimes(1);
+    expect(h.onWarn).toHaveBeenCalledTimes(1);
+    // The call then closes the normal way and the end is reported as a hang-up, once.
+    meter.end("user_hangup");
+    meter.end("user_hangup");
+    expect(server.ends()).toEqual([{ url: "/api/usage/end", body: { callId: "call-1", reason: "user_hangup" } }]);
+  });
+
+  it("does nothing without a callId (demo mode)", async () => {
+    const server = stubServer([]);
+    const h = { onStop: vi.fn(), onGiveUp: vi.fn(), onWarn: vi.fn() };
+    const meter = new CallMeter(undefined, h);
+    meter.open();
+    meter.audio();
+    await vi.advanceTimersByTimeAsync(30_000);
+    meter.end("user_hangup");
+    expect(server.calls).toHaveLength(0);
+  });
+});
+
+describe("RealtimeCall: a cap stop ends the call through the hang-up path", () => {
+  const scenario = BUILT_IN_SCENARIOS[0];
+  const track = { enabled: true, stop: vi.fn() };
+  const mic = { getTracks: () => [track], getAudioTracks: () => [track] };
+  let channel: { readyState: string; close: () => void; send: () => void; onopen?: () => void };
+
+  beforeEach(() => {
+    vi.stubGlobal("window", { location: { assign: vi.fn() } });
+    vi.stubGlobal("localStorage", { removeItem: vi.fn() });
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: vi.fn(async () => mic) } });
+    vi.stubGlobal("AudioContext", class { constructor() { throw new Error("No audio device in test"); } });
+    vi.stubGlobal("Audio", class { autoplay = false; muted = false; srcObject = null; pause() {} play() { return Promise.resolve(); } });
+    vi.stubGlobal("RTCPeerConnection", class {
+      addTrack() {}
+      createDataChannel() { channel = { readyState: "connecting", close: vi.fn(), send: vi.fn() }; return channel; }
+      async createOffer() { return { type: "offer", sdp: "v=0 test offer" }; }
+      async setLocalDescription() {}
+      async setRemoteDescription() {}
+      close() {}
+    });
+  });
+
+  const handlers = () => ({ onTurn: vi.fn(), onEnded: vi.fn(), onError: vi.fn(), onView: vi.fn(), onMinted: vi.fn(), onVoiceInfo: vi.fn(), onCapWarning: vi.fn() });
+
+  /** Starts a call, opens the data channel and reports first audio, so the meter is heartbeating. */
+  async function liveCall(answers: Answer[]) {
+    const server = stubServer(answers);
+    const h = handlers();
+    const call = new RealtimeCall(scenario, h);
+    await call.start();
+    channel.onopen?.();
+    (call as unknown as { meter: CallMeter }).meter.audio();
+    await settle();
+    await vi.waitFor(() => expect(server.heartbeats().length).toBeGreaterThan(0));
+    await settle();
+    return { server, h, call };
+  }
+
+  it("the warning reaches the trainer once", async () => {
+    const { h, call } = await liveCall([{ stop: false, secondsLeft: 75, capWarning: true, message: FREE_CAP_WARNING_MESSAGE }]);
+    expect(h.onCapWarning).toHaveBeenCalledWith(FREE_CAP_WARNING_MESSAGE);
+    expect(h.onCapWarning).toHaveBeenCalledTimes(1);
+    expect(h.onEnded).not.toHaveBeenCalled();
+    call.close(false);
+  });
+
+  it("a stop runs end(): the 'ending' phase, onEnded so the call is saved and graded, a user_hangup end, and the Free message", async () => {
+    const { h, server } = await liveCall([{ stop: true, reason: "cap_reached", message: FREE_CAP_STOPPED_MESSAGE }]);
+    await vi.waitFor(() => expect(h.onEnded).toHaveBeenCalledTimes(1));
+    // The same sequence a hang-up produces: wrapping up (mic off, last words flushed), then closed with notify.
+    const phases = h.onView.mock.calls.map(([v]) => (v as { phase: string }).phase);
+    expect(phases).toContain("ending");
+    expect(phases.at(-1)).toBe("closed");
+    expect(track.enabled).toBe(false);
+    expect(h.onError).toHaveBeenCalledWith(FREE_CAP_STOPPED_MESSAGE);
+    expect(server.ends()).toEqual([{ url: "/api/usage/end", body: { callId: "call-1", reason: "user_hangup" } }]);
+  });
+
+  it("matches a user hang-up: the same phases, onEnded once and the same end report", async () => {
+    const { h, server, call } = await liveCall([]);
+    call.end();
+    await vi.waitFor(() => expect(h.onEnded).toHaveBeenCalledTimes(1));
+    const phases = h.onView.mock.calls.map(([v]) => (v as { phase: string }).phase);
+    expect(phases).toContain("ending");
+    expect(phases.at(-1)).toBe("closed");
+    expect(server.ends()).toEqual([{ url: "/api/usage/end", body: { callId: "call-1", reason: "user_hangup" } }]);
+  });
+});

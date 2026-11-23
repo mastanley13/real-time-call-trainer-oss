@@ -12,13 +12,13 @@ vi.mock("@/lib/apiAuth", async () => ({
   isDemoUser: () => false,
 }));
 
-import { beginCall, endCall, heartbeat } from "@/lib/usage";
+import { beginCall, endCall, ensureAllowance, heartbeat } from "@/lib/usage";
 import { isTrialSampleOn, PREMIUM_TRIAL_SAMPLE_ENV, TRIAL_SAMPLE_SECONDS, trialDeadlineBinds, trialMaxSeconds, trialSampleEligible } from "@/lib/premiumTrial";
 import { premiumOnSale, premiumTrialSampleOn } from "@/lib/serverConfig";
 import { mintVoiceTier } from "@/lib/voiceTier";
 import { TRIAL_CALL_NOTICE, CAP_STOPPED_MESSAGE, voiceLabel } from "@/lib/billingUi";
 import { voiceInfoFrom } from "@/components/call/RealtimeVoiceSession";
-import { MAX_CALL_SECONDS } from "@/lib/usagePlan";
+import { FREE_END_GRACE_SECONDS, MAX_CALL_SECONDS } from "@/lib/usagePlan";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
 import { POST as heartbeatRoute } from "@/app/api/usage/heartbeat/route";
@@ -346,14 +346,37 @@ describe("PREMIUM_TRIAL_SAMPLE_ON and PREMIUM_VOICE_ON_SALE are independent (all
 // ---- Deadline, completion, minutes ----------------------------------------------------------------------------------
 
 describe("the trial call's deadline and minutes", () => {
-  it("4: maxSeconds is 300 (the Free call's own deadline is 24 hours) and the secret lives no longer", async () => {
+  it("4: maxSeconds is 300 (the Free call's own deadline is its 10 minutes plus the end grace) and the secret lives no longer", async () => {
     const minted = await mintAs("u-1");
     expect(minted.body).toMatchObject({ voiceTier: "premium", voiceTrial: true, maxSeconds: 300, nextCallStandard: true });
     expect(ttls).toEqual([300]);
-    // A later Standard Free call keeps the usual Free deadline.
+    // A later Standard Free call keeps the usual Free deadline: its Free minutes plus the end grace (24 hours before the
+    // Free mid-call cap).
     vi.setSystemTime(at(5));
     await endCall("u-1", minted.body.callId as string, "failed_connect", at(5));
-    expect((await begin("u-1", 10)).maxSeconds).toBe(MAX_CALL_SECONDS);
+    const next = (await begin("u-1", 10)).maxSeconds;
+    expect(next).toBe(10 * 60 + FREE_END_GRACE_SECONDS);
+    expect(next).toBeLessThan(MAX_CALL_SECONDS);
+  });
+
+  it("4c: a Free trial call with fewer than 5 Free minutes left ends on the Free cap, with the warning, not the trial deadline", async () => {
+    await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
+    allowanceOf("u-1").minutesUsed = 8;
+    const minted = await mintAs("u-1");
+    // min(2 minutes + grace, 300): the Free minutes bind, so the call ends as cap_reached like any Free call.
+    expect(minted.body).toMatchObject({ voiceTrial: true, maxSeconds: 120 + FREE_END_GRACE_SECONDS });
+    const callId = minted.body.callId as string;
+    await heartbeat("u-1", callId, "connected", at(0));
+    expect(await heartbeat("u-1", callId, "ok", at(80))).toMatchObject({ stop: false, capWarning: true });
+    expect(await heartbeat("u-1", callId, "ok", at(120 + FREE_END_GRACE_SECONDS))).toMatchObject({ stop: true, reason: "cap_reached", freeCap: true });
+    expect(session(callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 2 });
+  });
+
+  it("4d: a trial call ended by its 300 second deadline never carries the Free warning", async () => {
+    const minted = await mintAs("u-1");
+    const callId = minted.body.callId as string;
+    await heartbeat("u-1", callId, "connected", at(0));
+    for (const t of [240, 260, 290]) expect(await heartbeat("u-1", callId, "ok", at(t))).not.toHaveProperty("capWarning");
   });
 
   it("4b: a lower existing deadline still wins, and then ends the call with its own reason", async () => {

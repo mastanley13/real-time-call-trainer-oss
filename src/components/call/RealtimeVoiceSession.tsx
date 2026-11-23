@@ -33,6 +33,8 @@ interface Handlers {
   onMinted: (c: MintedCall) => void;
   /** The voice tier this call was minted on, and whether the next call drops to Standard. Labels only, no model id. */
   onVoiceInfo: (info: VoiceInfo) => void;
+  /** About a minute of a Free call's free minutes is left (from the server's heartbeat). Called at most once. */
+  onCapWarning?: (message: string) => void;
 }
 
 /**
@@ -132,9 +134,11 @@ export class RealtimeCall {
     const info = voiceInfoFrom(secret);
     if (info) this.h.onVoiceInfo(info);
     this.meter = new CallMeter(secret.callId, {
-      // The server has already stopped and billed the call; this ends the client side.
-      onStop: (m) => this.fail(m, "user_hangup"),
+      // The server has already stopped and billed the call. End the client side exactly like a hang-up (the last words
+      // are still transcribed, then the call is saved and graded), and say why it ended.
+      onStop: (m) => { this.end(); this.h.onError(m); },
       onGiveUp: () => this.fail("The voice connection dropped. Check your network. Your transcript so far is kept.", "network_drop"),
+      onWarn: (m) => this.h.onCapWarning?.(m),
     });
     if (secret.expiresAt && secret.expiresAt * 1000 <= Date.now()) return this.fail(EXPIRED, "failed_connect");
 
@@ -386,7 +390,7 @@ function iceGathered(pc: RTCPeerConnection, timeoutMs = 3000): Promise<void> {
 }
 
 /** Voice session on the OpenAI Realtime API, or GPT-Live when the server sets OPENAI_VOICE_API=live. Drop-in for the ElevenLabs VoiceSession. */
-export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onMinted, onVoiceInfo, registerEnd, render, voiceTier }: {
+export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onMinted, onVoiceInfo, onCapWarning, registerEnd, render, voiceTier }: {
   scenario: Scenario;
   /** The setup's Standard or Premium pick for this call, sent as a request. Read when the call starts. */
   voiceTier?: "premium" | "standard";
@@ -397,14 +401,15 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   onError: (msg: string) => void;
   onMinted?: (c: MintedCall) => void;
   onVoiceInfo?: (info: VoiceInfo) => void;
+  onCapWarning?: (message: string) => void;
   registerEnd: (fn: () => void) => void;
   render: (v: VoiceRender) => React.ReactNode;
 }) {
   const [view, setView] = useState<CallView>({ phase: "mic", speaking: false, muted: false });
   const callRef = useRef<RealtimeCall | null>(null);
   // Latest callbacks without restarting the call when the parent re-renders.
-  const cb = useRef({ onTurn, onEnded, onError, onMinted, onVoiceInfo });
-  useEffect(() => { cb.current = { onTurn, onEnded, onError, onMinted, onVoiceInfo }; });
+  const cb = useRef({ onTurn, onEnded, onError, onMinted, onVoiceInfo, onCapWarning });
+  useEffect(() => { cb.current = { onTurn, onEnded, onError, onMinted, onVoiceInfo, onCapWarning }; });
   // The pick at the moment the call starts; changing it later never restarts or switches a running call.
   const tierRef = useRef(voiceTier);
   useEffect(() => { tierRef.current = voiceTier; });
@@ -418,6 +423,7 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
       onView: (v) => { if (callRef.current === call) setView(v); },
       onMinted: (c) => cb.current.onMinted?.(c),
       onVoiceInfo: (i) => cb.current.onVoiceInfo?.(i),
+      onCapWarning: (m) => cb.current.onCapWarning?.(m),
     }, tierRef.current);
     callRef.current = call;
     setView({ phase: "mic", speaking: false, muted: false });
