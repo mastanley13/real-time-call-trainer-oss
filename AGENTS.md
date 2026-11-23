@@ -89,7 +89,7 @@ src/lib/
   sessionStore.ts, scenarioStore.ts    Client-side persistence (API when signed in, localStorage in demo)
   serverConfig.ts                 Capability flags; the only place that reads provider env vars for the UI
   apiAuth.ts, auth.ts, mfa.ts     requireAuth, JWT sessions, bcrypt, TOTP
-  passwordReset.ts, mailer.ts     Stateless HMAC reset tokens (server-only); Resend email or console log. passwordRules.ts is shared
+  passwordReset.ts, ghlMail.ts    Stateless HMAC reset tokens (server-only); GoHighLevel API email or console log. passwordRules.ts is shared
   rateLimit.ts                    clientIp (TRUSTED_PROXY_HOPS), IP_LIMITS, USER_LIMITS, body and transcript caps
   access.ts + src/proxy.ts        Optional TRAINER_ACCESS_CODE gate
   realtime.ts                     OpenAI Realtime helpers shared by server and client (see Secrets below)
