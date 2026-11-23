@@ -192,7 +192,7 @@ describe("browser call on the Live path", () => {
       .mockResolvedValueOnce(Response.json({ voiceApi: "live", liveTicket: "lt1.ticket", sessionId: "call-abcdef12", voice: "marin" }))
       .mockResolvedValueOnce(Response.json({ sdp: "v=0 answer" }));
     vi.stubGlobal("fetch", fetchMock);
-    const h = { onTurn: vi.fn(), onEnded: vi.fn(), onError: vi.fn(), onView: vi.fn(), onMinted: vi.fn(), onVoiceInfo: vi.fn() };
+    const h = { onTurn: vi.fn(), onEnded: vi.fn(), onCancelled: vi.fn(), onError: vi.fn(), onView: vi.fn(), onMinted: vi.fn(), onVoiceInfo: vi.fn() };
     const call = new RealtimeCall(scenario, h);
     await call.start();
     expect(h.onError).not.toHaveBeenCalled();

@@ -30,7 +30,8 @@ export class CallMeter {
   audio() { this.heard = true; this.maybeConnect(); }
 
   private maybeConnect() {
-    if (!this.callId || this.connected || !this.opened || !this.heard) return;
+    // An ended call never starts heartbeats, even if a late connect from an abandoned attempt reports in.
+    if (!this.callId || this.ended || this.connected || !this.opened || !this.heard) return;
     this.connected = true;
     void this.beat("connected");
     this.timer = setInterval(() => void this.beat(this.recovering ? "recovering" : "ok"), HEARTBEAT_MS);

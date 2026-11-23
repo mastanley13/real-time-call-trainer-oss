@@ -11,7 +11,7 @@ const closeChannel = vi.fn();
 const removeItem = vi.fn();
 const track = { enabled: true, stop };
 const mic = { getTracks: () => [track], getAudioTracks: () => [track] };
-const handlers = () => ({ onTurn: vi.fn(), onEnded: vi.fn(), onError: vi.fn(), onView: vi.fn(), onMinted: vi.fn(), onVoiceInfo: vi.fn() });
+const handlers = () => ({ onTurn: vi.fn(), onEnded: vi.fn(), onCancelled: vi.fn(), onError: vi.fn(), onView: vi.fn(), onMinted: vi.fn(), onVoiceInfo: vi.fn() });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -129,6 +129,54 @@ describe("connect timeout and late answers (SAL-1039)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1][0]).toBe("/api/usage/end");
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ callId: "call-late-mint", reason: "failed_connect" });
+  });
+
+  it("a hang-up while waiting for the mic cancels without grading or an error", async () => {
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: vi.fn(() => new Promise(() => {})) } });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const h = handlers();
+    const call = new RealtimeCall(scenario, h);
+    void call.start();
+    call.end();
+    expect(h.onCancelled).toHaveBeenCalledOnce();
+    expect(h.onEnded).not.toHaveBeenCalled();
+    expect(h.onError).not.toHaveBeenCalled();
+    expect(h.onView).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "closed" }));
+    // A second press, or a later failure, does nothing more.
+    call.end();
+    expect(h.onCancelled).toHaveBeenCalledOnce();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a hang-up after the mint but before connect settles the call as failed_connect and never grades", async () => {
+    let offered!: (o: RTCSessionDescriptionInit) => void;
+    vi.stubGlobal("RTCPeerConnection", class {
+      addTrack() {}
+      createDataChannel() { return { readyState: "connecting", close: closeChannel }; }
+      createOffer() { return new Promise<RTCSessionDescriptionInit>((resolve) => { offered = resolve; }); }
+      async setLocalDescription() {}
+      close = closePeer;
+    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ clientSecret: "ek_fictional_test_only", callId: "call-hangup-early" }))
+      .mockResolvedValue(new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    const h = handlers();
+    const call = new RealtimeCall(scenario, h);
+    const started = call.start();
+    await vi.waitFor(() => expect(offered).toBeTypeOf("function"));
+    call.end();
+    offered({ type: "offer", sdp: "v=0 test offer" });
+    await started;
+    expect(h.onCancelled).toHaveBeenCalledOnce();
+    expect(h.onEnded).not.toHaveBeenCalled();
+    expect(h.onError).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/usage/end");
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ callId: "call-hangup-early", reason: "failed_connect" });
+    expect(stop).toHaveBeenCalledOnce();
+    expect(closePeer).toHaveBeenCalledOnce();
   });
 
   it("sends no SDP offer when the call closes while createOffer is pending", async () => {

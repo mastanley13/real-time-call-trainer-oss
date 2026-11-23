@@ -27,6 +27,8 @@ interface CallView { phase: CallPhase; speaking: boolean; muted: boolean }
 interface Handlers {
   onTurn: (t: AssembledTurn) => void;
   onEnded: () => void;
+  /** The rep hung up before the call connected: back to the briefing, nothing graded. */
+  onCancelled: () => void;
   onError: (msg: string, info?: VoiceErrorInfo) => void;
   onView: (v: CallView) => void;
   /**
@@ -320,11 +322,19 @@ export class RealtimeCall {
     this.set({ muted });
   };
 
-  /** Hang up: stop the mic and the persona now, wait briefly for the last transcript, then close and report. */
+  /**
+   * Hang up: stop the mic and the persona now, wait briefly for the last transcript, then close and report.
+   * Before connect it ends like any other connect failure (settled as failed_connect, never graded, not even a
+   * retry's seeded turns) but reports onCancelled instead of an error: the rep chose to stop.
+   */
   end = () => {
     if (this.closed || this.ending) return;
     this.ending = true;
-    if (this.view.phase !== "connected") return this.close(true);
+    if (this.view.phase !== "connected") {
+      this.meter?.end("failed_connect");
+      this.close(false);
+      return this.h.onCancelled();
+    }
     this.mic?.getAudioTracks().forEach((t) => (t.enabled = false));
     if (this.audio) this.audio.muted = true;
     this.set({ phase: "ending", speaking: false });
@@ -402,7 +412,7 @@ function iceGathered(pc: RTCPeerConnection, timeoutMs = 3000): Promise<void> {
 }
 
 /** Voice session on the OpenAI Realtime API, or GPT-Live when the server sets OPENAI_VOICE_API=live. Drop-in for the ElevenLabs VoiceSession. */
-export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onMinted, onVoiceInfo, registerEnd, render, voiceTier }: {
+export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onCancelled, onError, onMinted, onVoiceInfo, registerEnd, render, voiceTier }: {
   scenario: Scenario;
   /** The setup's Standard or Premium pick for this call, sent as a request. Read when the call starts. */
   voiceTier?: "premium" | "standard";
@@ -410,6 +420,7 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   grading: boolean;
   onTurn: (t: StoredTurn) => void;
   onEnded: () => void;
+  onCancelled: () => void;
   onError: (msg: string, info?: VoiceErrorInfo) => void;
   onMinted?: (c: MintedCall) => void;
   onVoiceInfo?: (info: VoiceInfo) => void;
@@ -419,8 +430,8 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   const [view, setView] = useState<CallView>({ phase: "mic", speaking: false, muted: false });
   const callRef = useRef<RealtimeCall | null>(null);
   // Latest callbacks without restarting the call when the parent re-renders.
-  const cb = useRef({ onTurn, onEnded, onError, onMinted, onVoiceInfo });
-  useEffect(() => { cb.current = { onTurn, onEnded, onError, onMinted, onVoiceInfo }; });
+  const cb = useRef({ onTurn, onEnded, onCancelled, onError, onMinted, onVoiceInfo });
+  useEffect(() => { cb.current = { onTurn, onEnded, onCancelled, onError, onMinted, onVoiceInfo }; });
   // The pick at the moment the call starts; changing it later never restarts or switches a running call.
   const tierRef = useRef(voiceTier);
   useEffect(() => { tierRef.current = voiceTier; });
@@ -430,6 +441,7 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
     const call = new RealtimeCall(scenario, {
       onTurn: (t) => cb.current.onTurn(t),
       onEnded: () => cb.current.onEnded(),
+      onCancelled: () => cb.current.onCancelled(),
       onError: (m, i) => cb.current.onError(m, i),
       onView: (v) => { if (callRef.current === call) setView(v); },
       onMinted: (c) => cb.current.onMinted?.(c),

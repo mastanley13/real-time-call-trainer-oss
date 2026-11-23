@@ -14,6 +14,31 @@ export function leavesCallOnError(info: VoiceErrorInfo | undefined, repSpoke: bo
   return info?.connectFailed === true || !repSpoke;
 }
 
+/*
+ * A deliberate hang-up before the call connects is not an error. Both engines end the attempt as failed_connect and
+ * report it through onCancelled (never onEnded), so nothing is graded, not even turns seeded from a retry. The trainer
+ * returns to the briefing with no banner: the rep chose to stop, and Start call is right there.
+ */
+
+/**
+ * Which voice attempt owns the ElevenLabs SDK session. The SDK's callbacks belong to the hook, not to one session, so a
+ * session started for an attempt that was then abandoned (connect timeout, hang-up before connect) can still connect,
+ * speak or disconnect later. Each callback checks live() first; a late connect for an abandoned attempt is torn down.
+ */
+export class VoiceAttempts {
+  private current = 0;
+  private session = 0;
+  /** Starts a new attempt and returns its id. */
+  begin(): number { return ++this.current; }
+  /** Abandons the current attempt: its late token is settled, its late session ignored and ended. */
+  abandon(): void { this.current++; }
+  isCurrent(id: number): boolean { return id === this.current; }
+  /** Called right before startSession: the SDK session from now on belongs to attempt `id`. */
+  bind(id: number): void { this.session = id; }
+  /** True when the SDK session belongs to the current attempt, so its callbacks may act. */
+  live(): boolean { return this.session !== 0 && this.session === this.current; }
+}
+
 export type VoicePhase = "mic" | "connecting" | "connected" | "ending" | "closed";
 export type StatusTone = "ok" | "signal" | "caution";
 export type LampTone = StatusTone | "alert" | "off";

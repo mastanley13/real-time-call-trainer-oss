@@ -14,7 +14,7 @@ import { PageSkeleton } from "@/components/ui/Skeleton";
 import Briefing from "@/components/call/Briefing";
 import Deck from "@/components/call/Deck";
 import { CallMeter } from "@/lib/callMeter";
-import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoiceErrorInfo } from "@/lib/callStatus";
+import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, VoiceAttempts, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoiceErrorInfo } from "@/lib/callStatus";
 import RealtimeVoiceSession, { voiceInfoFrom, type VoiceInfo, type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
@@ -35,7 +35,7 @@ const missingNotice = (asked: string | null, picked: Scenario) =>
   asked && picked.id !== asked ? `That persona isn't in this browser's library, so we opened ${picked.aiPersona.name} instead. Pick another in the Library.` : "";
 
 /** Rendered inside ConversationProvider; owns the ElevenLabs session and feeds the shared deck. */
-function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onVoiceInfo, registerEnd, render, voiceTier }: {
+function VoiceSession({ scenario, active, grading, onTurn, onEnded, onCancelled, onError, onVoiceInfo, registerEnd, render, voiceTier }: {
   scenario: Scenario;
   /** The setup's Standard or Premium pick, sent as a request with the token. */
   voiceTier?: "premium" | "standard";
@@ -43,6 +43,8 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
   grading: boolean;
   onTurn: (t: StoredTurn) => void;
   onEnded: () => void;
+  /** The rep hung up before the call connected: back to the briefing, nothing graded. */
+  onCancelled: () => void;
   onError: (msg: string, info?: VoiceErrorInfo) => void;
   onVoiceInfo?: (info: VoiceInfo) => void;
   registerEnd: (fn: () => void) => void;
@@ -58,50 +60,63 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
   const connectedRef = useRef(false);
   /** The same fact for rendering: once connected, a later non-connected status means the call ended. One call per mount. */
   const [wasConnected, setWasConnected] = useState(false);
+  /** Bumped by the connect timeout and by a hang-up before connect; a token or SDK session for an older attempt is dropped. */
+  const attempts = useRef(new VoiceAttempts()).current;
+  /** False after unmount. Set again on mount, so a StrictMode remount does not cancel a real attempt. */
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  /** SDK callbacks act only for the current attempt's session (see VoiceAttempts). */
+  const live = () => attempts.live() && mountedRef.current;
   const conv = useConversation({
-    onConnect: () => { connectedRef.current = true; setWasConnected(true); meterRef.current.open(); },
+    onConnect: () => {
+      // The attempt was abandoned while the mic or handshake was pending: end the late session, never meter it.
+      if (!live()) { endRef.current(); return; }
+      connectedRef.current = true; setWasConnected(true); meterRef.current.open();
+    },
     onMessage: ({ message, role }) => {
+      if (!live()) return;
       // ElevenLabs has no packet-level event; the first agent message is the first remote audio.
       if (role !== "user") meterRef.current.audio();
       onTurn({ role: role === "user" ? "user" : "assistant", text: message });
     },
     onError: (m: unknown) => {
+      if (!live()) return;
       meterRef.current.end("provider_error");
       // Any SDK error before the call connected is a connect failure: back to the briefing at once, nothing graded.
       const beforeConnect = !connectedRef.current;
       if (beforeConnect) connectFailedRef.current = true;
       onError(typeof m === "string" ? m : "Voice connection error", beforeConnect ? { connectFailed: true } : undefined);
     },
-    onDisconnect: () => { meterRef.current.end(userEndedRef.current ? "user_hangup" : "network_drop"); if (!connectFailedRef.current) onEnded(); },
+    onDisconnect: () => {
+      if (!live()) return;
+      meterRef.current.end(userEndedRef.current ? "user_hangup" : "network_drop");
+      if (!connectFailedRef.current) onEnded();
+    },
   });
   const { startSession, endSession, status, isSpeaking, isMuted, setMuted, getInputVolume, getOutputVolume } = conv;
   const startedRef = useRef(false);
-  /** Bumped by the connect timeout and by a hang-up before connect; a token that answers an older attempt is settled, never started. */
-  const attemptRef = useRef(0);
-  /** False after unmount. Set again on mount, so a StrictMode remount does not cancel a real attempt. */
-  const mountedRef = useRef(true);
-  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   useEffect(() => { endRef.current = () => { void endSession(); }; }, [endSession]);
   const connected = status === "connected";
 
-  // Hang-up. Before the call connects (token still minting, or the SDK still starting) it ends like the Realtime path
-  // does: the attempt is cancelled, so a late token is settled as failed_connect and never started, and the call
-  // screen closes now instead of waiting for a disconnect that may never come.
+  // Hang-up. Before the call connects (token still minting, or the SDK still starting) it ends like the timeout: the
+  // attempt is abandoned and settled as failed_connect, so a late token or session is dropped, and nothing is graded
+  // (a retry may have seeded rep turns). The call screen closes now instead of waiting for a disconnect.
   const hangUp = useCallback(() => {
     userEndedRef.current = true;
     if (connected) { void endSession(); return; }
-    attemptRef.current++;
-    meterRef.current.end("user_hangup");
+    attempts.abandon();
+    connectFailedRef.current = true;
+    meterRef.current.end("failed_connect");
     void endSession();
-    onEnded();
-  }, [connected, endSession, onEnded]);
+    onCancelled();
+  }, [connected, endSession, onCancelled, attempts]);
   useEffect(() => registerEnd(hangUp), [hangUp, registerEnd]);
 
   useEffect(() => {
     if (!active || startedRef.current) return;
     startedRef.current = true;
-    const attempt = ++attemptRef.current;
-    const cancelled = () => attempt !== attemptRef.current || !mountedRef.current;
+    const attempt = attempts.begin();
+    const cancelled = () => !attempts.isCurrent(attempt) || !mountedRef.current;
     (async () => {
       try {
         userEndedRef.current = false;
@@ -119,6 +134,7 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
           onStop: (m) => { userEndedRef.current = true; endRef.current(); onError(m); },
           onGiveUp: () => endRef.current(),
         });
+        attempts.bind(attempt);
         startSession({
           conversationToken: data.token,
           connectionType: "webrtc",
@@ -133,7 +149,7 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
         onError(e instanceof Error ? e.message : "Failed to start the call.", { connectFailed: true });
       }
     })();
-  }, [active, scenario, startSession, onError, onVoiceInfo, voiceTier]);
+  }, [active, scenario, startSession, onError, onVoiceInfo, voiceTier, attempts]);
 
   useEffect(() => {
     if (!active) startedRef.current = false;
@@ -145,14 +161,14 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
   useEffect(() => {
     if (!active || connected) return;
     const t = setTimeout(() => {
-      attemptRef.current++;
+      attempts.abandon();
       connectFailedRef.current = true;
       meterRef.current.end("failed_connect");
       endRef.current();
       onErrorRef.current(CONNECT_TIMEOUT_MESSAGE, { connectFailed: true });
     }, CONNECT_TIMEOUT_MS);
     return () => clearTimeout(t);
-  }, [active, connected]);
+  }, [active, connected, attempts]);
 
   const orbState: AgentState = grading || !connected ? "thinking" : isSpeaking ? "talking" : "listening";
   const name = scenario.aiPersona.name.split(" ")[0];
@@ -519,6 +535,8 @@ export default function TrainerClient() {
   if (mode === "voice" && engine) {
     const voiceProps = {
       scenario, active: live, grading, onTurn: addTurn, onEnded: onVoiceEnded, onVoiceInfo, voiceTier: callTier,
+      // A deliberate hang-up before connect: back to the briefing with no banner and nothing graded (see callStatus.ts).
+      onCancelled: () => { setError(""); setConnectFailedError(""); mintedCallRef.current = null; setPhase("idle"); },
       // With nothing from the rep there is nothing to grade: go back to the briefing, where the error explains what happened.
       // A call that never connected always goes back too, even when a retry seeded rep turns, so the error and its actions show.
       onError: (m: string, info?: VoiceErrorInfo) => { setError(m); setConnectFailedError(info?.connectFailed ? m : ""); if (leavesCallOnError(info, turnsRef.current.some((t) => t.role === "user" && t.text.trim()))) setPhase("idle"); },
