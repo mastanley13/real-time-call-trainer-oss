@@ -4,7 +4,8 @@ import { rateLimit, ipLimitResponse } from "@/lib/rateLimit";
 import { elevenLabsAgentFor, meteringEnabled } from "@/lib/serverConfig";
 import { beginCall, endCall } from "@/lib/usage";
 import { capReached, dailySessionLimit, minutesReserved, standardVoiceUnavailable, voiceBlocked, voiceUnavailable } from "@/lib/usageResponses";
-import { emitPremiumEvent } from "@/lib/billingEvents";
+import { emitPremiumEvent, queuePremiumEvent } from "@/lib/billingEvents";
+import "@/lib/billing"; // registers the CRM sink that forwards voice_cap_hit
 
 /**
  * Mints a short-lived WebRTC conversation token for the configured
@@ -61,7 +62,11 @@ export async function GET(req: NextRequest) {
       return null;
     });
     if (!begun) return voiceUnavailable();
-    if (!begun.ok && begun.error === "cap_reached") return capReached();
+    if (!begun.ok && begun.error === "cap_reached") {
+      // Ids only, and never awaited: the 402 does not wait on the sink (the GHL sink, when GHL events are on).
+      queuePremiumEvent({ name: "voice_cap_hit", subject: "user", subjectId: auth.id, reason: "cap_reached" });
+      return capReached();
+    }
     if (!begun.ok && begun.error === "minutes_reserved") return minutesReserved();
     if (!begun.ok && begun.error === "voice_blocked") return voiceBlocked(begun.retryAfterSeconds);
     if (!begun.ok && begun.error === "daily_session_limit") return dailySessionLimit();

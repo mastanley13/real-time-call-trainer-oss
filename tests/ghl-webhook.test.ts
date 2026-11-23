@@ -42,7 +42,12 @@ import {
   signupPayload,
   claimFirstGradedCall,
   FIRST_GRADED_MARKER,
+  ghlPremiumSink,
+  voiceCapHitPayload,
 } from "@/lib/ghlWebhook";
+import type { PremiumEvent } from "@/lib/billingEvents";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { POST as register } from "@/app/api/auth/register/route";
 import { POST as saveTranscript } from "@/app/api/transcripts/route";
 import { PATCH as regrade } from "@/app/api/transcripts/[id]/route";
@@ -788,5 +793,136 @@ describe("first graded call from every grading path", () => {
     await settleGhlEvents();
     expect(db.markers()).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("voice_cap_hit", () => {
+  const capHit = (reason: string, extra: Partial<PremiumEvent> = {}): PremiumEvent => ({ name: "voice_cap_hit", subject: "user", subjectId: "u-1", reason, ...extra });
+  const noSub = { subscriptionStatus: null, stripeSubscriptionId: null, pastDueSince: null };
+  const freeUser = { email: "Mia@Example.test", organizationId: "org-1", planTier: "free", ...noSub, organization: { planTier: "free", ...noSub } };
+
+  it("payload: base fields, user and org ids, lowercased email, plan and reason, app tag only, nothing else", () => {
+    expect(voiceCapHitPayload({ userId: "u-1", organizationId: "org-1", email: "Mia@Example.test", plan: "free", reason: "cap_reached" }, NOW)).toEqual({
+      eventId: "voice_cap_hit:u-1:cap_reached:2026-11-05", event: "voice_cap_hit", occurredAt: "2026-11-05T12:00:00.000Z", app: "calltrainer", version: 1,
+      tags: ["app-calltrainer"],
+      userId: "u-1", organizationId: "org-1", email: "mia@example.test", plan: "free", reason: "cap_reached",
+    });
+    const unknown = voiceCapHitPayload({ userId: "u-1", organizationId: null, email: null, plan: null, reason: "cap_reached_in_call" }, NOW);
+    expect(unknown).toMatchObject({ eventId: "voice_cap_hit:u-1:cap_reached_in_call:2026-11-05", email: null, plan: null, organizationId: null });
+  });
+
+  it("adds no tag: only app-calltrainer, and no tag string the other events do not already use", () => {
+    expect(ghlTagsFor({ event: "voice_cap_hit" })).toEqual(["app-calltrainer"]);
+    const existing = new Set([
+      ...ghlTagsFor({ event: "signup", signupMethod: "email" }),
+      ...ghlTagsFor({ event: "signup", signupMethod: "google" }),
+      ...ghlTagsFor({ event: "first_graded_call" }),
+      ...(["upgrade", "downgrade", "churn"] as const).flatMap((event) => (["free", "pro", "team"] as const).flatMap((toPlan) => ghlTagsFor({ event, toPlan }))),
+    ]);
+    expect([...existing].sort()).toEqual(["app-calltrainer", "ct-activated", "ct-churned", "ct-paid-pro", "ct-paid-team", "ct-signed-up", "ct-signup-email", "ct-signup-google"]);
+    for (const t of ghlTagsFor({ event: "voice_cap_hit" })) expect(existing.has(t)).toBe(true);
+  });
+
+  it("the sink forwards voice_cap_hit with the looked-up contact, and nothing else", async () => {
+    on();
+    mocks.prisma.user.findUnique.mockResolvedValue(freeUser);
+    for (const other of [
+      { name: "premium_added", subject: "user", subjectId: "u-1" },
+      { name: "premium_fallback_to_standard", subject: "user", subjectId: "u-1", reason: "minutes_used" },
+      { name: "premium_upsell_viewed", surface: "live" },
+      capHit("cap_reached", { subject: "organization", subjectId: "org-1" }),
+      capHit("cap_reached", { subjectId: undefined }),
+      capHit("not_a_reason"),
+    ] as PremiumEvent[]) ghlPremiumSink(other);
+    await settleGhlEvents();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.prisma.user.findUnique).not.toHaveBeenCalled();
+
+    expect(ghlPremiumSink(capHit("cap_reached"))).toBeUndefined(); // returns at once; the lookup and POST run in the background
+    ghlPremiumSink(capHit("cap_reached_in_call"));
+    await settleGhlEvents();
+    const bodies = sent().map((c) => c.body);
+    expect(bodies).toEqual([
+      expect.objectContaining({ event: "voice_cap_hit", userId: "u-1", organizationId: "org-1", email: "mia@example.test", plan: "free", reason: "cap_reached", tags: ["app-calltrainer"] }),
+      expect.objectContaining({ event: "voice_cap_hit", reason: "cap_reached_in_call" }),
+    ]);
+    // Same kind of fields as the other payloads: no transcript, session, call or provider detail.
+    expect(Object.keys(bodies[0]).sort()).toEqual(["app", "email", "event", "eventId", "occurredAt", "organizationId", "plan", "reason", "tags", "userId", "version"]);
+    expect(mocks.prisma.user.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "u-1" } }));
+  });
+
+  it("plan follows the allowance rule: Team for a member of an entitled Team org while billing is on, else the user's own plan", async () => {
+    on();
+    vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
+    mocks.prisma.user.findUnique
+      .mockResolvedValueOnce({ ...freeUser, organization: { ...freeUser.organization, planTier: "team" } })
+      .mockResolvedValueOnce({ ...freeUser, planTier: "pro" });
+    ghlPremiumSink(capHit("cap_reached"));
+    await settleGhlEvents();
+    ghlPremiumSink(capHit("cap_reached"));
+    await settleGhlEvents();
+    expect(sent().map((c) => c.body.plan)).toEqual(["team", "pro"]);
+  });
+
+  it("a missing user or a failed lookup still sends, with email and plan null", async () => {
+    on();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.prisma.user.findUnique.mockResolvedValueOnce(null).mockRejectedValueOnce(new Error("db down"));
+    ghlPremiumSink(capHit("cap_reached"));
+    await settleGhlEvents();
+    ghlPremiumSink(capHit("cap_reached"));
+    await settleGhlEvents();
+    expect(sent().map((c) => c.body)).toEqual([
+      expect.objectContaining({ event: "voice_cap_hit", email: null, plan: null, organizationId: null }),
+      expect.objectContaining({ event: "voice_cap_hit", email: null, plan: null }),
+    ]);
+    expect(errors.mock.calls.map((c) => c.join(" "))).toEqual(["[ghl] voice_cap_hit contact lookup failed; sending without email"]);
+  });
+
+  it("occurredAt and the dedupe date come from the event's queue time, not the send time", async () => {
+    on();
+    mocks.prisma.user.findUnique.mockResolvedValue(freeUser);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-06T00:00:00.200Z")); // the sink runs just after midnight UTC
+      ghlPremiumSink(capHit("cap_reached", { occurredAt: "2026-11-05T23:59:59.800Z" })); // queued just before it
+      ghlPremiumSink(capHit("cap_reached_in_call", { occurredAt: "not a date" })); // no valid stamp: the sink's time
+      ghlPremiumSink(capHit("cap_reached_in_call")); // no stamp at all: the sink's time
+    } finally {
+      vi.useRealTimers();
+    }
+    await settleGhlEvents();
+    expect(sent().map((c) => [c.body.occurredAt, c.body.eventId])).toEqual([
+      ["2026-11-05T23:59:59.800Z", "voice_cap_hit:u-1:cap_reached:2026-11-05"],
+      ["2026-11-06T00:00:00.200Z", "voice_cap_hit:u-1:cap_reached_in_call:2026-11-06"],
+      ["2026-11-06T00:00:00.200Z", "voice_cap_hit:u-1:cap_reached_in_call:2026-11-06"],
+    ]);
+  });
+
+  it("does nothing while GHL events are off: no lookup, no POST", async () => {
+    mocks.prisma.user.findUnique.mockResolvedValue(freeUser);
+    ghlPremiumSink(capHit("cap_reached"));
+    vi.stubEnv("GHL_BILLING_EVENTS", "true"); // the flag without a URL is still off
+    ghlPremiumSink(capHit("cap_reached_in_call"));
+    await settleGhlEvents();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.prisma.user.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("billing.ts registers the sink, and every route that emits voice_cap_hit loads billing.ts", async () => {
+    vi.resetModules();
+    const events = await import("@/lib/billingEvents");
+    await import("@/lib/billing");
+    const ghl = await import("@/lib/ghlWebhook");
+    on();
+    mocks.prisma.user.findUnique.mockResolvedValue(freeUser);
+    await events.emitPremiumEvent(capHit("cap_reached"));
+    await ghl.settleGhlEvents();
+    expect(sent().map((c) => c.body)).toEqual([expect.objectContaining({ event: "voice_cap_hit", userId: "u-1" })]);
+
+    for (const route of ["realtime/session", "elevenlabs/token", "usage/heartbeat"]) {
+      const src = readFileSync(join(process.cwd(), "src/app/api", route, "route.ts"), "utf8");
+      expect(src, route).toContain('import "@/lib/billing";');
+    }
   });
 });
