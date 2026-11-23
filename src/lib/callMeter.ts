@@ -20,6 +20,11 @@ export const RECOVER_MS = 10_000;
  * its last heartbeat (once per period), so an honest client must not keep the voice session running past that.
  */
 export const MAX_FAILED_HEARTBEATS = 3;
+/**
+ * A Free call's heartbeat request is aborted after this long and counts as a failure, so a request the network leaves
+ * pending cannot hold off the shutdown. Shorter than the 10 s interval, so each one settles before the next tick.
+ */
+export const HEARTBEAT_REQUEST_TIMEOUT_MS = 8_000;
 /** Shown when a Free call ended because its heartbeats kept failing. */
 export const HEARTBEAT_LOST_MESSAGE = "The connection to the server dropped, so the call ended. Check your network. Your transcript so far is kept.";
 
@@ -131,6 +136,9 @@ export class CallMeter {
   private warned = false;
   private failedBeats = 0;
   private lost = false;
+  /** A Free call's heartbeat in flight (see boundedBeat). */
+  private pending?: { seq: number; controller: AbortController; timer: ReturnType<typeof setTimeout> };
+  private requestSeq = 0;
   private timer?: ReturnType<typeof setInterval>;
   private recoverTimer?: ReturnType<typeof setTimeout>;
 
@@ -162,10 +170,19 @@ export class CallMeter {
     if (this.connected) void this.beat("ok");
   }
 
-  private async beat(state: "connected" | "ok" | "recovering") {
+  private heartbeatRequest(state: "connected" | "ok" | "recovering", signal?: AbortSignal) {
+    return fetch("/api/usage/heartbeat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId: this.callId, state }), ...(signal ? { signal } : {}) });
+  }
+
+  private beat(state: "connected" | "ok" | "recovering"): Promise<void> {
+    return this.h.onHeartbeatsLost ? this.boundedBeat(state) : this.paidBeat(state);
+  }
+
+  /** A paid call's heartbeat, unchanged: no timeout, and a failed one is tolerated. */
+  private async paidBeat(state: "connected" | "ok" | "recovering") {
     let res: Response;
     try {
-      res = await fetch("/api/usage/heartbeat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId: this.callId, state }) });
+      res = await this.heartbeatRequest(state);
     } catch {
       return this.failedBeat();
     }
@@ -179,6 +196,62 @@ export class CallMeter {
   }
 
   /**
+   * A Free call's heartbeat: one at a time, each bounded by HEARTBEAT_REQUEST_TIMEOUT_MS. A request that has no answer
+   * (with its body read) by then is aborted and counts as a failure, so a network that leaves requests pending still
+   * reaches the MAX_FAILED_HEARTBEATS shutdown. While a request is in flight no other heartbeat starts: that tick is
+   * skipped, not counted, because the pending one settles (answer or timeout) within the timeout, which is shorter than
+   * the interval. So every interval tick still makes one attempt, and 3 failures stay about 30 s of lost contact. An
+   * out-of-band heartbeat (trouble, recovered) is skipped the same way; the next tick sends the current state. An answer
+   * that arrives after its request timed out or was cancelled is ignored.
+   */
+  private async boundedBeat(state: "connected" | "ok" | "recovering") {
+    if (this.pending || this.ended || this.stopped || this.lost) return;
+    const seq = ++this.requestSeq;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      if (this.pending?.seq !== seq) return;
+      this.pending = undefined;
+      controller.abort();
+      this.failedBeat();
+    }, HEARTBEAT_REQUEST_TIMEOUT_MS);
+    this.pending = { seq, controller, timer };
+    /** True when this request still owns the pending slot (it neither timed out nor was cancelled), and releases it. */
+    const settle = (): boolean => {
+      if (this.pending?.seq !== seq) return false;
+      clearTimeout(timer);
+      this.pending = undefined;
+      return true;
+    };
+    let body: unknown;
+    try {
+      const res = await this.heartbeatRequest(state, controller.signal);
+      if (!res.ok) {
+        if (settle()) this.failedBeat();
+        return;
+      }
+      body = await res.json().catch(() => ({}));
+    } catch {
+      if (settle()) this.failedBeat();
+      return;
+    }
+    if (!settle()) return; // timed out or cancelled while waiting: a late answer is ignored
+    this.failedBeats = 0;
+    try {
+      this.answer(readHeartbeat(body));
+    } catch {
+      /* a handler that throws does not reject the heartbeat timer's promise */
+    }
+  }
+
+  /** Aborts the heartbeat in flight, if any, and clears its timeout. Its answer, if it still comes, is ignored. */
+  private cancelPending() {
+    if (!this.pending) return;
+    clearTimeout(this.pending.timer);
+    this.pending.controller.abort();
+    this.pending = undefined;
+  }
+
+  /**
    * One heartbeat failed. A paid call tolerates it, as before: the server ends a call 30 seconds after the last one. A
    * Free call (onHeartbeatsLost set) ends after MAX_FAILED_HEARTBEATS in a row, so it never runs on unbilled.
    */
@@ -189,6 +262,7 @@ export class CallMeter {
     this.lost = true;
     clearInterval(this.timer);
     clearTimeout(this.recoverTimer);
+    this.cancelPending();
     this.h.onHeartbeatsLost();
   }
 
@@ -200,6 +274,7 @@ export class CallMeter {
       this.stopped = true;
       clearInterval(this.timer);
       clearTimeout(this.recoverTimer);
+      this.cancelPending();
       this.h.onStop(a.message, a.freeCap);
     } else if (a.kind === "warn" && !this.warned) {
       this.warned = true;
@@ -213,6 +288,7 @@ export class CallMeter {
     this.ended = true;
     clearInterval(this.timer);
     clearTimeout(this.recoverTimer);
+    this.cancelPending();
     if (!this.callId) return;
     void fetch("/api/usage/end", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId: this.callId, reason }), keepalive: true }).catch(() => {});
   }

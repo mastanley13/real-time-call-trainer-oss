@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CAP_STOP_DISCONNECT_MS, CAP_STOP_SPEECH_FLUSH_MS, CallMeter, CapStopEnd, END_GRACE_MS, HEARTBEAT_LOST_MESSAGE, MAX_FAILED_HEARTBEATS, readHeartbeat } from "@/lib/callMeter";
+import { CAP_STOP_DISCONNECT_MS, CAP_STOP_SPEECH_FLUSH_MS, CallMeter, CapStopEnd, END_GRACE_MS, HEARTBEAT_LOST_MESSAGE, HEARTBEAT_REQUEST_TIMEOUT_MS, MAX_FAILED_HEARTBEATS, readHeartbeat } from "@/lib/callMeter";
 import { FREE_END_GRACE_SECONDS } from "@/lib/usagePlan";
 import { RealtimeCall } from "@/components/call/RealtimeVoiceSession";
 import { CAP_STOPPED_MESSAGE, FREE_CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE } from "@/lib/billingUi";
@@ -148,6 +148,152 @@ describe("CallMeter", () => {
     expect(server.heartbeats()).toHaveLength(6); // still heartbeating
     expect(h.onStop).not.toHaveBeenCalled();
     expect(h.onGiveUp).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Heartbeat plans for a network that leaves requests pending. "hang": never settles and ignores the abort (the worst
+   * case). "hangAbortable": never settles until aborted, then rejects as fetch does. { afterMs, answer }: answers late.
+   */
+  type Plan = "hang" | "hangAbortable" | { afterMs: number; answer: Answer };
+  function hangingServer(plans: Plan[]) {
+    const beats: Array<{ state: unknown; startedAt: number; aborted: boolean; answered: boolean }> = [];
+    let overlapped = 0;
+    const ends: unknown[] = [];
+    vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(init.body as string) : {};
+      if (url === "/api/usage/end") { ends.push(body); return Promise.resolve(Response.json({ ok: true })); }
+      // Overlap: a heartbeat starting while an earlier one is neither answered nor aborted by the client.
+      if (beats.some((b) => !b.aborted && !b.answered)) overlapped += 1;
+      const beat = { state: body.state, startedAt: Date.now(), aborted: false, answered: false };
+      beats.push(beat);
+      init?.signal?.addEventListener("abort", () => { beat.aborted = true; });
+      const plan = plans.shift() ?? { afterMs: 0, answer: { stop: false, secondsLeft: 300 } };
+      if (plan === "hang") return new Promise<Response>(() => {});
+      if (plan === "hangAbortable") {
+        return new Promise<Response>((_, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError"))));
+      }
+      return new Promise<Response>((resolve) => setTimeout(() => { beat.answered = true; resolve(Response.json(plan.answer)); }, plan.afterMs));
+    }));
+    return { beats, ends, overlapped: () => overlapped };
+  }
+
+  describe("a Free call's heartbeat requests are bounded", () => {
+    beforeEach(() => {
+      vi.useRealTimers(); // the outer block fakes timers without Date; start again with Date faked too
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout", "Date"] });
+    });
+    const freeHandlers = () => ({ onStop: vi.fn(), onGiveUp: vi.fn(), onWarn: vi.fn(), onHeartbeatsLost: vi.fn() });
+    const advance = async (ms: number) => { await vi.advanceTimersByTimeAsync(ms); await settle(); };
+
+    it("requests that never answer time out after 8 s and the call shuts down after 3, without overlapping", async () => {
+      expect(HEARTBEAT_REQUEST_TIMEOUT_MS).toBe(8_000);
+      const server = hangingServer(["hang", "hangAbortable", "hang"]);
+      const h = freeHandlers();
+      const meter = new CallMeter("call-1", h);
+      meter.open();
+      meter.audio(); // connect heartbeat at 0 s: pending
+      await advance(7_999);
+      expect(server.beats).toHaveLength(1);
+      expect(server.beats[0].aborted).toBe(false);
+      await advance(1); // 8 s: timed out, failure 1
+      expect(server.beats[0].aborted).toBe(true);
+      await advance(10_000); // 10 s: second request; 18 s: timed out, failure 2
+      expect(server.beats).toHaveLength(2);
+      expect(server.beats[1].aborted).toBe(true);
+      await advance(9_999); // 20 s: third request, pending until 28 s
+      expect(server.beats).toHaveLength(3);
+      expect(h.onHeartbeatsLost).not.toHaveBeenCalled(); // 2 failures: still on the call
+      await advance(1); // 28 s: failure 3
+      expect(h.onHeartbeatsLost).toHaveBeenCalledTimes(1);
+      expect(server.beats[2].aborted).toBe(true);
+      // Nothing more is sent, and the loss is reported once.
+      await advance(60_000);
+      expect(server.beats).toHaveLength(3);
+      expect(h.onHeartbeatsLost).toHaveBeenCalledTimes(1);
+      expect(server.beats.map((b) => b.startedAt - server.beats[0].startedAt)).toEqual([0, 10_000, 20_000]);
+      expect(server.overlapped()).toBe(0);
+      expect(h.onStop).not.toHaveBeenCalled();
+    });
+
+    it("a request still in flight blocks the next one: an out-of-band heartbeat is skipped, not overlapped", async () => {
+      const server = hangingServer(["hang", { afterMs: 0, answer: { stop: false, secondsLeft: 300 } }]);
+      const h = freeHandlers();
+      const meter = new CallMeter("call-1", h);
+      meter.open();
+      meter.audio(); // pending connect heartbeat
+      await advance(2_000);
+      meter.trouble(); // would send "recovering" now; skipped while the connect heartbeat is in flight
+      meter.recovered(); // would send "ok"; skipped too
+      await advance(1_000);
+      expect(server.beats).toHaveLength(1);
+      await advance(7_000); // 10 s: the connect heartbeat timed out at 8 s, the tick sends the next one
+      expect(server.beats).toHaveLength(2);
+      expect(server.overlapped()).toBe(0);
+      meter.end("user_hangup");
+    });
+
+    it("a stop answer still ends the call, even after two timeouts, and a slow answer inside 8 s counts", async () => {
+      const stop = { stop: true, reason: "cap_reached", message: FREE_CAP_STOPPED_MESSAGE, freeCap: true };
+      const server = hangingServer(["hang", "hang", { afterMs: 7_000, answer: stop }]);
+      const h = freeHandlers();
+      const meter = new CallMeter("call-1", h);
+      meter.open();
+      meter.audio();
+      await advance(20_000 + 6_999);
+      expect(h.onStop).not.toHaveBeenCalled();
+      await advance(1); // 27 s: the stop answer, 1 s before that request would have timed out
+      expect(h.onStop).toHaveBeenCalledWith(FREE_CAP_STOPPED_MESSAGE, true);
+      // Its timeout was cleared: no third failure, no shutdown, and no more heartbeats.
+      await advance(60_000);
+      expect(h.onHeartbeatsLost).not.toHaveBeenCalled();
+      expect(server.beats).toHaveLength(3);
+      expect(server.overlapped()).toBe(0);
+    });
+
+    it("an answer that arrives after its request timed out is ignored and counts as a failure", async () => {
+      const stop = { stop: true, reason: "cap_reached", message: FREE_CAP_STOPPED_MESSAGE, freeCap: true };
+      // The server ignores the abort and answers at 9 s.
+      hangingServer([{ afterMs: 9_000, answer: stop }, "hang", "hang"]);
+      const h = freeHandlers();
+      const meter = new CallMeter("call-1", h);
+      meter.open();
+      meter.audio();
+      await advance(9_500);
+      expect(h.onStop).not.toHaveBeenCalled();
+      await advance(20_000); // two more timeouts: 3 failures in a row
+      expect(h.onHeartbeatsLost).toHaveBeenCalledTimes(1);
+      expect(h.onStop).not.toHaveBeenCalled();
+    });
+
+    it("end() clears the request timeout: no failure is counted after the call ended", async () => {
+      const server = hangingServer(["hang"]);
+      const h = freeHandlers();
+      const meter = new CallMeter("call-1", h);
+      meter.open();
+      meter.audio();
+      await advance(1_000);
+      meter.end("user_hangup");
+      expect(server.beats[0].aborted).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+      await advance(60_000);
+      expect(server.beats).toHaveLength(1);
+      expect(server.ends).toEqual([{ callId: "call-1", reason: "user_hangup" }]);
+      expect(h.onHeartbeatsLost).not.toHaveBeenCalled();
+    });
+
+    it("a paid call (no onHeartbeatsLost) keeps its heartbeats as before: no timeout, one per tick", async () => {
+      const server = hangingServer(["hang", "hang", "hang", "hang"]);
+      const h = { onStop: vi.fn(), onGiveUp: vi.fn(), onWarn: vi.fn() };
+      const meter = new CallMeter("call-1", h);
+      meter.open();
+      meter.audio();
+      await advance(30_000);
+      expect(server.beats).toHaveLength(4);
+      expect(server.beats.every((b) => !b.aborted)).toBe(true);
+      expect(h.onStop).not.toHaveBeenCalled();
+      expect(h.onGiveUp).not.toHaveBeenCalled();
+      meter.end("user_hangup");
+    });
   });
 
   it("does nothing without a callId (demo mode)", async () => {
