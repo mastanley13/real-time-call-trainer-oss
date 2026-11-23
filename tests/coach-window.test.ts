@@ -7,8 +7,10 @@ import {
   WINDOW_CHARS,
   WINDOW_TURNS,
   coachWindow,
+  isStaleCue,
   mergeChips,
   mergeWindowed,
+  repLinesOf,
   resultGate,
   retireStaleCues,
   shiftIndex,
@@ -86,6 +88,22 @@ describe("mergeWindowed", () => {
     expect(merged.steps).toEqual([true, false]);
   });
 
+  it("never lets a provisional score, equal or higher, erase confirmed evidence outside the window", () => {
+    const prev = result({ estimate: { overall: 0, criteria: [{ id: "a", name: "A", weight: 50, score: 50, confirmed: true, evidenceLine: 12 }, { id: "b", name: "B", weight: 50, score: 40, confirmed: true, evidenceLine: 14 }] } });
+    const next = result({ windowStart: 31, estimate: { overall: 0, criteria: [{ id: "a", name: "A", weight: 50, score: 50, confirmed: false }, { id: "b", name: "B", weight: 50, score: 70, confirmed: false }] } });
+    const merged = mergeWindowed(prev, next, 0);
+    expect(merged.estimate.criteria).toEqual(prev.estimate.criteria);
+    expect(merged.estimate.overall).toBe(45);
+  });
+
+  it("takes a new confirmed score that is equal or higher, and keeps the old one over a lower confirmed score", () => {
+    const prev = result({ estimate: { overall: 0, criteria: [{ id: "a", name: "A", weight: 50, score: 50, confirmed: true, evidenceLine: 12 }, { id: "b", name: "B", weight: 50, score: 40, confirmed: true, evidenceLine: 14 }] } });
+    const next = result({ windowStart: 31, estimate: { overall: 0, criteria: [{ id: "a", name: "A", weight: 50, score: 50, confirmed: true, evidenceLine: 33 }, { id: "b", name: "B", weight: 50, score: 30, confirmed: true, evidenceLine: 35 }] } });
+    const merged = mergeWindowed(prev, next, 0);
+    expect(merged.estimate.criteria.map((c) => [c.score, c.evidenceLine])).toEqual([[50, 33], [40, 14]]);
+    expect(merged.estimate.overall).toBe(45);
+  });
+
   it("returns the new result as is when nothing was left out", () => {
     const next = result();
     expect(mergeWindowed(result({ steps: [true, true] }), next, 0)).toBe(next);
@@ -147,6 +165,45 @@ describe("retireStaleCues", () => {
   it("never retires objection cues or touches used and dismissed ones", () => {
     const cs = [cue({ id: "o", type: "objection" }), cue({ id: "u", status: "used" }), cue({ id: "d", status: "dismissed" })];
     expect(retireStaleCues(cs, [11, 13, 15, 17]).map((c) => c.status)).toEqual(["active", "used", "dismissed"]);
+  });
+});
+
+describe("stale cues against the current transcript", () => {
+  type T = { role: "user" | "assistant"; text: string };
+  // The rep speaks on the odd lines (1, 3, ... 11, 13), the persona on the even ones.
+  const call = (n: number): T[] => Array.from({ length: n }, (_, i) => ({ role: i % 2 ? "assistant" : "user", text: `line ${i + 1}` }));
+  const nextCue = (triggerTurn: number) => ({ type: "next_question" as const, title: "Next: ask about timing", message: "", triggerTurn });
+
+  it("numbers rep lines like coach requests do, skipping empty turns", () => {
+    expect(repLinesOf([{ role: "assistant", text: "Hi" }, { role: "user", text: "  " }, { role: "user", text: "Hello" }, { role: "assistant", text: "Yes?" }, { role: "user", text: "So" }])).toEqual([2, 4]);
+  });
+
+  it("drops a late non-objection cue when the rep spoke twice while its request was in flight", () => {
+    // Request sent with lines 1-10; the cue is for line 10. Before it came back the rep spoke at 11 and 13.
+    expect(isStaleCue(nextCue(10), repLinesOf(call(10)))).toBe(false);
+    expect(isStaleCue(nextCue(10), repLinesOf(call(13)))).toBe(true);
+    expect(isStaleCue(nextCue(10), repLinesOf(call(12)))).toBe(false);
+    expect(isStaleCue({ ...nextCue(10), type: "objection" }, repLinesOf(call(13)))).toBe(false);
+  });
+
+  it("compares a cue shifted past inserted replies with the transcript as it is now", () => {
+    // Snapshot [A, U, U'] with a cue on U' (line 3). The persona's reply R then went in at index 2: [A, U, R, U', A, U].
+    const now: T[] = [{ role: "assistant", text: "a" }, { role: "user", text: "u" }, { role: "assistant", text: "r" }, { role: "user", text: "u2" }, { role: "assistant", text: "a2" }, { role: "user", text: "u3" }];
+    const raw = result({ cue: nextCue(3) });
+    const shifted = shiftResult(raw, [2]).cue!;
+    expect(shifted.triggerTurn).toBe(4);
+    // Only one rep line (6) follows U' now, so it is still fresh; unshifted, line 4 would wrongly count against it.
+    expect(isStaleCue(shifted, repLinesOf(now))).toBe(false);
+    expect(isStaleCue(raw.cue!, repLinesOf(now))).toBe(true);
+  });
+
+  it("retires a cue from turns alone after a failed request, and leaves state untouched otherwise", () => {
+    const cs: LiveCue[] = [{ ...nextCue(10), id: "n", status: "active" }, { ...nextCue(10), id: "o", type: "objection", status: "active" }];
+    // The coach request after line 10 failed; no result arrives. The turns effect still runs as the call moves.
+    const quiet = retireStaleCues(cs, repLinesOf(call(12)));
+    expect(quiet).toBe(cs);
+    const moved = retireStaleCues(cs, repLinesOf(call(13)));
+    expect(moved.map((c) => c.status)).toEqual(["dismissed", "active"]);
   });
 });
 

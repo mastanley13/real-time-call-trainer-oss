@@ -49,7 +49,10 @@ export function mergeWindowed(prev: CoachResult | null, next: CoachResult, offse
   if (!prev || unseen <= 0) return next;
   const criteria = next.estimate.criteria.map((c) => {
     const p = prev.estimate.criteria.find((x) => x.id === c.id);
-    return p?.confirmed && (p.evidenceLine ?? 0) <= unseen && p.score > c.score ? p : c;
+    // Evidence the new result could not see stands, unless the new result confirms the criterion at least as high.
+    // A provisional score is only an estimate, so it never replaces confirmed evidence, whatever its value.
+    const keep = p?.confirmed && (p.evidenceLine ?? 0) <= unseen && !(c.confirmed && c.score >= p.score);
+    return keep && p ? p : c;
   });
   const total = criteria.reduce((a, c) => a + c.weight, 0) || 1;
   return {
@@ -66,11 +69,23 @@ export function mergeWindowed(prev: CoachResult | null, next: CoachResult, offse
  */
 export const STALE_AFTER_REP_TURNS = 2;
 
-/** Retires active non-objection cues that the rep's later lines (1-based) have moved past. */
+/**
+ * 1-based lines of the rep's turns, numbered the way coach requests number them (empty turns left out). With the
+ * current transcript, these are in the same coordinates as cue trigger turns after the insert shift.
+ */
+export function repLinesOf(turns: { role: StoredTurn["role"]; text: string }[]): number[] {
+  return turns.filter((t) => t.text.trim()).flatMap((t, i) => (t.role === "user" ? [i + 1] : []));
+}
+
+/** A non-objection cue the rep has already spoken past `after` times. Objection cues are never stale. */
+export function isStaleCue(cue: Pick<Cue, "type" | "triggerTurn">, repLines: number[], after = STALE_AFTER_REP_TURNS): boolean {
+  return cue.type !== "objection" && repLines.filter((n) => n > cue.triggerTurn).length >= after;
+}
+
+/** Retires active stale cues (see isStaleCue). Returns the same array when nothing changes, so a state update is a no-op. */
 export function retireStaleCues(cues: LiveCue[], repLines: number[], after = STALE_AFTER_REP_TURNS): LiveCue[] {
-  return cues.map((c) =>
-    c.status === "active" && c.type !== "objection" && repLines.filter((n) => n > c.triggerTurn).length >= after ? { ...c, status: "dismissed" as const } : c,
-  );
+  const stale = (c: LiveCue) => c.status === "active" && isStaleCue(c, repLines, after);
+  return cues.some(stale) ? cues.map((c) => (stale(c) ? { ...c, status: "dismissed" as const } : c)) : cues;
 }
 
 /**
@@ -204,8 +219,10 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
         .filter((c) => c.confirmed)
         .map((c) => ({ id: c.id, name: c.name, delta: Math.round(c.score - (base.current.scores[c.id] ?? 0)) }))
         .filter((d) => d.delta >= 3);
+      // Judged against the transcript as it is now, not the request snapshot: the rep may have spoken while this was in flight.
+      // r is already shifted past replies inserted since then, so its lines match the current transcript.
+      const repLines = repLinesOf(turnsRef.current);
       // A "next step" cue is stale once that talk-track step is done, and any non-objection cue once the rep has moved on.
-      const repLines = snapshot.flatMap((t, i) => (t.role === "user" ? [shiftIndex(i, later) + 1] : []));
       setCues((cs) => retireStaleCues(cs.map((c) => {
         const step = c.status === "active" && c.key?.startsWith("step:") ? Number(c.key.slice(5)) : NaN;
         return Number.isInteger(step) && r.steps[step] ? { ...c, status: "dismissed" as const } : c;
@@ -213,7 +230,8 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
       prevScores.current = Object.fromEntries(r.estimate.criteria.map((c) => [c.id, c.score]));
       if (lastUser !== undefined && deltas.length) setChips((c) => ({ ...c, [lastUser]: mergeChips(c[lastUser] ?? [], deltas) }));
 
-      if (r.cue && opts.mode === "coached") {
+      // A cue that is already stale on arrival is dropped like a cooldown drop: never shown, key not recorded.
+      if (r.cue && opts.mode === "coached" && !isStaleCue(r.cue, repLines)) {
         const now = Date.now();
         const isObjection = r.cue.type === "objection";
         if (isObjection || now - lastCueAt.current >= COOLDOWN_MS) {
@@ -238,6 +256,11 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
       if (pending.current) { pending.current = false; void run(); }
     }
   }, [scenario, opts.mode, setResult]);
+
+  // Retire stale cues as the call moves, not only when a coach run succeeds: a slow or failed run must not leave one current.
+  useEffect(() => {
+    setCues((cs) => retireStaleCues(cs, repLinesOf(turns)));
+  }, [turns]);
 
   // Debounce: react quickly after the persona speaks (that's when the rep needs help), slower after the rep speaks.
   const lastRole = turns[turns.length - 1]?.role;
