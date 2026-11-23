@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { createContext, useCallback, useContext, useState, useEffect, useRef } from "react";
+import { createContext, useCallback, useContext, useState, useEffect } from "react";
 import { isTokenFresh } from "@/lib/clientSession";
 import { installSessionExpiryGuard } from "@/lib/sessionExpiry";
 
@@ -80,6 +80,33 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// The cookie, not localStorage, authenticates API calls. When a same-origin API call says the session is gone,
+// clear the client session and send the user to sign in again (src/lib/sessionExpiry.ts). Installed at module
+// load in the browser, before any component mounts, so requests from child mount effects are covered too.
+let demoModeActive = false;
+let clearActiveSession: (() => void) | null = null;
+
+function storedSessionToken(): string | null {
+  try {
+    return localStorage.getItem("authToken");
+  } catch {
+    return null;
+  }
+}
+
+function clearStoredSession() {
+  localStorage.removeItem("authToken");
+  localStorage.removeItem("userData");
+}
+
+if (typeof window !== "undefined") {
+  installSessionExpiryGuard(window, {
+    currentSession: storedSessionToken,
+    isDemo: () => demoModeActive,
+    onExpired: () => (clearActiveSession ?? clearStoredSession)(),
+  });
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
@@ -88,7 +115,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   const [capabilitiesFailed, setCapabilitiesFailed] = useState(false);
-  const demoModeRef = useRef(false);
 
   useEffect(() => {
     setIsLoading(true);
@@ -97,7 +123,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       .then((caps: Capabilities | null) => {
         setCapabilities(caps);
         setCapabilitiesFailed(caps === null);
-        demoModeRef.current = !!caps?.demoMode;
+        demoModeActive = !!caps?.demoMode;
         if (caps?.demoMode) {
           setUser({ id: "demo-user", email: "demo@example.local", firstName: "Demo", lastName: "User", role: "owner" });
           setIsAuthenticated(true);
@@ -141,23 +167,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const clearSession = useCallback(() => {
-    localStorage.removeItem("authToken");
-    localStorage.removeItem("userData");
+    clearStoredSession();
     setUser(null);
     setIsAuthenticated(false);
   }, []);
 
-  // The cookie, not localStorage, authenticates API calls. When a same-origin API call says the session is
-  // gone, clear the client session and send the user to sign in again (src/lib/sessionExpiry.ts).
-  useEffect(
-    () =>
-      installSessionExpiryGuard(window, {
-        isSignedIn: () => !!localStorage.getItem("authToken"),
-        isDemo: () => demoModeRef.current,
-        onExpired: clearSession,
-      }),
-    [clearSession],
-  );
+  // Lets the guard above also reset this provider's state. 401s are handled after the response arrives, by
+  // which time this has run; without it the guard still clears storage before the full-page redirect.
+  useEffect(() => {
+    clearActiveSession = clearSession;
+    return () => {
+      if (clearActiveSession === clearSession) clearActiveSession = null;
+    };
+  }, [clearSession]);
 
   const login = async (
     credentials: LoginCredentials,

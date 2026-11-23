@@ -96,8 +96,12 @@ export interface SessionGuardTarget {
 }
 
 export interface SessionGuardOptions {
-  /** A client session exists (localStorage authToken). Signed-out visitors are never redirected. */
-  isSignedIn: () => boolean;
+  /**
+   * The current client session (localStorage authToken), or null when signed out. Read when a request starts
+   * and again when its 401 is handled; only the same session is expired, so a late 401 from before a sign-out
+   * and new sign-in never clears the new session. Signed-out visitors are never redirected.
+   */
+  currentSession: () => string | null;
   /** Demo mode has no sessions to expire. */
   isDemo: () => boolean;
   /** Clears the client session (AuthContext clearSession). */
@@ -105,7 +109,8 @@ export interface SessionGuardOptions {
 }
 
 const WRAPPED = Symbol.for("ct.sessionExpiryGuard");
-type Wrapped = typeof fetch & { [WRAPPED]?: true };
+/** The wrapper carries its live options, so a repeat install (for example after a hot reload) refreshes them. */
+type Wrapped = typeof fetch & { [WRAPPED]?: SessionGuardOptions };
 
 /** Set once a redirect is under way, so parallel 401s don't stack navigations. */
 let redirecting = false;
@@ -121,11 +126,19 @@ function requestUrl(input: RequestInfo | URL): string {
   return input.url;
 }
 
-/** Runs after a guarded 401: decides, clears the session and redirects at most once. */
-export async function handleGuarded401(res: Response, target: SessionGuardTarget, opts: SessionGuardOptions): Promise<void> {
-  if (redirecting) return;
+/**
+ * Runs after a guarded 401: decides, clears the session and redirects at most once. `session` is what
+ * currentSession() returned when the request started.
+ */
+export async function handleGuarded401(
+  res: Response,
+  session: string | null,
+  target: SessionGuardTarget,
+  opts: SessionGuardOptions,
+): Promise<void> {
+  if (redirecting || !session) return;
   if (!(await responseIsSessionExpiry(res))) return;
-  if (redirecting || opts.isDemo() || !opts.isSignedIn()) return;
+  if (redirecting || opts.isDemo() || opts.currentSession() !== session) return;
   opts.onExpired();
   const href = expiredLoginHref(target.location.pathname, target.location.search);
   if (!href) return;
@@ -135,25 +148,40 @@ export async function handleGuarded401(res: Response, target: SessionGuardTarget
 
 /**
  * Wraps target.fetch. The caller always gets the original response untouched; a clone is inspected in the
- * background. Idempotent: a second install while one is active is a no-op. Returns an uninstaller.
+ * background. Idempotent: a second install while one is active only refreshes the options. A no-op when the
+ * target or its fetch is missing (server rendering, tests that stub window). Returns an uninstaller.
  */
-export function installSessionExpiryGuard(target: SessionGuardTarget, opts: SessionGuardOptions): () => void {
-  if ((target.fetch as Wrapped)[WRAPPED]) return () => {};
+export function installSessionExpiryGuard(target: SessionGuardTarget | undefined, opts: SessionGuardOptions): () => void {
+  if (!target || typeof target.fetch !== "function" || !target.location) return () => {};
+  const existing = target.fetch as Wrapped;
+  if (existing[WRAPPED]) {
+    existing[WRAPPED] = opts;
+    return () => {};
+  }
   const original = target.fetch;
   const wrapped: Wrapped = async (input, init) => {
+    const live = wrapped[WRAPPED] ?? opts;
+    let guarded = false;
+    let session: string | null = null;
+    try {
+      guarded = isSessionGuardedUrl(requestUrl(input), target.location.origin);
+      session = guarded ? live.currentSession() : null;
+    } catch {
+      guarded = false;
+    }
     const res = await original(input, init);
-    if (res.status === 401 && isSessionGuardedUrl(requestUrl(input), target.location.origin)) {
+    if (guarded && session && res.status === 401) {
       let copy: Response | null = null;
       try {
         copy = res.clone();
       } catch {
         copy = null;
       }
-      if (copy) void handleGuarded401(copy, target, opts).catch(() => {});
+      if (copy) void handleGuarded401(copy, session, target, live).catch(() => {});
     }
     return res;
   };
-  wrapped[WRAPPED] = true;
+  wrapped[WRAPPED] = opts;
   target.fetch = wrapped;
   return () => {
     if (target.fetch === wrapped) target.fetch = original;

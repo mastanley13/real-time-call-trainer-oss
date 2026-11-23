@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   expiredLoginHref,
   installSessionExpiryGuard,
@@ -34,7 +34,7 @@ function setup(opts: { path?: string; search?: string; demo?: boolean; signedIn?
   };
   const onExpired = vi.fn(() => { store.delete("authToken"); store.delete("userData"); });
   const uninstall = installSessionExpiryGuard(target, {
-    isSignedIn: () => store.has("authToken"),
+    currentSession: () => store.get("authToken") ?? null,
     isDemo: () => !!opts.demo,
     onExpired,
   });
@@ -202,12 +202,52 @@ describe("installSessionExpiryGuard", () => {
   it("is idempotent and the uninstaller restores the original fetch", async () => {
     const s = setup();
     const wrapped = s.target.fetch;
-    const second = installSessionExpiryGuard(s.target, { isSignedIn: () => true, isDemo: () => false, onExpired: vi.fn() });
+    const second = installSessionExpiryGuard(s.target, { currentSession: () => null, isDemo: () => false, onExpired: vi.fn() });
     expect(s.target.fetch).toBe(wrapped);
     second();
     expect(s.target.fetch).toBe(wrapped);
     s.uninstall();
     expect(s.target.fetch).toBe(s.inner);
+  });
+
+  it.each([
+    ["no target", undefined],
+    ["a target with no fetch", { location: { origin: ORIGIN, pathname: "/", search: "", assign: vi.fn() } }],
+    ["a target with no location", { fetch: vi.fn() }],
+  ])("is a no-op with %s", (_label, target) => {
+    const uninstall = installSessionExpiryGuard(target as SessionGuardTarget | undefined, { currentSession: () => "t", isDemo: () => false, onExpired: vi.fn() });
+    expect(uninstall).toBeTypeOf("function");
+    expect(() => uninstall()).not.toThrow();
+  });
+
+  it("ignores a delayed 401 from an old session after the user signs in again", async () => {
+    let release!: (r: Response) => void;
+    const { target, inner, assign, onExpired, store } = setup();
+    inner.mockImplementationOnce(() => new Promise<Response>((r) => { release = r; }));
+    const pending = target.fetch("/api/coach/turn");
+    // Sign out and back in while the old request is in flight.
+    store.delete("authToken");
+    store.set("authToken", "header.new-payload.signature");
+    release(json(401, EXPIRED));
+    const res = await pending;
+    expect(await res.json()).toEqual(EXPIRED);
+    await settle();
+    expect(onExpired).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
+    expect(store.get("authToken")).toBe("header.new-payload.signature");
+  });
+
+  it("ignores a 401 for a request that started signed out, even if a session exists by the time it lands", async () => {
+    let release!: (r: Response) => void;
+    const { target, inner, assign, onExpired, store } = setup({ signedIn: false });
+    inner.mockImplementationOnce(() => new Promise<Response>((r) => { release = r; }));
+    const pending = target.fetch("/api/coach/turn");
+    store.set("authToken", "header.new-payload.signature");
+    release(json(401, MISSING));
+    await pending;
+    await settle();
+    expect(onExpired).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it("returns the caller's response untouched on success", async () => {
@@ -219,10 +259,45 @@ describe("installSessionExpiryGuard", () => {
   });
 });
 
-describe("AuthProvider wiring (source check; no DOM test library in this repo)", () => {
-  const SRC = readFileSync("src/contexts/AuthContext.tsx", "utf8");
-  it("installs the guard on window with clearSession, a localStorage sign-in check and the demo flag", () => {
-    expect(SRC).toMatch(/installSessionExpiryGuard\(window, \{\s*isSignedIn: \(\) => !!localStorage\.getItem\("authToken"\),\s*isDemo: \(\) => demoModeRef\.current,\s*onExpired: clearSession,\s*\}\)/);
-    expect(SRC).toContain("demoModeRef.current = !!caps?.demoMode;");
+describe("AuthContext install timing", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it("guards requests made before any component effect runs, such as a child's mount-time fetch", async () => {
+    const store = new Map([["authToken", "header.payload.signature"], ["userData", "{}"]]);
+    const assign = vi.fn();
+    const inner = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json(401, EXPIRED));
+    const win = { fetch: inner as unknown as typeof fetch, location: { origin: ORIGIN, pathname: "/trainer", search: "?retry=s1", assign } };
+    vi.stubGlobal("window", win);
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => store.set(k, v),
+      removeItem: (k: string) => store.delete(k),
+    });
+    vi.resetModules();
+    // Loading the module is all it takes: no AuthProvider has rendered, so none of its effects have run.
+    await import("@/contexts/AuthContext");
+    expect(win.fetch).not.toBe(inner);
+    // What TrainerClient's mount effect does for a retry: load the stored transcript.
+    const res = await win.fetch("/api/transcripts/s1");
+    expect(await res.json()).toEqual(EXPIRED);
+    await settle();
+    expect(store.has("authToken")).toBe(false);
+    expect(store.has("userData")).toBe(false);
+    expect(assign).toHaveBeenCalledWith(`/login?next=${encodeURIComponent("/trainer?retry=s1")}&reason=expired`);
+  });
+
+  it("installs nothing when window is undefined (server rendering)", async () => {
+    vi.resetModules();
+    await expect(import("@/contexts/AuthContext")).resolves.toBeTruthy();
+  });
+
+  it("the provider registers clearSession for the guard and reads demo mode at call time", () => {
+    const SRC = readFileSync("src/contexts/AuthContext.tsx", "utf8");
+    expect(SRC).toMatch(/if \(typeof window !== "undefined"\) \{\s*installSessionExpiryGuard\(window, \{\s*currentSession: storedSessionToken,\s*isDemo: \(\) => demoModeActive,/);
+    expect(SRC).toContain("demoModeActive = !!caps?.demoMode;");
+    expect(SRC).toContain("clearActiveSession = clearSession;");
   });
 });
