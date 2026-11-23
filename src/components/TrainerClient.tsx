@@ -14,7 +14,7 @@ import { PageSkeleton } from "@/components/ui/Skeleton";
 import Briefing from "@/components/call/Briefing";
 import Deck from "@/components/call/Deck";
 import { CallMeter } from "@/lib/callMeter";
-import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, DISCONNECTED_BEFORE_CONNECT_MESSAGE, VoiceAttempts, elevenLabsConnectTimeout, elevenLabsDisconnect, elevenLabsHangUp, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoiceErrorInfo } from "@/lib/callStatus";
+import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, DISCONNECTED_BEFORE_CONNECT_MESSAGE, VoiceAttempts, elevenLabsConnectTimeout, elevenLabsDisconnect, elevenLabsHangUp, settleElevenLabsUnmount, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoiceErrorInfo } from "@/lib/callStatus";
 import RealtimeVoiceSession, { voiceInfoFrom, type VoiceInfo, type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
@@ -65,7 +65,14 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onCancelled,
   const [wasConnected, setWasConnected] = useState(false);
   /** False after unmount. Set again on mount, so a StrictMode remount does not cancel a real attempt. */
   const mountedRef = useRef(true);
-  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      // live() ignores every SDK callback from now on, so settle the meter and end the session here (see settleElevenLabsUnmount).
+      settleElevenLabsUnmount(attempts, meterRef.current, () => endRef.current());
+    };
+  }, [attempts]);
   /** SDK callbacks act only for the current attempt's session (see VoiceAttempts). */
   const live = () => attempts.live() && mountedRef.current;
   const conv = useConversation({

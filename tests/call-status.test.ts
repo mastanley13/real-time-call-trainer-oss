@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, DISCONNECTED_BEFORE_CONNECT_MESSAGE, VoiceAttempts, callClockSeconds, elevenLabsConnectTimeout, elevenLabsDisconnect, elevenLabsHangUp, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoicePhase } from "@/lib/callStatus";
+import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, DISCONNECTED_BEFORE_CONNECT_MESSAGE, VoiceAttempts, callClockSeconds, elevenLabsConnectTimeout, elevenLabsDisconnect, elevenLabsHangUp, settleElevenLabsUnmount, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoicePhase } from "@/lib/callStatus";
 import { CallMeter } from "@/lib/callMeter";
 
 const src = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
@@ -315,6 +315,64 @@ describe("hang-up and timeout right after onConnect, before the connected render
   it("the session wires both to attempts, and reports the timeout error only when it stopped the attempt", () => {
     expect(trainer).toContain("if (elevenLabsConnectTimeout(attempts, { endSession: () => endRef.current(), failAttempt })) onErrorRef.current(CONNECT_TIMEOUT_MESSAGE, { connectFailed: true });");
     expect(trainer).not.toContain("connectedRef");
+  });
+});
+
+describe("ElevenLabs session unmount settles the meter (Codex re-review)", () => {
+  const trainer = src("src/components/TrainerClient.tsx");
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  function setup(callId = "call-unmount") {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    const meter = new CallMeter(callId, { onStop: () => {}, onGiveUp: () => {} });
+    const a = new VoiceAttempts();
+    a.bind(a.begin());
+    const calls = (url: string) => fetchMock.mock.calls.filter((c) => (c as unknown[])[0] === url).map((c) => JSON.parse(String(((c as unknown[])[1] as RequestInit).body)));
+    return { meter, a, fetchMock, calls };
+  }
+
+  it("a pending connection (token minted, SDK starting) ends as failed_connect and ends the session", () => {
+    const { meter, a, calls } = setup();
+    const endSession = vi.fn();
+    expect(settleElevenLabsUnmount(a, meter, endSession)).toBe("failed_connect");
+    expect(calls("/api/usage/end")).toEqual([{ callId: "call-unmount", reason: "failed_connect" }]);
+    expect(endSession).toHaveBeenCalledOnce();
+  });
+
+  it("a connected call ends as user_hangup and its heartbeat timer stops", async () => {
+    const { meter, a, calls } = setup();
+    a.connect();
+    meter.open();
+    meter.audio();
+    expect(calls("/api/usage/heartbeat")).toEqual([{ callId: "call-unmount", state: "connected" }]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls("/api/usage/heartbeat")).toHaveLength(2); // the timer runs while mounted
+    const endSession = vi.fn();
+    expect(settleElevenLabsUnmount(a, meter, endSession)).toBe("user_hangup");
+    expect(calls("/api/usage/end")).toEqual([{ callId: "call-unmount", reason: "user_hangup" }]);
+    expect(endSession).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls("/api/usage/heartbeat")).toHaveLength(2);
+  });
+
+  it("never ends a meter twice: a hang-up, timeout or error that already ended it keeps its reason", () => {
+    const { meter, a, calls } = setup();
+    meter.end("failed_connect"); // e.g. the connect timeout
+    a.abandon();
+    settleElevenLabsUnmount(a, meter, () => {});
+    settleElevenLabsUnmount(a, meter, () => {});
+    expect(calls("/api/usage/end")).toEqual([{ callId: "call-unmount", reason: "failed_connect" }]);
+  });
+
+  it("an SDK that throws on endSession does not break unmount", () => {
+    const { meter, a } = setup();
+    expect(() => settleElevenLabsUnmount(a, meter, () => { throw new Error("already gone"); })).not.toThrow();
+  });
+
+  it("the session's mount cleanup runs it with the live meter, after live() stops accepting callbacks", () => {
+    expect(trainer).toMatch(/return \(\) => \{\s*mountedRef\.current = false;\s*\/\/[^\n]*\n\s*settleElevenLabsUnmount\(attempts, meterRef\.current, \(\) => endRef\.current\(\)\);\s*\};/);
   });
 });
 

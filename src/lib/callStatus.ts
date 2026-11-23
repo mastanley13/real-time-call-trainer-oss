@@ -86,6 +86,20 @@ export function elevenLabsDisconnect(a: VoiceAttempts, s: { failed: boolean; use
 }
 
 /**
+ * The ElevenLabs session unmounted (the trainer left the call screen). Its SDK callbacks are ignored from then on, so
+ * the meter is settled here: failed_connect when the current attempt never connected (releases the reservation, bills
+ * 0), user_hangup once it did, as the Realtime call does on unmount. CallMeter.end is idempotent and stops the
+ * heartbeat timers, so a meter a hang-up, timeout or error already ended is not ended twice. Then the SDK session ends.
+ * A StrictMode remount runs this before any token is minted, when the meter has no callId and ending it does nothing.
+ */
+export function settleElevenLabsUnmount(a: VoiceAttempts, meter: { end(reason: MeterEndReason): void }, endSession: () => void): MeterEndReason {
+  const reason: MeterEndReason = a.connected() ? "user_hangup" : "failed_connect";
+  meter.end(reason);
+  try { endSession(); } catch { /* already ended */ }
+  return reason;
+}
+
+/**
  * The ElevenLabs connect timeout. Does nothing (false) once onConnect ran for this attempt, even if the timer fires
  * before the connected render clears it. Otherwise it stops the attempt like a pre-connect hang-up and returns true,
  * so the caller reports the timeout error.
