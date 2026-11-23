@@ -27,6 +27,7 @@ vi.mock("@/lib/apiAuth", async (importOriginal) => ({
 vi.mock("@/lib/gradeSeal", () => ({ verifySeal: () => true, sealEvaluation: () => "test-seal" }));
 
 import {
+  GHL_RETRY_DELAY_MS,
   GHL_TIMEOUT_MS,
   emitGhlEvent,
   firstGradedCallPayload,
@@ -484,6 +485,156 @@ describe("first graded call (claimFirstGradedCall)", () => {
     await settleGhlEvents();
     expect(db.markers()).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("first graded call retry (one retry of the same POST)", () => {
+  const activation = () => firstGradedCallPayload({ userId: "u-1", organizationId: "org-1", email: "u-1@example.test", sessionId: "s-b", scenarioId: LIBRARY[0].id, overallScore: 81, grade: "B" }, NOW);
+  /** fetch's TypeError for a connection that never opened: the request cannot have reached GHL. */
+  const refused = () => new TypeError("fetch failed", { cause: Object.assign(new Error("connect refused"), { code: "ECONNREFUSED" }) });
+  const status = (s: number) => new Response("ghl says something private", { status: s });
+  /** Yields one macrotask, so every pending microtask (the mocked fetch, the body cancel) has run. */
+  const tick = () => new Promise((r) => setImmediate(r));
+
+  afterEach(() => { vi.useRealTimers(); });
+
+  for (const [name, first] of [["a connection-phase network error", () => Promise.reject(refused())], ["HTTP 503", async () => status(503)]] as const) {
+    it(`retries once after ${name}, after the fixed delay, with the same body and Idempotency-Key`, async () => {
+      on();
+      vi.stubEnv("GHL_WEBHOOK_SECRET", SECRET);
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      const info = vi.spyOn(console, "info").mockImplementation(() => {});
+      vi.useFakeTimers({ toFake: ["setTimeout"] });
+      const timeout = vi.spyOn(AbortSignal, "timeout");
+      fetchMock.mockImplementationOnce(first);
+      const done = postGhlEvent(activation());
+      await tick();
+      expect(fetchMock).toHaveBeenCalledOnce();
+      vi.advanceTimersByTime(GHL_RETRY_DELAY_MS - 1);
+      await tick();
+      expect(fetchMock).toHaveBeenCalledOnce();
+      vi.advanceTimersByTime(1);
+      await done;
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const [a, b] = sent();
+      expect(b.body).toEqual(a.body);
+      expect(b.init.body).toBe(a.init.body);
+      expect(b.init.headers).toEqual(a.init.headers);
+      expect((b.init.headers as Record<string, string>)["idempotency-key"]).toBe("first_graded_call:u-1");
+      // Each attempt has its own hard timeout.
+      expect(timeout.mock.calls).toEqual([[GHL_TIMEOUT_MS], [GHL_TIMEOUT_MS]]);
+      expect(a.init.signal).not.toBe(b.init.signal);
+      const logged = [...errors.mock.calls, ...info.mock.calls].map((c) => c.join(" "));
+      expect(logged).toEqual([
+        name === "HTTP 503" ? "[ghl] first_graded_call webhook answered status 503" : "[ghl] first_graded_call webhook failed",
+        "[ghl] first_graded_call webhook retry delivered",
+      ]);
+      expect(logged.join(" ")).not.toContain(URL_);
+      expect(logged.join(" ")).not.toContain(SECRET);
+      expect(logged.join(" ")).not.toContain("private");
+    });
+  }
+
+  it("retries on 429, 502 and 504 too", async () => {
+    on();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    for (const s of [429, 502, 504]) {
+      fetchMock.mockClear();
+      fetchMock.mockResolvedValueOnce(status(s));
+      await postGhlEvent(activation());
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it("never retries a timeout, a 400, a 500, a 2xx or a network error after the connection opened", async () => {
+    on();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const cases: [string, () => Promise<Response>][] = [
+      ["timeout", () => Promise.reject(new DOMException("The operation was aborted due to timeout", "TimeoutError"))],
+      ["400", async () => status(400)],
+      ["500", async () => status(500)],
+      ["200", async () => new Response("ok", { status: 200 })],
+      ["202", async () => new Response(null, { status: 202 })],
+      ["reset after send", () => Promise.reject(new TypeError("fetch failed", { cause: Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }) }))],
+      ["no cause", () => Promise.reject(new TypeError("fetch failed"))],
+      ["sync throw", () => { throw new Error("boom"); }],
+    ];
+    for (const [, impl] of cases) {
+      fetchMock.mockClear();
+      fetchMock.mockImplementationOnce(impl);
+      await postGhlEvent(activation());
+      expect(fetchMock).toHaveBeenCalledOnce();
+    }
+    expect(errors.mock.calls.map((c) => c.join(" ")).filter((l) => l.includes("retry"))).toEqual([]);
+  });
+
+  it("never retries a connect timeout (TypeError with cause code UND_ERR_CONNECT_TIMEOUT): exactly one POST", async () => {
+    on();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockRejectedValueOnce(new TypeError("fetch failed", { cause: Object.assign(new Error("connect timeout"), { code: "UND_ERR_CONNECT_TIMEOUT" }) }));
+    await postGhlEvent(activation());
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(errors.mock.calls.map((c) => c.join(" "))).toEqual(["[ghl] first_graded_call webhook failed"]);
+  });
+
+  it("retries at most once: a second clear failure is logged and dropped", async () => {
+    on();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce(status(503)).mockResolvedValueOnce(status(503));
+    await postGhlEvent(activation());
+    fetchMock.mockRejectedValueOnce(refused()).mockRejectedValueOnce(refused());
+    await postGhlEvent(activation());
+    fetchMock.mockResolvedValueOnce(status(502)).mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+    await postGhlEvent(activation());
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(errors.mock.calls.map((c) => c.join(" "))).toEqual([
+      "[ghl] first_graded_call webhook answered status 503",
+      "[ghl] first_graded_call webhook retry answered status 503",
+      "[ghl] first_graded_call webhook failed",
+      "[ghl] first_graded_call webhook retry failed",
+      "[ghl] first_graded_call webhook answered status 502",
+      "[ghl] first_graded_call webhook retry timed out",
+    ]);
+  });
+
+  it("signup, plan changes and voice_cap_hit keep one attempt on a 503 or a refused connection", async () => {
+    on();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const capHit = voiceCapHitPayload({ userId: "u-1", organizationId: "org-1", email: "u-1@example.test", plan: "free", reason: "cap_reached" }, NOW);
+    for (const payload of [signupPayload(signupInput), planChangePayload(planEvent, "u-1@example.test"), capHit]) {
+      fetchMock.mockClear();
+      fetchMock.mockResolvedValueOnce(status(503));
+      await postGhlEvent(payload);
+      expect(fetchMock).toHaveBeenCalledOnce();
+      fetchMock.mockClear();
+      fetchMock.mockRejectedValueOnce(refused());
+      await postGhlEvent(payload);
+      expect(fetchMock).toHaveBeenCalledOnce();
+    }
+  });
+
+  it("end to end: the claim runs once and writes one marker; only the POST is repeated", async () => {
+    on();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const db = gradeStore();
+    db.seed("s-b", "u-1", { score: 81, grade: "B" });
+    fetchMock.mockResolvedValueOnce(status(503));
+    notifyFirstGradedCall("u-1");
+    await settleGhlEvents();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(db.activations()).toHaveLength(2);
+    expect(new Set(db.activations().map((b) => JSON.stringify(b))).size).toBe(1);
+    expect(db.markers()).toEqual([expect.objectContaining({ userId: "u-1", resource: "s-b", metadata: { eventId: "first_graded_call:u-1" } })]);
+    expect(mocks.prisma.$transaction).toHaveBeenCalledOnce();
+    expect(mocks.prisma.auditEvent.create).toHaveBeenCalledOnce();
+    expect(db.order.filter((o) => o.startsWith("lock:"))).toHaveLength(1);
+    // A later grade finds the marker and sends nothing, retry or not.
+    notifyFirstGradedCall("u-1");
+    await settleGhlEvents();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(db.markers()).toHaveLength(1);
   });
 });
 
