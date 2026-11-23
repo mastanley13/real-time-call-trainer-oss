@@ -14,7 +14,7 @@ import { PageSkeleton } from "@/components/ui/Skeleton";
 import Briefing from "@/components/call/Briefing";
 import Deck from "@/components/call/Deck";
 import { CallMeter } from "@/lib/callMeter";
-import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, VoiceAttempts, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoiceErrorInfo } from "@/lib/callStatus";
+import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, VoiceAttempts, elevenLabsConnectTimeout, elevenLabsHangUp, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoiceErrorInfo } from "@/lib/callStatus";
 import RealtimeVoiceSession, { voiceInfoFrom, type VoiceInfo, type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
@@ -56,12 +56,13 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onCancelled,
   const endRef = useRef<() => void>(() => {});
   /** Set when the call failed before it connected: the disconnect that follows must not grade (a retry may have seeded rep turns). */
   const connectFailedRef = useRef(false);
-  /** Mirrors the SDK's connected status for its own callbacks, which may hold an older render's `connected`. */
-  const connectedRef = useRef(false);
-  /** The same fact for rendering: once connected, a later non-connected status means the call ended. One call per mount. */
-  const [wasConnected, setWasConnected] = useState(false);
-  /** Bumped by the connect timeout and by a hang-up before connect; a token or SDK session for an older attempt is dropped. */
+  /**
+   * Bumped by the connect timeout and by a hang-up before connect; a token or SDK session for an older attempt is
+   * dropped. Also holds whether the current attempt connected, set synchronously in onConnect (attempts.connected()).
+   */
   const attempts = useRef(new VoiceAttempts()).current;
+  /** The connected fact for rendering: once connected, a later non-connected status means the call ended. One call per mount. */
+  const [wasConnected, setWasConnected] = useState(false);
   /** False after unmount. Set again on mount, so a StrictMode remount does not cancel a real attempt. */
   const mountedRef = useRef(true);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
@@ -71,7 +72,7 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onCancelled,
     onConnect: () => {
       // The attempt was abandoned while the mic or handshake was pending: end the late session, never meter it.
       if (!live()) { endRef.current(); return; }
-      connectedRef.current = true; setWasConnected(true); meterRef.current.open();
+      attempts.connect(); setWasConnected(true); meterRef.current.open();
     },
     onMessage: ({ message, role }) => {
       if (!live()) return;
@@ -83,7 +84,7 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onCancelled,
       if (!live()) return;
       meterRef.current.end("provider_error");
       // Any SDK error before the call connected is a connect failure: back to the briefing at once, nothing graded.
-      const beforeConnect = !connectedRef.current;
+      const beforeConnect = !attempts.connected();
       if (beforeConnect) connectFailedRef.current = true;
       onError(typeof m === "string" ? m : "Voice connection error", beforeConnect ? { connectFailed: true } : undefined);
     },
@@ -98,18 +99,17 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onCancelled,
   useEffect(() => { endRef.current = () => { void endSession(); }; }, [endSession]);
   const connected = status === "connected";
 
+  /** Ending an attempt before it connects: its disconnect grades nothing, and the meter settles it as failed_connect. */
+  const failAttempt = useCallback(() => { connectFailedRef.current = true; meterRef.current.end("failed_connect"); }, []);
+
   // Hang-up. Before the call connects (token still minting, or the SDK still starting) it ends like the timeout: the
   // attempt is abandoned and settled as failed_connect, so a late token or session is dropped, and nothing is graded
   // (a retry may have seeded rep turns). The call screen closes now instead of waiting for a disconnect.
+  // Connected is read from attempts, set in onConnect, not from the rendered status, which can lag behind it.
   const hangUp = useCallback(() => {
     userEndedRef.current = true;
-    if (connected) { void endSession(); return; }
-    attempts.abandon();
-    connectFailedRef.current = true;
-    meterRef.current.end("failed_connect");
-    void endSession();
-    onCancelled();
-  }, [connected, endSession, onCancelled, attempts]);
+    if (elevenLabsHangUp(attempts, { endSession: () => { void endSession(); }, failAttempt }) === "cancelled") onCancelled();
+  }, [endSession, failAttempt, onCancelled, attempts]);
   useEffect(() => registerEnd(hangUp), [hangUp, registerEnd]);
 
   useEffect(() => {
@@ -121,7 +121,6 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onCancelled,
       try {
         userEndedRef.current = false;
         connectFailedRef.current = false;
-        connectedRef.current = false;
         const res = await fetch(`/api/elevenlabs/token?${new URLSearchParams({ scenarioId: scenario.id, title: scenario.title, ...(voiceTier ? { voiceTier } : {}) })}`);
         const data = await res.json().catch(() => ({}));
         // Timed out or left while the token was minting: release the late call on the server, start nothing.
@@ -160,15 +159,12 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onCancelled,
   useEffect(() => { onErrorRef.current = onError; });
   useEffect(() => {
     if (!active || connected) return;
+    // The timer can fire after onConnect but before the connected render clears it; elevenLabsConnectTimeout then does nothing.
     const t = setTimeout(() => {
-      attempts.abandon();
-      connectFailedRef.current = true;
-      meterRef.current.end("failed_connect");
-      endRef.current();
-      onErrorRef.current(CONNECT_TIMEOUT_MESSAGE, { connectFailed: true });
+      if (elevenLabsConnectTimeout(attempts, { endSession: () => endRef.current(), failAttempt })) onErrorRef.current(CONNECT_TIMEOUT_MESSAGE, { connectFailed: true });
     }, CONNECT_TIMEOUT_MS);
     return () => clearTimeout(t);
-  }, [active, connected, attempts]);
+  }, [active, connected, attempts, failAttempt]);
 
   const orbState: AgentState = grading || !connected ? "thinking" : isSpeaking ? "talking" : "listening";
   const name = scenario.aiPersona.name.split(" ")[0];

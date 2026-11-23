@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, VoiceAttempts, callClockSeconds, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoicePhase } from "@/lib/callStatus";
+import { CONNECT_TIMEOUT_MESSAGE, CONNECT_TIMEOUT_MS, VoiceAttempts, callClockSeconds, elevenLabsConnectTimeout, elevenLabsHangUp, elevenLabsPhase, leavesCallOnError, settleAbandonedCall, voiceStatusCopy, type VoicePhase } from "@/lib/callStatus";
 import { CallMeter } from "@/lib/callMeter";
 
 const src = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
@@ -118,7 +118,7 @@ describe("elevenLabsPhase (round 6)", () => {
   it("the ElevenLabs session uses it with the grading and connected facts", () => {
     const trainer = src("src/components/TrainerClient.tsx");
     expect(trainer).toContain("const phase = elevenLabsPhase(status, { grading, wasConnected });");
-    expect(trainer).toContain("connectedRef.current = true; setWasConnected(true); meterRef.current.open();");
+    expect(trainer).toContain("attempts.connect(); setWasConnected(true); meterRef.current.open();");
     expect(trainer).not.toContain('connected ? "connected" : "connecting"');
   });
 });
@@ -170,14 +170,17 @@ describe("settleAbandonedCall (late mint after timeout, hang-up or unmount)", ()
     expect(settle).toBeGreaterThan(-1);
     expect(settle).toBeLessThan(trainer.indexOf("startSession({"));
     expect(settle).toBeLessThan(trainer.indexOf("meterRef.current = new CallMeter(data.callId"));
-    expect(trainer).toMatch(/setTimeout\(\(\) => \{\s*attempts\.abandon\(\);/);
+    expect(trainer).toMatch(/setTimeout\(\(\) => \{\s*if \(elevenLabsConnectTimeout\(attempts, /);
     expect(trainer).toContain("const cancelled = () => !attempts.isCurrent(attempt) || !mountedRef.current;");
   });
 
   it("an ElevenLabs hang-up before connect abandons the attempt as failed_connect and cancels, like the Realtime path", () => {
     const trainer = src("src/components/TrainerClient.tsx");
     const body = trainer.slice(trainer.indexOf("const hangUp = useCallback("), trainer.indexOf("useEffect(() => registerEnd(hangUp)"));
-    expect(body).toMatch(/if \(connected\) \{ void endSession\(\); return; \}\s*attempts\.abandon\(\);\s*connectFailedRef\.current = true;\s*meterRef\.current\.end\("failed_connect"\);\s*void endSession\(\);\s*onCancelled\(\);/);
+    expect(body).toContain('if (elevenLabsHangUp(attempts, { endSession: () => { void endSession(); }, failAttempt }) === "cancelled") onCancelled();');
+    // Connected comes from attempts (set in onConnect), never from the rendered status.
+    expect(body).not.toMatch(/\bconnected\b(?!\()/);
+    expect(trainer).toContain('const failAttempt = useCallback(() => { connectFailedRef.current = true; meterRef.current.end("failed_connect"); }, []);');
     // Never graded: a retry may have seeded rep turns.
     expect(body).not.toContain("onEnded()");
     // Both ways out of the call (the End button and the trainer's registered hang-up) use it.
@@ -223,8 +226,22 @@ describe("ElevenLabs callbacks from an abandoned attempt (Codex review)", () => 
   });
 
   it("a late connect for an abandoned attempt ends that session and never opens the meter", () => {
-    expect(sdk).toMatch(/onConnect: \(\) => \{\s*\/\/[^\n]*\n\s*if \(!live\(\)\) \{ endRef\.current\(\); return; \}\s*connectedRef\.current = true; setWasConnected\(true\); meterRef\.current\.open\(\);/);
+    expect(sdk).toMatch(/onConnect: \(\) => \{\s*\/\/[^\n]*\n\s*if \(!live\(\)\) \{ endRef\.current\(\); return; \}\s*attempts\.connect\(\); setWasConnected\(true\); meterRef\.current\.open\(\);/);
     expect(trainer).toContain("const live = () => attempts.live() && mountedRef.current;");
+  });
+
+  it("VoiceAttempts.connect: records the connect only for the current attempt, and a new attempt starts not connected", () => {
+    const a = new VoiceAttempts();
+    const first = a.begin();
+    a.bind(first);
+    expect(a.connected()).toBe(false);
+    expect(a.connect()).toBe(true);
+    expect(a.connected()).toBe(true);
+    a.abandon();
+    expect(a.connected()).toBe(false);
+    expect(a.connect()).toBe(false); // a late connect for the abandoned attempt records nothing
+    a.bind(a.begin());
+    expect(a.connected()).toBe(false);
   });
 
   it("messages, errors and disconnects from an abandoned attempt are ignored, so nothing grades twice", () => {
@@ -251,6 +268,56 @@ describe("ElevenLabs callbacks from an abandoned attempt (Codex review)", () => 
   });
 });
 
+describe("hang-up and timeout right after onConnect, before the connected render (Codex re-review)", () => {
+  const trainer = src("src/components/TrainerClient.tsx");
+  const deps = () => ({ endSession: vi.fn(), failAttempt: vi.fn() });
+  /** onConnect has run (synchronously) for the current attempt; React has not rendered status "connected" yet. */
+  const justConnected = () => { const a = new VoiceAttempts(); a.bind(a.begin()); a.connect(); return a; };
+  const notConnected = () => { const a = new VoiceAttempts(); a.bind(a.begin()); return a; };
+
+  it("a hang-up in that gap ends a connected call (graded on disconnect), not a failed connect", () => {
+    const a = justConnected();
+    const d = deps();
+    expect(elevenLabsHangUp(a, d)).toBe("ended");
+    expect(d.endSession).toHaveBeenCalledOnce();
+    expect(d.failAttempt).not.toHaveBeenCalled();
+    // The attempt stays current, so its onDisconnect still runs and grades the transcript.
+    expect(a.live()).toBe(true);
+  });
+
+  it("a hang-up before onConnect still cancels: abandoned, failed_connect, session ended", () => {
+    const a = notConnected();
+    const d = deps();
+    expect(elevenLabsHangUp(a, d)).toBe("cancelled");
+    expect(d.failAttempt).toHaveBeenCalledOnce();
+    expect(d.endSession).toHaveBeenCalledOnce();
+    expect(a.live()).toBe(false);
+  });
+
+  it("a timeout that fires in that gap does nothing: the call is connected", () => {
+    const a = justConnected();
+    const d = deps();
+    expect(elevenLabsConnectTimeout(a, d)).toBe(false);
+    expect(d.endSession).not.toHaveBeenCalled();
+    expect(d.failAttempt).not.toHaveBeenCalled();
+    expect(a.live()).toBe(true);
+  });
+
+  it("a timeout before onConnect stops the attempt and asks for the timeout error", () => {
+    const a = notConnected();
+    const d = deps();
+    expect(elevenLabsConnectTimeout(a, d)).toBe(true);
+    expect(d.failAttempt).toHaveBeenCalledOnce();
+    expect(d.endSession).toHaveBeenCalledOnce();
+    expect(a.live()).toBe(false);
+  });
+
+  it("the session wires both to attempts, and reports the timeout error only when it stopped the attempt", () => {
+    expect(trainer).toContain("if (elevenLabsConnectTimeout(attempts, { endSession: () => endRef.current(), failAttempt })) onErrorRef.current(CONNECT_TIMEOUT_MESSAGE, { connectFailed: true });");
+    expect(trainer).not.toContain("connectedRef");
+  });
+});
+
 describe("connect timeout", () => {
   it("is a fixed 20 second limit", () => {
     expect(CONNECT_TIMEOUT_MS).toBe(20_000);
@@ -266,7 +333,8 @@ describe("connect timeout", () => {
 
   it("ends a stuck ElevenLabs attempt and settles the meter as failed_connect", () => {
     const trainer = src("src/components/TrainerClient.tsx");
-    expect(trainer).toMatch(/attempts\.abandon\(\);\s*connectFailedRef\.current = true;\s*meterRef\.current\.end\("failed_connect"\);\s*endRef\.current\(\);\s*onErrorRef\.current\(CONNECT_TIMEOUT_MESSAGE, \{ connectFailed: true \}\)/);
+    expect(trainer).toMatch(/if \(elevenLabsConnectTimeout\(attempts, \{ endSession: \(\) => endRef\.current\(\), failAttempt \}\)\) onErrorRef\.current\(CONNECT_TIMEOUT_MESSAGE, \{ connectFailed: true \}\)/);
+    expect(trainer).toContain('meterRef.current.end("failed_connect");');
   });
 });
 
@@ -301,11 +369,12 @@ describe("a failed connect on a retry with prior turns (SAL-1039 round 3)", () =
   it("any ElevenLabs SDK error before connect is a connect failure, and its disconnect does not grade", () => {
     const trainer = src("src/components/TrainerClient.tsx");
     const sdk = trainer.slice(trainer.indexOf("const conv = useConversation({"), trainer.indexOf("const { startSession, endSession"));
-    expect(sdk).toMatch(/connectedRef\.current = true; setWasConnected\(true\); meterRef\.current\.open\(\);\s*\},/);
-    expect(sdk).toMatch(/const beforeConnect = !connectedRef\.current;\s*if \(beforeConnect\) connectFailedRef\.current = true;\s*onError\([^;]*beforeConnect \? \{ connectFailed: true \} : undefined\);/);
+    expect(sdk).toMatch(/attempts\.connect\(\); setWasConnected\(true\); meterRef\.current\.open\(\);\s*\},/);
+    expect(sdk).toMatch(/const beforeConnect = !attempts\.connected\(\);\s*if \(beforeConnect\) connectFailedRef\.current = true;\s*onError\([^;]*beforeConnect \? \{ connectFailed: true \} : undefined\);/);
     expect(sdk).toContain("if (!connectFailedRef.current) onEnded();");
-    // Each attempt starts not connected and not failed.
-    expect(trainer).toMatch(/connectFailedRef\.current = false;\s*connectedRef\.current = false;/);
+    // Each attempt starts not failed, and not connected until its own session binds and connects (VoiceAttempts).
+    expect(trainer).toMatch(/userEndedRef\.current = false;\s*connectFailedRef\.current = false;/);
+    expect(trainer).toMatch(/attempts\.bind\(attempt\);\s*startSession\(\{/);
   });
 
   it("back on the briefing, a connect failure offers Retry voice and Switch to text even with a retry seed", () => {

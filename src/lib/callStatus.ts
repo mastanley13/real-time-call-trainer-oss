@@ -28,6 +28,7 @@ export function leavesCallOnError(info: VoiceErrorInfo | undefined, repSpoke: bo
 export class VoiceAttempts {
   private current = 0;
   private session = 0;
+  private connectedSession = 0;
   /** Starts a new attempt and returns its id. */
   begin(): number { return ++this.current; }
   /** Abandons the current attempt: its late token is settled, its late session ignored and ended. */
@@ -37,6 +38,51 @@ export class VoiceAttempts {
   bind(id: number): void { this.session = id; }
   /** True when the SDK session belongs to the current attempt, so its callbacks may act. */
   live(): boolean { return this.session !== 0 && this.session === this.current; }
+  /** Records the SDK's onConnect for the current attempt's session. False, and nothing recorded, for an abandoned one. */
+  connect(): boolean {
+    if (!this.live()) return false;
+    this.connectedSession = this.session;
+    return true;
+  }
+  /**
+   * True once onConnect ran for the current attempt. Set synchronously in the callback, so it is right before React
+   * renders the SDK's connected status; the hang-up and the connect timeout read this, never the rendered status.
+   */
+  connected(): boolean { return this.live() && this.connectedSession === this.session; }
+}
+
+/** What ending an ElevenLabs attempt early needs from the session. */
+export interface AttemptEndDeps {
+  /** Ends the SDK session; safe when none has started. */
+  endSession: () => void;
+  /** Marks the attempt failed (its disconnect grades nothing) and settles the meter as failed_connect. */
+  failAttempt: () => void;
+}
+
+/**
+ * The ElevenLabs hang-up. Once connected (onConnect ran for this attempt, rendered or not) it only ends the session,
+ * whose disconnect grades the call: "ended". Before that it abandons the attempt, settles it as failed_connect and
+ * ends whatever started: "cancelled", so the trainer returns to the briefing without grading.
+ */
+export function elevenLabsHangUp(a: VoiceAttempts, d: AttemptEndDeps): "ended" | "cancelled" {
+  if (a.connected()) { d.endSession(); return "ended"; }
+  a.abandon();
+  d.failAttempt();
+  d.endSession();
+  return "cancelled";
+}
+
+/**
+ * The ElevenLabs connect timeout. Does nothing (false) once onConnect ran for this attempt, even if the timer fires
+ * before the connected render clears it. Otherwise it stops the attempt like a pre-connect hang-up and returns true,
+ * so the caller reports the timeout error.
+ */
+export function elevenLabsConnectTimeout(a: VoiceAttempts, d: AttemptEndDeps): boolean {
+  if (a.connected()) return false;
+  a.abandon();
+  d.failAttempt();
+  d.endSession();
+  return true;
 }
 
 export type VoicePhase = "mic" | "connecting" | "connected" | "ending" | "closed";
