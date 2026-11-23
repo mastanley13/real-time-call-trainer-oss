@@ -349,7 +349,7 @@ describe("OpenAI Realtime and GPT-Live: every exit before connect reports failed
     expect(h.onError).toHaveBeenCalledWith(LEFT_BEFORE_CONNECT_MESSAGE);
   });
 
-  it("a page hide during a mint that fails reports nothing and keeps the server's message", async () => {
+  it("a page hide during a mint that then fails: the attempt ended at the page hide, and there is nothing to report", async () => {
     const mint = deferred<Response>();
     stubFetch(() => mint.promise);
     const h = handlers();
@@ -359,7 +359,42 @@ describe("OpenAI Realtime and GPT-Live: every exit before connect reports failed
     mint.resolve(Response.json({ error: "minutes_reserved", message: "Your minutes are held by another call." }, { status: 409 }));
     await started;
     expect(ends()).toEqual([]);
-    expect(h.onError).toHaveBeenCalledWith("Your minutes are held by another call.");
+    expect(h.onError).toHaveBeenCalledOnce();
+    expect(h.onError).toHaveBeenCalledWith(LEFT_BEFORE_CONNECT_MESSAGE);
+  });
+
+  it("a page hide during the mic prompt: the stream that arrives is stopped, nothing is minted, and nothing resumes", async () => {
+    const stream = deferred<typeof mic>();
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: vi.fn(() => stream.promise) } });
+    const h = handlers();
+    const call = new RealtimeCall(scenario, h);
+    const started = call.start();
+    await flush();
+    page.dispatchEvent(new Event("pagehide"));
+    expect(h.onError).toHaveBeenCalledWith(LEFT_BEFORE_CONNECT_MESSAGE);
+    pageShowPersisted();
+    stream.resolve(mic);
+    await started;
+    expect(track.stop).toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(lastPc).toBeNull();
+    expect(h.onEnded).not.toHaveBeenCalled();
+    expect(h.onError).toHaveBeenCalledOnce();
+  });
+
+  it("a hang-up during the mic prompt: the stream that arrives is stopped and nothing is minted", async () => {
+    const stream = deferred<typeof mic>();
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: vi.fn(() => stream.promise) } });
+    const h = handlers();
+    const call = new RealtimeCall(scenario, h);
+    const started = call.start();
+    await flush();
+    call.end();
+    stream.resolve(mic);
+    await started;
+    expect(track.stop).toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(h.onEnded).toHaveBeenCalledOnce();
   });
 
   it("the pending-mint page listener is removed once the mint answers", async () => {
@@ -408,6 +443,7 @@ describe("ElevenLabs: every exit before connect reports failed_connect once", ()
     answer.resolve(token());
     expect(await pending).toBeNull();
     call.unmount();
+    await flush();
     expect(ends()).toEqual(FAILED_ONCE("call-el"));
   });
 
@@ -422,8 +458,10 @@ describe("ElevenLabs: every exit before connect reports failed_connect once", ()
     call.unmount();
     answer.resolve(token());
     expect(await pending).toBeNull();
+    await flush();
     expect(ends()).toEqual(FAILED_ONCE("call-el"));
     expect(h.onEnded).not.toHaveBeenCalled();
+    expect(h.onError).not.toHaveBeenCalled();
   });
 
   it("a StrictMode unmount and remount during the token request does not cancel the call", async () => {
@@ -434,10 +472,15 @@ describe("ElevenLabs: every exit before connect reports failed_connect once", ()
     const pending = call.mint(URL, noop);
     call.unmount();
     call.mount();
+    await flush(); // the deferred unmount check finds the component mounted again
     answer.resolve(token());
     expect(await pending).toMatchObject({ token: "tok_fictional_test_only", callId: "call-el", attempt: 1 });
     expect(ends()).toEqual([]);
+    expect(call.isCancelled).toBe(false);
+    // The real unmount later still cancels it.
     call.unmount();
+    await flush();
+    expect(ends()).toEqual(FAILED_ONCE("call-el"));
   });
 
   it("hang-up while the SDK is connecting reports failed_connect once and ends the screen at once, with no SDK callback", async () => {
@@ -458,7 +501,8 @@ describe("ElevenLabs: every exit before connect reports failed_connect once", ()
     sdk.onDisconnect();
     call.hangUp();
     call.unmount();
-    expect(h.endSession).toHaveBeenCalledOnce(); // from the late onConnect
+    await flush();
+    expect(h.endSession).toHaveBeenCalledTimes(2); // the hang-up's cancel, then the late onConnect
     expect(onTurn).not.toHaveBeenCalled();
     expect(h.onEnded).toHaveBeenCalledOnce();
     expect(h.onError).not.toHaveBeenCalled();
@@ -573,13 +617,42 @@ describe("ElevenLabs: every exit before connect reports failed_connect once", ()
     const { call } = await started();
     call.failed();
     call.unmount();
+    await flush();
     expect(ends()).toEqual(FAILED_ONCE("call-el"));
   });
 
-  it("unmount while connecting reports failed_connect once", async () => {
-    const { call } = await started();
+  it("unmount while the SDK is connecting cancels the attempt: reported once, session ended, every late callback ignored", async () => {
+    const { call, sdk, h, onTurn } = await started();
     call.unmount();
+    await flush();
     expect(ends()).toEqual(FAILED_ONCE("call-el"));
+    expect(h.endSession).toHaveBeenCalledOnce();
+    expect(call.isCancelled).toBe(true);
+    // The SDK connects late anyway: that session is ended, and nothing reaches the meter or the transcript.
+    sdk.onConnect();
+    sdk.onMessage({ message: "Hi, this is the buyer.", role: "agent" });
+    sdk.onMessage({ message: "Hello?", role: "user" });
+    sdk.onError("Voice connection error");
+    sdk.onDisconnect();
+    expect(h.endSession).toHaveBeenCalledTimes(2);
+    expect(onTurn).not.toHaveBeenCalled();
+    expect(beats()).toEqual([]);
+    expect(ends()).toHaveLength(1);
+    // An unmounted call has no screen: no screen callback at all.
+    expect(h.onEnded).not.toHaveBeenCalled();
+    expect(h.onError).not.toHaveBeenCalled();
+  });
+
+  it("unmount after onConnect but before the first agent audio also cancels the attempt", async () => {
+    const { call, sdk, h, onTurn } = await started();
+    sdk.onConnect();
+    call.unmount();
+    await flush();
+    expect(ends()).toEqual(FAILED_ONCE("call-el"));
+    expect(h.endSession).toHaveBeenCalledOnce();
+    sdk.onMessage({ message: "Hi, this is the buyer.", role: "agent" });
+    expect(onTurn).not.toHaveBeenCalled();
+    expect(beats()).toEqual([]);
   });
 
   it("a failed mint throws and reports nothing: the token route already closed it", async () => {
@@ -589,16 +662,87 @@ describe("ElevenLabs: every exit before connect reports failed_connect once", ()
     await expect(call.mint(URL, noop)).rejects.toThrow("Your minutes are held by another call.");
     call.failed();
     call.unmount();
+    await flush();
     expect(ends()).toEqual([]);
   });
 
   it("a connected call is left to its own end event on unmount", async () => {
-    const { call, sdk } = await started();
+    const { call, sdk, h } = await started();
     sdk.onConnect();
     sdk.onMessage({ message: "Hi, this is the buyer.", role: "agent" });
     call.unmount();
+    await flush();
     expect(ends()).toEqual([]);
-    call.meter.end("user_hangup");
-    expect(ends()).toEqual([{ callId: "call-el", reason: "user_hangup", keepalive: true }]);
+    expect(h.endSession).not.toHaveBeenCalled();
+    sdk.onDisconnect(); // the SDK provider ends the session on unmount
+    expect(ends()).toEqual([{ callId: "call-el", reason: "network_drop", keepalive: true }]);
   });
+});
+
+describe("the same rules on both engines for every exit before connect", () => {
+  type Exit = "hang-up" | "page hide" | "unmount";
+  interface Driven {
+    exit: (e: Exit) => Promise<void>;
+    /** Provider events arriving after the exit (late connect, first audio or message). */
+    late: () => Promise<void>;
+    onEnded: ReturnType<typeof vi.fn>;
+    onError: ReturnType<typeof vi.fn>;
+    /** The attempt's provider connection was torn down (Realtime peer closed, ElevenLabs session ended). */
+    tornDown: () => boolean;
+  }
+
+  async function realtime(): Promise<Driven> {
+    stubFetch((url) => (url === "/api/realtime/session" ? Response.json({ clientSecret: "ek_fictional_test_only", callId: "call-x", sessionId: "call-x" }) : Response.json({ sdp: "v=0 answer" })));
+    const h = handlers();
+    const call = new RealtimeCall(scenario, h);
+    await call.start();
+    return {
+      exit: async (e) => { if (e === "hang-up") call.end(); else if (e === "page hide") page.dispatchEvent(new Event("pagehide")); else call.close(false); await flush(); },
+      late: async () => { lastPc!.dc.readyState = "open"; lastPc!.dc.onopen?.(); lastPc!.ontrack?.({ streams: [{ getTracks: () => [] }] }); await flush(); },
+      onEnded: h.onEnded, onError: h.onError,
+      tornDown: () => lastPc!.closed,
+    };
+  }
+
+  async function elevenLabs(): Promise<Driven> {
+    stubFetch(() => Response.json({ token: "tok_fictional_test_only", callId: "call-x" }));
+    const h = elHandlers();
+    const call = new ElevenLabsStart(h);
+    call.mount();
+    const data = await call.mint("/api/elevenlabs/token", noop);
+    const onTurn = vi.fn();
+    const sdk = call.sessionCallbacks(data!.attempt, { onTurn, userEnded: () => false });
+    return {
+      exit: async (e) => { if (e === "hang-up") call.hangUp(); else if (e === "page hide") page.dispatchEvent(new Event("pagehide")); else call.unmount(); await flush(); },
+      late: async () => { sdk.onConnect(); sdk.onMessage({ message: "Hi, this is the buyer.", role: "agent" }); await flush(); expect(onTurn).not.toHaveBeenCalled(); },
+      onEnded: h.onEnded, onError: h.onError,
+      tornDown: () => h.endSession.mock.calls.length > 0,
+    };
+  }
+
+  const screen: Record<Exit, { ended: number; error: string | null }> = {
+    "hang-up": { ended: 1, error: null }, // back to the briefing: nothing said, nothing to grade
+    "page hide": { ended: 0, error: LEFT_BEFORE_CONNECT_MESSAGE }, // back to the briefing with the reason, no grading
+    unmount: { ended: 0, error: null }, // no screen left to update
+  };
+
+  for (const [engine, drive] of [["Realtime", realtime], ["ElevenLabs", elevenLabs]] as const) {
+    for (const exit of ["hang-up", "page hide", "unmount"] as const) {
+      it(`${engine}, ${exit} while connecting: failed_connect once, connection torn down, same screen result, nothing resumes`, async () => {
+        const d = await drive();
+        await d.exit(exit);
+        expect(ends()).toEqual(FAILED_ONCE("call-x"));
+        expect(d.tornDown()).toBe(true);
+        expect(d.onEnded).toHaveBeenCalledTimes(screen[exit].ended);
+        if (screen[exit].error) expect(d.onError).toHaveBeenCalledWith(screen[exit].error);
+        else expect(d.onError).not.toHaveBeenCalled();
+        pageShowPersisted();
+        await d.late();
+        expect(beats()).toEqual([]);
+        expect(ends()).toHaveLength(1);
+        expect(d.onEnded).toHaveBeenCalledTimes(screen[exit].ended);
+        expect(d.onError).toHaveBeenCalledTimes(screen[exit].error ? 1 : 0);
+      });
+    }
+  }
 });

@@ -70,6 +70,9 @@ export class CallMeter {
     this.h.onAbandon?.();
   }
 
+  /** The first heartbeat was sent: the call counts as connected for billing. */
+  get isConnected() { return this.connected; }
+
   open() { this.opened = true; this.maybeConnect(); }
   audio() { this.heard = true; this.maybeConnect(); }
 

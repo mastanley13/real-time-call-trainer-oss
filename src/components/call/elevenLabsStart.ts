@@ -12,18 +12,20 @@ export interface SessionCallbacks {
 }
 
 /**
- * The part of an ElevenLabs voice call before it connects, kept outside React (like RealtimeCall) so every way out of
- * it reports the end to the server once, as failed_connect: a hang-up, unmount or page hide while the token is on its
- * way, a hang-up or page hide while the SDK is still connecting, a start that fails after the mint. One per VoiceSession
- * mount. After the call connects, the meter's own end events apply as before.
+ * The part of an ElevenLabs voice call before it connects, kept outside React (like RealtimeCall). One per VoiceSession
+ * mount; each token starts a new attempt with its own id, and the SDK callbacks are bound to it (sessionCallbacks).
  *
- * It also owns ending the call screen. A hang-up before the SDK reported a connection ends the screen from here, at
- * once: the SDK suppresses its error callback when endSession comes during a pending connection and does not always
- * call onDisconnect, so waiting for it could leave the rep stuck.
+ * Before the call connects, the same rules as RealtimeCall apply to every exit, through one cancel():
+ * - hang-up: cancelled, failed_connect reported once, and the call screen ends at once (onEnded; nothing said, so back to
+ *   the briefing without grading). The SDK suppresses its error callback when endSession comes during a pending
+ *   connection and does not always call onDisconnect, so the screen is not left waiting for it.
+ * - page hide (closed tab, navigation, back/forward cache): cancelled, failed_connect reported once, and the screen goes
+ *   back to the briefing with LEFT_BEFORE_CONNECT_MESSAGE (onError, no grading).
+ * - unmount: cancelled and failed_connect reported once; no screen callback (there is no screen).
+ * A cancelled attempt is final: its SDK session is ended, every later callback (connect, message, error, disconnect) is
+ * ignored, and a late onConnect ends that SDK session again. A token that arrives for it is reported and never started.
  *
- * Each token starts an attempt with its own id, and the SDK callbacks are bound to it (sessionCallbacks). Once an attempt
- * is cancelled (hang-up or page hide before connect) or the screen has ended, every callback from it is ignored: no turn,
- * no meter event, no error, no second screen end. A late onConnect from a cancelled attempt ends that SDK session.
+ * After the call connected (the meter sent its first heartbeat), the SDK's own end events apply as before.
  */
 export class ElevenLabsStart {
   /** The metered call, once the token route answered with a callId. A no-op meter until then. */
@@ -33,7 +35,7 @@ export class ElevenLabsStart {
   private unmounted = false;
   /** The page was hidden (closed, navigated away) while the token request was pending. */
   private hiddenDuringMint = false;
-  /** The SDK reported the connection (onConnect). From then on its onDisconnect ends the screen, as before. */
+  /** The SDK reported the connection (onConnect). From then on a hang-up's screen end comes from its onDisconnect. */
   private sdkConnected = false;
   /** The screen was ended (onEnded or the page-hide error): every later SDK callback is ignored. */
   private screenEnded = false;
@@ -41,17 +43,21 @@ export class ElevenLabsStart {
   /**
    * onEnded: ends the call screen. With nothing said by the rep (always the case before connect) the trainer goes back
    * to the briefing without grading. onError: shows an error; before the rep spoke it also returns to the briefing.
-   * endSession: ends the SDK session, also one that is still connecting.
+   * endSession: ends the SDK session, also one that is still connecting (harmless when there is none).
    */
   constructor(private h: { onEnded: () => void; onError: (msg: string) => void; endSession: () => void }) {}
 
-  /** Mounted (again, under StrictMode): a later token answer may start the call. */
+  /** Mounted (again, under StrictMode): the attempt carries on. */
   mount() { this.unmounted = false; }
 
-  /** Unmounted: a token still on its way is reported and never started; a call that did not connect is reported now. */
+  /**
+   * Unmounted. A call that did not connect is cancelled like any other pre-connect exit. The cancel waits one task: a
+   * StrictMode remount comes back in the same task and the attempt carries on; a real unmount does not come back. A
+   * connected call is left to the SDK, whose provider ends the session on unmount and reports through onDisconnect.
+   */
   unmount() {
     this.unmounted = true;
-    this.meter.abandon();
+    setTimeout(() => { if (this.unmounted && !this.meter.isConnected) this.cancel(); }, 0);
   }
 
   /** True when this attempt must not start or show anything more: hung up, unmounted, page hidden, or screen ended. */
@@ -66,19 +72,24 @@ export class ElevenLabsStart {
    */
   async mint(url: string, handlers: MeterHandlers): Promise<(TokenAnswer & { attempt: number }) | null> {
     const id = ++this.attempt;
+    this.meter = new CallMeter(undefined, { onStop: () => {}, onGiveUp: () => {} });
     this.cancelled = false;
     this.hiddenDuringMint = false;
     this.sdkConnected = false;
-    const unlisten = onPageHide(() => { this.hiddenDuringMint = true; });
+    // A page hide while the token is on its way cancels the attempt at once (as RealtimeCall does during its mic prompt and
+    // mint); the token, if it still arrives, is then reported and never started.
+    const unlisten = onPageHide(() => {
+      if (id !== this.attempt) return;
+      this.hiddenDuringMint = true;
+      this.pageHidden(id);
+    });
     try {
       const res = await fetch(url);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || "Could not get a voice token.");
-      this.meter = new CallMeter(typeof data.callId === "string" ? data.callId : undefined, { ...handlers, onAbandon: () => this.abandon(id) });
+      this.meter = new CallMeter(typeof data.callId === "string" ? data.callId : undefined, { ...handlers, onAbandon: () => this.pageHidden(id) });
       if (this.isCancelled) {
-        this.meter.end("failed_connect");
-        // Hidden but still here (the back/forward cache): back to the briefing. A hang-up already ended the screen.
-        if (this.hiddenDuringMint && !this.unmounted) this.endScreenLeft();
+        this.cancel(); // reports this token's call: failed_connect, once
         return null;
       }
       return { ...data, attempt: id };
@@ -87,7 +98,7 @@ export class ElevenLabsStart {
     }
   }
 
-  /** The callbacks for startSession, bound to `attempt` (from mint). */
+  /** The callbacks for startSession, bound to `attempt` (from mint). None of them acts once the attempt is cancelled. */
   sessionCallbacks(attempt: number, cb: { onTurn: (t: { role: "user" | "assistant"; text: string }) => void; userEnded: () => boolean }): SessionCallbacks {
     const live = () => attempt === this.attempt && !this.cancelled && !this.screenEnded;
     return {
@@ -120,27 +131,39 @@ export class ElevenLabsStart {
   failed() { this.meter.abandon(); }
 
   /**
-   * The rep hung up. Before the call connected this is a failed connect, reported now. Before the SDK reported a
-   * connection (token still on its way, or the SDK still connecting) the attempt is cancelled and the screen ends here,
-   * since no SDK callback is guaranteed. After onConnect, the SDK's onDisconnect ends it as before.
+   * The rep hung up. Before the SDK reported a connection the attempt is cancelled and the screen ends here. After
+   * onConnect the SDK's onDisconnect ends the screen as before; a call that had not yet sent its first heartbeat is still
+   * reported as failed_connect now.
    */
   hangUp() {
-    this.meter.abandon();
-    if (this.sdkConnected) return;
-    this.cancelled = true;
+    if (this.sdkConnected) {
+      this.meter.abandon();
+      return;
+    }
+    this.cancel();
     this.endScreen();
   }
 
   /**
-   * The page was hidden while attempt `id` was still connecting (the meter has reported failed_connect). The attempt is
-   * cancelled for good and its SDK session ended, so a page restored from the back/forward cache cannot connect it, and
-   * the screen goes back to the briefing with a message.
+   * The page was hidden while attempt `id` had not connected (token on its way, or the SDK connecting; the meter has
+   * then already reported failed_connect). Cancelled for good, and back to the briefing with the reason, no grading.
    */
-  private abandon(id: number) {
-    if (id !== this.attempt) return;
+  private pageHidden(id: number) {
+    if (id !== this.attempt || this.meter.isConnected) return;
+    this.cancel();
+    if (!this.unmounted) this.endScreenLeft();
+  }
+
+  /**
+   * The one pre-connect cancellation (hang-up, page hide, unmount): final for this attempt. Reports failed_connect once
+   * (the meter sends only its first end, and nothing for a call that already connected) and ends the SDK session, also
+   * one still connecting. Every later callback of the attempt is ignored (sessionCallbacks).
+   */
+  private cancel() {
+    this.meter.abandon();
+    if (this.cancelled) return;
     this.cancelled = true;
     this.h.endSession();
-    this.endScreenLeft();
   }
 
   private endScreen() {
