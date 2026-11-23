@@ -56,6 +56,11 @@ export interface CoachResult {
   /** Which coach produced this update. The model id is never sent to the browser. */
   source: "llm" | "heuristic";
   latencyMs: number;
+  /**
+   * 1-based line of the first turn this result was based on, when the coach read less than the client sent. Scores
+   * and steps say nothing about earlier lines, so the client keeps the evidence it already has for them.
+   */
+  windowStart?: number;
 }
 
 /** Blind = no live help; Guided = live estimate and talk track only; Coached = everything including cues. */
