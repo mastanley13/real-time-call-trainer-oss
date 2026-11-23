@@ -564,6 +564,15 @@ describe("first graded call retry (one retry of the same POST)", () => {
     expect(errors.mock.calls.map((c) => c.join(" ")).filter((l) => l.includes("retry"))).toEqual([]);
   });
 
+  it("never retries a connect timeout (TypeError with cause code UND_ERR_CONNECT_TIMEOUT): exactly one POST", async () => {
+    on();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockRejectedValueOnce(new TypeError("fetch failed", { cause: Object.assign(new Error("connect timeout"), { code: "UND_ERR_CONNECT_TIMEOUT" }) }));
+    await postGhlEvent(activation());
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(errors.mock.calls.map((c) => c.join(" "))).toEqual(["[ghl] first_graded_call webhook failed"]);
+  });
+
   it("retries at most once: a second clear failure is logged and dropped", async () => {
     on();
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});

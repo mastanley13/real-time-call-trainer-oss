@@ -21,9 +21,10 @@ import type { PlanTier } from "./usagePlan";
  *
  * Attempts: signup and plan changes get one POST. first_graded_call (ct-activated) gets at most one retry of the same
  * POST (same body, eventId and Idempotency-Key), inside the same background work, after GHL_RETRY_DELAY_MS and with its
- * own GHL_TIMEOUT_MS bound, and only when the first attempt clearly did not deliver: a connection-phase network error
- * before any response, or HTTP 429, 502, 503 or 504. Never after a timeout (GHL may have accepted the request), a 500,
- * another 4xx or a 2xx. The retry repeats only the POST: claimFirstGradedCall runs once and its marker is written once.
+ * own GHL_TIMEOUT_MS bound, and only when the first attempt clearly did not deliver: a connection refused, DNS failure
+ * or unreachable network before any response (cause.code ECONNREFUSED, ENOTFOUND, EAI_AGAIN, ENETUNREACH or
+ * EHOSTUNREACH), or HTTP 429, 502, 503 or 504. Never after any timeout, including a connect timeout
+ * (UND_ERR_CONNECT_TIMEOUT), because GHL may have accepted the request; never after a 500, another 4xx or a 2xx. The retry repeats only the POST: claimFirstGradedCall runs once and its marker is written once.
  *
  * Tags: every payload carries `tags: string[]` so the GHL workflow can apply them to the contact as they are. The one
  * mapping is ghlTagsFor below:
@@ -258,9 +259,10 @@ const RETRY_STATUSES: ReadonlySet<number> = new Set([429, 502, 503, 504]);
 /**
  * Connection-phase failures: the request never reached a server, so it cannot have been accepted. Read from the
  * structured `cause.code` of fetch's TypeError, never from message text. A reset or socket error after the request
- * was sent is not here, because GHL may already have run the workflow.
+ * was sent is not here, because GHL may already have run the workflow. No timeout of any kind is here either, not even a
+ * connect timeout (UND_ERR_CONNECT_TIMEOUT): a timeout is never retried.
  */
-const NOT_SENT_CODES: ReadonlySet<string> = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH", "UND_ERR_CONNECT_TIMEOUT"]);
+const NOT_SENT_CODES: ReadonlySet<string> = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH"]);
 
 /** "delivered" (2xx), "retryable" (clearly not delivered), or "final" (anything else, including a timeout). */
 type GhlAttempt = "delivered" | "retryable" | "final";
@@ -277,7 +279,7 @@ const notSentError = (e: unknown): boolean => {
  *
  * first_graded_call only: when the first attempt clearly did not deliver (a connection-phase network error before any
  * response, or HTTP 429, 502, 503 or 504), the same body and headers (same eventId and Idempotency-Key) are posted once
- * more after GHL_RETRY_DELAY_MS, with their own GHL_TIMEOUT_MS bound. Never on a timeout (GHL may have accepted it), 500,
+ * more after GHL_RETRY_DELAY_MS, with their own GHL_TIMEOUT_MS bound. Never on any timeout, connect timeout included, a 500,
  * another 4xx or 2xx. This only repeats the POST; the claim and its marker are never touched again. Other events get
  * one attempt.
  */
