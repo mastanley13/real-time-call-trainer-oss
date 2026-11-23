@@ -13,10 +13,11 @@ vi.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get: (_t, k) => (mocks.fake
 vi.mock("@/lib/rateLimit", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/rateLimit")>()), ipLimitResponse: () => null, userLimitResponse: () => null }));
 vi.mock("@/lib/apiAuth",() => ({ requireAuth: () => ({ id: mocks.authId, email: `${mocks.authId}@example.test` }), isDemoUser: () => false }));
 
-import { buildCheckoutParams, CheckoutConfigError, entitlementFromItems, PRICE_ENV, priceAllowlist, resetPriceCache, resolvePriceIds, type PriceIds } from "@/lib/billing";
+import { buildCheckoutParams, CheckoutConfigError, entitlementFromItems, lifecycleEventFor, lifecycleRef, PRICE_ENV, priceAllowlist, resetPriceCache, resolvePriceIds, type PriceIds } from "@/lib/billing";
 import { isTeamPlan } from "@/lib/usagePlan";
 import { billingGate, encodeForm, stripeApi, StripeApiError, stripeLiveMode, stripeReady, stripeSecretKey, stripeStatus, stripeTestMode, StripeConfigError, verifyWebhookSignature } from "@/lib/stripe";
 import { classifyPlanChange, setBillingEventSink, type BillingLifecycleEvent } from "@/lib/billingEvents";
+import { ghlBillingSink, planChangePayload, settleGhlEvents } from "@/lib/ghlWebhook";
 import { POST as webhook } from "@/app/api/stripe/webhook/route";
 import { POST as checkout } from "@/app/api/billing/checkout/route";
 import { POST as portal } from "@/app/api/billing/portal/route";
@@ -1151,19 +1152,167 @@ describe("idempotency", () => {
 describe("CRM lifecycle hook (off by default)", () => {
   const seen: BillingLifecycleEvent[] = [];
   beforeEach(() => { seen.length = 0; setBillingEventSink((e) => { seen.push(e); }); });
-  const checkoutPro = (id: string) => deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata: { plan: "pro", userId: "owner-1" } }, id));
+  const CT = { app: "calltrainer", userId: "owner-1" };
+  const checkoutPro = (id: string, metadata: Record<string, string> = { ...CT, plan: "pro" }) =>
+    deliver(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata }, id));
 
   it("emits nothing unless GHL_BILLING_EVENTS=true", async () => {
     await checkoutPro("evt_a");
     expect(seen).toEqual([]);
   });
 
-  it("emits upgrade and churn with ids and plans only", async () => {
+  const SUB1 = lifecycleRef("sub_test_1", null)!;
+
+  it("lifecycleRef digests the subscription id and falls back only when there is none", () => {
+    expect(SUB1).toMatch(/^subscription:[0-9a-f]{32}$/);
+    expect(SUB1).not.toContain("sub_test_1");
+    expect(lifecycleRef("sub_test_1", "evt_x")).toBe(SUB1);
+    expect(lifecycleRef("sub_test_2", null)).not.toBe(SUB1);
+    expect(lifecycleRef(null, "evt_x")).toBe("evt_x");
+    expect(lifecycleRef(undefined, "checkout_session:cs_test_1")).toBe("checkout_session:cs_test_1");
+  });
+
+  it("emits upgrade and churn with ids, plans and the subscription reference only", async () => {
     vi.stubEnv("GHL_BILLING_EVENTS", "true");
     await checkoutPro("evt_b");
-    await deliver(event("customer.subscription.deleted", sub({ pro: true })));
-    expect(seen.map((e) => [e.kind, e.fromPlan, e.toPlan])).toEqual([["upgrade", "free", "pro"], ["churn", "pro", "free"]]);
+    await deliver(event("customer.subscription.deleted", sub({ pro: true, metadata: CT }), "evt_b_del"));
+    expect(seen.map((e) => [e.kind, e.fromPlan, e.toPlan, e.stripeRef, e.purchaserUserId])).toEqual([
+      ["upgrade", "free", "pro", SUB1, "owner-1"],
+      ["churn", "pro", "free", SUB1, "owner-1"],
+    ]);
     expect(JSON.stringify(seen)).not.toContain("@");
+    expect(JSON.stringify(seen)).not.toContain("cus_");
+    expect(JSON.stringify(seen)).not.toContain("sub_");
+  });
+
+  it("forwards a Call Trainer subscription without app metadata: allowlisted plan prices for a known user", async () => {
+    vi.stubEnv("GHL_BILLING_EVENTS", "true");
+    // A portal or hand-made subscription: our Pro price, the user's own customer id, no metadata at all.
+    user().stripeCustomerId = "cus_test_1";
+    await deliver(event("customer.subscription.updated", sub({ pro: true, metadata: {} }), "evt_nometa_up"));
+    expect(user().planTier).toBe("pro");
+    await deliver(event("customer.subscription.deleted", sub({ pro: true, metadata: {} }), "evt_nometa_del"));
+    expect(user().planTier).toBe("free");
+    expect(seen.map((e) => [e.kind, e.fromPlan, e.toPlan, e.stripeRef, e.purchaserUserId])).toEqual([
+      ["upgrade", "free", "pro", SUB1, null],
+      ["churn", "pro", "free", SUB1, null],
+    ]);
+  });
+
+  it("never forwards another product on a shared Stripe account (no allowlisted price, no ct_* metadata)", async () => {
+    vi.stubEnv("GHL_BILLING_EVENTS", "true");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const foreign = (status: string, metadata: Record<string, string> = {}) => ({
+      id: "sub_test_other", customer: "cus_test_1", status, metadata,
+      items: { data: [{ quantity: 1, price: itemPrice("price_other_product", { tier: "gold" }) }] },
+    });
+    // Same Stripe customer as the Call Trainer user, and a plan the link step changes (an admin-set Pro with no subscription).
+    Object.assign(user(), { stripeCustomerId: "cus_test_1", planTier: "pro" });
+    await deliver(event("customer.subscription.updated", foreign("active"), "evt_foreign_up"));
+    // Billing did make a plan change (Pro to Free while linking the foreign subscription); the CRM gate dropped it.
+    expect(user()).toMatchObject({ planTier: "free", stripeSubscriptionId: "sub_test_other" });
+    await deliver(event("customer.subscription.updated", foreign("active", { userId: "owner-1", app: "another-product" }), "evt_foreign_up2"));
+    await deliver(event("customer.subscription.deleted", foreign("canceled"), "evt_foreign_del"));
+    expect(seen).toEqual([]);
+  });
+
+  it("locks the subject row before reading its prior state, on every path that applies a plan change", async () => {
+    const LOCK_USER = 'raw:SELECT "id" FROM "User" WHERE "id" = ? FOR UPDATE';
+    const LOCK_ORG = 'raw:SELECT "id" FROM "Organization" WHERE "id" = ? FOR UPDATE';
+    /** The calls one delivery makes, from its stripeEvent check on. */
+    const callsOf = async (e: unknown) => {
+      const from = fake.calls.length;
+      expect((await deliver(e)).status).toBe(200);
+      return fake.calls.slice(from);
+    };
+    // Valid plan items: the lock comes before the held-subscription, past-due and plan reads.
+    let calls = await callsOf(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_1", subscription: "sub_test_1", metadata: { ...CT, plan: "pro" } }));
+    let lock = calls.indexOf(LOCK_USER);
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(lock).toBeLessThan(calls.indexOf("user.findUniqueOrThrow"));
+    expect(calls.slice(lock + 1, calls.indexOf("user.findUniqueOrThrow"))).toEqual(["user.findUnique", "user.findUnique"]);
+    // Deleted (holder path): looked up, locked, looked up again, then the prior state is read.
+    calls = await callsOf(event("customer.subscription.deleted", sub({ pro: true, metadata: CT })));
+    lock = calls.indexOf(LOCK_USER);
+    expect(calls.slice(lock - 1, lock + 3)).toEqual(["user.findUnique", LOCK_USER, "user.findUnique", "user.findUniqueOrThrow"]);
+    // A Team subscription locks the organization row.
+    calls = await callsOf(event("checkout.session.completed", { mode: "subscription", customer: "cus_test_2", subscription: "sub_test_2", metadata: { ...CT, plan: "team", seats: "3", organizationId: "org-1" } }));
+    lock = calls.indexOf(LOCK_ORG);
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(lock).toBeLessThan(calls.indexOf("organization.findUniqueOrThrow"));
+    expect(org().planTier).toBe("team");
+  });
+
+  it("a committed upgrade is sent once even when the add-on sync after it throws, and Stripe's retries send nothing more", async () => {
+    vi.stubEnv("GHL_BILLING_EVENTS", "true");
+    vi.stubEnv("PREMIUM_VOICE_ON_SALE", "true");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    // Pro with the Premium add-on at quantity 2: the sync must bring it back to 1 after the plan is applied.
+    const update = vi.spyOn(stripeApi, "updateSubscription").mockRejectedValue(new StripeApiError(500));
+    const base = sub({ pro: true, premium: 2, metadata: CT });
+    const withIds = { ...base, items: { data: base.items.data.map((it, i) => ({ ...it, id: `si_test_${i}` })) } };
+    const e = event("customer.subscription.updated", withIds, "evt_addon_fail");
+    expect((await deliver(e)).status).toBe(500);
+    expect(user().planTier).toBe("pro");
+    expect(update).toHaveBeenCalledOnce();
+    expect(seen.map((x) => [x.kind, x.toPlan])).toEqual([["upgrade", "pro"]]);
+    // Stripe retries: once failing again, then succeeding. The plan is already applied, so no second event.
+    expect((await deliver(e)).status).toBe(500);
+    update.mockResolvedValue({});
+    expect((await deliver(e)).status).toBe(200);
+    expect(update).toHaveBeenCalledTimes(3);
+    expect(seen).toHaveLength(1);
+  });
+
+  it("one subscription that upgrades, churns and upgrades again gets three distinct eventIds", async () => {
+    vi.stubEnv("GHL_BILLING_EVENTS", "true");
+    await checkoutPro("evt_t1");
+    await deliver(event("customer.subscription.updated", sub({ pro: true, status: "unpaid", metadata: CT }), "evt_t2"));
+    expect(user().planTier).toBe("free");
+    await deliver(event("customer.subscription.updated", sub({ pro: true, status: "active", metadata: CT }), "evt_t3"));
+    expect(user().planTier).toBe("pro");
+    const ids = seen.map((e) => planChangePayload(e, null).eventId);
+    expect(seen.map((e) => e.kind)).toEqual(["upgrade", "churn", "upgrade"]);
+    expect(new Set(ids).size).toBe(3);
+    for (const id of ids) expect(id).toMatch(new RegExp(`^stripe:${SUB1}:(upgrade|churn):[0-9a-f-]{36}$`));
+  });
+
+  it("the GHL sink posts the classified lifecycle payload, never the Stripe object, and a GHL outage keeps the 200", async () => {
+    vi.stubEnv("GHL_BILLING_EVENTS", "true");
+    vi.stubEnv("GHL_WEBHOOK_URL", "https://hooks.example.test/hooks/loc-test/webhook-trigger/trigger-test");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => { throw new TypeError("fetch failed"); });
+    vi.stubGlobal("fetch", fetchMock);
+    setBillingEventSink(ghlBillingSink);
+    expect((await checkoutPro("evt_ghl")).status).toBe(200);
+    await settleGhlEvents();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const body = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string;
+    expect(JSON.parse(body)).toMatchObject({ eventId: expect.stringMatching(new RegExp(`^stripe:${SUB1}:upgrade:[0-9a-f-]{36}$`)), event: "upgrade", app: "calltrainer", subject: "user", userId: "owner-1", email: "owner-1@example.test", fromPlan: "free", toPlan: "pro", stripeRef: SUB1 });
+    for (const leak of ["cus_", "sub_", "price_", "items"]) expect(body).not.toContain(leak);
+    expect(user().planTier).toBe("pro");
+  });
+
+  it("a redelivered Stripe event emits once", async () => {
+    vi.stubEnv("GHL_BILLING_EVENTS", "true");
+    await checkoutPro("evt_once");
+    await checkoutPro("evt_once");
+    expect(seen.map((e) => e.stripeRef)).toEqual([SUB1]);
+  });
+
+  it("an event with no subscription id falls back to the Stripe event id", () => {
+    const change = { kind: "upgrade" as const, subject: "user" as const, subjectId: "owner-1", fromPlan: "free" as const, toPlan: "pro" as const, seats: 1, premiumVoice: false, transition: "1" };
+    expect(lifecycleEventFor(change, { stripeRef: lifecycleRef(null, "evt_rare"), metadata: [CT] })).toMatchObject({ stripeRef: "evt_rare" });
+  });
+
+  it("lifecycleEventFor: app=calltrainer metadata or a change billing classified as a Calltrainer plan, nothing else", () => {
+    const change = { kind: "upgrade" as const, subject: "user" as const, subjectId: "owner-1", fromPlan: "free" as const, toPlan: "pro" as const, seats: 1, premiumVoice: false, transition: "1" };
+    const origin = (metadata: (Record<string, string> | null)[]) => ({ stripeRef: SUB1, metadata });
+    expect(lifecycleEventFor(change, origin([{ userId: "owner-1" }, null]))).toBeNull();
+    expect(lifecycleEventFor({ ...change, calltrainerPlan: false }, origin([{ app: "another-product" }]))).toBeNull();
+    expect(lifecycleEventFor(change, origin([null, CT]))).toMatchObject({ stripeRef: SUB1, purchaserUserId: "owner-1" });
+    expect(lifecycleEventFor({ ...change, calltrainerPlan: true }, origin([null, null]))).toMatchObject({ stripeRef: SUB1, purchaserUserId: null });
+    expect(lifecycleEventFor({ ...change, calltrainerPlan: true }, { stripeRef: null, metadata: [CT] })).toBeNull();
   });
 
   it("a sink that throws never fails the webhook", async () => {
@@ -1398,6 +1547,50 @@ describe("one outstanding Checkout Session per billing subject", () => {
       await deliverRaw(event("checkout.session.completed", doc({ subscription: "sub_test_9", payment_status: "paid" })));
       expect(user()).toMatchObject({ planTier: "pro", stripeSubscriptionId: "sub_test_9" });
       expect(cancelSpy).not.toHaveBeenCalled();
+    });
+
+    describe("the CRM key is the same whichever path applies the checkout first", () => {
+      const seen: BillingLifecycleEvent[] = [];
+      const ct = { plan: "pro", userId: "owner-1", app: "calltrainer" };
+      const SUB9 = lifecycleRef("sub_test_9", null);
+      beforeEach(() => {
+        seen.length = 0;
+        vi.stubEnv("GHL_BILLING_EVENTS", "true");
+        setBillingEventSink((e) => { seen.push(e); });
+        liveSub({ id: "sub_test_9", pro: true, metadata: ct });
+      });
+
+      it("success page first: keyed on the subscription, and the later webhook sends nothing", async () => {
+        await post({ plan: "pro", interval: "month" });
+        failExpire(400);
+        vi.spyOn(stripeApi, "retrieveCheckoutSession").mockResolvedValue(doc({ status: "complete", payment_status: "paid", subscription: "sub_test_9", metadata: ct }));
+        expect((await post({ plan: "pro", interval: "year" })).status).toBe(409);
+        await deliverRaw(event("checkout.session.completed", doc({ subscription: "sub_test_9", payment_status: "paid", metadata: ct })));
+        expect(seen.map((e) => [e.kind, e.stripeRef])).toEqual([["upgrade", SUB9]]);
+      });
+
+      it("webhook first: the same key", async () => {
+        await deliverRaw(event("checkout.session.completed", doc({ subscription: "sub_test_9", payment_status: "paid", metadata: ct })));
+        expect(seen.map((e) => [e.kind, e.stripeRef])).toEqual([["upgrade", SUB9]]);
+      });
+
+      it("one transition sends one event across the webhook, its retry and the success page", async () => {
+        const completed = event("checkout.session.completed", doc({ subscription: "sub_test_9", payment_status: "paid", metadata: ct }), "evt_same_transition");
+        await post({ plan: "pro", interval: "month" });
+        vi.spyOn(console, "error").mockImplementation(() => {});
+        // The webhook's first try fails inside its transaction and rolls back; Stripe's retry applies the change.
+        fake.failNextUpdate("user");
+        expect((await deliverRaw(completed)).status).toBe(500);
+        expect(seen).toEqual([]);
+        expect((await deliverRaw(completed)).status).toBe(200);
+        // The success page for the same checkout, then another webhook for it: both read the post-change row and send nothing.
+        failExpire(400);
+        vi.spyOn(stripeApi, "retrieveCheckoutSession").mockResolvedValue(doc({ status: "complete", payment_status: "paid", subscription: "sub_test_9", metadata: ct }));
+        expect((await post({ plan: "pro", interval: "year" })).status).toBe(409);
+        await deliverRaw(event("checkout.session.completed", doc({ subscription: "sub_test_9", payment_status: "paid", metadata: ct })));
+        // One event, from the path that applied the change, with the transition id made in that transaction.
+        expect(seen.map((e) => planChangePayload(e, null).eventId)).toEqual([expect.stringMatching(new RegExp(`^stripe:${SUB9}:upgrade:[0-9a-f-]{36}$`))]);
+      });
     });
 
     it("a completed session whose payment is still pending keeps blocking, and a failed payment frees the account", async () => {

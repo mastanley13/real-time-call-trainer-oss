@@ -9,6 +9,7 @@ import { validNextPath } from "@/lib/safeNext";
 import { googleLandingPath } from "@/lib/signupIntent";
 import { sanitizeSignupIntent, type SignupIntent } from "@/lib/pricing";
 import { clientIp, ipLimitResponse } from "@/lib/rateLimit";
+import { notifySignup } from "@/lib/ghlWebhook";
 import { linkGoogleAtomically, checkIdTokenClaims, decodeIdToken, exchangeCode, flowCookieOptions, GOOGLE_FLOW_COOKIE, googleConfig, verifyFlowState, type GoogleProfile } from "@/lib/googleAuth";
 
 /**
@@ -89,8 +90,9 @@ export async function GET(req: NextRequest) {
         if (gate && !(await hasValidAccessCookie(req, gate))) {
           return back(req, "/access?next=%2Fregister&reason=google_invite");
         }
+        const intent = sanitizeSignupIntent(flow.intent ?? {});
         try {
-          user = await createSoloUser(profile, ip, userAgent, sanitizeSignupIntent(flow.intent ?? {}));
+          user = await createSoloUser(profile, ip, userAgent, intent);
           created = true;
         } catch (error) {
           // Two first-time callbacks can both pass the email lookup and then lose on user.email or
@@ -100,6 +102,11 @@ export async function GET(req: NextRequest) {
           if (!recovered) return fail(req, "google_failed");
           user = recovered.user;
           pendingLink = recovered.pendingLink;
+        }
+        // Only the callback whose create committed is a new signup; a clash winner already sent its own event.
+        // Fire and forget, so a GHL outage never fails sign-in.
+        if (created) {
+          notifySignup({ userId: user.id, organizationId: user.organizationId, email: user.email, method: "google", role: "owner", intent });
         }
       }
     }

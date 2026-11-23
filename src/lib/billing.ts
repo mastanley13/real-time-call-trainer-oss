@@ -1,14 +1,21 @@
 import "server-only";
+import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "./db";
 import { ensureAllowance } from "./usage";
-import { emitBillingLifecycle, emitPremiumEvent, classifyPlanChange, type BillingLifecycleEvent, type PremiumEvent } from "./billingEvents";
+import { emitBillingLifecycle, emitPremiumEvent, classifyPlanChange, isCalltrainerStripe, setBillingEventSink, setPremiumEventSink, type BillingLifecycleEvent, type PlanChange, type PremiumEvent } from "./billingEvents";
+import { ghlBillingSink, ghlPremiumSink } from "./ghlWebhook";
 import { TEAM_MAX_SEATS, TEAM_MIN_SEATS, isPlanTier, nextAnchorUnix, type PlanTier } from "./usagePlan";
 import { blocksCheckout, isEntitled, nextPastDueSince } from "./subscriptionStatus";
 import { PREMIUM_STATUSES } from "./premiumVoice";
 import { premiumOnSale } from "./serverConfig";
 import { stripeApi, StripeApiError, stripeLiveMode, type StripeParams } from "./stripe";
+
+// The one place the CRM sinks are registered. They still send nothing unless GHL_BILLING_EVENTS=true and GHL_WEBHOOK_URL is set.
+// The premium sink forwards only voice_cap_hit. Routes that emit it import this module so the sink is set in their bundle.
+setBillingEventSink(ghlBillingSink);
+setPremiumEventSink(ghlPremiumSink);
 
 /**
  * Checkout parameters and webhook handling. Stripe is the billing source of truth; this module mirrors
@@ -491,6 +498,32 @@ async function findSubject(tx: Tx, ref: { subscriptionId?: string | null; custom
   return null;
 }
 
+/**
+ * Row-locks the billing subject (SELECT ... FOR UPDATE, held until the transaction commits) before anything reads its
+ * prior plan state. Invariant: every transaction that may apply a plan change takes this lock as soon as it knows the
+ * subject and reads the subject's state only after it. So two paths applying the same transition (the success page and
+ * the Stripe webhook), or a plan change and any other write to the row, run one after the other: the later one reads
+ * the committed post-change row, sees no change and emits nothing. Only the path that applies a transition produces a
+ * PlanChange for it, and it is emitted only after that commit (see newTransitionId). Locking the same row twice in one
+ * transaction is a no-op.
+ */
+async function lockSubject(tx: Tx, subject: Subject): Promise<void> {
+  if (subject.kind === "organization") await tx.$queryRaw`SELECT "id" FROM "Organization" WHERE "id" = ${subject.id} FOR UPDATE`;
+  else await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${subject.id} FOR UPDATE`;
+}
+
+/**
+ * The subject whose CURRENT subscription this is, locked. The holder is looked up, locked, then looked up again: if
+ * another transaction moved the subscription while this one waited for the lock, the stale holder is not used.
+ */
+async function lockedHolder(tx: Tx, subscriptionId: string): Promise<Subject | null> {
+  const holder = await subjectOfSubscription(tx, subscriptionId);
+  if (!holder) return null;
+  await lockSubject(tx, holder);
+  const again = await subjectOfSubscription(tx, subscriptionId);
+  return again && again.kind === holder.kind && again.id === holder.id ? holder : null;
+}
+
 async function currentSubscriptionId(tx: Tx, subject: Subject): Promise<string | null> {
   const row = subject.kind === "organization"
     ? await tx.organization.findUnique({ where: { id: subject.id }, select: { stripeSubscriptionId: true } })
@@ -506,7 +539,7 @@ async function pastDueSinceOf(tx: Tx, subject: Subject): Promise<Date | null> {
 }
 
 interface Applied {
-  event: BillingLifecycleEvent | null;
+  event: PlanChange | null;
   /** A second subscription for a subject that already has one: cancel it at Stripe after the transaction commits. */
   cancelSubscriptionId?: string;
   /** Premium Voice events to emit after commit (premium_added, premium_removed). */
@@ -582,7 +615,8 @@ function premiumFlip(subject: Subject, plan: PlanTier, before: boolean, after: b
 /**
  * Writes plan, seats, premium, add-on quantity, period end and Stripe ids onto the subject, then re-derives its
  * UsageAllowance cap, Premium minutes and period. Never writes voiceModelComped or voiceModelTier: comped overrides
- * billing and Stripe never clears it.
+ * billing and Stripe never clears it. Callers hold lockSubject on `subject`, so the prior plan read here cannot change
+ * before the write below.
  */
 async function applyEntitlement(
   tx: Tx, subject: Subject, next: Entitlement,
@@ -671,10 +705,28 @@ async function applyEntitlement(
   };
 }
 
-function build(subject: Subject, from: PlanTier, to: PlanTier, seats: number, premiumVoice: boolean): BillingLifecycleEvent | null {
+/**
+ * The per-transition part of the CRM eventId: a random UUID made inside the transaction that applies the change (billing
+ * writes no AuditEvent per plan change whose id could serve instead). It only has to be unique and stable for one emit,
+ * not agreed across paths: with lockSubject, only the path that applies a transition gets a PlanChange for it (any other
+ * path reads the post-change row and emits nothing), and the event is emitted once, after commit, carrying this value. A
+ * rolled-back attempt emits nothing; Stripe's retry that then applies the change makes the one id. A later transition on
+ * the same subscription (upgrade, churn, upgrade again) gets a new id. Random, so it carries no Stripe id or personal data.
+ */
+export const newTransitionId = (): string => randomUUID();
+
+function build(subject: Subject, from: PlanTier, to: PlanTier, seats: number, premiumVoice: boolean): PlanChange | null {
   const kind = classifyPlanChange(from, to);
-  return kind ? { kind, subject: subject.kind, subjectId: subject.id, fromPlan: from, toPlan: to, seats, premiumVoice } : null;
+  return kind ? { kind, subject: subject.kind, subjectId: subject.id, fromPlan: from, toPlan: to, seats, premiumVoice, transition: newTransitionId() } : null;
 }
+
+/**
+ * Marks the applied plan change as made from a Calltrainer plan by billing's own rules (PlanChange.calltrainerPlan), so
+ * lifecycleEventFor forwards it even when the subscription has no app=calltrainer metadata. Used only where reconcile
+ * classified the items as a Calltrainer plan for the resolved subject, or where the subject held this very subscription.
+ */
+const fromCalltrainerPlan = <A extends Applied | null>(a: A): A =>
+  a?.event ? { ...a, event: { ...a.event, calltrainerPlan: true } } : a;
 
 const FREE: Entitlement = { plan: "free", seats: 1, premium: false };
 
@@ -691,8 +743,10 @@ async function reconcile(
   if (live === null) return null;
   if (live === "gone") {
     // Stripe no longer has it: the same as canceled, and only for the subject that still holds it.
-    const holder = await subjectOfSubscription(tx, subscriptionId);
-    return holder ? applyEntitlement(tx, holder, FREE, { customerId: hint.customerId, subscriptionId: null, status: "canceled" }, now) : null;
+    // The holder's paid plan (the only kind of change here is churn from it) was granted by this subscription's own
+    // Calltrainer plan items, so the change counts as a Calltrainer plan change (see lifecycleEventFor).
+    const holder = await lockedHolder(tx, subscriptionId);
+    return holder ? fromCalltrainerPlan(await applyEntitlement(tx, holder, FREE, { customerId: hint.customerId, subscriptionId: null, status: "canceled" }, now)) : null;
   }
   // "incomplete" (first payment pending or needs action) goes through like any other status: it is recorded and
   // linked, grants nothing (not entitled) and blocks a second checkout until it becomes active or expires.
@@ -709,19 +763,23 @@ async function reconcile(
     // subscription this is drops to Free (fail closed), whatever the status. A subscription nobody holds,
     // or an old one a newer subscription replaced, finds no holder and changes nothing. While Stripe is still
     // billing it (entitled status) the link is kept, so the account cannot start a second subscription.
-    const holder = await subjectOfSubscription(tx, live.id);
-    if (holder) return applyEntitlement(tx, holder, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status }, now);
-    // Nobody holds it yet: a new purchase that failed validation. If Stripe is billing it, record the link
+    const holder = await lockedHolder(tx, live.id);
+    if (holder) return fromCalltrainerPlan(await applyEntitlement(tx, holder, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status }, now));
+    // Nobody holds it yet: a new purchase that failed validation. Not marked as a Calltrainer plan change: these items
+    // are not a Calltrainer plan, so only app=calltrainer metadata could forward a change made here. If Stripe is billing it, record the link
     // (without granting anything) so checkout is blocked and a duplicate is detected, as for a valid purchase.
     if (!blocksCheckout(live.status)) return null;
     const owner = await findSubject(tx, { subscriptionId: live.id, customerId: live.customer, metadata: { ...(hint.metadata ?? {}), ...(live.metadata ?? {}) } });
     if (!owner) return null;
+    await lockSubject(tx, owner);
     const heldByOwner = await currentSubscriptionId(tx, owner);
     if (heldByOwner && heldByOwner !== live.id) return { event: null, cancelSubscriptionId: live.id };
     return applyEntitlement(tx, owner, FREE, { customerId: live.customer, subscriptionId: live.id, status: live.status }, now);
   }
   const subject = await findSubject(tx, { subscriptionId: live.id, customerId: live.customer, metadata: { ...(hint.metadata ?? {}), ...(live.metadata ?? {}) } });
   if (!subject) return null;
+  // Locked before any of its state is read (held, pastDueSince, then the plan in applyEntitlement); see lockSubject.
+  await lockSubject(tx, subject);
 
   const held = await currentSubscriptionId(tx, subject);
   if (held && held !== live.id) {
@@ -733,7 +791,9 @@ async function reconcile(
   const since = nextPastDueSince(live.status, await pastDueSinceOf(tx, subject), now);
   const next = isEntitled(live.status, since, now) ? found : FREE;
   // The stored status and period end feed the stricter Premium check at every mint (src/lib/premiumVoice.ts).
-  const applied = await applyEntitlement(tx, subject, next, { customerId: live.customer, subscriptionId: live.id, status: live.status, periodEnd: periodEndOf(live) }, now);
+  // `found` means entitlementFromItems recognized a Calltrainer plan (allowlisted price or product ct_* metadata), and
+  // `subject` is a Calltrainer user or org, so whatever this changes is a Calltrainer plan change.
+  const applied = fromCalltrainerPlan(await applyEntitlement(tx, subject, next, { customerId: live.customer, subscriptionId: live.id, status: live.status, periodEnd: periodEndOf(live) }, now));
   // Keep the add-on quantity equal to the seats after a seat change made outside the app. Only while Premium is on sale:
   // with the sale off no paid Premium is used, and nothing is written to Stripe for it.
   let sync = next.premium && premiumOnSale() ? addonQuantitySync(live) : null;
@@ -851,8 +911,9 @@ async function onSubscriptionDeleted(tx: Tx, obj: unknown, now: Date): Promise<A
   const sub = SubscriptionObject.pick({ id: true, customer: true }).parse(obj);
   // Only the subject whose current subscription this is loses access. A deleted OLD subscription finds
   // nobody here, so it cannot cancel a newer subscription's entitlement.
-  const holder = await subjectOfSubscription(tx, sub.id);
-  return holder ? applyEntitlement(tx, holder, FREE, { customerId: sub.customer, subscriptionId: null, status: "canceled" }, now) : null;
+  // As in reconcile: churn from a plan the holder got from this subscription's Calltrainer items.
+  const holder = await lockedHolder(tx, sub.id);
+  return holder ? fromCalltrainerPlan(await applyEntitlement(tx, holder, FREE, { customerId: sub.customer, subscriptionId: null, status: "canceled" }, now)) : null;
 }
 
 async function onCheckoutExpired(tx: Tx, obj: unknown): Promise<Applied | null> {
@@ -1016,7 +1077,10 @@ export async function handleStripeEvent(event: StripeEventLike, now = new Date()
   }
   try {
     // The event id is the trigger: Stripe's retry of this event repeats the same add-on sync key, a later event does not.
-    await afterApplied(applied, deps, event.id);
+    await afterApplied(applied, deps, event.id, {
+      stripeRef: lifecycleRef((live && live !== "gone" ? live.id : null) ?? subscriptionIdOf(event), event.id),
+      metadata: [metadataOf(event.data.object), live && live !== "gone" ? live.metadata : null],
+    });
   } catch (e) {
     // Cancel and add-on sync run after commit. Drop the event id so Stripe's 500 retry can do them again.
     if (applied?.cancelSubscriptionId || applied?.addonSync) {
@@ -1027,8 +1091,66 @@ export async function handleStripeEvent(event: StripeEventLike, now = new Date()
   return applied ? "processed" : "ignored";
 }
 
-/** The work that must wait until the transaction has committed: dropping a duplicate subscription, then the lifecycle event. */
-async function afterApplied(applied: Applied | null, deps: StripeDeps, trigger: string): Promise<void> {
+/** Where an applied change came from: the Stripe reference for dedupe, and the metadata on the event object and the live subscription. */
+interface Origin {
+  stripeRef: string | null;
+  metadata: (Record<string, string> | null | undefined)[];
+}
+
+const metadataOf = (obj: unknown): Record<string, string> | null => {
+  const m = Meta.safeParse((obj as { metadata?: unknown } | null | undefined)?.metadata);
+  return m.success ? (m.data ?? null) : null;
+};
+
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * The CRM reference for a plan change: which subscription it was on, the same whichever path applied it (the success
+ * page via applyCompletedCheckout, or the Stripe webhook): `subscription:{first 32 hex of sha256(subscription id)}`. A
+ * digest, so the raw Stripe subscription id never reaches GHL. Every handled event names its subscription
+ * (session.subscription, the live subscription, or the updated or deleted subscription's id), so the fallback is rare: a
+ * checkout session or event that carries no subscription id keeps `checkout_session:{id}` or the Stripe event id (evt_...).
+ *
+ * The eventId is `stripe:{stripeRef}:{kind}:{transition}`, where transition is newTransitionId() from the applying
+ * transaction. The same subscription can repeat a kind (a past-due churn, an upgrade when payment recovers, another
+ * churn); each transition still gets its own eventId, and a receiver may dedupe on every eventId it has seen. Exactly
+ * one path emits each transition (lockSubject), so the id never has to match across paths.
+ */
+export function lifecycleRef(subscriptionId: string | null | undefined, fallback: string | null): string | null {
+  return subscriptionId ? `subscription:${createHash("sha256").update(subscriptionId).digest("hex").slice(0, 32)}` : fallback;
+}
+
+/**
+ * The lifecycle event for the CRM, or null. A plan change is forwarded when EITHER
+ * 1. the event object or the live subscription carries metadata app=calltrainer (our checkout sets it), OR
+ * 2. billing's own rules made the change from a Calltrainer plan (change.calltrainerPlan, set in reconcile and
+ *    onSubscriptionDeleted): entitlementFromItems recognized the subscription's items as a Calltrainer plan (a price on
+ *    the env allowlist, or a product with valid ct_* metadata) and findSubject resolved a Calltrainer user or org; or
+ *    the subscription is the one the subject currently holds and the change is churn from the paid plan it held, which
+ *    billing only ever grants from such items on that same subscription.
+ * Rule 2 covers real Call Trainer subscriptions without our metadata (portal plan switches, legacy ones, ones made by
+ * hand). Another product on a shared Stripe account has no allowlisted price and no ct_* product metadata, so it never
+ * grants a plan and is never marked; a change it causes (for example the link step for a failed purchase) is forwarded
+ * only with app=calltrainer metadata.
+ */
+export function lifecycleEventFor(change: PlanChange | null, origin: Origin): BillingLifecycleEvent | null {
+  if (!change || !origin.stripeRef) return null;
+  if (!change.calltrainerPlan && !origin.metadata.some(isCalltrainerStripe)) return null;
+  const buyer = origin.metadata.map((m) => m?.userId).find((id): id is string => typeof id === "string" && SAFE_ID.test(id)) ?? null;
+  return { ...change, stripeRef: origin.stripeRef, purchaserUserId: buyer };
+}
+
+/**
+ * The work that must wait until the transaction has committed: the CRM lifecycle event (tied to `origin`, see
+ * lifecycleEventFor), dropping a duplicate subscription, the add-on quantity sync (keyed by `trigger`), then Premium events.
+ */
+async function afterApplied(applied: Applied | null, deps: StripeDeps, trigger: string, origin: Origin): Promise<void> {
+  // First, before anything here can throw: the plan transition has committed, and a Stripe retry after a failed cancel or
+  // add-on sync reads the post-change row and gets no PlanChange, so this is the transition's only chance to be sent.
+  // emitBillingLifecycle never throws, and the GHL sink only schedules the POST. Only a Calltrainer plan change becomes a
+  // CRM event (see lifecycleEventFor); Premium events are unaffected by that gate.
+  const event = lifecycleEventFor(applied?.event ?? null, origin);
+  if (event) await emitBillingLifecycle(event);
   if (applied?.cancelSubscriptionId) {
     try {
       await deps.cancelSubscription(applied.cancelSubscriptionId);
@@ -1074,7 +1196,6 @@ async function afterApplied(applied: Applied | null, deps: StripeDeps, trigger: 
       throw e;
     }
   }
-  if (applied?.event) await emitBillingLifecycle(applied.event);
   for (const e of applied?.premiumEvents ?? []) await emitPremiumEvent(e);
 }
 
@@ -1085,8 +1206,12 @@ async function afterApplied(applied: Applied | null, deps: StripeDeps, trigger: 
 export async function syncSubscriptionNow(subscriptionId: string, now = new Date(), deps: StripeDeps = liveDeps): Promise<void> {
   const live = await fetchLive(subscriptionId, deps);
   const applied = await prisma.$transaction((tx) => reconcile(tx, subscriptionId, live, {}, now));
-  // No Stripe event here: the app's own sync is its own trigger.
-  await afterApplied(applied, deps, `app-sync-${now.getTime()}`);
+  // No Stripe event here: the app's own sync is its own trigger. The CRM reference is the subscription digest, the same
+  // one the webhook computes; whichever path applies the change emits it, and the other one sees no change (lockSubject).
+  await afterApplied(applied, deps, `app-sync-${now.getTime()}`, {
+    stripeRef: lifecycleRef(live && live !== "gone" ? live.id : subscriptionId, null),
+    metadata: [live && live !== "gone" ? live.metadata : null],
+  });
 }
 
 /**
@@ -1096,5 +1221,8 @@ export async function syncSubscriptionNow(subscriptionId: string, now = new Date
 async function applyCompletedCheckout(session: z.infer<typeof SessionObject>, now: Date, deps: StripeDeps): Promise<void> {
   const live = await fetchLive(session.subscription ?? null, deps);
   const applied = await prisma.$transaction((tx) => onCheckoutPaid(tx, session, live, now, true));
-  await afterApplied(applied, deps, `checkout-${session.id ?? now.getTime()}`);
+  await afterApplied(applied, deps, `checkout-${session.id ?? now.getTime()}`, {
+    stripeRef: lifecycleRef(session.subscription ?? (live && live !== "gone" ? live.id : null), session.id ? `checkout_session:${session.id}` : null),
+    metadata: [session.metadata, live && live !== "gone" ? live.metadata : null],
+  });
 }

@@ -2,9 +2,9 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
 import { getJwtSecret } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { escapeHtml, sendMail } from "@/lib/mailer";
+import { passwordResetEmail, sendMail } from "@/lib/ghlMail";
 import { resetLink, resetLinkOrigin, signResetToken } from "@/lib/passwordReset";
-import { RESET_NO_DATABASE_MESSAGE, RESET_REQUEST_MESSAGE, RESET_TTL_MINUTES } from "@/lib/passwordReset-types";
+import { RESET_NO_DATABASE_MESSAGE, RESET_REQUEST_MESSAGE } from "@/lib/passwordReset-types";
 import { clientIp, rateLimit, readJsonLimited } from "@/lib/rateLimit";
 
 const RequestSchema = z.object({ email: z.string().trim().email().max(254) });
@@ -65,23 +65,7 @@ async function sendResetEmail(user: { id: string; email: string; passwordHash: s
     }
     const token = signResetToken({ userId: user.id, passwordHash: user.passwordHash, secret: getJwtSecret(), now: Date.now() });
     const link = resetLink(origin, token);
-    const result = await sendMail({
-      to: user.email,
-      subject: "Reset your Real-Time Call Trainer password",
-      text: [
-        "We got a request to reset the password for your Real-Time Call Trainer account.",
-        "",
-        `Choose a new password here. The link expires in ${RESET_TTL_MINUTES} minutes:`,
-        link,
-        "",
-        "If you did not ask for this, you can ignore this email. Your password stays the same.",
-      ].join("\n"),
-      html: [
-        "<p>We got a request to reset the password for your Real-Time Call Trainer account.</p>",
-        `<p><a href="${escapeHtml(link)}">Choose a new password</a>. The link expires in ${RESET_TTL_MINUTES} minutes.</p>`,
-        "<p>If you did not ask for this, you can ignore this email. Your password stays the same.</p>",
-      ].join("\n"),
-    });
+    const result = await sendMail(passwordResetEmail(user.email, link));
     await prisma.auditEvent.create({
       data: {
         userId: user.id,
