@@ -49,6 +49,9 @@ export async function GET(req: NextRequest) {
   let mintAgentId = chosenStandard ? standardAgent.agentId ?? agentId : agentId;
   let voiceTier: "premium" | "standard" | undefined;
   let nextCallStandard = false;
+  // A Free call: the client ends it by itself when its heartbeats keep failing (src/lib/callMeter.ts). Sent only when
+  // true, so a paid token answer is unchanged.
+  let freeRule = false;
   if (meteringEnabled()) {
     // A failed lookup refuses voice (fail closed); text practice never reaches this route.
     const begun = await beginCall(
@@ -74,6 +77,7 @@ export async function GET(req: NextRequest) {
     if (!begun.ok) return voiceUnavailable();
     callId = begun.callId;
     maxSeconds = begun.maxSeconds;
+    freeRule = begun.freeRule;
     mintAgentId = elevenLabsAgentFor(begun.engine).agentId ?? agentId;
     voiceTier = begun.engine;
     nextCallStandard = begun.premium?.nextCallStandard ?? false;
@@ -98,7 +102,7 @@ export async function GET(req: NextRequest) {
     const { token } = await res.json();
     if (!token) throw new Error("no token in response");
     // Metered calls also say which voice tier this call runs on (a label, never an agent or model id).
-    return NextResponse.json({ token, ...(callId ? { callId, maxSeconds, ...(voiceTier ? { voiceTier, nextCallStandard } : {}) } : {}) });
+    return NextResponse.json({ token, ...(callId ? { callId, maxSeconds, ...(voiceTier ? { voiceTier, nextCallStandard } : {}), ...(freeRule ? { freeRule: true } : {}) } : {}) });
   } catch (e) {
     console.error("[elevenlabs/token]", e);
     if (callId) await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);

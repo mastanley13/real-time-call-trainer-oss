@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CallMeter } from "@/lib/callMeter";
+import { CallMeter, HEARTBEAT_LOST_MESSAGE, MAX_FAILED_HEARTBEATS } from "@/lib/callMeter";
 import { DROPPED_BEFORE_CONNECT_MESSAGE, ENDED_BEFORE_CONNECT_MESSAGE, LEFT_BEFORE_CONNECT_MESSAGE, VoiceAttempt } from "@/lib/voiceAttempt";
 import { RealtimeCall } from "@/components/call/RealtimeVoiceSession";
 import { ElevenLabsStart } from "@/components/call/elevenLabsStart";
@@ -675,5 +675,97 @@ describe("after the meter connected, nothing above applies", () => {
     expect(h.onError).toHaveBeenCalledWith("Voice connection error");
     expect(h.onCancelled).not.toHaveBeenCalled();
     expect(ends()).toEqual([{ callId: "call-el", reason: "provider_error", keepalive: true }]);
+  });
+});
+
+// ---- Free heartbeat loss after connect (callMeter) meets the shared pre-connect cancel (VoiceAttempt) ----------------
+
+describe("a Free call's heartbeat-loss end after connect is the connected end, reported once", () => {
+  /**
+   * fetch for a Free call: the mint says freeRule, the connect heartbeat answers, every later heartbeat fails (network
+   * error), so the meter gives up after MAX_FAILED_HEARTBEATS ticks.
+   */
+  function stubFreeCall(engine: "Realtime" | "ElevenLabs", callId: string) {
+    let heartbeats = 0;
+    fetchMock = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u === "/api/usage/heartbeat") {
+        heartbeats += 1;
+        if (heartbeats > 1) throw new TypeError("Failed to fetch");
+        return Response.json({ stop: false, secondsLeft: 600 });
+      }
+      if (u.startsWith("/api/usage/")) return Response.json({});
+      if (u.endsWith("/sdp")) return Response.json({ sdp: "v=0 answer" });
+      return Response.json({ ...(await mintAnswer(engine, callId).json()), freeRule: true });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  }
+
+  it("Realtime: 3 failed heartbeats end the call once as network_drop; later hang-up, unmount and page hide report nothing", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
+    stubFreeCall("Realtime", "call-rt");
+    const h = handlers();
+    const call = new RealtimeCall(scenario, h);
+    await call.start();
+    lastPc!.dc.readyState = "open";
+    lastPc!.dc.onopen!();
+    lastPc!.ontrack!({ streams: [{ getTracks: () => [] }] });
+    await vi.advanceTimersByTimeAsync(600);
+    expect(beats()).toEqual([{ callId: "call-rt", state: "connected" }]);
+    // Connected: the attempt's pre-connect page-hide observer is gone.
+    expect(pageListeners()).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(MAX_FAILED_HEARTBEATS * 10_000);
+    expect(h.onError).toHaveBeenCalledOnce();
+    expect(h.onError).toHaveBeenCalledWith(HEARTBEAT_LOST_MESSAGE);
+    expect(lastPc!.closed).toBe(true);
+    expect(ends()).toEqual([{ callId: "call-rt", reason: "network_drop", keepalive: true }]);
+
+    // Nothing after it reports again or takes the pre-connect path.
+    call.end();
+    call.close(true);
+    call.close(false);
+    pageHide();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(ends()).toHaveLength(1);
+    expect(beats()).toHaveLength(1 + MAX_FAILED_HEARTBEATS);
+    expect(h.onCancelled).not.toHaveBeenCalled();
+    expect(h.onError).toHaveBeenCalledOnce();
+  });
+
+  it("ElevenLabs: 3 failed heartbeats end the session once as network_drop; the SDK's onDisconnect then ends the screen without a second report", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
+    stubFreeCall("ElevenLabs", "call-el");
+    const h = elHandlers();
+    const call = new ElevenLabsStart(h);
+    call.mount();
+    // Wired as TrainerClient's VoiceSession wires it: the handlers depend on the token answer's freeRule.
+    const data = await call.mint("/api/elevenlabs/token", (answer) => ({
+      ...noop,
+      ...(answer.freeRule === true ? { onHeartbeatsLost: () => { call.meter.end("network_drop"); h.endSession(); h.onError(HEARTBEAT_LOST_MESSAGE); } } : {}),
+    }));
+    const sdk = call.sessionCallbacks(data!.attempt, { onTurn: vi.fn(), userEnded: () => false });
+    sdk.onConnect();
+    sdk.onMessage({ message: "Hi, this is the buyer.", role: "agent" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(beats()).toEqual([{ callId: "call-el", state: "connected" }]);
+    expect(pageListeners()).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(MAX_FAILED_HEARTBEATS * 10_000);
+    expect(h.endSession).toHaveBeenCalledOnce();
+    expect(h.onError).toHaveBeenCalledWith(HEARTBEAT_LOST_MESSAGE);
+    expect(ends()).toEqual([{ callId: "call-el", reason: "network_drop", keepalive: true }]);
+
+    // The SDK reports the disconnect the endSession caused: the connected path ends the screen, the meter end is a no-op.
+    sdk.onDisconnect();
+    sdk.onDisconnect();
+    call.hangUp();
+    pageHide();
+    call.unmount();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.onEnded).toHaveBeenCalledOnce();
+    expect(h.onCancelled).not.toHaveBeenCalled();
+    expect(h.endSession).toHaveBeenCalledOnce();
+    expect(ends()).toHaveLength(1);
   });
 });

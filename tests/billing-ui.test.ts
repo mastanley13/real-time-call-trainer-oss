@@ -14,7 +14,7 @@ vi.mock("@/lib/apiAuth", async () => ({
 import CallError from "@/components/call/CallError";
 import {
   ASK_ADMIN_MESSAGE, canUpgradeFromUsage, capCopy,
-  CAP_REACHED_MESSAGE, CAP_STOPPED_MESSAGE, PRICE, clampSeats, formatMinutes, freeOverCapNotice, isCapMessage, minutesLeftFromUsage, minutesLeftLabel,
+  CAP_REACHED_MESSAGE, CAP_STOPPED_MESSAGE, FREE_CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE, PRICE, clampSeats, formatMinutes, freeOverCapNotice, isCapMessage, minutesLeftFromUsage, minutesLeftLabel,
   planPriceLine, premiumLabel, proButtonLabel, teamButtonLabel, usageHeaderCopy,
   ADD_PREMIUM_LABEL, ASK_ADMIN_PREMIUM, NEXT_CALL_STANDARD_NOTICE, premiumFallbackLine, premiumLeftLabel, voiceLabel,
 } from "@/lib/billingUi";
@@ -49,7 +49,7 @@ describe("billing page header copy (item 4)", () => {
 
 describe("copy rules", () => {
   const all = [
-    CAP_REACHED_MESSAGE, CAP_STOPPED_MESSAGE, usageHeaderCopy("free"), usageHeaderCopy("pro"), usageHeaderCopy("team"), usageHeaderCopy(undefined),
+    CAP_REACHED_MESSAGE, CAP_STOPPED_MESSAGE, FREE_CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE, usageHeaderCopy("free"), usageHeaderCopy("pro"), usageHeaderCopy("team"), usageHeaderCopy(undefined),
     planPriceLine("pro", "month"), planPriceLine("pro", "year"), planPriceLine("team", "month"), planPriceLine("team", "year"),
     premiumLabel("month"), premiumLabel("year"), proButtonLabel("team"), minutesLeftLabel(0.5),
     premiumLabel("month", "pro"), NEXT_CALL_STANDARD_NOTICE, premiumFallbackLine("2026-12-05T00:00:00Z"), premiumFallbackLine(null),
@@ -73,6 +73,11 @@ describe("copy rules", () => {
     expect(body.message).toBe(CAP_REACHED_MESSAGE);
     expect(isCapMessage(body.message)).toBe(true);
     expect(isCapMessage(CAP_STOPPED_MESSAGE)).toBe(true);
+    // The Free stop gets the Upgrade link too; the 1 minute warning is not a cap message.
+    expect(isCapMessage(FREE_CAP_STOPPED_MESSAGE)).toBe(true);
+    expect(isCapMessage(FREE_CAP_WARNING_MESSAGE)).toBe(false);
+    expect(FREE_CAP_STOPPED_MESSAGE).toMatch(/practicing in Text/);
+    expect(FREE_CAP_WARNING_MESSAGE).toBe("1 minute left on your free practice minutes. Wrap up the call.");
     expect(isCapMessage("Voice connection error")).toBe(false);
     expect(isCapMessage(undefined)).toBe(false);
   });

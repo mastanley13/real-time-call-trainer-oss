@@ -15,7 +15,7 @@ import { elevenLabsAgentFor } from "@/lib/serverConfig";
 import { resolveTierModel } from "@/lib/voiceModels";
 import { verifyMintReceipt } from "@/lib/mintReceipt";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
-import { MAX_CALL_SECONDS } from "@/lib/usagePlan";
+import { FREE_END_GRACE_SECONDS, MAX_CALL_SECONDS } from "@/lib/usagePlan";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
 import { POST as saveTranscript } from "@/app/api/transcripts/route";
 import { transcriptSaveBody } from "@/lib/sessionStore";
@@ -485,13 +485,14 @@ describe("heartbeat trust: usage is settled from the server's mint time", () => 
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
   });
 
-  it("a silent Free call is still bounded by its reservation: a closed tab is not billed for a day", async () => {
+  it("a silent Free call is billed to its last heartbeat plus the grace: a closed tab is not billed for a day", async () => {
     addUser("u-1");
     const c = await begin("u-1");
     await heartbeat("u-1", c.callId, "connected", at(0));
     await usageSummary("u-1", at(3 * 3600));
-    expect(session(c.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 10, abuseFlagged: false });
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
+    // Connect heartbeat at 0 s plus FREE_ABANDON_GRACE_SECONDS (15 s): 1 started minute, not the 10 it reserved.
+    expect(session(c.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 15, billedMinutes: 1, abuseFlagged: false });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 1, minutesReserved: 0 });
   });
 
   it("the maximum length is the minutes left at mint time, capped at 60", async () => {
@@ -551,10 +552,12 @@ describe("heartbeat trust: usage is settled from the server's mint time", () => 
       expect(bodies[0].expires_after.seconds).toBe(600);
     });
 
-    it("a Free call is not limited by the plan cap: only the call length limit, and the secret lifetime stays 10 minutes", async () => {
+    it("a Free call is limited to its Free minutes plus the end grace, and the secret lifetime stays 10 minutes", async () => {
       addUser("u-1");
       const body = await (await mint()).json();
-      expect(body.maxSeconds).toBe(MAX_CALL_SECONDS);
+      // Was MAX_CALL_SECONDS before the Free mid-call cap (a Free call could run 24 hours).
+      expect(body.maxSeconds).toBe(10 * 60 + FREE_END_GRACE_SECONDS);
+      expect(body.maxSeconds).toBeLessThan(MAX_CALL_SECONDS);
       expect(bodies[0].expires_after.seconds).toBe(600);
       expect(allowanceOf("u-1").minutesReserved).toBe(10);
     });
@@ -567,7 +570,7 @@ describe("reservations", () => {
   it("a second call cannot take minutes the first call holds, and gets them back when it ends", async () => {
     addUser("u-1");
     const a = await begin("u-1");
-    expect(a.maxSeconds).toBe(MAX_CALL_SECONDS); // Free: the reservation gates starts, it does not limit the running call
+    expect(a.maxSeconds).toBe(10 * 60 + FREE_END_GRACE_SECONDS); // Free: the reservation limits the running call, plus the end grace
     expect(allowanceOf("u-1").minutesReserved).toBe(10);
     expect(await beginCall("u-1", scn, at(1))).toEqual({ ok: false, error: "minutes_reserved" });
 

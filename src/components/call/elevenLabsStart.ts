@@ -1,8 +1,8 @@
-import { CallMeter, type MeterHandlers } from "@/lib/callMeter";
+import { CallMeter, type MeterEndReason, type MeterHandlers } from "@/lib/callMeter";
 import { DROPPED_BEFORE_CONNECT_MESSAGE, VoiceAttempt } from "@/lib/voiceAttempt";
 
-/** What /api/elevenlabs/token answers. Labels and numbers only, no model id. */
-export interface TokenAnswer { token?: string; callId?: string; maxSeconds?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown }
+/** What /api/elevenlabs/token answers. Labels and numbers only, no model id. freeRule: the call is on the Free rule. */
+export interface TokenAnswer { token?: string; callId?: string; maxSeconds?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown; freeRule?: unknown }
 
 /** The SDK callbacks one attempt passes to startSession. Each is bound to that attempt's id. */
 export interface SessionCallbacks {
@@ -53,16 +53,18 @@ export class ElevenLabsStart {
    * Asks the server for a token (it reserves the minutes and returns the callId) in a new attempt; an older attempt still
    * before connect is superseded (row 15). Null when the attempt was cancelled while the request was in flight (rows 1,
    * 2, 3); the minted call is then reported as failed_connect at once (row 7). Throws on a failed mint (row 6), which the
-   * token route has already closed on the server; the caller passes the message to failed().
+   * token route has already closed on the server; the caller passes the message to failed(). `handlers` may depend on
+   * the answer (a Free call, freeRule, adds onHeartbeatsLost).
    */
-  async mint(url: string, handlers: MeterHandlers): Promise<(TokenAnswer & { attempt: number }) | null> {
+  async mint(url: string, handlers: MeterHandlers | ((data: TokenAnswer) => MeterHandlers)): Promise<(TokenAnswer & { attempt: number }) | null> {
     this.attempt?.cancel("superseded");
     const attempt = new VoiceAttempt({ teardown: () => this.h.endSession(), onCancelled: (m) => this.h.onCancelled(m) });
     this.attempt = attempt;
     const res = await fetch(url);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.message || "Could not get a voice token.");
-    if (!attempt.minted(typeof data.callId === "string" ? data.callId : undefined, handlers)) return null;
+    const meterHandlers = typeof handlers === "function" ? handlers(data) : handlers;
+    if (!attempt.minted(typeof data.callId === "string" ? data.callId : undefined, meterHandlers)) return null;
     if (this.unmounted) {
       attempt.cancel("unmount");
       return null;
@@ -70,8 +72,12 @@ export class ElevenLabsStart {
     return { ...data, attempt: attempt.id };
   }
 
-  /** The callbacks for startSession, bound to `attemptId` (from mint). None of them acts once the attempt is over. */
-  sessionCallbacks(attemptId: number, cb: { onTurn: (t: { role: "user" | "assistant"; text: string }) => void; userEnded: () => boolean }): SessionCallbacks {
+  /**
+   * The callbacks for startSession, bound to `attemptId` (from mint). None of them acts once the attempt is over.
+   * onUserTranscript: a rep's final transcript was recorded (a Free cap stop's flush window hangs up on it).
+   * disconnected: true when a Free cap stop (CapStopEnd) reported and ended the call itself on this disconnect.
+   */
+  sessionCallbacks(attemptId: number, cb: { onTurn: (t: { role: "user" | "assistant"; text: string }) => void; userEnded: () => boolean; onUserTranscript?: () => void; disconnected?: () => boolean }): SessionCallbacks {
     const current = () => (this.attempt?.id === attemptId && this.attempt.live ? this.attempt : null);
     return {
       onConnect: () => {
@@ -86,6 +92,7 @@ export class ElevenLabsStart {
         // ElevenLabs has no packet-level event; the first agent message is the first remote audio.
         if (role !== "user") a.meter.audio();
         cb.onTurn({ role: role === "user" ? "user" : "assistant", text: message });
+        if (role === "user") cb.onUserTranscript?.();
       },
       onError: (m) => {
         const a = current();
@@ -101,9 +108,21 @@ export class ElevenLabsStart {
         if (a.cancel("error", DROPPED_BEFORE_CONNECT_MESSAGE)) return; // row 13: before connect
         a.meter.end(cb.userEnded() ? "user_hangup" : "network_drop");
         a.finish();
+        if (cb.disconnected?.()) return; // a Free cap stop reports and ends the call itself
         this.h.onEnded();
       },
     };
+  }
+
+  /**
+   * A connected call ended outside onDisconnect (a Free cap stop whose disconnect never came): the meter reports the end
+   * once (a second end is a no-op) and later callbacks of the attempt are ignored.
+   */
+  endConnected(reason: MeterEndReason) {
+    const a = this.attempt;
+    if (!a) return;
+    a.meter.end(reason);
+    a.finish();
   }
 
   /** The start failed: a failed mint (row 6) or startSession throwing after it (row 14). */

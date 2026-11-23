@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { createFakePrisma } from "./fakePrisma";
 
-// Free voice is 10 minutes a month, checked only when a call starts. Same fakes as usage-metering.test.ts:
+// Free voice is 10 minutes a month. A voice start needs some of them left, and a running Free call is stopped at the Free
+// minutes it reserved at its start plus FREE_END_GRACE_SECONDS, with a warning about a minute before. STR-715 (fc9bdb4)
+// checked the cap only at the start and let a started Free call run up to 24 hours; that is reversed here, so the tests
+// that pinned it now pin the mid-call cap and say why. Same fakes as usage-metering.test.ts:
 // the database and the session check are replaced; metering, the ledger and the routes run for real.
 const mocks = vi.hoisted(() => ({
   fake: null as unknown as ReturnType<typeof import("./fakePrisma").createFakePrisma>,
@@ -20,8 +23,9 @@ vi.mock("@/lib/apiAuth", async () => ({
   isDemoUser: () => false,
 }));
 
-import { beginCall, checkCap, creditManual, endCall, ensureAllowance, heartbeat, resolveAllowance, usageSummary } from "@/lib/usage";
-import { FREE_MINUTES, MAX_CALL_SECONDS, capFor } from "@/lib/usagePlan";
+import { FREE_ABANDON_REDUCED_MARKER, beginCall, checkCap, creditManual, endCall, ensureAllowance, freeAbandonClaimKey, heartbeat, resolveAllowance, usageSummary } from "@/lib/usage";
+import { FREE_ABANDON_GRACE_SECONDS, FREE_ABANDON_REDUCED_PER_PERIOD, FREE_CAP_WARNING_SECONDS, FREE_END_GRACE_SECONDS, FREE_MINUTES, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, NEVER_CONNECTED_RECLAIM_SECONDS, callLimitSeconds, capFor, endGraceSeconds, exactCapStop, freeCapWarning, freeCapWarningReached } from "@/lib/usagePlan";
+import { CAP_STOPPED_MESSAGE, FREE_CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE, isCapMessage } from "@/lib/billingUi";
 import { setPremiumEventSink, type PremiumEvent } from "@/lib/billingEvents";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { POST as realtimeSession } from "@/app/api/realtime/session/route";
@@ -69,7 +73,42 @@ async function runCall(userId: string, o: { endAt: number; start?: number }) {
   return { begun, callId: begun.callId, answers, result: result! };
 }
 
-const post = (url: string, body: unknown) => new NextRequest(`http://localhost${url}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+/**
+ * A voice call the way the real client runs it: heartbeats every 10 seconds until the server says stop or `endAt`, and on
+ * a stop it hangs up at once (CallMeter stops heartbeating and the call ends through the hang-up path).
+ */
+async function callUntilStopped(userId: string, o: { endAt: number }) {
+  const begun = await beginCall(userId, scn, at(0));
+  if (!begun.ok) throw new Error(begun.error);
+  const connected = await heartbeat(userId, begun.callId, "connected", at(0));
+  const answers: Array<Awaited<ReturnType<typeof heartbeat>> & { t: number }> = [];
+  let t = 10;
+  for (; t < o.endAt; t += 10) {
+    const a = await heartbeat(userId, begun.callId, "ok", at(t));
+    answers.push({ ...a, t });
+    if (a.found && a.stop) break;
+  }
+  const result = await endCall(userId, begun.callId, "user_hangup", at(Math.min(t, o.endAt)));
+  const stop = answers.find((a) => a.found && a.stop);
+  return { begun, callId: begun.callId, connected, answers, stop, result: result! };
+}
+
+/**
+ * The debrief path as TrainerClient runs it: grade under the id the call is saved under (sessionId = the call id for a
+ * metered call, plus its callId), split the grade seal off the answer (splitSeal), and save the transcript with the grade
+ * and its seal. The seal is keyed on JWT_SECRET, stubbed here with a fixture value. Returns both answers.
+ */
+async function gradeAndSave(ids: { sessionId: string; callId?: string }, durationSeconds: number) {
+  vi.stubEnv("JWT_SECRET", "fixture-only-not-a-secret-0123456789abcdef");
+  const graded = await evaluate(post("/api/evaluate-call", { scenario, transcript, ...ids }));
+  expect(graded.status).toBe(200);
+  const { seal, ...evaluation } = (await graded.json()) as { seal?: string; overallScore: number; grade: string };
+  expect(typeof seal).toBe("string");
+  const saved = await saveTranscript(post("/api/transcripts", { ...ids, transcript, durationSeconds, scenario: { id: scenario.id }, evaluation, seal }));
+  expect(saved.status).toBe(200);
+  return { evaluation, saved: (await saved.json()) as { id: string } };
+}
+const post =(url: string, body: unknown) => new NextRequest(`http://localhost${url}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
 const scenario = BUILT_IN_SCENARIOS[0];
 const transcript = [
   { role: "assistant", text: "Hello, this is Dana." },
@@ -118,56 +157,218 @@ describe("the Free allowance", () => {
   });
 });
 
-describe("the cap is checked only when a call starts", () => {
-  it("2: a call started at 9.5 of 10 used runs 3 minutes with no cutoff, is graded and debriefed, and usage reads 12.5", async () => {
+describe("a running Free call is stopped at its Free minutes plus the end grace", () => {
+  it("the grace and warning constants, and the pure limit and warning rules", () => {
+    // 20 s: up to 10 s of heartbeat lag plus time to finish a sentence, and still under half a minute (see usagePlan.ts).
+    expect(FREE_END_GRACE_SECONDS).toBeGreaterThanOrEqual(15);
+    expect(FREE_END_GRACE_SECONDS).toBeLessThanOrEqual(30);
+    expect(FREE_CAP_WARNING_SECONDS).toBe(60);
+    expect(exactCapStop("free")).toBe(false);
+    expect(exactCapStop("pro")).toBe(true);
+    expect(exactCapStop("team")).toBe(true);
+    expect(endGraceSeconds(false)).toBe(FREE_END_GRACE_SECONDS);
+    expect(endGraceSeconds(true)).toBe(0);
+
+    // Free: remaining minutes * 60 + grace. Paid: exactly the reservation, as before.
+    expect(callLimitSeconds(10, false)).toBe(10 * 60 + FREE_END_GRACE_SECONDS);
+    expect(callLimitSeconds(1, false)).toBe(60 + FREE_END_GRACE_SECONDS);
+    expect(callLimitSeconds(10, true)).toBe(600);
+    expect(callLimitSeconds(60, true)).toBe(3600);
+    // Never past the call length limit, and never negative.
+    expect(callLimitSeconds(MAX_CALL_SECONDS, false)).toBe(MAX_CALL_SECONDS);
+    expect(callLimitSeconds(MAX_CALL_SECONDS, true)).toBe(MAX_CALL_SECONDS);
+    expect(callLimitSeconds(-3, false)).toBe(FREE_END_GRACE_SECONDS);
+
+    // Warned from 60 s of Free minutes left (secondsLeft counts the grace too) until the stop, inside the grace included.
+    const g = FREE_END_GRACE_SECONDS;
+    expect(freeCapWarning(g + 61)).toBe(false);
+    expect(freeCapWarning(g + 60)).toBe(true);
+    expect(freeCapWarning(g + 1)).toBe(true);
+    expect(freeCapWarning(g)).toBe(true);
+    expect(freeCapWarning(1)).toBe(true);
+    expect(freeCapWarning(0)).toBe(false);
+  });
+
+  it("beginCall: a Free call's maxSeconds is its remaining minutes * 60 plus the grace, never 86400, and paid is unchanged", async () => {
+    for (const [used, minutes] of [[0, 10], [4, 6], [9, 1]] as const) {
+      fake = createFakePrisma();
+      mocks.fake = fake;
+      await freeUserWith(used);
+      const begun = await beginCall("u-1", scn, at(0));
+      expect(begun, `${used} of 10 used`).toMatchObject({ ok: true, remaining: minutes, maxSeconds: minutes * 60 + FREE_END_GRACE_SECONDS });
+      if (!begun.ok) continue;
+      expect(begun.maxSeconds).not.toBe(MAX_CALL_SECONDS);
+      expect(begun.maxSeconds).toBeLessThanOrEqual(MAX_CALL_SECONDS);
+      expect(session(begun.callId)).toMatchObject({ capEnforced: false, reservedMinutes: minutes });
+    }
+    // Pro: exactly the reservation, no grace, as before.
+    fake = createFakePrisma();
+    mocks.fake = fake;
+    addUser("u-1", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
+    allowanceOf("u-1").minutesUsed = 196;
+    const pro = await beginCall("u-1", scn, at(0));
+    expect(pro).toMatchObject({ ok: true, maxSeconds: 240 });
+    if (pro.ok) expect(session(pro.callId).capEnforced).toBe(true);
+  });
+
+  it("2: a call started at 9.5 of 10 used is stopped at its one reserved minute plus the grace, billed that minute, then graded and debriefed", async () => {
     await freeUserWith(9.5);
     const start = await resolveAllowance(fake.db as never, "u-1", at(0));
     expect(start).toMatchObject({ remaining: 0.5, available: 0.5 });
-    const { begun, callId, answers, result } = await runCall("u-1", { endAt: 180 });
+    const { begun, callId, connected, answers, stop, result } = await callUntilStopped("u-1", { endAt: 180 });
 
-    // Past the minute the call held, the server never said stop and never clamped it.
-    expect(begun.maxSeconds).toBe(MAX_CALL_SECONDS);
-    expect(answers.length).toBeGreaterThan(10);
-    for (const a of answers) expect(a).toMatchObject({ found: true, stop: false });
-    expect(result).toMatchObject({ endReason: "user_hangup", billedMinutes: 3, creditedMinutes: 0 });
-    expect(session(callId)).toMatchObject({ endReason: "user_hangup", billableSeconds: 180, billedMinutes: 3, abuseFlagged: false });
+    // Reservations are whole minutes, so half a minute left holds (and may use) one minute, plus the end grace.
+    expect(begun.maxSeconds).toBe(60 + FREE_END_GRACE_SECONDS);
+    expect(stop).toMatchObject({ t: 60 + FREE_END_GRACE_SECONDS, found: true, stop: true, reason: "cap_reached", freeCap: true });
+    // The warning came first, once: under a minute of Free minutes was left from the start, so the first heartbeat
+    // (the "connected" one) carried it and no later one did.
+    expect(connected).toMatchObject({ found: true, stop: false, capWarning: true });
+    expect(answers.filter((a) => "capWarning" in a)).toEqual([]);
+    // The grace is not billed: 80 s ran, 60 s and 1 minute are charged.
+    expect(result).toMatchObject({ endReason: "cap_reached", billedMinutes: 1, creditedMinutes: 0, billableSeconds: 60 });
+    expect(session(callId)).toMatchObject({ endReason: "cap_reached", billableSeconds: 60, billedMinutes: 1, abuseFlagged: false });
     expect(fake.rows("user")[0].voiceBlockedUntil ?? null).toBeNull();
+    // Billing is in whole started minutes, so a call that starts on a half minute adds a whole one (as on Pro and Team).
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10.5, minutesReserved: 0 });
+    expect(await usageSummary("u-1", at(200))).toMatchObject({ minutesCap: 10, remaining: 0 });
 
-    // Every minute counts toward the month, above the cap.
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 12.5, minutesReserved: 0 });
-    expect(await usageSummary("u-1", at(200))).toMatchObject({ minutesCap: 10, minutesUsed: 12.5, remaining: 0 });
-
-    // The debrief path is open: the call is graded and its transcript is saved against the metered call.
-    const graded = await evaluate(post("/api/evaluate-call", { scenario, transcript }));
-    expect(graded.status).toBe(200);
-    const evaluation = await graded.json();
+    // The debrief path is open: the cap-stopped call is graded under its own id (sessionId = callId), and the sealed
+    // grade is stored on the metered call's own row together with its transcript.
+    const { evaluation, saved } = await gradeAndSave({ sessionId: callId, callId }, 80);
     expect(typeof evaluation.overallScore).toBe("number");
-    const saved = await saveTranscript(post("/api/transcripts", { sessionId: callId, callId, transcript, durationSeconds: 180, scenario: { id: scenario.id }, evaluation }));
-    expect(saved.status).toBe(200);
+    expect(saved.id).toBe(callId);
     expect(session(callId).transcript).toHaveLength(transcript.length);
+    expect(session(callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 1, overallScore: Math.round(evaluation.overallScore), grade: evaluation.grade });
+    expect(session(callId).evaluation).toMatchObject({ overallScore: evaluation.overallScore, grade: evaluation.grade });
+    expect(fake.rows("trainerSession").filter((s) => s.overallScore != null)).toHaveLength(1);
   });
 
-  it("a Free call that runs far past the cap is never stopped or flagged, and all of it counts", async () => {
+  it("a Free call is stopped at its cap plus the grace and never billed past the allowance (this reverses STR-715)", async () => {
+    // STR-715 pinned "a Free call that runs far past the cap is never stopped or flagged, and all of it counts": a Free
+    // call minted with maxSeconds 86400 could run a whole day (Funnel's finding) and push usage far past 10 minutes.
+    // The Free cap now applies mid-call: the server stops the call at what it reserved plus the end grace, and billing
+    // clamps it to the reservation, so usage ends at exactly the allowance.
     await freeUserWith(9);
-    const { answers, result } = await runCall("u-1", { endAt: 40 * 60 });
-    expect(answers.every((a) => a.found && !a.stop)).toBe(true);
-    expect(result).toMatchObject({ endReason: "user_hangup", billedMinutes: 40 });
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 49, minutesReserved: 0 });
-    expect(fake.rows("trainerSession")[0].abuseFlagged).toBe(false);
+    const { callId, answers, stop, result } = await callUntilStopped("u-1", { endAt: 40 * 60 });
+    expect(stop).toMatchObject({ t: 80, reason: "cap_reached", freeCap: true });
+    expect(answers.filter((a) => a.found && a.stop)).toHaveLength(1);
+    expect(result).toMatchObject({ endReason: "cap_reached", billedMinutes: 1, billableSeconds: 60 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
+    // A client that hangs up when told is not an overrun.
+    expect(session(callId).abuseFlagged).toBe(false);
     expect(fake.rows("user")[0].voiceBlockedUntil ?? null).toBeNull();
-    // A late stray end event for a call that was never clamped is not an overrun either.
-    await endCall("u-1", fake.rows("trainerSession")[0].id as string, "user_hangup", at(40 * 60 + 600));
-    expect(fake.rows("trainerSession")[0].abuseFlagged).toBe(false);
+    // Every later heartbeat answers "ended", never a second cap_reached.
+    expect(await heartbeat("u-1", callId, "ok", at(90))).toMatchObject({ found: true, stop: true, reason: "ended" });
+    // The next voice start is refused: the allowance is used up.
+    expect(await beginCall("u-1", scn, at(120))).toEqual({ ok: false, error: "cap_reached" });
   });
 
-  it("the call length limit still applies to a Free call", async () => {
+  it("a Free browser that keeps reporting long after the stop is flagged, like a paid one", async () => {
+    await freeUserWith(9);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    expect(await heartbeat("u-1", begun.callId, "ok", at(80))).toMatchObject({ stop: true, reason: "cap_reached" });
+    expect(await heartbeat("u-1", begun.callId, "ok", at(120))).toMatchObject({ stop: true, reason: "ended" });
+    expect(session(begun.callId).abuseFlagged).toBe(false); // within the overrun grace
+    await heartbeat("u-1", begun.callId, "ok", at(80 + 61 + 10));
+    expect(session(begun.callId).abuseFlagged).toBe(true);
+    expect(session(begun.callId).billedMinutes).toBe(1); // flagging never changes the bill
+  });
+
+  it("an end event that arrives after the cap, with the stop heartbeat missed, is still billed only the allowance", async () => {
     await freeUserWith(0);
     const begun = await beginCall("u-1", scn, at(0));
     if (!begun.ok) throw new Error(begun.error);
     await heartbeat("u-1", begun.callId, "connected", at(0));
-    const r = await heartbeat("u-1", begun.callId, "ok", at(MAX_CALL_SECONDS + 5));
-    expect(r).toMatchObject({ found: true, stop: true, reason: "max_duration" });
-    expect(session(begun.callId)).toMatchObject({ endReason: "max_duration", billedMinutes: MAX_CALL_SECONDS / 60 });
+    for (let t = 10; t <= 600; t += 10) await heartbeat("u-1", begun.callId, "ok", at(t));
+    // The heartbeat at 610 and 620 never arrived (network); the rep hangs up at 625.
+    const result = await endCall("u-1", begun.callId, "user_hangup", at(625));
+    expect(result).toMatchObject({ endReason: "cap_reached", billedMinutes: 10, billableSeconds: 600 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: FREE_MINUTES, minutesReserved: 0 });
+    expect(session(begun.callId).abuseFlagged).toBe(false);
+  });
+
+  it("heartbeat: no warning early, the warning from 60 s of Free minutes left, then one cap_reached stop at 10 minutes plus the grace", async () => {
+    await freeUserWith(0);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    const limit = 600 + FREE_END_GRACE_SECONDS;
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    const early = await heartbeat("u-1", begun.callId, "ok", at(530));
+    expect(early).toEqual({ found: true, stop: false, secondsLeft: limit - 530 });
+    // 540 s in: 60 s of Free minutes left (80 s with the grace).
+    expect(await heartbeat("u-1", begun.callId, "ok", at(540))).toEqual({ found: true, stop: false, secondsLeft: limit - 540, capWarning: true });
+    // Sent once: the later heartbeats, inside the window and inside the grace (allowance already at 0), carry no warning.
+    for (const t of [550, 600, 610]) expect(await heartbeat("u-1", begun.callId, "ok", at(t))).toEqual({ found: true, stop: false, secondsLeft: limit - t });
+    const stopped = await heartbeat("u-1", begun.callId, "ok", at(limit));
+    expect(stopped).toMatchObject({ found: true, stop: true, reason: "cap_reached", freeCap: true });
+    expect(session(begun.callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 10, billableSeconds: 600 });
+    expect(await heartbeat("u-1", begun.callId, "ok", at(limit + 10))).toMatchObject({ stop: true, reason: "ended" });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
+  });
+
+  it("a lost stop answer: every later heartbeat of a Free cap-stopped call still says freeCap (reason ended); paid and silent ones do not", async () => {
+    await freeUserWith(9);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    // This answer never reaches the client.
+    expect(await heartbeat("u-1", begun.callId, "ok", at(80))).toMatchObject({ stop: true, reason: "cap_reached", freeCap: true });
+    for (const t of [90, 100]) {
+      expect(await heartbeat("u-1", begun.callId, "ok", at(t))).toEqual({ found: true, stop: true, reason: "ended", settlement: null, freeCap: true });
+    }
+
+    // A paid cap stop's later answers carry no freeCap (the paid client path is unchanged).
+    addUser("u-2", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-2" }, at(0));
+    allowanceOf("u-2").minutesUsed = 199;
+    const pro = await beginCall("u-2", scn, at(0));
+    if (!pro.ok) throw new Error(pro.error);
+    await heartbeat("u-2", pro.callId, "connected", at(0));
+    expect(await heartbeat("u-2", pro.callId, "ok", at(60))).toMatchObject({ reason: "cap_reached" });
+    expect(await heartbeat("u-2", pro.callId, "ok", at(70))).toEqual({ found: true, stop: true, reason: "ended", settlement: null });
+
+    // A Free call reaped as silent was not stopped at the cap, so it carries no freeCap either.
+    addUser("u-3");
+    const quiet = await beginCall("u-3", scn, at(0));
+    if (!quiet.ok) throw new Error(quiet.error);
+    await heartbeat("u-3", quiet.callId, "connected", at(0));
+    await usageSummary("u-3", at(300));
+    expect(session(quiet.callId).endReason).toBe("heartbeat_timeout");
+    expect(await heartbeat("u-3", quiet.callId, "ok", at(301))).toEqual({ found: true, stop: true, reason: "ended", settlement: null });
+  });
+
+  it("an overlapping heartbeat that read the call open while another one stopped it still answers freeCap", async () => {
+    await freeUserWith(9);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    const before = { ...session(begun.callId) }; // what the overlapping heartbeat read: still open
+    expect(await heartbeat("u-1", begun.callId, "ok", at(80))).toMatchObject({ reason: "cap_reached", freeCap: true });
+    const reads = vi.spyOn(fake.db.trainerSession as unknown as { findUnique: (...a: unknown[]) => unknown }, "findUnique");
+    reads.mockImplementationOnce(async () => before);
+    // Its write finds the row closed, so it answers "ended", and reads how the call ended to keep freeCap.
+    expect(await heartbeat("u-1", begun.callId, "ok", at(80))).toEqual({ found: true, stop: true, reason: "ended", settlement: null, freeCap: true });
+    reads.mockRestore();
+    expect(session(begun.callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 1 });
+  });
+
+  it("paid calls are unchanged: no warning, no grace, stopped exactly at the reservation", async () => {
+    addUser("u-1", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
+    allowanceOf("u-1").minutesUsed = 198;
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    expect(begun.maxSeconds).toBe(120);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    expect(await heartbeat("u-1", begun.callId, "ok", at(70))).toEqual({ found: true, stop: false, secondsLeft: 50 });
+    expect(await heartbeat("u-1", begun.callId, "ok", at(119))).toEqual({ found: true, stop: false, secondsLeft: 1 });
+    const stopped = await heartbeat("u-1", begun.callId, "ok", at(120));
+    expect(stopped).toMatchObject({ found: true, stop: true, reason: "cap_reached" });
+    expect(stopped).not.toHaveProperty("freeCap");
+    expect(session(begun.callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 2 });
   });
 
   it("a plan change mid-call does not change the rule the call started under", async () => {
@@ -177,10 +378,504 @@ describe("the cap is checked only when a call starts", () => {
     expect(session(begun.callId).capEnforced).toBe(false);
     await heartbeat("u-1", begun.callId, "connected", at(0));
     fake.rows("user")[0].planTier = "pro"; // upgraded while the call is running
-    const r = await heartbeat("u-1", begun.callId, "ok", at(15 * 60));
-    expect(r).toMatchObject({ found: true, stop: false });
-    await endCall("u-1", begun.callId, "user_hangup", at(15 * 60));
-    expect(session(begun.callId).billedMinutes).toBe(15);
+    // Still the Free rule: past its 10 reserved minutes it keeps the end grace (a Pro call would have stopped at 600 s)...
+    expect(await heartbeat("u-1", begun.callId, "ok", at(610))).toMatchObject({ found: true, stop: false, capWarning: true });
+    // ...and it stops at the Free limit, billed the 10 minutes it reserved.
+    expect(await heartbeat("u-1", begun.callId, "ok", at(620))).toMatchObject({ found: true, stop: true, reason: "cap_reached", freeCap: true });
+    expect(session(begun.callId).billedMinutes).toBe(10);
+  });
+
+  it("a Free call minted before this change (capEnforced false, 24 hour deadline) is stopped by its next heartbeat, billed its reservation and not flagged", async () => {
+    await freeUserWith(0);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    // The deploy lands 30 minutes into the call: its first heartbeat after it stops the call.
+    const r = await heartbeat("u-1", begun.callId, "ok", at(30 * 60));
+    expect(r).toMatchObject({ found: true, stop: true, reason: "cap_reached", freeCap: true });
+    // The client hangs up when told: the end event and a straggling heartbeat seconds later are not an overrun.
+    await endCall("u-1", begun.callId, "user_hangup", at(30 * 60 + 2));
+    await heartbeat("u-1", begun.callId, "ok", at(30 * 60 + 10));
+    expect(session(begun.callId)).toMatchObject({ billedMinutes: 10, abuseFlagged: false });
+    expect(fake.rows("user")[0].voiceBlockedUntil ?? null).toBeNull();
+    // Still reporting more than a minute after the server's stop is an overrun, as for a paid call.
+    await heartbeat("u-1", begun.callId, "ok", at(30 * 60 + 75));
+    expect(session(begun.callId).abuseFlagged).toBe(true);
+  });
+
+  it("a Free client whose stop heartbeat arrives late and then hangs up at once is not flagged or blocked", async () => {
+    await freeUserWith(9);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    // Heartbeats were lost on the network until 10 minutes in; that one gets the stop and the client ends the call.
+    expect(await heartbeat("u-1", begun.callId, "ok", at(600))).toMatchObject({ stop: true, reason: "cap_reached" });
+    await endCall("u-1", begun.callId, "user_hangup", at(601));
+    expect(session(begun.callId)).toMatchObject({ billedMinutes: 1, abuseFlagged: false });
+    expect(fake.rows("user")[0].voiceBlockedUntil ?? null).toBeNull();
+  });
+});
+
+describe("the Free 1 minute warning goes out once per call", () => {
+  const limit = 600 + FREE_END_GRACE_SECONDS;
+  const warned = (answers: Array<Awaited<ReturnType<typeof heartbeat>>>) => answers.filter((a) => a.found && !a.stop && a.capWarning);
+
+  it("a whole call heartbeating every 10 s gets the warning on the crossing heartbeat only", async () => {
+    await freeUserWith(0);
+    const { connected, answers, stop } = await callUntilStopped("u-1", { endAt: 40 * 60 });
+    expect(connected).toEqual({ found: true, stop: false, secondsLeft: limit });
+    expect(stop).toMatchObject({ t: limit, reason: "cap_reached", freeCap: true });
+    // 540 s in is the first heartbeat inside the window (60 s of Free minutes left); nothing before or after it warns.
+    expect(answers.filter((a) => "capWarning" in a).map((a) => a.t)).toEqual([540]);
+    expect(answers.filter((a) => a.found && !a.stop && a.t > 540).length).toBeGreaterThan(0);
+  });
+
+  it("a call that starts inside the window warns once, on its first heartbeat", async () => {
+    await freeUserWith(9); // 1 Free minute left: 60 s plus the grace, inside the window from the start
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    const answers = [await heartbeat("u-1", begun.callId, "connected", at(0))];
+    for (const t of [10, 20, 30, 40, 50, 60, 70]) answers.push(await heartbeat("u-1", begun.callId, "ok", at(t)));
+    expect(answers[0]).toEqual({ found: true, stop: false, secondsLeft: 80, capWarning: true });
+    expect(warned(answers)).toHaveLength(1);
+    expect(await heartbeat("u-1", begun.callId, "ok", at(80))).toMatchObject({ stop: true, reason: "cap_reached", freeCap: true });
+  });
+
+  // The races below run heartbeats concurrently (Promise.all) with the fake's row locks on, so overlapping heartbeats
+  // really contend for the call row's FOR UPDATE lock the way they do in Postgres.
+  async function lockedCall(used: number, ...times: number[]) {
+    await freeUserWith(used);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    for (const t of times) await heartbeat("u-1", begun.callId, t === 0 ? "connected" : "ok", at(t));
+    fake.enableRowLocks();
+    return begun.callId;
+  }
+  const beatAt = (callId: string, t: number, state: "connected" | "ok" | "recovering" = "ok") => heartbeat("u-1", callId, state, at(t));
+
+  it("each heartbeat locks the call row, and overlapping heartbeats give one warning", async () => {
+    const callId = await lockedCall(0, 0, 530);
+    const [a, b] = await Promise.all([beatAt(callId, 541), beatAt(callId, 545)]);
+    expect([a, b]).toEqual([
+      { found: true, stop: false, secondsLeft: limit - 541, capWarning: true },
+      { found: true, stop: false, secondsLeft: limit - 545 },
+    ]);
+    expect(session(callId).lastHeartbeatAt).toEqual(at(545));
+    expect(fake.rawQueries).toContainEqual({ sql: 'SELECT "id" FROM "TrainerSession" WHERE "id" = ? FOR UPDATE', values: [callId] });
+    expect(await beatAt(callId, 560)).toEqual({ found: true, stop: false, secondsLeft: limit - 560 });
+  });
+
+  it("overlapping heartbeats with the same time give one warning", async () => {
+    const callId = await lockedCall(0, 0, 530);
+    const answers = await Promise.all([beatAt(callId, 545), beatAt(callId, 545), beatAt(callId, 545)]);
+    expect(warned(answers)).toHaveLength(1);
+    expect(answers.every((a) => a.found && !a.stop && a.secondsLeft === limit - 545)).toBe(true);
+    expect(session(callId).lastHeartbeatAt).toEqual(at(545));
+    expect(await beatAt(callId, 555)).toEqual({ found: true, stop: false, secondsLeft: limit - 555 });
+  });
+
+  it("an older heartbeat that arrives after a newer one does not move lastHeartbeatAt back, so no second warning", async () => {
+    const callId = await lockedCall(0, 0, 530);
+    expect(await beatAt(callId, 545)).toMatchObject({ capWarning: true });
+    // Sent at 538 s (outside the window), delivered after the 545 s one: answered for its own time, no warning.
+    expect(await beatAt(callId, 538, "recovering")).toEqual({ found: true, stop: false, secondsLeft: limit - 538 });
+    expect(session(callId).lastHeartbeatAt).toEqual(at(545));
+    // Had lastHeartbeatAt gone back to 538 s, this one would cross into the window again.
+    expect(await beatAt(callId, 555)).toEqual({ found: true, stop: false, secondsLeft: limit - 555 });
+    // Concurrently, in either order, too.
+    const answers = await Promise.all([beatAt(callId, 570), beatAt(callId, 565)]);
+    expect(warned(answers)).toEqual([]);
+    expect(session(callId).lastHeartbeatAt).toEqual(at(570));
+  });
+
+  for (const order of [["ok", "connected"], ["connected", "ok"]] as const) {
+    it(`a connected heartbeat concurrent with an ok one at the same time still records connectedAt (${order.join(" first, ")})`, async () => {
+      const callId = await lockedCall(0);
+      const answers = await Promise.all(order.map((state) => beatAt(callId, 5, state)));
+      expect(answers).toEqual([{ found: true, stop: false, secondsLeft: limit }, { found: true, stop: false, secondsLeft: limit }]);
+      expect(session(callId)).toMatchObject({ connectedAt: at(5), lastHeartbeatAt: at(5) });
+      // The deadline runs from the recorded connection, not from the mint-time cutoff.
+      expect(await beatAt(callId, 15)).toEqual({ found: true, stop: false, secondsLeft: limit - 10 });
+      expect(await beatAt(callId, 5 + limit)).toMatchObject({ stop: true, reason: "cap_reached", freeCap: true });
+    });
+  }
+
+  it("two connected heartbeats at once keep the first recorded connection time", async () => {
+    const callId = await lockedCall(0);
+    const [first, second] = await Promise.all([beatAt(callId, 3, "connected"), beatAt(callId, 5, "connected")]);
+    expect(first).toEqual({ found: true, stop: false, secondsLeft: limit });
+    expect(second).toEqual({ found: true, stop: false, secondsLeft: limit - 2 });
+    expect(session(callId)).toMatchObject({ connectedAt: at(3), lastHeartbeatAt: at(5) });
+  });
+
+  it("sustained contention never drops the newest heartbeat, and the warning still goes out once", async () => {
+    const callId = await lockedCall(0, 0, 100);
+    // 40 heartbeats from 110 s to 500 s and 18 more from 505 s to 590 s (across the window at 540 s), all at once and
+    // in a scrambled order.
+    const times = [...Array.from({ length: 40 }, (_, i) => 110 + i * 10), ...Array.from({ length: 18 }, (_, i) => 505 + i * 5)]
+      .sort((x, y) => ((x * 7919) % 101) - ((y * 7919) % 101));
+    const answers = await Promise.all(times.map((t) => beatAt(callId, t)));
+    expect(answers.map((a) => (a.found && !a.stop ? a.secondsLeft : null))).toEqual(times.map((t) => limit - t));
+    expect(warned(answers)).toHaveLength(1);
+    expect(session(callId).lastHeartbeatAt).toEqual(at(Math.max(...times)));
+    // The silence timeout runs from the newest heartbeat: the call is not reaped before it.
+    await usageSummary("u-1", at(Math.max(...times) + HEARTBEAT_TIMEOUT_SECONDS - 1));
+    expect(session(callId).endedAt ?? null).toBeNull();
+  });
+
+  it("an older in-window heartbeat that arrives after a deadline heartbeat does not warn a second time", async () => {
+    const callId = await lockedCall(0, 0, 530);
+    // In the window (75 s left, 55 s of Free minutes): the one warning.
+    expect(await beatAt(callId, 545)).toEqual({ found: true, stop: false, secondsLeft: limit - 545, capWarning: true });
+    // The deadline heartbeat (625 s) records its time and stops the call after it commits; the older heartbeat (600 s,
+    // in the window) takes the call row in between and sees the stored 625 s, which has reached the window too.
+    const answers = await Promise.all([beatAt(callId, 625), beatAt(callId, 600)]);
+    expect(warned(answers)).toEqual([]);
+    expect(answers.filter((a) => a.found && a.stop && a.reason === "cap_reached")).toHaveLength(1);
+    expect(session(callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 10, lastHeartbeatAt: at(625) });
+  });
+
+  it("a call never warned before gets no warning from an older heartbeat behind its deadline heartbeat", async () => {
+    const callId = await lockedCall(0, 0, 530);
+    const answers = await Promise.all([beatAt(callId, 625), beatAt(callId, 600)]);
+    expect(warned(answers)).toEqual([]);
+    expect(answers.filter((a) => a.found && a.stop && a.reason === "cap_reached")).toHaveLength(1);
+  });
+
+  it("an ok heartbeat before the call connected never warns; after connecting the crossing warns once", async () => {
+    await freeUserWith(0);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    // Codex's sequence: an ok heartbeat at 540 s with no connectedAt yet, then "connected" at 550 s.
+    const early = await heartbeat("u-1", begun.callId, "ok", at(540));
+    expect(early).toMatchObject({ found: true, stop: false });
+    expect(early).not.toHaveProperty("capWarning");
+    expect(session(begun.callId).connectedAt ?? null).toBeNull();
+    const connected = await heartbeat("u-1", begun.callId, "connected", at(550));
+    expect(session(begun.callId).connectedAt).toEqual(at(550));
+    // The billing start is min(connectedAt, mint + 60 s) = 60 s: recording connectedAt never moves it later.
+    expect(connected).toEqual({ found: true, stop: false, secondsLeft: limit - (550 - 60) });
+    const times = [550];
+    const answers = [connected];
+    for (let t = 560; t <= 1090; t += 10) { times.push(t); answers.push(await heartbeat("u-1", begun.callId, "ok", at(t))); }
+    // The window opens at 80 s left (600 s on this timeline): one warning there, none after, through 1090 s.
+    expect(warned(answers)).toEqual([{ found: true, stop: false, secondsLeft: 80, capWarning: true }]);
+    expect(times.filter((_, i) => answers[i].found && !answers[i].stop && answers[i].capWarning)).toEqual([600]);
+    expect(answers.filter((a) => a.found && a.stop && a.reason === "cap_reached")).toHaveLength(1);
+  });
+
+  it("a call inside the window from its start warns on the heartbeat that connects it, not before, and only once", async () => {
+    await freeUserWith(9); // 1 Free minute: 80 s with the grace, inside the window from the start
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    // Before connecting (billing start would be the 60 s cutoff, 80 s left): no warning without connectedAt.
+    expect(await heartbeat("u-1", begun.callId, "ok", at(30))).toEqual({ found: true, stop: false, secondsLeft: 80 });
+    // Connecting at 40 s fixes the start at 40 s: still 80 s left, the warning goes out here.
+    const answers = [await heartbeat("u-1", begun.callId, "connected", at(40))];
+    expect(answers[0]).toEqual({ found: true, stop: false, secondsLeft: 80, capWarning: true });
+    for (let t = 50; t <= 130; t += 10) answers.push(await heartbeat("u-1", begun.callId, "ok", at(t)));
+    expect(warned(answers)).toHaveLength(1);
+    expect(answers.find((a) => a.found && a.stop)).toMatchObject({ reason: "cap_reached", freeCap: true });
+  });
+
+  it("the window, once reached, stays reached, the deadline included", () => {
+    // secondsLeft includes the 20 s end grace: the window opens at 80 s left.
+    expect([81, 80, 1, 0, -5].map(freeCapWarningReached)).toEqual([false, true, true, true, true]);
+    expect([81, 80, 1, 0, -5].map(freeCapWarning)).toEqual([false, true, true, false, false]);
+  });
+
+  it("overlapping heartbeats at the deadline stop the call once", async () => {
+    const callId = await lockedCall(9, 0, 70);
+    const answers = await Promise.all([beatAt(callId, 75), beatAt(callId, 80), beatAt(callId, 80)]);
+    expect(answers.filter((a) => a.found && a.stop && a.reason === "cap_reached")).toHaveLength(1);
+    expect(session(callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 1, billableSeconds: 60, lastHeartbeatAt: at(80) });
+  });
+
+  it("paid calls never warn, from the first heartbeat to the stop", async () => {
+    addUser("u-1", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
+    allowanceOf("u-1").minutesUsed = 199; // 1 Pro minute left: inside the Free window, were it a Free call
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    const answers = [await heartbeat("u-1", begun.callId, "connected", at(0))];
+    for (const t of [10, 20, 30, 40, 50]) answers.push(await heartbeat("u-1", begun.callId, "ok", at(t)));
+    expect(answers.filter((a) => "capWarning" in a)).toEqual([]);
+    expect(await heartbeat("u-1", begun.callId, "ok", at(60))).toEqual(expect.objectContaining({ stop: true, reason: "cap_reached" }));
+  });
+});
+
+describe("heartbeat lock order: the call-row lock is never held while another row is used", () => {
+  const LOCK_CALL = 'raw:SELECT "id" FROM "TrainerSession" WHERE "id" = ? FOR UPDATE';
+  /** Each transaction that took the call-row lock, with every operation it ran. */
+  const lockTransactions = () => {
+    const txs = new Set(fake.ops.filter((o) => o.op === LOCK_CALL).map((o) => o.tx));
+    return [...txs].map((tx) => ({ tx, ops: fake.ops.filter((o) => o.tx === tx).map((o) => o.op) }));
+  };
+  const onlyTheCallRow = (ops: string[]) =>
+    ops.filter((o) => !["begin", "commit", "rollback", LOCK_CALL].includes(o) && !o.startsWith("trainerSession.") && !/^(lock|wait):trainerSession:/.test(o));
+
+  it("every heartbeat's lock transaction reads and writes only the call row, and the stop settles after it committed", async () => {
+    await freeUserWith(9);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    for (const t of [10, 20, 30, 40, 50, 60, 70]) await heartbeat("u-1", begun.callId, "ok", at(t));
+    const before = fake.ops.length;
+    expect(await heartbeat("u-1", begun.callId, "ok", at(80))).toMatchObject({ stop: true, reason: "cap_reached", freeCap: true });
+    // Well past the reservation: the overrun flag (user and audit writes) also runs outside the lock.
+    expect(await heartbeat("u-1", begun.callId, "ok", at(80 + 61 + 10))).toMatchObject({ stop: true, reason: "ended" });
+    expect(session(begun.callId).abuseFlagged).toBe(true);
+
+    const locked = lockTransactions();
+    expect(locked).toHaveLength(10);
+    for (const { ops } of locked) expect(onlyTheCallRow(ops)).toEqual([]); // no allowance, user, ledger or audit access, no other lock
+
+    // The stopping heartbeat: its lock transaction committed before the settlement touched the allowance and the ledger.
+    const stop = fake.ops.slice(before);
+    const lockTx = stop.find((o) => o.op === LOCK_CALL)!.tx;
+    const committed = stop.findIndex((o) => o.tx === lockTx && o.op === "commit");
+    const settled = stop.findIndex((o) => o.op === "usageAllowance.updateMany");
+    expect(committed).toBeGreaterThanOrEqual(0);
+    expect(settled).toBeGreaterThan(committed);
+    expect(stop[settled].tx).not.toBe(lockTx);
+    expect(stop.filter((o) => o.op === "usageEntry.create").every((o) => o.tx !== lockTx)).toBe(true);
+    expect(session(begun.callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 1, billableSeconds: 60 });
+  });
+
+  it("a rollover that holds the allowance row and then waits for the call row does not deadlock with a stopping heartbeat", async () => {
+    await freeUserWith(9);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    await heartbeat("u-1", begun.callId, "ok", at(70));
+    fake.enableRowLocks();
+    const allowanceId = allowanceOf("u-1").id;
+    const tick = () => new Promise<void>((r) => setImmediate(r));
+
+    // The moment the heartbeat holds the call row, the rollover (already holding the allowance) asks for it too; the
+    // heartbeat goes on only after that request is waiting. This is the interleaving that deadlocked when the settlement
+    // ran inside the locked transaction: heartbeat holds the call and wants the allowance, rollover the reverse.
+    let heartbeatHasCallRow!: () => void;
+    const callRowTaken = new Promise<void>((r) => { heartbeatHasCallRow = r; });
+    const raw = fake.db.$queryRaw;
+    fake.db.$queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const out = await raw(strings, ...values);
+      if (strings.join("?").includes('FROM "TrainerSession"')) { heartbeatHasCallRow(); await tick(); }
+      return out;
+    };
+
+    // The rollover's lock order: the allowance row first, then the call row (where it writes the carry).
+    let rolloverHasAllowance!: () => void;
+    const allowanceTaken = new Promise<void>((r) => { rolloverHasAllowance = r; });
+    const rollover = (fake.db.$transaction as (fn: (tx: typeof fake.db) => Promise<void>) => Promise<void>)(async (tx) => {
+      await tx.usageAllowance.updateMany({ where: { id: allowanceId }, data: { version: { increment: 1 } } });
+      rolloverHasAllowance();
+      await callRowTaken;
+      await tx.trainerSession.updateMany({ where: { id: begun.callId }, data: { carriedMinutes: 0 } });
+    });
+    await allowanceTaken;
+    const stopping = heartbeat("u-1", begun.callId, "ok", at(80));
+
+    await expect(rollover).resolves.toBeUndefined();
+    expect(await stopping).toMatchObject({ found: true, stop: true, reason: "cap_reached", freeCap: true });
+    expect(fake.ops.some((o) => o.op.startsWith("deadlock:"))).toBe(false);
+    // The rollover did wait for the call row while the heartbeat held it, and the heartbeat's lock transaction never
+    // waited for (or touched) the allowance: it committed and let the rollover through, and the stop settled after.
+    const lockTx = lockTransactions().at(-1)!;
+    const waited = fake.ops.findIndex((o) => o.op === `wait:trainerSession:${begun.callId}`);
+    expect(waited).toBeGreaterThanOrEqual(0);
+    expect(fake.ops.findIndex((o) => o.tx === lockTx.tx && o.op === "commit")).toBeGreaterThan(waited);
+    expect(onlyTheCallRow(lockTx.ops)).toEqual([]);
+    expect(session(begun.callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 1, billableSeconds: 60 });
+  });
+});
+
+describe("settling a silent Free call locks the user row first, in a voice start's order", () => {
+  const tick = () => new Promise<void>((r) => setImmediate(r));
+  /** Waits (a bounded number of turns) until some transaction is blocked on this row. */
+  async function untilWaitingFor(key: string) {
+    for (let i = 0; i < 200 && !fake.ops.some((o) => o.op === `wait:${key}`); i++) await tick();
+  }
+  type Script = (tx: typeof fake.db) => Promise<void>;
+  const transaction = (fn: Script) => (fake.db.$transaction as (fn: Script) => Promise<void>)(fn);
+  const lockUser = (tx: typeof fake.db) => tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${"u-1"} FOR UPDATE`;
+
+  it("the lock model: allowance then user deadlocks with a voice start's user then allowance; user then allowance does not", async () => {
+    addUser("u-1");
+    await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
+    const allowanceId = allowanceOf("u-1").id;
+    const bumpAllowance = (tx: typeof fake.db) => tx.usageAllowance.updateMany({ where: { id: allowanceId }, data: { version: { increment: 1 } } });
+    fake.enableRowLocks();
+
+    /** A voice start (user row, then the allowance) against a settlement that locks in `order`. */
+    async function race(order: "allowance-first" | "user-first") {
+      let startHasUser!: () => void;
+      const userTaken = new Promise<void>((r) => { startHasUser = r; });
+      const start = transaction(async (tx) => {
+        await lockUser(tx);
+        startHasUser();
+        await untilWaitingFor("user:u-1"); // the settlement is blocked on the user row
+        await bumpAllowance(tx);
+      });
+      await userTaken;
+      const settlement = transaction(async (tx) => {
+        if (order === "allowance-first") { await bumpAllowance(tx); await lockUser(tx); } else { await lockUser(tx); await bumpAllowance(tx); }
+      });
+      return Promise.allSettled([start, settlement]);
+    }
+
+    // The previous order: the settlement held the allowance (its rollover) when it asked for the user row.
+    const before = await race("allowance-first");
+    expect(before.some((r) => r.status === "rejected" && (r.reason as { code?: string }).code === "P2034")).toBe(true);
+    expect(fake.ops.some((o) => o.op.startsWith("deadlock:"))).toBe(true);
+
+    fake.ops.length = 0;
+    const after = await race("user-first");
+    expect(after.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(fake.ops.some((o) => o.op.startsWith("deadlock:"))).toBe(false);
+  });
+
+  it("a stale Free call reaped across a period boundary waits for a voice start's user row without holding the allowance", async () => {
+    // The month resets on Nov 10 at 12:00 UTC. A Free call with 2 minutes reserved goes silent just before it, and is
+    // reaped just after, so its settlement rolls the allowance over (locking it and the call row) inside chargeTarget.
+    const nov10 = 26 * 24 * 3600;
+    await freeUserWith(8);
+    const begun = await beginCall("u-1", scn, at(nov10 - 100));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(nov10 - 100));
+    for (const t of [90, 80, 70, 60]) await heartbeat("u-1", begun.callId, "ok", at(nov10 - t));
+    const allowanceId = allowanceOf("u-1").id;
+    fake.enableRowLocks();
+
+    // A voice start in beginCall's order: the user row, then (once the settlement is blocked) the allowance.
+    let startHasUser!: () => void;
+    const userTaken = new Promise<void>((r) => { startHasUser = r; });
+    const start = transaction(async (tx) => {
+      await lockUser(tx);
+      startHasUser();
+      await untilWaitingFor("user:u-1");
+      await tx.usageAllowance.updateMany({ where: { id: allowanceId }, data: { version: { increment: 1 } } });
+    });
+    await userTaken;
+    const reap = usageSummary("u-1", at(nov10 + 60));
+
+    const [started, read] = await Promise.allSettled([start, reap]);
+    expect(started.status).toBe("fulfilled");
+    expect(read.status).toBe("fulfilled");
+    expect(fake.ops.some((o) => o.op.startsWith("deadlock:"))).toBe(false);
+    // The settlement asked for the user row before it touched the allowance.
+    const settleTx = fake.ops.find((o) => o.op === "wait:user:u-1")!.tx;
+    const mine = fake.ops.filter((o) => o.tx === settleTx).map((o) => o.op);
+    expect(mine.indexOf("wait:user:u-1")).toBeLessThan(mine.indexOf(`lock:usageAllowance:${allowanceId}`));
+    // Reduced charge: last heartbeat 60 s before the reset plus 15 s, 55 s, 1 minute, in the period it ran in.
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 55, billedMinutes: 1 });
+  });
+
+  it("a paid call reaped across the boundary locks the user row first too, and bills as on main", async () => {
+    const nov10 = 26 * 24 * 3600;
+    addUser("u-1", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
+    const begun = await beginCall("u-1", scn, at(nov10 - 100));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(nov10 - 100));
+    await heartbeat("u-1", begun.callId, "ok", at(nov10 - 60));
+    const before = fake.calls.length;
+    await usageSummary("u-1", at(nov10 + 60));
+    // Every metering transaction takes the user row first (lockUserFirst), paid calls included.
+    expect(fake.calls[before]).toBe('raw:SELECT "id" FROM "User" WHERE "id" = ? FOR UPDATE');
+    expect(fake.lockOrderViolations).toEqual([]);
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 160, billedMinutes: 3 });
+    expect(fake.rows("auditEvent").filter((e) => e.action === FREE_ABANDON_REDUCED_MARKER)).toEqual([]);
+  });
+
+  /**
+   * One reap settles a batch whose first stale call takes the allowance lock without the user row (a never-connected
+   * call, or a call on the exact paid rule), then a stale connected Free call, while a real beginCall holds the user row
+   * and then reserves on the allowance. The reap must lock the user row before its first settlement.
+   */
+  async function mixedBatch(first: "never-connected" | "paid") {
+    await freeUserWith(-170); // 180 Free minutes left: three open calls of 60 reserved minutes each
+    const allowance = allowanceOf("u-1");
+    let firstId: string;
+    if (first === "never-connected") {
+      const a = await beginCall("u-1", scn, at(0)); // never sends a heartbeat
+      if (!a.ok) throw new Error(a.error);
+      firstId = a.callId;
+    } else {
+      // A call on the exact (paid) rule on this allowance, as one minted on Pro before a downgrade to Free.
+      firstId = fake.seed("trainerSession", {
+        userId: "u-1", organizationId: "org-1", createdAt: at(0), transcript: [], allowanceId: allowance.id,
+        allowancePeriodStart: allowance.periodStart, reservedMinutes: 60, capEnforced: true, connectedAt: at(0), lastHeartbeatAt: at(30),
+      }).id as string;
+      allowance.minutesReserved = (allowance.minutesReserved as number) + 60;
+    }
+    const free = await beginCall("u-1", scn, at(10));
+    if (!free.ok) throw new Error(free.error);
+    await heartbeat("u-1", free.callId, "connected", at(20)); // then silent
+    fake.enableRowLocks();
+
+    // Hold the voice start right after it took the user row, until the reap is blocked on that row (bounded).
+    let startHasUser!: () => void;
+    const userTaken = new Promise<void>((r) => { startHasUser = r; });
+    const raw = fake.db.$queryRaw;
+    let gated = false;
+    fake.db.$queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const out = await raw(strings, ...values);
+      if (!gated && strings.join("?").includes('FROM "User"')) {
+        gated = true;
+        startHasUser();
+        for (let i = 0; i < 200 && !fake.ops.some((o) => o.op === "wait:user:u-1"); i++) await tick();
+      }
+      return out;
+    };
+    // At 40 s nothing is stale yet, so this start settles nothing: user row, then the allowance (its reservation).
+    const start = beginCall("u-1", scn, at(40));
+    await userTaken;
+    // At 1000 s both earlier calls are stale; the batch settles the first one first.
+    const reap = usageSummary("u-1", at(1000));
+    const [started, read] = await Promise.allSettled([start, reap]);
+    fake.db.$queryRaw = raw;
+    return { allowanceId: allowance.id as string, firstId, freeId: free.callId, started, read };
+  }
+
+  for (const first of ["never-connected", "paid"] as const) {
+    it(`a batch that settles a stale ${first} call before a stale connected Free call takes the user row first: no deadlock with beginCall`, async () => {
+      const { allowanceId, firstId, freeId, started, read } = await mixedBatch(first);
+      expect(started.status).toBe("fulfilled");
+      expect(started.status === "fulfilled" && started.value).toMatchObject({ ok: true });
+      expect(read.status).toBe("fulfilled");
+      expect(fake.ops.some((o) => o.op.startsWith("deadlock:"))).toBe(false);
+      // The reap waited for the user row before it locked the allowance for any settlement.
+      const reapTx = fake.ops.find((o) => o.op === "wait:user:u-1")!.tx;
+      const mine = fake.ops.filter((o) => o.tx === reapTx).map((o) => o.op);
+      expect(mine.indexOf("wait:user:u-1")).toBeGreaterThanOrEqual(0);
+      expect(mine.indexOf("wait:user:u-1")).toBeLessThan(mine.indexOf(`lock:usageAllowance:${allowanceId}`));
+      // Billing as without the race. The first call: 0 for a never-connected one; through the reap for the paid rule
+      // (1000 s, 17 minutes, as on main). The Free call: connected at 20 s, plus 15 s, 1 minute, with its marker.
+      expect(session(firstId)).toMatchObject(first === "never-connected"
+        ? { endReason: "failed_connect", billableSeconds: 0, billedMinutes: 0 }
+        : { endReason: "heartbeat_timeout", billableSeconds: 1000, billedMinutes: 17 });
+      expect(session(freeId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 15, billedMinutes: 1 });
+      expect(fake.rows("auditEvent").filter((e) => e.action === FREE_ABANDON_REDUCED_MARKER)).toHaveLength(1);
+      // The reap took the user row first (usageSummary, lockUserFirst) before it read the open calls, so it ran after the
+      // voice start committed and saw its call too: minted at 40 s, never connected, 960 s old at the reap, so the 15
+      // minute connect window closes it as failed_connect, 0 billed, its reservation released and no silent-call marker.
+      const startedCall = started.status === "fulfilled" && started.value.ok ? started.value.callId : "";
+      expect(session(startedCall)).toMatchObject({ endReason: "failed_connect", billableSeconds: 0, billedMinutes: 0 });
+      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: -170 + (first === "paid" ? 17 : 0) + 1, minutesReserved: 0 });
+    });
+  }
+
+  it("a batch with no Free silent call also locks the user row first, and its never-connected call bills 0 with no marker", async () => {
+    await freeUserWith(-170);
+    const a = await beginCall("u-1", scn, at(0)); // never connects
+    if (!a.ok) throw new Error(a.error);
+    const before = fake.calls.length;
+    await usageSummary("u-1", at(1000));
+    expect(session(a.callId)).toMatchObject({ endReason: "failed_connect", billableSeconds: 0, billedMinutes: 0 });
+    expect(fake.calls[before]).toBe('raw:SELECT "id" FROM "User" WHERE "id" = ? FOR UPDATE');
+    expect(fake.lockOrderViolations).toEqual([]);
+    expect(fake.rows("auditEvent").filter((e) => e.action === FREE_ABANDON_REDUCED_MARKER)).toEqual([]);
   });
 });
 
@@ -190,7 +885,8 @@ describe("fractional usage", () => {
     expect(checkCap({ remaining: 0.5 })).toEqual({ ok: true });
     expect(checkCap({ remaining: 0 })).toEqual({ ok: false, error: "cap_reached" });
     const first = await beginCall("u-1", scn, at(0));
-    expect(first).toMatchObject({ ok: true, remaining: 0.5, maxSeconds: MAX_CALL_SECONDS });
+    // It holds one whole minute, which is also how long it may run, plus the Free end grace.
+    expect(first).toMatchObject({ ok: true, remaining: 0.5, maxSeconds: 60 + FREE_END_GRACE_SECONDS });
     expect(allowanceOf("u-1").minutesReserved).toBe(1);
     expect(await beginCall("u-1", scn, at(1))).toEqual({ ok: false, error: "minutes_reserved" });
   });
@@ -301,52 +997,362 @@ describe("past the cap, the next voice call is refused", () => {
   });
 });
 
-describe("a Free call that goes silent keeps the time it was confirmed to have used", () => {
-  /** Starts a call, heartbeats every 10 seconds for `confirmedSec`, then says nothing more. */
-  async function goSilentAfter(confirmedSec: number) {
-    const begun = await beginCall("u-1", scn, at(0));
+describe("a Free call that goes silent is billed to its last heartbeat plus a short grace, never past its reservation", () => {
+  // A Free call that goes silent (tab closed, no end event) is reaped lazily by settleStale on the next voice start or
+  // usage read, as heartbeat_timeout. It is billed through its last heartbeat plus FREE_ABANDON_GRACE_SECONDS, rounded up
+  // to whole started minutes and clamped to its reservation, however late the reap. Before, it was billed through the
+  // reap, up to the reservation: Funnel's retest call heartbeated for 125 s, was reaped 240 s later and billed 7 minutes.
+  // The reduced charge applies to the first FREE_ABANDON_REDUCED_PER_PERIOD (3) abandoned Free calls of a billing period;
+  // the 4th and later in the same period are billed their whole reservation whenever they are reaped, because a modified
+  // client can stop heartbeating and keep talking. Paid calls and every other way a call ends are unchanged.
+  /**
+   * Starts a call at `start` seconds, heartbeats every 10 seconds and once more at `start + lastSec`, then says nothing
+   * more. Starting a call reaps this user's earlier silent call (settleStale in beginCall).
+   */
+  async function silentAfterHeartbeat(userId: string, lastSec: number, start = 0) {
+    const begun = await beginCall(userId, scn, at(start));
     if (!begun.ok) throw new Error(begun.error);
-    await heartbeat("u-1", begun.callId, "connected", at(0));
-    for (let t = 10; t < confirmedSec; t += 10) await heartbeat("u-1", begun.callId, "ok", at(t));
+    await heartbeat(userId, begun.callId, "connected", at(start));
+    for (let t = 10; t < lastSec; t += 10) await heartbeat(userId, begun.callId, "ok", at(start + t));
+    if (lastSec > 0) await heartbeat(userId, begun.callId, "ok", at(start + lastSec));
+    expect(session(begun.callId).lastHeartbeatAt).toEqual(at(start + lastSec));
     return begun;
   }
 
-  it("9.5 used, 3 minutes of heartbeats, then lost connection: the 3 minutes count, not just the 1 minute reserved", async () => {
+  it("the grace covers one missed heartbeat and stays inside the silence timeout", () => {
+    expect(FREE_ABANDON_GRACE_SECONDS).toBe(15);
+    expect(FREE_ABANDON_GRACE_SECONDS).toBeLessThan(HEARTBEAT_TIMEOUT_SECONDS);
+  });
+
+  it("Funnel's case: 125 s of heartbeats, reaped 240 s later, bills 3 minutes, not 7", async () => {
+    await freeUserWith(0);
+    const begun = await silentAfterHeartbeat("u-1", 125);
+    await usageSummary("u-1", at(125 + 240));
+    // 125 s + 15 s = 140 s: 3 started minutes. Before this change it billed through the reap: 365 s, 7 minutes.
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(140), billableSeconds: 140, billedMinutes: 3, abuseFlagged: false });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 3, minutesReserved: 0 });
+    expect(await usageSummary("u-1", at(125 + 241))).toMatchObject({ minutesUsed: 3, remaining: 7 });
+  });
+
+  it("50 s used, then silent and reaped the next day: billed to the last heartbeat plus the grace, not the reservation", async () => {
+    await freeUserWith(0);
+    const begun = await silentAfterHeartbeat("u-1", 50);
+    const reaped = 24 * 3600;
+    await usageSummary("u-1", at(reaped));
+    // 50 s + 15 s = 65 s: 2 started minutes. Before this change: min(reap, 50 s + 10 minutes), clamped to 10 minutes.
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(65), billableSeconds: 65, billedMinutes: 2, abuseFlagged: false });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 2, minutesReserved: 0 });
+    // The user who comes back keeps the rest of their Free minutes, and is not voice blocked.
+    expect(await beginCall("u-1", scn, at(reaped + 5))).toMatchObject({ ok: true, remaining: 8 });
+    expect(fake.rows("user")[0].voiceBlockedUntil ?? null).toBeNull();
+  });
+
+  it("reaped 31 s after its last heartbeat: billed to the last heartbeat plus the grace, not through the reap", async () => {
+    await freeUserWith(0);
+    const begun = await silentAfterHeartbeat("u-1", 50);
+    await usageSummary("u-1", at(50 + 31)); // reaped as soon as it counts as silent
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(65), billableSeconds: 65, billedMinutes: 2 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 2, minutesReserved: 0 });
+  });
+
+  it("the grace boundary: a last heartbeat at 105 s bills 2 minutes, at 106 s or 119 s it bills 3", async () => {
+    const cases: Array<[last: number, seconds: number, minutes: number]> = [[105, 120, 2], [106, 121, 3], [119, 134, 3]];
+    for (const [last, seconds, minutes] of cases) {
+      fake = createFakePrisma();
+      mocks.fake = fake;
+      await freeUserWith(0);
+      const begun = await silentAfterHeartbeat("u-1", last);
+      await usageSummary("u-1", at(3600));
+      expect(last + FREE_ABANDON_GRACE_SECONDS).toBe(seconds);
+      expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: seconds, billedMinutes: minutes });
+      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: minutes, minutesReserved: 0 });
+    }
+  });
+
+  it("the reservation still caps it: 2 minutes left, last heartbeat at 125 s, bills the 2 minutes reserved", async () => {
+    await freeUserWith(8);
+    const begun = await silentAfterHeartbeat("u-1", 125); // inside the end grace of a 2 minute reservation
+    expect(allowanceOf("u-1").minutesReserved).toBe(2);
+    await usageSummary("u-1", at(3600));
+    // 140 s would be 3 minutes; the reservation clamps it to 120 s and 2 minutes, and it keeps its own reason.
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 120, billedMinutes: 2, abuseFlagged: false });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
+  });
+
+  it("9.5 used, heartbeats for 70 seconds, then lost connection: billed the 1 minute reserved, and not flagged", async () => {
     await freeUserWith(9.5);
-    const begun = await goSilentAfter(180); // last heartbeat at 170 seconds
+    const begun = await silentAfterHeartbeat("u-1", 70); // last heartbeat at 70 seconds, inside the end grace
     expect(allowanceOf("u-1").minutesReserved).toBe(1);
 
     await usageSummary("u-1", at(600)); // the server notices the silence and settles the call
     const s = session(begun.callId);
-    expect(s).toMatchObject({ endReason: "heartbeat_timeout", abuseFlagged: false });
-    // Through the last heartbeat (170 s) plus the silent stretch bounded by the 1 minute reservation: 230 s, 4 minutes.
-    expect(s.billableSeconds).toBe(230);
-    expect(s.billedMinutes).toBe(4);
-    expect(s.billedMinutes as number).toBeGreaterThanOrEqual(3);
-    // The old rule clamped the whole call to its reservation: 1 minute, usage 10.5.
-    expect(allowanceOf("u-1").minutesUsed).toBe(13.5);
-    expect(allowanceOf("u-1").minutesUsed as number).toBeGreaterThan(10.5);
-    expect(allowanceOf("u-1")).toMatchObject({ minutesReserved: 0 });
+    expect(s).toMatchObject({ endReason: "heartbeat_timeout", abuseFlagged: false, billableSeconds: 60, billedMinutes: 1 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10.5, minutesReserved: 0 });
+    expect(fake.rows("user")[0].voiceBlockedUntil ?? null).toBeNull();
   });
 
-  it("a longer confirmed call is counted in full, however long the silence that follows", async () => {
-    await freeUserWith(9.5);
-    const begun = await goSilentAfter(25 * 60); // 25 minutes of heartbeats, last at 1490 s
-    await usageSummary("u-1", at(24 * 3600));
-    const s = session(begun.callId);
-    expect(s.billableSeconds).toBe(1490 + 60); // confirmed time plus at most the reservation
-    expect(s.billedMinutes).toBe(26);
-    expect(allowanceOf("u-1").minutesUsed).toBe(9.5 + 26);
-  });
-
-  it("a call that only sent its connect heartbeat is still bounded by its reservation", async () => {
+  it("a call that only sent its connect heartbeat bills the grace: 1 started minute", async () => {
     await freeUserWith(0);
-    const begun = await beginCall("u-1", scn, at(0));
-    if (!begun.ok) throw new Error(begun.error);
-    await heartbeat("u-1", begun.callId, "connected", at(0));
+    const begun = await silentAfterHeartbeat("u-1", 0);
     await usageSummary("u-1", at(3 * 3600));
-    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 10 });
-    expect(allowanceOf("u-1").minutesUsed).toBe(10);
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: FREE_ABANDON_GRACE_SECONDS, billedMinutes: 1 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 1, minutesReserved: 0 });
+  });
+
+  it("a paid call that goes silent is billed as before: through the reap, up to its reservation", async () => {
+    addUser("u-1", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
+    const funnel = await silentAfterHeartbeat("u-1", 125);
+    expect(session(funnel.callId).capEnforced).toBe(true);
+    await usageSummary("u-1", at(125 + 240));
+    // The same as before the Free change: the whole silent stretch until the reap.
+    expect(session(funnel.callId)).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(365), billableSeconds: 365, billedMinutes: 7, abuseFlagged: false });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 7, minutesReserved: 0 });
+
+    // Reaped the next day: clamped to its 60 minute reservation and flagged as outliving it, as before.
+    addUser("u-2", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-2" }, at(0));
+    const late = await silentAfterHeartbeat("u-2", 50);
+    await usageSummary("u-2", at(24 * 3600));
+    expect(session(late.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 3600, billedMinutes: 60, abuseFlagged: true });
+    expect(allowanceOf("u-2")).toMatchObject({ minutesUsed: 60, minutesReserved: 0 });
+  });
+
+  /** The reduced-charge markers written so far (one per reduced settlement). */
+  const markers = () => fake.rows("auditEvent").filter((e) => e.action === FREE_ABANDON_REDUCED_MARKER);
+  /**
+   * `n` silent calls, one an hour from `from`, each with its last heartbeat 50 s in. Starting each call reaps the one
+   * before it; the last is left open. Returns the call ids.
+   */
+  async function silentCalls(n: number, from = 0) {
+    const ids: string[] = [];
+    for (let k = 0; k < n; k++) ids.push((await silentAfterHeartbeat("u-1", 50, from + k * 3600)).callId);
+    return ids;
+  }
+
+  it("the limit is 3 reduced silent calls per period", () => {
+    expect(FREE_ABANDON_REDUCED_PER_PERIOD).toBe(3);
+  });
+
+  it("calls 1 to 3 of a period are reduced and each writes a marker; the 4th, reaped 31 s after its last heartbeat, bills its whole reservation and writes none", async () => {
+    await freeUserWith(-50); // 60 Free minutes left (a manual credit), so 4 calls fit
+    const ids = await silentCalls(4);
+    // Calls 1 to 3: 50 s + 15 s = 65 s, 2 minutes each, reaped by the next start.
+    for (const id of ids.slice(0, 3)) expect(session(id)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 65, billedMinutes: 2 });
+    const october = freeAbandonClaimKey(allowanceOf("u-1").id as string, allowanceOf("u-1").periodStart as Date);
+    expect(markers()).toEqual(ids.slice(0, 3).map((id) => expect.objectContaining({ userId: "u-1", resource: october, metadata: { trainerSessionId: id } })));
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: -44, minutesReserved: 54 });
+    // The 4th, reaped as soon as it counts as silent: its whole 54 minute reservation, not 65 s. The row keeps the reap.
+    const reap = 3 * 3600 + 50 + HEARTBEAT_TIMEOUT_SECONDS + 1;
+    await usageSummary("u-1", at(reap));
+    expect(session(ids[3])).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(reap), billableSeconds: 54 * 60, billedMinutes: 54, abuseFlagged: false });
+    expect(markers()).toHaveLength(3);
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
+    expect(fake.rows("user")[0].voiceBlockedUntil ?? null).toBeNull();
+  });
+
+  it("the 4th silent call of a period reaped the next day bills its whole reservation too", async () => {
+    await freeUserWith(0); // 10 Free minutes: calls 1 to 3 bill 2 each, the 4th reserves the last 4
+    const ids = await silentCalls(4);
+    await usageSummary("u-1", at(24 * 3600));
+    expect(session(ids[3])).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(24 * 3600), billableSeconds: 240, billedMinutes: 4, abuseFlagged: false });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
+  });
+
+  // ---- Never-connected calls (no heartbeat, no connectedAt) never use a silent-call slot ----------------------------
+
+  it("a never-connected call reclaimed by a new start at 46 s bills 0 with no marker, and all 3 reduced silent calls are still available", async () => {
+    await freeUserWith(-50); // 60 Free minutes left: the never-connected call reserves all of them
+    const ghost = await beginCall("u-1", scn, at(0)); // never sends a heartbeat
+    if (!ghost.ok) throw new Error(ghost.error);
+    expect(allowanceOf("u-1").minutesReserved).toBe(60);
+    // At 45 s it is not reclaimed yet, so the start finds nothing free.
+    expect(NEVER_CONNECTED_RECLAIM_SECONDS).toBe(45);
+    expect(await beginCall("u-1", scn, at(45))).toEqual({ ok: false, error: "minutes_reserved" });
+    // At 46 s the next start reclaims it (failed_connect, 0) and can reserve; then 3 silent calls follow.
+    const ids = await silentCalls(3, 46);
+    expect(session(ghost.callId)).toMatchObject({ endReason: "failed_connect", billableSeconds: 0, billedMinutes: 0, connectedAt: null, lastHeartbeatAt: null });
+    expect(markers().some((m) => (m.metadata as { trainerSessionId?: string }).trainerSessionId === ghost.callId)).toBe(false);
+    await usageSummary("u-1", at(46 + 2 * 3600 + 81));
+    // All three got the reduced charge (50 s + 15 s, 2 minutes each), one marker each, none for the reclaimed call.
+    expect(ids.map((id) => session(id))).toEqual(ids.map(() => expect.objectContaining({ endReason: "heartbeat_timeout", billableSeconds: 65, billedMinutes: 2 })));
+    expect(markers().map((m) => (m.metadata as { trainerSessionId: string }).trainerSessionId)).toEqual(ids);
+    // Only now are the slots used up: the 4th silent call bills its whole reservation.
+    const [fourth] = await silentCalls(1, 4 * 3600);
+    const reserved = session(fourth).reservedMinutes as number;
+    await usageSummary("u-1", at(4 * 3600 + 81));
+    expect(session(fourth)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: reserved, billableSeconds: reserved * 60 });
+    expect(markers()).toHaveLength(3);
+  });
+
+  it("a never-connected call closed by the 15 minute window on a usage read bills 0 with no marker, and does not count toward the 3", async () => {
+    await freeUserWith(-50);
+    const ghost = await beginCall("u-1", scn, at(0));
+    if (!ghost.ok) throw new Error(ghost.error);
+    // A usage read never uses the 45 s reclaim: at 46 s and at 900 s the call stays open and reserved.
+    await usageSummary("u-1", at(46));
+    await usageSummary("u-1", at(900));
+    expect(session(ghost.callId).endedAt ?? null).toBeNull();
+    expect(allowanceOf("u-1").minutesReserved).toBe(60);
+    await usageSummary("u-1", at(901));
+    expect(session(ghost.callId)).toMatchObject({ endReason: "failed_connect", billableSeconds: 0, billedMinutes: 0 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: -50, minutesReserved: 0 });
+    expect(markers()).toEqual([]);
+    // The 3 reduced silent calls are all still there.
+    const ids = await silentCalls(3, 1000);
+    await usageSummary("u-1", at(1000 + 2 * 3600 + 81));
+    expect(ids.map((id) => session(id).billedMinutes)).toEqual([2, 2, 2]);
+    expect(markers()).toHaveLength(3);
+  });
+
+  it("one start that reclaims a never-connected call and settles a silent Free call takes the user row first: one marker, only for the Free call", async () => {
+    await freeUserWith(-110); // 120 Free minutes: two calls of 60 reserved minutes each
+    // The never-connected call comes first in the batch, so its settlement (which can lock the allowance) runs first.
+    const ghost = await beginCall("u-1", scn, at(0));
+    if (!ghost.ok) throw new Error(ghost.error);
+    const free = await beginCall("u-1", scn, at(10));
+    if (!free.ok) throw new Error(free.error);
+    await heartbeat("u-1", free.callId, "connected", at(10));
+    await heartbeat("u-1", free.callId, "ok", at(20)); // then silent
+    fake.enableRowLocks();
+
+    // The start at 100 s (ghost 100 s old, Free call silent 80 s) races a usage read at the same moment.
+    const opsFrom = fake.ops.length;
+    const [started, read] = await Promise.allSettled([beginCall("u-1", scn, at(100)), usageSummary("u-1", at(100))]);
+    expect(started.status).toBe("fulfilled");
+    expect(started.status === "fulfilled" && started.value).toMatchObject({ ok: true });
+    expect(read.status).toBe("fulfilled");
+    expect(fake.ops.some((o) => o.op.startsWith("deadlock:"))).toBe(false);
+    expect(fake.lockOrderViolations).toEqual([]);
+
+    // Every transaction of the race asked for the user row before anything else, and before any allowance or call row lock.
+    const raced = fake.ops.slice(opsFrom);
+    // A real race: one of the two waited for the other's user row lock.
+    expect(raced.some((o) => o.op === "wait:user:u-1")).toBe(true);
+    for (const tx of new Set(raced.map((o) => o.tx).filter((n): n is number => n !== null))) {
+      const mine = raced.filter((o) => o.tx === tx).map((o) => o.op);
+      expect(mine[0]).toBe("begin");
+      expect(mine[1]).toBe('raw:SELECT "id" FROM "User" WHERE "id" = ? FOR UPDATE');
+      const userLock = mine.findIndex((op) => op === "lock:user:u-1");
+      expect(userLock).toBeGreaterThan(0);
+      for (const [i, op] of mine.entries()) if (/^lock:(usageAllowance|trainerSession):/.test(op)) expect(i).toBeGreaterThan(userLock);
+    }
+
+    // Billing: the reclaimed call 0 and no marker; the Free call reduced (connected at 10 s, last heartbeat 20 s, plus 15 s).
+    expect(session(ghost.callId)).toMatchObject({ endReason: "failed_connect", billableSeconds: 0, billedMinutes: 0 });
+    expect(session(free.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 25, billedMinutes: 1 });
+    expect(markers().map((m) => (m.metadata as { trainerSessionId: string }).trainerSessionId)).toEqual([free.callId]);
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: -109, minutesReserved: 60 });
+  });
+
+  it("the next billing period gets 3 reduced silent calls again", async () => {
+    await freeUserWith(0);
+    const octKey = freeAbandonClaimKey(allowanceOf("u-1").id as string, allowanceOf("u-1").periodStart as Date);
+    const october = await silentCalls(4);
+    await usageSummary("u-1", at(3 * 3600 + 81));
+    // 3 reduced (2 minutes each), then the 4th bills the 4 minutes it reserved.
+    expect(october.map((id) => session(id).billedMinutes)).toEqual([2, 2, 2, 4]);
+    // The month resets on the 10th at 12:00 UTC, 26 days after T0.
+    const nov10 = 26 * 24 * 3600;
+    expect(at(nov10).toISOString()).toBe("2026-11-10T12:00:00.000Z");
+    const november = await silentCalls(4, nov10 + 60);
+    await usageSummary("u-1", at(nov10 + 60 + 3 * 3600 + 81));
+    expect(november.map((id) => session(id).billableSeconds)).toEqual([65, 65, 65, 240]);
+    expect(november.map((id) => session(id).billedMinutes)).toEqual([2, 2, 2, 4]);
+    const novKey = freeAbandonClaimKey(allowanceOf("u-1").id as string, at(nov10));
+    expect(markers().map((m) => m.resource)).toEqual([octKey, octKey, octKey, novKey, novKey, novKey]);
+  });
+
+  it("the markers survive the retention purge and still count: after the rows of calls 1 to 3 are deleted, the 4th bills its whole reservation", async () => {
+    await freeUserWith(-50);
+    fake.rows("organization")[0].sessionRetentionDays = 1; // shorter than any billing period
+    const ids = await silentCalls(3);
+    await usageSummary("u-1", at(2 * 3600 + 81));
+    expect(ids.map((id) => session(id).billedMinutes)).toEqual([2, 2, 2]);
+    expect(markers()).toHaveLength(3);
+
+    // Two days later the nightly purge deletes the call rows; the AuditEvent markers stay.
+    vi.stubEnv("CRON_SECRET", "cron-test-secret-not-real");
+    vi.setSystemTime(at(2 * 24 * 3600));
+    const res = await purge(new NextRequest("https://trainer.example/api/cron/purge-expired", { headers: { authorization: "Bearer cron-test-secret-not-real" } }));
+    expect(res.status).toBe(200);
+    vi.setSystemTime(T0);
+    for (const id of ids) expect(fake.rows("trainerSession").find((s) => s.id === id)).toBeUndefined();
+    expect(fake.rows("trainerSession").filter((s) => s.endReason === "heartbeat_timeout")).toEqual([]);
+    expect(markers()).toHaveLength(3);
+
+    // A 4th silent call in the same period, reaped 31 s after its last heartbeat: its whole 54 minute reservation.
+    const start = 2 * 24 * 3600 + 100;
+    const fourth = await silentAfterHeartbeat("u-1", 125, start);
+    await usageSummary("u-1", at(start + 125 + HEARTBEAT_TIMEOUT_SECONDS + 1));
+    expect(session(fourth.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 54 * 60, billedMinutes: 54 });
+    expect(markers()).toHaveLength(3); // a full-reservation settlement writes none
+
+    // The next period starts with no markers: its first silent call is reduced again and writes one.
+    const nov10 = 26 * 24 * 3600;
+    const november = await silentAfterHeartbeat("u-1", 125, nov10 + 60);
+    await usageSummary("u-1", at(nov10 + 60 + 365));
+    expect(session(november.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 140, billedMinutes: 3 });
+    expect(markers()).toHaveLength(4);
+    expect(markers()[3].resource).toBe(freeAbandonClaimKey(allowanceOf("u-1").id as string, at(nov10)));
+  });
+
+  it("parallel reaps of 5 stale calls give exactly 3 reduced charges and 3 markers", async () => {
+    await freeUserWith(-290); // 300 Free minutes left: 5 open calls of 60 reserved minutes each
+    // Calls A to E start a second apart; their last heartbeats run backwards (A at 500 s, E at 100 s). Each reap below
+    // sees a different set of stale calls, so the first call each one settles is a different call: E, D, C, B, A.
+    const lastBeats = [500, 400, 300, 200, 100];
+    const ids: string[] = [];
+    for (let k = 0; k < 5; k++) {
+      const begun = await beginCall("u-1", scn, at(k));
+      if (!begun.ok) throw new Error(begun.error);
+      ids.push(begun.callId);
+    }
+    for (let k = 0; k < 5; k++) await heartbeat("u-1", ids[k], "connected", at(lastBeats[k]));
+    expect(allowanceOf("u-1").minutesReserved).toBe(300);
+    fake.enableRowLocks();
+
+    const reaps = await Promise.allSettled([...lastBeats].reverse().map((t) => usageSummary("u-1", at(t + HEARTBEAT_TIMEOUT_SECONDS + 1))));
+    expect(reaps.map((r) => r.status)).toEqual(Array(5).fill("fulfilled"));
+    expect(fake.ops.some((o) => o.op.startsWith("deadlock:"))).toBe(false);
+    const billed = ids.map((id) => session(id).billedMinutes as number);
+    expect(ids.every((id) => session(id).endReason === "heartbeat_timeout")).toBe(true);
+    expect(billed.filter((m) => m < 60)).toHaveLength(3);
+    expect(billed.filter((m) => m === 60)).toHaveLength(2);
+    expect(markers()).toHaveLength(3);
+    // The markers name exactly the 3 calls that were reduced.
+    expect(markers().map((m) => (m.metadata as { trainerSessionId: string }).trainerSessionId).sort()).toEqual(ids.filter((_, k) => billed[k] < 60).sort());
+  });
+
+  it("a never-connected call or a hung-up call does not count toward the period's reduced silent calls", async () => {
+    await freeUserWith(0);
+    const never = await beginCall("u-1", scn, at(0));
+    if (!never.ok) throw new Error(never.error);
+    const { callId: hungUp } = await runCall("u-1", { start: 3600, endAt: 60 }); // reaps the never-connected one first
+    expect(session(never.callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0 });
+    expect(session(hungUp)).toMatchObject({ endReason: "user_hangup", billedMinutes: 1 });
+    const abandoned = await silentAfterHeartbeat("u-1", 125, 7200);
+    await usageSummary("u-1", at(7200 + 365));
+    expect(session(abandoned.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 140, billedMinutes: 3 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 4, minutesReserved: 0 });
+  });
+
+  it("paid: every abandoned call in a period is billed through the reap, as before", async () => {
+    addUser("u-1", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
+    const first = await silentAfterHeartbeat("u-1", 125);
+    const second = await silentAfterHeartbeat("u-1", 125, 365); // reaps the first at 365 s
+    await usageSummary("u-1", at(365 + 365));
+    expect(session(first.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 365, billedMinutes: 7 });
+    expect(session(second.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 365, billedMinutes: 7 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 14, minutesReserved: 0 });
+
+    // A third one reaped 31 s after its last heartbeat is still billed only through the reap (the reap-timing weakness
+    // main has for paid calls, left as is): 125 s + 31 s = 156 s, 3 minutes.
+    const third = await silentAfterHeartbeat("u-1", 125, 3600);
+    await usageSummary("u-1", at(3600 + 125 + HEARTBEAT_TIMEOUT_SECONDS + 1));
+    expect(session(third.callId)).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(3600 + 156), billableSeconds: 156, billedMinutes: 3 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 17, minutesReserved: 0 });
   });
 
   it("a call that never sent a heartbeat is closed as failed_connect and bills nothing", async () => {
@@ -535,6 +1541,8 @@ describe("voice_cap_hit: a used-up allowance is reported with ids only, and neve
       expect(ghlPosts).toHaveBeenCalledTimes(1);
       const body = JSON.parse((ghlPosts.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
       expect(body).toMatchObject({ event: "voice_cap_hit", userId: "u-ghl", email: "u-ghl@example.test", plan: "free", reason: "cap_reached", tags: ["app-calltrainer"] });
+      // The claim marker for the organization's day is written once, before the POST.
+      expect(fake.rows("auditEvent").filter((a) => a.action === "ghl.voice_cap_hit_sent")).toEqual([expect.objectContaining({ userId: "u-ghl", resource: "voice_cap_hit:org-1:2026-10-15" })]);
     });
 
     it("a cap hit queued just before UTC midnight and sent just after keeps its own time and day", async () => {
@@ -556,7 +1564,7 @@ describe("voice_cap_hit: a used-up allowance is reported with ids only, and neve
       expect(body).toMatchObject({
         event: "voice_cap_hit",
         occurredAt: "2026-10-15T23:59:59.900Z",
-        eventId: "voice_cap_hit:u-midnight:cap_reached:2026-10-15",
+        eventId: "voice_cap_hit:org-1:2026-10-15",
       });
     });
 
@@ -628,15 +1636,53 @@ describe("voice_cap_hit: a used-up allowance is reported with ids only, and neve
     expect(events).toEqual([capHit("u-pro", "cap_reached_in_call", at(70).toISOString())]);
   });
 
-  it("a Free call stopped by the call length limit is not a cap hit", async () => {
-    await freeUser("u-long", 0);
-    const begun = await beginCall("u-long", scn, at(0));
+  it("a Free call stopped at its cap emits cap_reached_in_call once, with the Free stop wording and the warning before it", async () => {
+    // STR-715 had "a Free call stopped by the call length limit is not a cap hit": Free calls never stopped on the cap.
+    // They do now, through the same heartbeat stop as paid calls, so the in-call cap hit from #106 fires for Free too.
+    await freeUser("u-free-stop", 0);
+    const begun = await beginCall("u-free-stop", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    const limit = 600 + FREE_END_GRACE_SECONDS;
+    expect(begun.maxSeconds).toBe(limit);
+
+    expect(await (await beat(begun.callId, "connected")).json()).toEqual({ stop: false, secondsLeft: limit });
+    vi.setSystemTime(at(300));
+    expect(await (await beat(begun.callId, "ok")).json()).toEqual({ stop: false, secondsLeft: limit - 300 });
+    vi.setSystemTime(at(550));
+    expect(await (await beat(begun.callId, "ok")).json()).toEqual({ stop: false, secondsLeft: limit - 550, capWarning: true, message: FREE_CAP_WARNING_MESSAGE });
+    // The route sends the warning once: the next heartbeat in the window answers without it.
+    vi.setSystemTime(at(560));
+    expect(await (await beat(begun.callId, "ok")).json()).toEqual({ stop: false, secondsLeft: limit - 560 });
+    await flush();
+    expect(events).toEqual([]); // the warning is not a cap hit
+
+    vi.setSystemTime(at(limit));
+    const stopped = await (await beat(begun.callId, "ok")).json();
+    expect(stopped).toEqual({ stop: true, reason: "cap_reached", message: FREE_CAP_STOPPED_MESSAGE, freeCap: true });
+    expect(isCapMessage(stopped.message)).toBe(true); // the call screen adds the Upgrade link
+    // If that answer is lost, the next ones still tell the client it was a Free cap stop, with the Free wording.
+    vi.setSystemTime(at(limit + 10));
+    expect(await (await beat(begun.callId, "ok")).json()).toEqual({ stop: true, reason: "ended", message: FREE_CAP_STOPPED_MESSAGE, freeCap: true });
+    vi.setSystemTime(at(limit + 20));
+    await beat(begun.callId, "ok");
+    await flush();
+    expect(events).toEqual([capHit("u-free-stop", "cap_reached_in_call", at(limit).toISOString())]);
+  });
+
+  it("a paid cap stop keeps the paid wording and never carries the Free warning", async () => {
+    mocks.authId = "u-pro-copy";
+    addUser("u-pro-copy", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-pro-copy" }, at(0));
+    allowanceOf("u-pro-copy").minutesUsed = 199;
+    const begun = await beginCall("u-pro-copy", scn, at(0));
     if (!begun.ok) throw new Error(begun.error);
     await beat(begun.callId, "connected");
-    vi.setSystemTime(at(MAX_CALL_SECONDS + 5));
-    expect(await (await beat(begun.callId, "ok")).json()).toMatchObject({ stop: true, reason: "max_duration" });
+    vi.setSystemTime(at(30));
+    expect(await (await beat(begun.callId, "ok")).json()).toEqual({ stop: false, secondsLeft: 30 });
+    vi.setSystemTime(at(60));
+    expect(await (await beat(begun.callId, "ok")).json()).toEqual({ stop: true, reason: "cap_reached", message: CAP_STOPPED_MESSAGE });
     await flush();
-    expect(events).toEqual([]);
+    expect(events).toEqual([capHit("u-pro-copy", "cap_reached_in_call", at(60).toISOString())]);
   });
 
   it("no event when metering is off: the mint is not capped and the heartbeat is not served", async () => {
@@ -661,7 +1707,7 @@ describe("a Free user at 9.5 of 10 used can start a voice call", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.callId).toBeTruthy();
-    expect(body.maxSeconds).toBe(MAX_CALL_SECONDS);
+    expect(body.maxSeconds).toBe(60 + FREE_END_GRACE_SECONDS);
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 9.5, minutesReserved: 1 });
   });
 
@@ -984,14 +2030,11 @@ describe("text practice is never capped", () => {
     expect(turn.status).toBe(200);
     expect(((await turn.json()) as { reply?: string }).reply).toBeTruthy();
 
-    const graded = await evaluate(post("/api/evaluate-call", { scenario, transcript }));
-    expect(graded.status).toBe(200);
-    const evaluation = await graded.json();
+    // Graded under the id the text session is saved under, and the sealed grade is stored with it.
+    const { evaluation } = await gradeAndSave({ sessionId: "text-1" }, 600);
     expect(typeof evaluation.overallScore).toBe("number");
-
-    const saved = await saveTranscript(post("/api/transcripts", { sessionId: "text-1", transcript, durationSeconds: 600, scenario: { id: scenario.id }, evaluation }));
-    expect(saved.status).toBe(200);
-    expect(fake.rows("trainerSession")[0]).toMatchObject({ billedMinutes: 0, billableSeconds: 0, connectedAt: null });
+    expect(fake.rows("trainerSession")).toHaveLength(1);
+    expect(fake.rows("trainerSession")[0]).toMatchObject({ billedMinutes: 0, billableSeconds: 0, connectedAt: null, overallScore: Math.round(evaluation.overallScore), grade: evaluation.grade });
     expect(fake.rows("usageEntry")).toHaveLength(0);
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 12, minutesReserved: 0 });
 

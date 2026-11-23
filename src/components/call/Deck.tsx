@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronUp, Loader2, Mic, MicOff, PhoneOff, Send, Target, X } from "lucide-react";
+import { ChevronUp, Loader2, Mic, MicOff, PhoneOff, Send, Target, Timer, X } from "lucide-react";
 import { CUE_LABELS, type CoachMode } from "@/lib/coach-types";
 import { talkTrackSteps, type Scenario } from "@/lib/scenarios";
 import type { StoredTurn } from "@/lib/sessionStore";
@@ -28,6 +28,8 @@ export interface DeckVoice {
   trial?: boolean;
   /** The server's deadline for THIS call (its normal end), in seconds. */
   maxSeconds?: number;
+  /** The Free 1 minute warning, once the server sent it for this call. Shown and announced once. */
+  capWarning?: string;
 }
 
 /**
@@ -257,6 +259,16 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
                 </div>
                 <p className="hidden font-mono text-[10px] text-ink-muted sm:block"><span className="kbd">Enter</span> send · <span className="kbd">Shift</span>+<span className="kbd">Enter</span> new line · <span className="kbd">Esc</span> end call</p>
               </form>
+            )}
+            {/* Mounted for the whole voice call so the warning, when it arrives, is announced once as a status. */}
+            {voice && (
+              <div role="status" aria-atomic="true">
+                {voice.capWarning && (
+                  <p className="mb-3 flex items-center justify-center gap-2 rounded-panel bg-caution-soft p-3 text-center text-sm font-medium">
+                    <Timer size={16} strokeWidth={1.75} className="shrink-0" aria-hidden />{voice.capWarning}
+                  </p>
+                )}
+              </div>
             )}
             {voice && (
               <p className="flex items-center justify-center gap-2 py-1 text-sm text-ink-soft">

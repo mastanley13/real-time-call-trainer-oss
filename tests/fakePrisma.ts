@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Prisma } from "@prisma/client";
 
 /**
@@ -102,6 +103,51 @@ export function createFakePrisma() {
 
   /** Every query in call order: `table.method`, or `raw:<sql>` for a raw query (row and advisory locks). */
   const calls: string[] = [];
+  /** Every query and transaction boundary in order, with the transaction it ran in (null outside one). */
+  const ops: { tx: number | null; op: string }[] = [];
+  const op = (what: string) => ops.push({ tx: txScope.getStore()?.n ?? null, op: what });
+
+  // Row locks, modelled only after enableRowLocks(): a SELECT ... FOR UPDATE and every update take the row's lock for the
+  // calling transaction until it ends. Another transaction asking for a held row waits, the way Postgres blocks it; the
+  // same transaction may ask again. A wait that would close a cycle throws a deadlock error (Postgres 40P01, Prisma
+  // P2034) instead of hanging. Off by default, because interleave() hooks model a commit landing between a read and a
+  // write, which a held row lock would block.
+  type Owner = { n: number };
+  const txScope = new AsyncLocalStorage<Owner>();
+  let txSeq = 0;
+  let rowLocking = false;
+  const rowLocks = new Map<string, { owner: Owner; released: Promise<void> }>();
+  const waitsFor = new Map<Owner, string>();
+  const releasers = new Map<Owner, Array<() => void>>();
+  async function lockRow(key: string) {
+    const owner = txScope.getStore();
+    if (!rowLocking || !owner) return;
+    for (let held = rowLocks.get(key); held && held.owner !== owner; held = rowLocks.get(key)) {
+      for (let k: string | undefined = key; k !== undefined;) {
+        const holder: Owner | undefined = rowLocks.get(k)?.owner;
+        if (!holder) break;
+        if (holder === owner) {
+          op(`deadlock:${key}`);
+          throw new Prisma.PrismaClientKnownRequestError("deadlock detected", { code: "P2034", clientVersion: "test" });
+        }
+        k = waitsFor.get(holder);
+      }
+      waitsFor.set(owner, key);
+      op(`wait:${key}`);
+      await held.released;
+      waitsFor.delete(owner);
+    }
+    if (!rowLocks.has(key)) {
+      let release!: () => void;
+      const released = new Promise<void>((r) => { release = r; });
+      rowLocks.set(key, { owner, released });
+      op(`lock:${key}`);
+      const mine = releasers.get(owner) ?? [];
+      mine.push(() => { rowLocks.delete(key); release(); });
+      releasers.set(owner, mine);
+    }
+  }
+
   function table(name: string) {
     const rows = () => data[name];
     const log = (method: string) => calls.push(`${name}.${method}`);
@@ -127,21 +173,24 @@ export function createFakePrisma() {
       }
     };
     return {
-      findUnique: async (args: { where: Where; include?: { organization?: boolean } }) => { log("findUnique"); return withInclude(find(args.where) ?? null, args); },
-      findFirst: async (args: { where: Where }) => { log("findFirst"); return copy(find(args.where)); },
+      findUnique: async (args: { where: Where; include?: { organization?: boolean } }) => { log("findUnique"); op(`${name}.findUnique`); return withInclude(find(args.where) ?? null, args); },
       findUniqueOrThrow: async (args: { where: Where; include?: { organization?: boolean } }) => {
         log("findUniqueOrThrow");
+        op(`${name}.findUniqueOrThrow`);
         const r = find(args.where);
         if (!r) throw new Error(`${name} not found`);
         return withInclude(r, args);
       },
       findMany: async (args: { where?: Where; take?: number; orderBy?: { createdAt: "desc" | "asc" } } = {}) => {
+        op(`${name}.findMany`);
         let out = rows().filter((r) => matches(r, args.where ?? {}));
         if (args.orderBy) out = [...out].sort((a, b) => ((a.createdAt as Date).getTime() - (b.createdAt as Date).getTime()) * (args.orderBy!.createdAt === "desc" ? -1 : 1));
         return out.slice(0, args.take ?? out.length).map((r) => ({ ...r }));
       },
-      count: async (args: { where?: Where } = {}) => rows().filter((r) => matches(r, args.where ?? {})).length,
+      findFirst: async (args: { where?: Where } = {}) => { log("findFirst"); op(`${name}.findFirst`); return copy(rows().find((r) => matches(r, args.where ?? {}))); },
+      count: async (args: { where?: Where } = {}) => { op(`${name}.count`); return rows().filter((r) => matches(r, args.where ?? {})).length; },
       create: async (args: { data: Record<string, unknown> }) => {
+        op(`${name}.create`);
         const row = { id: `${name}-${++seq}`, ...DEFAULTS[name](), ...(name === "trainerSession" ? { updatedAt: nextStamp() } : {}), ...Object.fromEntries(Object.entries(args.data).filter(([, v]) => v !== undefined)) } as Row;
         for (const keys of UNIQUE[name]) {
           if (keys.some((k) => row[k] === null || row[k] === undefined)) continue;
@@ -152,8 +201,11 @@ export function createFakePrisma() {
       },
       update: async (args: { where: Where; data: Record<string, unknown> }) => {
         log("update");
+        op(`${name}.update`);
         await fire(name, "update", args);
         if (failOnce[name] > 0) { failOnce[name] -= 1; throw new Error("injected failure"); }
+        const target = find(args.where);
+        if (target) await lockRow(`${name}:${target.id}`);
         const r = find(args.where);
         // Like Prisma: an update whose where matches no row (missing, or changed since read) is P2025.
         if (!r) throw new Prisma.PrismaClientKnownRequestError(`${name} not found`, { code: "P2025", clientVersion: "test" });
@@ -161,12 +213,16 @@ export function createFakePrisma() {
         return { ...r };
       },
       updateMany: async (args: { where: Where; data: Record<string, unknown> }) => {
+        op(`${name}.updateMany`);
         await fire(name, "updateMany", args);
+        // An UPDATE locks the rows it matches, then re-checks its condition on them, as Postgres does.
+        for (const r of rows().filter((x) => matches(x, args.where))) await lockRow(`${name}:${r.id}`);
         const hit = rows().filter((r) => matches(r, args.where));
         hit.forEach((r) => apply(r, args.data));
         return { count: hit.length };
       },
       deleteMany: async (args: { where?: Where } = {}) => {
+        op(`${name}.deleteMany`);
         const gone = rows().filter((r) => matches(r, args.where ?? {}));
         // In place, so anything holding the array from rows() still sees the live data.
         for (const r of gone) rows().splice(rows().indexOf(r), 1);
@@ -181,6 +237,7 @@ export function createFakePrisma() {
   }
 
   const rawQueries: { sql: string; values: unknown[] }[] = [];
+  const TABLE_OF: Record<string, string> = { User: "user", Organization: "organization", UsageAllowance: "usageAllowance", TrainerSession: "trainerSession" };
   const db = {
     user: table("user"),
     organization: table("organization"),
@@ -189,10 +246,14 @@ export function createFakePrisma() {
     trainerSession: table("trainerSession"),
     stripeEvent: table("stripeEvent"),
     auditEvent: table("auditEvent"),
-    /** Records raw queries (row locks); the fake has no concurrent transactions to block. */
+    /** Records raw queries (row and advisory locks). A SELECT ... FOR UPDATE takes that row's lock (see lockRow). */
     $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
-      rawQueries.push({ sql: strings.join("?"), values });
-      calls.push(`raw:${strings.join("?")}`);
+      const sql = strings.join("?");
+      rawQueries.push({ sql, values });
+      calls.push(`raw:${sql}`);
+      op(`raw:${sql}`);
+      const locked = /FROM "(\w+)" WHERE "id" = \? FOR UPDATE/.exec(sql);
+      if (locked && TABLE_OF[locked[1]]) await lockRow(`${TABLE_OF[locked[1]]}:${values[0]}`);
       return [];
     },
     /**
@@ -242,6 +303,8 @@ export function createFakePrisma() {
             releases.push(await acquireAdvisory(String(values[0])));
             entry.snapshot = structuredClone(data);
           }
+          // A FOR UPDATE on a call or allowance row holds that row like an update does (the heartbeat's call-row lock).
+          if (/FROM "(TrainerSession|UsageAllowance)"/.test(sql) && sql.includes("FOR UPDATE")) lockedMeteringRows = true;
           if (sql.includes('FROM "User"') && sql.includes("FOR UPDATE")) {
             const key = `user:${String(values[0])}`;
             if (heldUsers.has(key)) return out; // re-entrant
@@ -250,7 +313,9 @@ export function createFakePrisma() {
               throw new LockOrderError(key);
             }
             heldUsers.add(key);
-            if (!inHook) {
+            // With enableRowLocks() the row lock taken by db.$queryRaw above already serializes this user row (with
+            // deadlock detection), so the advisory wait is only the default model.
+            if (!inHook && !rowLocking) {
               releases.push(await acquireAdvisory(key));
               // Retaken only while nothing was written yet, so a rollback still undoes this transaction's own writes.
               if (!wrote) entry.snapshot = structuredClone(data);
@@ -260,13 +325,20 @@ export function createFakePrisma() {
         },
       };
       open.push(entry);
+      const owner: Owner = { n: ++txSeq };
+      let outcome = "rollback";
       try {
-        return await fn(tx);
+        const result = await txScope.run(owner, () => { op("begin"); return fn(tx); });
+        outcome = "commit";
+        return result;
       } catch (e) {
         if (wrote) data = entry.snapshot;
         throw e;
       } finally {
         open.splice(open.indexOf(entry), 1);
+        ops.push({ tx: owner.n, op: outcome });
+        for (const release of releasers.get(owner) ?? []) release();
+        releasers.delete(owner);
         for (const release of releases) release();
       }
     },
@@ -291,6 +363,7 @@ export function createFakePrisma() {
     db,
     rawQueries,
     calls,
+    ops,
     /** User row locks that were asked for after the transaction had written rows (see $transaction). Should stay empty. */
     lockOrderViolations,
     /** Direct access to rows for arranging and asserting. */
@@ -308,5 +381,7 @@ export function createFakePrisma() {
       hooks.push({ table, method, when, run });
     },
     failNextUpdate: (name: keyof typeof UNIQUE) => { failOnce[name] = 1; },
+    /** Turns on row locks: FOR UPDATE and updates block other transactions until the holder ends (see lockRow). */
+    enableRowLocks: () => { rowLocking = true; },
   };
 }

@@ -8,7 +8,7 @@ import { trialDeadlineBinds, trialMaxSeconds, trialSampleEligible } from "./prem
 import {
   CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, NEVER_CONNECTED_RECLAIM_SECONDS, MAX_CALL_SECONDS, MAX_CONNECT_LAG_SECONDS, MAX_RESERVE_MINUTES,
   DAILY_SESSION_MINT_CAP, MIN_PREMIUM_SECONDS, OVERRUN_GRACE_SECONDS, PREMIUM_MINUTES_PER_UNIT, VOICE_BLOCK_SECONDS,
-  capFor, effectivePlan, maxMinutesAfter, midCallCapApplies, periodFor, settleCall, splitAcrossBoundary,
+  FREE_ABANDON_GRACE_SECONDS, FREE_ABANDON_REDUCED_PER_PERIOD, callLimitSeconds, capFor, effectivePlan, exactCapStop, freeCapWarningReached, maxMinutesAfter, periodFor, settleCall, splitAcrossBoundary,
   type CallEndReasonId, type CallOutcome, type PlanTier,
 } from "./usagePlan";
 
@@ -25,10 +25,13 @@ import {
  * Neither voice provider is ended from here (the browser holds the connection), so the reservation is a
  * billing clamp, not a hard stop. Calls that visibly outlive it are flagged (see `flagOverrun`).
  *
- * Free is the exception: its cap is checked only when a call starts. The reservation still stops two calls from
- * starting on the same last minutes, but it is not a limit on the running call: no heartbeat stop, no billing
- * clamp, no overrun flag. The call runs to its normal end (or the 24 hour length limit) and every minute it used
- * counts toward the month, which can leave minutesUsed above the cap. The next voice start is then refused.
+ * Free calls follow the same rule with an end grace: a Free call reserves the Free minutes left when it starts, the
+ * heartbeat stops it (cap_reached) at that reservation plus FREE_END_GRACE_SECONDS, and it is billed at most the
+ * reservation, so the grace is never charged. The first FREE_ABANDON_REDUCED_PER_PERIOD silent Free calls of a period
+ * are billed through their last heartbeat plus FREE_ABANDON_GRACE_SECONDS, not until they are reaped; any later one in
+ * that period is billed its whole reservation (see settle()). The heartbeat also tells a Free call when about a minute is left. A Free
+ * call is not flagged as an overrun when the server settles it (a closed tab reaped later is not abuse), only when the
+ * browser keeps reporting after the server already stopped it. (STR-715 let a started Free call run up to 24 hours.)
  */
 
 type Tx = Prisma.TransactionClient;
@@ -289,8 +292,8 @@ const roundMinutes = (n: number) => Math.round(n * 100) / 100;
 /**
  * The cap check (rule 11), the same for every plan: any minutes left let a call start, even half of one. What the
  * screen shows as "0.5 voice minutes left" is what this enforces. 9.5 of 10 used starts, 10 or more does not.
- * A Free call then runs to its end. A Pro or Team call holds a whole minute, because reservations are whole minutes
- * and every started minute counts, so it can end at most half a minute over its plan.
+ * Every call holds a whole minute (Free included), because reservations are whole minutes and every started minute
+ * counts, so a call that starts on a fractional remainder can end at most that fraction of a minute over its plan.
  */
 export function checkCap(r: Pick<Resolved, "remaining">): { ok: true } | { ok: false; error: "cap_reached" } {
   return r.remaining > 0 ? { ok: true } : { ok: false, error: "cap_reached" };
@@ -387,7 +390,12 @@ export function premiumMintInfo(
 export interface ScenarioInfo { id: string; title?: string; industry?: string; difficulty?: string }
 
 export type BeginResult =
-  | { ok: true; callId: string; remaining: number; pooled: boolean; engine: VoiceEngine; maxSeconds: number; premium: PremiumMintInfo }
+  /**
+   * freeRule: the call is on the Free rule (capEnforced false). The mint routes then tell the client, which ends a Free
+   * call by itself when its heartbeats keep failing (CallMeter), since a silent Free call may be billed only up to its
+   * last heartbeat (up to FREE_ABANDON_REDUCED_PER_PERIOD times per period).
+   */
+  | { ok: true; callId: string; remaining: number; pooled: boolean; engine: VoiceEngine; maxSeconds: number; premium: PremiumMintInfo; freeRule: boolean }
   | { ok: false; error: "cap_reached" | "minutes_reserved" | "no_organization" | "user_not_found" | "standard_unavailable" | "daily_session_limit" }
   | { ok: false; error: "voice_blocked"; retryAfterSeconds: number };
 
@@ -438,7 +446,8 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
       const check = checkCap(r);
       if (!check.ok) return check;
       if (!user.organizationId) return { ok: false, error: "no_organization" } as const;
-      const capApplies = midCallCapApplies(r.plan);
+      // Pro and Team stop exactly at their reservation; Free stops at it plus the end grace (stored as capEnforced).
+      const exactStop = exactCapStop(r.plan);
       // Any minutes not held by another start let this one begin, on every plan.
       if (r.available <= 0) return { ok: false, error: "minutes_reserved" } as const;
 
@@ -489,18 +498,19 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
           // The realtime mint route confirms it with the model it actually minted (src/lib/voiceMintLog.ts).
           voiceTier: comped || trial || engine === "premium" ? "premium" : "standard",
           premiumTrial: trial,
-          capEnforced: capApplies,
+          capEnforced: exactStop,
         },
       });
       if (trial) {
         // Which call used the trial, on the organization. Only the claim this transaction just made is stamped.
         await tx.organization.updateMany({ where: { id: user.organizationId, premiumTrialCallSessionId: null }, data: { premiumTrialCallSessionId: session.id } });
       }
-      // Free calls are not limited by the plan cap once started, only by the call length limit. The trial call is
+      // The call may use its reservation: what the plan had left at this start (whole minutes, at most
+      // MAX_RESERVE_MINUTES), plus FREE_END_GRACE_SECONDS on Free, never over the call length limit. The trial call is
       // also limited to TRIAL_SAMPLE_SECONDS, and a lower existing deadline still wins.
-      const existingMax = capApplies ? reserve * 60 : MAX_CALL_SECONDS;
+      const existingMax = callLimitSeconds(reserve, exactStop);
       const maxSeconds = trial ? trialMaxSeconds(existingMax) : existingMax;
-      return { ok: true, callId: session.id, remaining: r.remaining, pooled: r.pooled, engine, maxSeconds, premium } as const;
+      return { ok: true, callId: session.id, remaining: r.remaining, pooled: r.pooled, engine, maxSeconds, premium, freeRule: !exactStop } as const;
     }
     return { ok: false, error: "minutes_reserved" } as const;
   });
@@ -532,102 +542,232 @@ export function provedConnected(s: Pick<OpenSession, "allowanceId" | "connectedA
 
 /**
  * True when the call is still alive, as far as the server can tell, well past the end of its limit:
- * `now` is beyond the billing start plus the call's maximum length plus the grace period. For a call the plan
- * cap applies to, that length is its reservation; for a Free call it is the 24 hour length limit.
+ * `now` is beyond the billing start plus the call's maximum length plus the overrun grace. That length is its
+ * reservation, plus the end grace for a Free call (callLimitSeconds).
  */
-function pastReservation(s: Pick<OpenSession, "createdAt" | "connectedAt" | "reservedMinutes" | "allowanceId" | "premiumTrial">, now: Date, capApplies: boolean): boolean {
+function pastReservation(s: Pick<OpenSession, "createdAt" | "connectedAt" | "reservedMinutes" | "allowanceId" | "premiumTrial" | "capEnforced" | "endedAt">, now: Date): boolean {
   if (!s.allowanceId) return false;
-  const base = maxSecondsOf(s.reservedMinutes, capApplies);
+  const exactStop = exactStopOf(s);
+  const base = callLimitSeconds(s.reservedMinutes, exactStop);
   // A trial call's limit is its trial deadline, so a browser that keeps the Premium session past it is flagged too.
-  const end = billingStart(s).getTime() + (s.premiumTrial ? trialMaxSeconds(base) : base) * 1000;
+  let end = billingStart(s).getTime() + (s.premiumTrial ? trialMaxSeconds(base) : base) * 1000;
+  // A Free call is also measured from when the server actually settled it: one whose stop landed late (heartbeats lost,
+  // or a call minted before the Free mid-call cap) and that then hangs up at once kept nothing running past the stop.
+  if (!exactStop && s.endedAt) end = Math.max(end, s.endedAt.getTime());
   return now.getTime() - end > OVERRUN_GRACE_SECONDS * 1000;
 }
 
 /**
- * Whether the plan cap limits this running call: the rule it was started under, stored on the call at mint.
- * A plan change mid-call does not change it. Calls from before the column existed default to capped.
+ * Whether this call stops exactly at its reservation (Pro, Team) or at it plus the Free end grace: the rule it was
+ * started under, stored on the call at mint. A plan change mid-call does not change it. Calls from before the column
+ * existed default to the exact stop. Free calls minted before the Free mid-call cap (capEnforced false, which then meant
+ * "never stopped by the cap") get the Free rule from their next heartbeat.
  */
-const callCapApplies = (s: Pick<OpenSession, "capEnforced">): boolean => s.capEnforced !== false;
+const exactStopOf = (s: Pick<OpenSession, "capEnforced">): boolean => s.capEnforced !== false;
 
 /** End reasons of a call the server settled: the reservation clamped it, or nobody reported its end. */
 const SERVER_ENDED: ReadonlySet<string> = new Set(["cap_reached", "max_duration", "heartbeat_timeout"]);
-
-/**
- * The most seconds this call may run: what it reserved at mint time, and never more than the 24 hour limit.
- * A call the plan cap does not apply to (Free) has only the 24 hour limit.
- */
-const maxSecondsOf = (reservedMinutes: number, capApplies = true) => (capApplies ? Math.min(reservedMinutes * 60, MAX_CALL_SECONDS) : MAX_CALL_SECONDS);
 
 // ---- During a call ----------------------------------------------------------------------------
 
 export type HeartbeatState = "connected" | "ok" | "recovering";
 export type HeartbeatResult =
   | { found: false }
-  | { found: true; stop: false; secondsLeft: number }
-  | { found: true; stop: true; reason: "cap_reached" | "max_duration" | "ended"; settlement: CallResult | null };
+  /**
+   * capWarning: a Free call has about a minute of Free minutes left (freeCapWarning). Set once per call, on the heartbeat
+   * that crosses into the warning window. secondsLeft includes the end grace.
+   */
+  | { found: true; stop: false; secondsLeft: number; capWarning?: true }
+  /** freeCap: a cap_reached stop of a call on the Free rule, so the answer can use the Free wording. */
+  | { found: true; stop: true; reason: "cap_reached" | "max_duration" | "ended"; settlement: CallResult | null; freeCap?: true };
 
 /**
  * Client heartbeat. The first "connected" fixes connectedAt on the server clock; "recovering" marks the
  * start of a network wobble (cleared by the next "ok"). Answers stop=true once the call's reserved
- * minutes or the 24 hour limit are used up, and settles the call right then. The clock runs from the
- * server's mint time whether or not the client ever says "connected".
+ * minutes (plus the end grace on Free) or the 24 hour limit are used up, and settles the call right then. The clock
+ * runs from the server's mint time whether or not the client ever says "connected". Only the heartbeat that stops the
+ * call answers cap_reached or max_duration; every later one answers "ended".
  */
+/**
+ * The answer for a call that is already settled. A Free call the server stopped at its cap keeps freeCap on every later
+ * answer, so a client whose stopping answer was lost or overtaken still ends it through the hang-up path. The reason
+ * stays "ended", so the route fires voice_cap_hit only for the first stop.
+ */
+function endedAnswer(s: Pick<OpenSession, "endReason" | "capEnforced">): HeartbeatResult {
+  const freeCap = !exactStopOf(s) && s.endReason === "cap_reached";
+  return freeCap
+    ? { found: true, stop: true, reason: "ended", settlement: null, freeCap: true }
+    : { found: true, stop: true, reason: "ended", settlement: null };
+}
+
+/**
+ * What the locked part of a heartbeat decided (see heartbeat()). Built from the call row read under its row lock and
+ * the write made under it; nothing here has touched any other row.
+ */
+type HeartbeatDecision =
+  | { kind: "answer"; result: HeartbeatResult }
+  /** The call was already settled when read under the lock: the overrun check and the ended answer run after commit. */
+  | { kind: "ended"; row: OpenSession }
+  /**
+   * This heartbeat was recorded and the rest needs work outside the lock: the stop and its settlement, or, for a call
+   * from before reservations existed, its limit from the allowance. `locked` is the row as read under the lock, `row` is
+   * that row with this heartbeat's write applied, and `warn` the warning decision when the limit was known there.
+   */
+  | { kind: "after"; locked: OpenSession; row: OpenSession; warn: boolean | null };
+
 export async function heartbeat(userId: string, callId: string, state: HeartbeatState, now = new Date()): Promise<HeartbeatResult> {
+  const decision = await recordHeartbeat(userId, callId, state, now);
+  if (decision.kind === "answer") return decision.result;
+  // Everything that touches another row runs here, after the call-row lock was released by the commit above: it never
+  // holds the call row while it waits for the user or allowance row. This transaction takes the user row first, like
+  // every other metering transaction (lockUserFirst), then the allowance (limitSeconds, a rollover), then call rows.
   return runMetered(async (tx) => {
-    // Before the call-row write below: a stop settles the call and flagOverrun writes the user row (lockUserFirst).
+    // A stop settles the call and flagOverrun writes the user row, so the user row comes before anything else here.
     await lockUserFirst(tx, userId);
-    const s = await tx.trainerSession.findUnique({ where: { id: callId } });
-    if (!s || s.userId !== userId) return { found: false } as const;
-    if (s.endedAt) {
+    if (decision.kind === "ended") {
       // The server already settled this call. Still heartbeating well past the end of its reservation means the
       // browser kept the provider session running, whether the server clamped it or reaped it as silent.
-      if (SERVER_ENDED.has(s.endReason ?? "") && pastReservation(s, now, callCapApplies(s))) await flagOverrun(tx, s, now);
-      return { found: true, stop: true, reason: "ended", settlement: null } as const;
+      const s = (await tx.trainerSession.findUnique({ where: { id: callId } })) ?? decision.row;
+      if (SERVER_ENDED.has(s.endReason ?? "") && pastReservation(s, now)) await flagOverrun(tx, s, now);
+      return endedAnswer(s);
     }
+    // The row as it is now: what this heartbeat wrote, unless something committed since (then the settlement's own
+    // conditional write notices, as before).
+    const s = await tx.trainerSession.findUnique({ where: { id: callId } });
+    // Often an overlapping heartbeat that just stopped the call: read how it ended so a Free cap stop keeps its flag.
+    if (!s || s.endedAt) return endedAnswer(s ?? decision.row);
+    const lim = await limitSeconds(tx, s, now);
+    const start = billingStart(s);
+    const left = leftSeconds(lim.limit, now, start);
+    if (left > 0) {
+      const warn = decision.warn ?? capWarningDue(decision.locked, decision.row, now, lim);
+      return warn ? { found: true, stop: false, secondsLeft: left, capWarning: true } as const : { found: true, stop: false, secondsLeft: left } as const;
+    }
+    const elapsed = Math.max(0, Math.floor((now.getTime() - start.getTime()) / 1000));
+    // Free and paid calls stop the same way when their minutes run out (cap_reached); Free only gets its end grace
+    // first. A trial call that reaches its trial deadline ends the normal way (max_duration), never with a quota error.
+    const reason = lim.trialBound ? "max_duration" : lim.limit - elapsed <= 0 ? "cap_reached" : "max_duration";
+    const settlement = await settle(tx, { ...s, degradedAt: null }, reason, now);
+    if (!settlement) {
+      // Another settlement (an overlapping stopping heartbeat, an end event) closed the call first: this heartbeat
+      // answers "ended" like any later one, so only one answer says cap_reached. A call with nothing to charge stays open.
+      const closed = await tx.trainerSession.findUnique({ where: { id: callId }, select: { endedAt: true, endReason: true, capEnforced: true } });
+      if (closed?.endedAt) return endedAnswer(closed);
+    }
+    return reason === "cap_reached" && !lim.exactStop
+      ? { found: true, stop: true, reason, settlement, freeCap: true } as const
+      : { found: true, stop: true, reason, settlement } as const;
+  });
+}
 
-    const data: Prisma.TrainerSessionUpdateManyMutationInput = { lastHeartbeatAt: now };
+/**
+ * The locked part of a heartbeat, in its own short transaction: lock the call row (SELECT ... FOR UPDATE, held until
+ * commit), read it under the lock, write the heartbeat, and decide. Heartbeats of one call therefore run one at a time,
+ * and each one decides from the row the previous one wrote. It reads and writes only that TrainerSession row: no other
+ * row lock, no allowance or user read (limitSeconds is not called here), no settlement. Anything else is returned as a
+ * decision for heartbeat() to do after commit.
+ */
+async function recordHeartbeat(userId: string, callId: string, state: HeartbeatState, now: Date): Promise<HeartbeatDecision> {
+  return prisma.$transaction(async (tx): Promise<HeartbeatDecision> => {
+    const found = await tx.trainerSession.findUnique({ where: { id: callId }, select: { userId: true } });
+    if (!found || found.userId !== userId) return { kind: "answer", result: { found: false } };
+    await tx.$queryRaw`SELECT "id" FROM "TrainerSession" WHERE "id" = ${callId} FOR UPDATE`;
+    const s = await tx.trainerSession.findUnique({ where: { id: callId } });
+    if (!s) return { kind: "answer", result: { found: false } };
+    if (s.endedAt) return { kind: "ended", row: s };
+
+    // lastHeartbeatAt is the latest heartbeat received: max(stored, now), so a heartbeat that arrives after a newer one
+    // (out of order, or after waiting on the lock) never moves it back, and no heartbeat is dropped. This does not loosen
+    // abandoned-call billing (the silence timeout in settleStale and the last confirmed time in billedEnd, both
+    // unchanged): the stored value is always the server time of a heartbeat that really arrived and the newest one so
+    // far, never a time no heartbeat had and never earlier than one already received.
+    const lastHeartbeatAt = s.lastHeartbeatAt && s.lastHeartbeatAt.getTime() > now.getTime() ? s.lastHeartbeatAt : now;
+    const data: Prisma.TrainerSessionUpdateManyMutationInput = { lastHeartbeatAt };
     let connectedAt = s.connectedAt;
     if (!connectedAt && state === "connected" && now.getTime() - s.createdAt.getTime() <= CONNECT_WINDOW_SECONDS * 1000) {
       connectedAt = now;
       data.connectedAt = now;
     }
+    let degradedAt = s.degradedAt;
     if (state === "recovering") {
-      if (!s.degradedAt) data.degradedAt = now;
+      if (!s.degradedAt) data.degradedAt = degradedAt = now;
     } else if (s.degradedAt) {
-      data.degradedAt = null;
+      data.degradedAt = degradedAt = null;
     }
     // Written only while the call is still open. A settlement (settleStale, closeNeverConnectedCall, an end event) that
     // committed since the read above has closed the row and released its reservation: the heartbeat then records
     // nothing, no connection included, and tells the client to stop.
     const written = await tx.trainerSession.updateMany({ where: { id: s.id, endedAt: null }, data });
-    if (written.count === 0) return { found: true, stop: true, reason: "ended", settlement: null } as const;
+    if (written.count === 0) {
+      // Often an overlapping heartbeat that just stopped the call: read how it ended so a Free cap stop keeps its flag.
+      const closed = await tx.trainerSession.findUnique({ where: { id: s.id }, select: { endReason: true, capEnforced: true } });
+      return { kind: "answer", result: endedAnswer(closed ?? s) };
+    }
+    const row: OpenSession = { ...s, lastHeartbeatAt, connectedAt, degradedAt };
 
-    const { limit, capApplies, trialBound } = await limitSeconds(tx, s, now);
-    const start = billingStart({ createdAt: s.createdAt, connectedAt });
-    const elapsed = Math.max(0, Math.floor((now.getTime() - start.getTime()) / 1000));
-    const left = Math.min(limit, MAX_CALL_SECONDS) - elapsed;
-    if (left > 0) return { found: true, stop: false, secondsLeft: left } as const;
-    // A Free call can only be stopped by the call length limit, never by the plan cap. A trial call that reaches its
-    // trial deadline ends the same normal way (max_duration), never with a quota error.
-    const reason = trialBound ? "max_duration" : capApplies && limit - elapsed <= 0 ? "cap_reached" : "max_duration";
-    const settlement = await settle(tx, { ...s, connectedAt, lastHeartbeatAt: now, degradedAt: null }, reason, now);
-    return { found: true, stop: true, reason, settlement } as const;
+    // The limit of a metered call is fixed on its row; a call from before reservations existed needs its allowance,
+    // which is read after commit, so its answer is worked out there.
+    const lim = rowLimitSeconds(row);
+    if (!lim) return { kind: "after", locked: s, row, warn: null };
+    const left = leftSeconds(lim.limit, now, billingStart(row));
+    if (left <= 0) return { kind: "after", locked: s, row, warn: false }; // the stop, settled after commit
+    return capWarningDue(s, row, now, lim)
+      ? { kind: "answer", result: { found: true, stop: false, secondsLeft: left, capWarning: true } }
+      : { kind: "answer", result: { found: true, stop: false, secondsLeft: left } };
   });
 }
 
+/** Seconds a call with this limit has left at `t`, counted from its billing start `from`. */
+const leftSeconds = (limit: number, t: Date, from: Date): number =>
+  Math.min(limit, MAX_CALL_SECONDS) - Math.max(0, Math.floor((t.getTime() - from.getTime()) / 1000));
+
 /**
- * Seconds a call may run in total, and whether the plan cap is what sets that. A call from before reservations
- * existed uses what the allowance has left. Free calls get only the 24 hour call length limit.
+ * Whether this heartbeat carries the Free 1 minute warning. The warning comes from the call's own reservation on the
+ * server clock, never from a client timer. Not on a trial call whose 300 second deadline ends it first: that one ends as
+ * max_duration with its own notice. Once per call: it goes only to a heartbeat that has reached the window at its own
+ * time (`now`) and is not stopping the call (time left), while the stored last heartbeat in `locked` (the same row as
+ * read under the lock, before the write) had not reached it. "Reached" (freeCapWarningReached) includes being at or past
+ * the deadline, so it never turns false again as time moves on. Heartbeats are serialized by the call-row lock and the
+ * stored value only moves forward (max), so once a stored heartbeat has reached the window no later heartbeat warns,
+ * even an older one that arrives after a deadline heartbeat.
+ *
+ * One timeline: no warning while the call has no connectedAt (neither in the row read under the lock nor set by this
+ * write). connectedAt is written only by recordHeartbeat, only while it is null, under the call-row lock, so once set it
+ * never changes, and billingStart (min(connectedAt, mint time plus MAX_CONNECT_LAG_SECONDS)) is fixed from then on.
+ * Every warning decision is therefore made on that fixed start. A heartbeat stored before connectedAt existed cannot
+ * have warned, so the heartbeat that records connectedAt treats the call as not yet warned (a call that connects inside
+ * the window warns on that heartbeat). A client that never reports "connected" gets no warning; the stop still comes.
  */
-async function limitSeconds(tx: Tx, s: OpenSession, now: Date): Promise<{ limit: number; capApplies: boolean; trialBound: boolean }> {
-  const capApplies = callCapApplies(s);
-  let base: number;
-  if (!capApplies) base = MAX_CALL_SECONDS;
-  else if (s.allowanceId) base = maxSecondsOf(s.reservedMinutes);
-  else base = ((await resolveAllowance(tx, s.userId, now))?.remaining ?? 0) * 60;
-  // The organization's trial call: min(existing deadline, 300 s). trialBound says the trial cap is the binding one.
-  if (s.premiumTrial) return { limit: trialMaxSeconds(base), capApplies, trialBound: trialDeadlineBinds(base) };
-  return { limit: base, capApplies, trialBound: false };
+function capWarningDue(locked: OpenSession, row: OpenSession, now: Date, lim: { limit: number; exactStop: boolean; trialBound: boolean }): boolean {
+  if (lim.exactStop || lim.trialBound || !row.connectedAt) return false;
+  const start = billingStart(row);
+  const left = leftSeconds(lim.limit, now, start);
+  if (left <= 0 || !freeCapWarningReached(left)) return false;
+  if (!locked.connectedAt || !locked.lastHeartbeatAt) return true;
+  return !freeCapWarningReached(leftSeconds(lim.limit, locked.lastHeartbeatAt, start));
+}
+
+/** The trial deadline applied to a base limit: min(existing deadline, 300 s). trialBound says the trial cap binds. */
+function withTrial(s: Pick<OpenSession, "premiumTrial">, base: number, exactStop: boolean): { limit: number; exactStop: boolean; trialBound: boolean } {
+  if (s.premiumTrial) return { limit: trialMaxSeconds(base), exactStop, trialBound: trialDeadlineBinds(base) };
+  return { limit: base, exactStop, trialBound: false };
+}
+
+/** limitSeconds for a metered call, from its row alone (no reads). Null for a row with no allowanceId. */
+function rowLimitSeconds(s: OpenSession): { limit: number; exactStop: boolean; trialBound: boolean } | null {
+  if (!s.allowanceId) return null;
+  const exactStop = exactStopOf(s);
+  return withTrial(s, callLimitSeconds(s.reservedMinutes, exactStop), exactStop);
+}
+
+/**
+ * Seconds a call may run in total, and which stop rule it is on: its reservation, plus the end grace on the Free rule
+ * (callLimitSeconds). A call from before reservations existed uses what the allowance has left.
+ */
+async function limitSeconds(tx: Tx, s: OpenSession, now: Date): Promise<{ limit: number; exactStop: boolean; trialBound: boolean }> {
+  const fromRow = rowLimitSeconds(s);
+  if (fromRow) return fromRow;
+  return withTrial(s, ((await resolveAllowance(tx, s.userId, now))?.remaining ?? 0) * 60, exactStopOf(s));
 }
 
 // ---- Ending a call ----------------------------------------------------------------------------
@@ -695,6 +835,48 @@ class ConnectedSinceCheckError extends Error {
 }
 
 /**
+ * The durable record of one reduced abandoned-call charge: an AuditEvent with this action, the user, `resource` =
+ * freeAbandonClaimKey(allowance, period start) and the call id in `metadata`. One per reduced settlement, written in that
+ * settlement's transaction, so a period can have up to FREE_ABANDON_REDUCED_PER_PERIOD of them under the same resource
+ * (AuditEvent has no unique constraint, so they never collide). AuditEvent rows are never deleted (the retention purge
+ * deletes only TrainerSession rows, see src/app/api/cron/purge-expired), so the count outlives the call rows whatever
+ * the organization's retention. Same marker pattern as the GHL send markers in ghlWebhook.ts. No schema change.
+ */
+export const FREE_ABANDON_REDUCED_MARKER = "usage.free_abandon_reduced";
+/** The billing period a marker is for: the allowance and the start of the period the call started in. */
+export const freeAbandonClaimKey = (allowanceId: string, periodStart: Date): string => `${allowanceId}@${periodStart.toISOString()}`;
+
+/**
+ * Whether this user has used up the period's reduced abandoned-call charges (FREE_ABANDON_REDUCED_PER_PERIOD) in the
+ * period this call started in, counted from the durable markers (FREE_ABANDON_REDUCED_MARKER), not from earlier call
+ * rows, which the retention purge can delete. A call from before calls recorded their period (allowancePeriodStart
+ * null) is treated as used up.
+ *
+ * Concurrency: the caller (settle) holds the user row lock, taken before any allowance or call row lock, and writes the
+ * marker in the same transaction, after this count. So settlements of this user's calls run one after the other, each
+ * counts every marker written before it, and parallel reaps can never take more than the limit. A settlement that rolls
+ * back takes its marker with it.
+ */
+async function freeAbandonReducedUsedUp(tx: Tx, s: OpenSession): Promise<boolean> {
+  if (!s.allowanceId || !s.allowancePeriodStart) return true;
+  const reduced = await tx.auditEvent.count({
+    where: { userId: s.userId, action: FREE_ABANDON_REDUCED_MARKER, resource: freeAbandonClaimKey(s.allowanceId, s.allowancePeriodStart) },
+  });
+  return reduced >= FREE_ABANDON_REDUCED_PER_PERIOD;
+}
+
+/**
+ * Whether settling this call with this reason takes the Free silent-call path: a call on the Free rule that proved it
+ * connected (connectedAt or a heartbeat), reaped as heartbeat_timeout. Only this path counts and writes the
+ * FREE_ABANDON_REDUCED_MARKER. A never-connected call (no heartbeat, no connectedAt) is always failed_connect and 0,
+ * whoever closes it (the client report, the 45 s reclaim on a new start, the 15 minute connect window), and never takes
+ * or uses up one of the period's reduced silent-call charges.
+ */
+function freeSilentCallPath(s: Pick<OpenSession, "capEnforced" | "allowanceId" | "connectedAt" | "lastHeartbeatAt">, requested: CallEndReasonId): boolean {
+  return !exactStopOf(s) && requested === "heartbeat_timeout" && provedConnected(s);
+}
+
+/**
  * `neverConnectedOnly`: the caller promised to close only a call that never connected (closeNeverConnectedCall). The
  * settlement then writes only while the row it read still has no connectedAt and no heartbeat, and throws
  * ConnectedSinceCheckError instead of settling a call that connected in the meantime.
@@ -705,6 +887,7 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   if (opts.neverConnectedOnly && (original.connectedAt || original.lastHeartbeatAt)) throw new ConnectedSinceCheckError();
   // User row first, before chargeTarget/ensureAllowance touch the allowance (see lockUserFirst). Every caller already
   // took it as its transaction's first statement, so this is a re-entrant no-op that keeps the order for any new caller.
+  // It is also the lock the Free silent-call count (freeAbandonReducedUsedUp) and its marker write run under.
   await lockUserFirst(tx, original.userId);
   const target = await chargeTarget(tx, original, now);
   if (!target) return null;
@@ -718,18 +901,42 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   // seconds and 0 minutes whoever closes it (the client, a mint route or settleStale). See settleCall.
   const connected = provedConnected(s);
   const reason: CallEndReasonId = connected ? requested : "failed_connect";
+  const freeAbandon = connected && freeSilentCallPath(s, requested);
 
-  // The reservation limits what a capped call (Pro, Team) is billed. A Free call is billed for every minute it ran.
-  const bounded = callCapApplies(s);
-  // A Free call reaped as silent keeps everything it was confirmed to have used: its time is counted through the last
-  // heartbeat the server saw. Only the silent stretch after that is bounded, by the call's reservation, because the
-  // server cannot tell how long a silent call really ran and must not bill a closed browser tab for a day.
+  // A call on the Free rule (capEnforced false, set from exactCapStop(plan) at mint) that settleStale reaps as silent is
+  // an abandoned call (a closed tab). Only settleStale asks for heartbeat_timeout (clients cannot, see
+  // CLIENT_END_REASONS). The exact rule (Pro, Team) skips this branch and is billed until the reap, up to its
+  // reservation, exactly as before. Every other end reason skips it too.
+  //
+  // The first FREE_ABANDON_REDUCED_PER_PERIOD (3) abandoned Free calls of a period are billed through the last heartbeat
+  // the server saw plus FREE_ABANDON_GRACE_SECONDS, never past the reap. The 4th and every later one in the same period
+  // is billed its whole reservation (the reserved minutes, which never exceed the Free minutes the user had left),
+  // whenever the reap happens. The server cannot end the provider session, so a modified client can stop heartbeating
+  // and keep talking. Billing a later one through the reap would not stop that either: the client could trigger a usage
+  // read just over HEARTBEAT_TIMEOUT_SECONDS after its last heartbeat and pay about a minute per call. Residual risk: per
+  // period such a client gets up to 3 calls' reservations for the reduced charge; every other silent Free call costs
+  // its whole reservation. An honest client ends the call itself when heartbeats fail (CallMeter), so its reduced
+  // charge matches what it used.
+  //
+  // Paid calls (exact rule) are billed until the reap, up to the reservation, exactly as on main. That has the same
+  // reap-timing weakness (a usage read right after the 30 s silence bills only up to the reap), left as is here.
   let billedEnd = naturalEnd;
-  if (!bounded && requested === "heartbeat_timeout") {
-    const confirmedMs = Math.max(start.getTime(), s.lastHeartbeatAt?.getTime() ?? 0);
-    billedEnd = new Date(Math.min(naturalEnd.getTime(), confirmedMs + s.reservedMinutes * 60 * 1000));
+  let fullReservation = false;
+  if (freeAbandon) {
+    if (await freeAbandonReducedUsedUp(tx, s)) {
+      fullReservation = true;
+      billedEnd = new Date(start.getTime() + s.reservedMinutes * 60 * 1000);
+    } else {
+      const confirmedMs = Math.max(start.getTime(), s.lastHeartbeatAt?.getTime() ?? 0);
+      billedEnd = new Date(Math.min(naturalEnd.getTime(), confirmedMs + FREE_ABANDON_GRACE_SECONDS * 1000));
+    }
   }
+  // The reservation then limits what every call is billed, Free included (settleCall below): a Free call's end grace
+  // runs past its reserved minutes but is clamped off, so a Free call never adds more than it reserved at its start.
   const endedAt = connected ? billedEnd : now;
+  // What the row records as its end. A call billed its whole reservation keeps the reap time, not a time that may still
+  // be in the future; its billableSeconds say what it was charged.
+  const storedEndedAt = fullReservation ? new Date(Math.max(now.getTime(), start.getTime())) : endedAt;
   // The connect heartbeat sets lastHeartbeatAt to the start itself, so only a later one proves the client kept running.
   const heartbeatSeen = !!s.lastHeartbeatAt && s.lastHeartbeatAt.getTime() > start.getTime();
   // Only a drop that could still be credited needs the 24 hour count (DAILY_DROP_CREDIT_CAP). The user row was locked
@@ -747,7 +954,7 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
       },
     });
   }
-  const st = settleCall({ connectedAt: connected ? start : null, endedAt, reason, remainingMinutes: bounded ? target.remaining : Number.POSITIVE_INFINITY, heartbeatSeen, recentCreditedDrops });
+  const st = settleCall({ connectedAt: connected ? start : null, endedAt, reason, remainingMinutes: target.remaining, heartbeatSeen, recentCreditedDrops });
   // A stale call keeps its own reason when the reservation is what clamped it.
   let endReason: CallEndReasonId = requested === "heartbeat_timeout" && st.endReason === "cap_reached" ? "heartbeat_timeout" : st.endReason;
 
@@ -768,7 +975,7 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
     const split = splitAcrossBoundary({ startMs: start.getTime(), billableSeconds: st.billableSeconds, boundaryMs: boundary.getTime(), grossMinutes: st.grossMinutes });
     const credited = st.creditMinutes > 0;
     const inCurrent = boundary.getTime() === allowance.periodStart.getTime();
-    const newGross = inCurrent ? (bounded ? Math.min(split.newMinutes, s.carriedMinutes) : split.newMinutes) : 0;
+    const newGross = inCurrent ? Math.min(split.newMinutes, s.carriedMinutes) : 0;
     const clamped = inCurrent && newGross < split.newMinutes;
     if (clamped) endReason = "cap_reached";
     const lost = inCurrent ? 0 : split.newMinutes;
@@ -791,12 +998,20 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   // requires connectedAt to still be null, and is refused (not redone) when the call connected since its check.
   const won = await tx.trainerSession.updateMany({
     where: { id: s.id, endedAt: null, lastHeartbeatAt: s.lastHeartbeatAt ?? null, ...(opts.neverConnectedOnly ? { connectedAt: null } : {}) },
-    data: { endedAt, endReason: b.endReason, billableSeconds: b.billableSeconds, billedMinutes: b.net + b.priorNet },
+    data: { endedAt: storedEndedAt, endReason: b.endReason, billableSeconds: b.billableSeconds, billedMinutes: b.net + b.priorNet },
   });
   if (won.count === 0) {
     const current = await tx.trainerSession.findUnique({ where: { id: s.id }, select: { endedAt: true } });
     if (current && !current.endedAt) throw opts.neverConnectedOnly ? new ConnectedSinceCheckError() : new StaleAllowanceError();
     return null;
+  }
+  // This settlement took one of the period's reduced abandoned-call charges: record it durably, in this transaction and
+  // under the user row lock its count ran under, so it counts toward FREE_ABANDON_REDUCED_PER_PERIOD even after the
+  // retention purge deletes this call row (see freeAbandonReducedUsedUp).
+  if (freeAbandon && !fullReservation && s.allowanceId && s.allowancePeriodStart) {
+    await tx.auditEvent.create({
+      data: { userId: s.userId, action: FREE_ABANDON_REDUCED_MARKER, resource: freeAbandonClaimKey(s.allowanceId, s.allowancePeriodStart), metadata: { trainerSessionId: s.id } },
+    });
   }
 
   // When the call really ran, written on every call entry so it outlives the TrainerSession row (see usedInOtherAllowances).
@@ -828,7 +1043,10 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   }
   // A client that reports the end long after the reservation ran out kept the provider session open.
   // A silent call reaped after its reservation ran out counts too: the server cannot tell it from a live one.
-  if (connected && hasReservation && SERVER_ENDED.has(b.endReason) && pastReservation({ ...s, connectedAt: start }, now, callCapApplies(s))) {
+  // Not on the Free rule: a Free tab closed mid-call and reaped at the next visit must not block the next call, and a
+  // Free call minted before the Free mid-call cap is stopped late once, by its first heartbeat after the change. A Free
+  // browser that keeps reporting after the server stopped it is still flagged (the heartbeat and endCall checks).
+  if (connected && hasReservation && exactStopOf(s) && SERVER_ENDED.has(b.endReason) && pastReservation({ ...s, connectedAt: start }, now)) {
     await flagOverrun(tx, s, now);
   }
   return { outcome: st.outcome, endReason: b.endReason, billableSeconds: b.billableSeconds, billedMinutes: b.net + b.priorNet, creditedMinutes: st.creditMinutes };
@@ -874,7 +1092,7 @@ export async function endCall(userId: string, callId: string, reason: CallEndRea
     if (!s || s.userId !== userId) return null;
     if (s.endedAt) {
       // An end event for a call the server already settled, arriving after its reservation ran out.
-      if (SERVER_ENDED.has(s.endReason ?? "") && pastReservation(s, now, callCapApplies(s))) await flagOverrun(tx, s, now);
+      if (SERVER_ENDED.has(s.endReason ?? "") && pastReservation(s, now)) await flagOverrun(tx, s, now);
       return storedResult(s);
     }
     const done = await settle(tx, s, reason, now);
@@ -889,32 +1107,55 @@ export async function endCall(userId: string, callId: string, reason: CallEndRea
  * Only rows with an allowance are looked at: a text or unmetered save is never selected, closed or billed here.
  *
  * - A call that proved it connected (provedConnected) and then went silent for more than 30 seconds after its last
- *   heartbeat (rule 3) is settled as heartbeat_timeout and billed as if it ran until now, up to its reservation: the
- *   server cannot see the provider connection, so silence is not treated as proof the call stopped.
+ *   heartbeat (rule 3) is settled as heartbeat_timeout. A paid call (exact rule) is billed as if it ran until now, up to
+ *   its reservation: the server cannot see the provider connection, so silence is not treated as proof the call
+ *   stopped. The first FREE_ABANDON_REDUCED_PER_PERIOD such calls on the Free rule in a period are billed through their
+ *   last heartbeat plus FREE_ABANDON_GRACE_SECONDS, up to their reservation, so a closed tab reaped hours later costs
+ *   what the call used, not every minute it reserved. Later ones in the same period are billed their whole reservation,
+ *   whenever they are reaped (see settle()).
  * - A call that never reported a connection within the 15 minute connect window is closed as failed_connect: 0 seconds,
  *   0 minutes, and its reservation released. It is never billed for its age.
  * - `reclaimNeverConnected` (only beginCall, a new start by the same user, passes it): a call with no heartbeat and no
  *   connectedAt is closed the same way once it is older than NEVER_CONNECTED_RECLAIM_SECONDS (45 s), so a failed first
  *   connect does not hold the reservation for 15 minutes. Usage reads leave it on the 15 minute window, so a read during
  *   a long mic prompt never ends a live attempt. A call with any heartbeat or connectedAt is never touched by this rule.
+ *
+ * A never-connected call closed by either rule bills 0 as failed_connect and never takes one of the period's reduced
+ * Free silent-call charges (only a connected Free call reaped as heartbeat_timeout does, see freeSilentCallPath).
+ *
+ * Lock order: every call of the batch is settled in this one transaction, and settling can lock the allowance (its
+ * booking or a rollover). So when anything is due, the user row is locked here (lockUserFirst), before the first
+ * settlement, whatever order the calls come in: user row, then allowance, then call rows, as in beginCall. The callers
+ * (beginCall, usageSummary) already took it as their first statement and settle() takes it again; both are re-entrant
+ * no-ops in the same transaction.
  */
 export async function settleStale(tx: Tx, userId: string, now: Date, opts: { reclaimNeverConnected?: boolean } = {}): Promise<void> {
   const open = await tx.trainerSession.findMany({ where: { userId, endedAt: null, allowanceId: { not: null } } });
-  for (const s of open) {
-    if (opts.reclaimNeverConnected && await reclaimNeverConnected(tx, s, now)) continue;
-    await settleIfStale(tx, s, now);
+  const due = open.flatMap((s): { s: OpenSession; reason: CallEndReasonId; reclaim: boolean }[] => {
+    if (opts.reclaimNeverConnected && reclaimable(s, now)) return [{ s, reason: "failed_connect", reclaim: true }];
+    const reason = staleReason(s, now);
+    return reason ? [{ s, reason, reclaim: false }] : [];
+  });
+  if (due.length === 0) return;
+  await lockUserFirst(tx, userId);
+  for (const { s, reason, reclaim } of due) {
+    if (reclaim) await reclaimNeverConnected(tx, s, now);
+    else await settle(tx, s, reason, now);
   }
 }
 
-/**
- * The new-start rule (see settleStale): closes `s` as failed_connect when it never connected and is older than
- * NEVER_CONNECTED_RECLAIM_SECONDS. The settlement writes only while the row still has no heartbeat and no connectedAt
- * (neverConnectedOnly). A first heartbeat that commits in between wins: the settlement writes nothing, the call stays
- * open and keeps its reservation. True when the call was handled here (closed, or found connected since the read).
- */
-async function reclaimNeverConnected(tx: Tx, s: OpenSession, now: Date): Promise<boolean> {
+/** The new-start rule (see settleStale): `s` never connected and is older than NEVER_CONNECTED_RECLAIM_SECONDS. */
+function reclaimable(s: OpenSession, now: Date): boolean {
   if (!s.allowanceId || s.endedAt || s.connectedAt || s.lastHeartbeatAt) return false;
-  if (now.getTime() - s.createdAt.getTime() <= NEVER_CONNECTED_RECLAIM_SECONDS * 1000) return false;
+  return now.getTime() - s.createdAt.getTime() > NEVER_CONNECTED_RECLAIM_SECONDS * 1000;
+}
+
+/**
+ * Closes a reclaimable call as failed_connect. The settlement writes only while the row still has no heartbeat and no
+ * connectedAt (neverConnectedOnly). A first heartbeat that commits in between wins: the settlement writes nothing, the
+ * call stays open and keeps its reservation.
+ */
+async function reclaimNeverConnected(tx: Tx, s: OpenSession, now: Date): Promise<void> {
   try {
     await settle(tx, s, "failed_connect", now, { neverConnectedOnly: true });
   } catch (e) {
@@ -922,17 +1163,19 @@ async function reclaimNeverConnected(tx: Tx, s: OpenSession, now: Date): Promise
     // beginCall runs anyway may have happened), so the start carries on with the call left open and still reserved.
     if (!(e instanceof ConnectedSinceCheckError)) throw e;
   }
-  return true;
 }
 
-/** One open metered call: settled when stale (see settleStale), left alone otherwise. The settlement when this closed it. */
-async function settleIfStale(tx: Tx, s: OpenSession, now: Date): Promise<CallResult | null> {
+/**
+ * How settleStale closes one open metered call: heartbeat_timeout for a call that proved it connected and then went
+ * silent, failed_connect for one that never connected within the connect window, null when it is not stale.
+ */
+function staleReason(s: OpenSession, now: Date): CallEndReasonId | null {
   if (!s.allowanceId || s.endedAt) return null;
   const silent = s.lastHeartbeatAt
     ? now.getTime() - s.lastHeartbeatAt.getTime() > HEARTBEAT_TIMEOUT_SECONDS * 1000
     : now.getTime() - s.createdAt.getTime() > CONNECT_WINDOW_SECONDS * 1000;
   if (!silent) return null;
-  return settle(tx, s, provedConnected(s) ? "heartbeat_timeout" : "failed_connect", now);
+  return provedConnected(s) ? "heartbeat_timeout" : "failed_connect";
 }
 
 // ---- One-off repairs (scripts/usage-repair-text-billing.ts) -----------------------------------

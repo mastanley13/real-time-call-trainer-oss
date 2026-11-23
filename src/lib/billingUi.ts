@@ -12,6 +12,10 @@ import { PRICE as PLAN_PRICE } from "./pricing";
 export const CAP_REACHED_MESSAGE = "You have used all your voice minutes for this period. Switch to Text to practice, or upgrade your plan.";
 /** Shown when a Pro or Team call is stopped by its reserved minutes. */
 export const CAP_STOPPED_MESSAGE = "You have used all your voice minutes for this period.";
+/** Shown when a Free call is stopped at the end of its free minutes (after the end grace). The UI adds the Upgrade link. */
+export const FREE_CAP_STOPPED_MESSAGE = "Your free voice minutes for this month are used up, so the call ended. Upgrade for more voice minutes, or keep practicing in Text.";
+/** Shown once in a live Free call when about a minute of its free minutes is left. */
+export const FREE_CAP_WARNING_MESSAGE = "1 minute left on your free practice minutes. Wrap up the call.";
 
 export const BILLING_PATH = "/settings/billing";
 /** Where Upgrade goes when billing is off on this server: there is nothing to buy, so it shows the plans. */
@@ -23,8 +27,9 @@ export const VOICE_UNAVAILABLE_MESSAGE = "Voice is unavailable right now. Text p
 export const ASK_ADMIN_MESSAGE = "Ask your team admin for more minutes.";
 const POOL_MEMBER_CAP_MESSAGE = "You have used all your voice minutes for this period. Switch to Text to practice.";
 
-/** True for the two messages that mean "out of voice minutes", so the UI can offer an upgrade next to them. */
-export const isCapMessage = (message: string | null | undefined): boolean => message === CAP_REACHED_MESSAGE || message === CAP_STOPPED_MESSAGE;
+/** True for the messages that mean "out of voice minutes", so the UI can offer an upgrade next to them. */
+export const isCapMessage = (message: string | null | undefined): boolean =>
+  message === CAP_REACHED_MESSAGE || message === CAP_STOPPED_MESSAGE || message === FREE_CAP_STOPPED_MESSAGE;
 
 /**
  * What to show for an error on the briefing or call screen. A cap message normally offers an Upgrade link. A member of a

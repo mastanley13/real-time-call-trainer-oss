@@ -299,6 +299,10 @@ describe("billing a call", () => {
   it("every settlement transaction locks the user row as its first statement, before the drop count and any allowance write", async () => {
     addUser("u-1");
     const LOCK_USER = 'raw:SELECT "id" FROM "User" WHERE "id" = ? FOR UPDATE';
+    const userLocks = () => fake.rawQueries.filter((q) => q.sql.includes('FROM "User"'));
+    // A heartbeat's own transaction locks only its call row (heartbeats of one call run one at a time); that is not a
+    // user lock and touches no other row. A heartbeat with time left settles nothing, so it has no second transaction.
+    const callLocks = () => fake.rawQueries.filter((q) => q.sql.includes('FROM "TrainerSession"'));
     const firstCall = async (run: () => Promise<unknown>) => {
       const from = fake.calls.length;
       await run();
@@ -306,13 +310,18 @@ describe("billing a call", () => {
     };
     const begun = await beginCall("u-1", scn, at(100));
     if (!begun.ok) throw new Error(begun.error);
-    expect(await firstCall(() => heartbeat("u-1", begun.callId, "connected", at(100)))).toBe(LOCK_USER);
+    expect(fake.calls[0]).toBe(LOCK_USER);
+    const beforeBeat = fake.calls.length;
+    await heartbeat("u-1", begun.callId, "connected", at(100));
+    expect(fake.calls.slice(beforeBeat)).not.toContain(LOCK_USER);
+    expect(callLocks().map((q) => q.values)).toEqual([[begun.callId]]);
     expect(await firstCall(() => endCall("u-1", begun.callId, "network_drop", at(120)))).toBe(LOCK_USER);
     expect(await firstCall(() => usageSummary("u-1", at(130)))).toBe(LOCK_USER);
-    for (const q of fake.rawQueries) {
+    for (const q of userLocks()) {
       expect(q.sql).toContain("FOR UPDATE");
       expect(q.values).toEqual(["u-1"]);
     }
+    expect(fake.rawQueries).toHaveLength(userLocks().length + callLocks().length);
     expect(session(begun.callId).billedMinutes).toBe(0); // the drop credit still applies
     expect(fake.lockOrderViolations).toEqual([]);
   });
@@ -375,14 +384,26 @@ describe("billing a call", () => {
     expect(result?.billedMinutes).toBe(10);
   });
 
-  it("an abandoned call is settled the next time its owner asks for usage, billed until then", async () => {
+  it("an abandoned Free call is settled the next time its owner asks for usage, billed to its last heartbeat plus the grace", async () => {
     addUser("u-1");
     const begun = await beginCall("u-1", scn, at(0));
     if (!begun.ok) throw new Error();
     await heartbeat("u-1", begun.callId, "connected", at(0));
     await heartbeat("u-1", begun.callId, "ok", at(70));
     await usageSummary("u-1", at(500));
-    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 9 });
+    // 70 s + FREE_ABANDON_GRACE_SECONDS (15 s) = 85 s: 2 started minutes, not the 500 s until the reap.
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 85, billedMinutes: 2 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 2, minutesReserved: 0 });
+  });
+
+  it("an abandoned paid call is settled the next time its owner asks for usage, billed until then", async () => {
+    addUser("u-1", { planTier: "pro" });
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error();
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    await heartbeat("u-1", begun.callId, "ok", at(70));
+    await usageSummary("u-1", at(500));
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 500, billedMinutes: 9 });
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 9, minutesReserved: 0 });
   });
 });

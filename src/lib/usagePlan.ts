@@ -2,8 +2,8 @@
  * Plans, caps and voice-minute rules. Pure and client-safe: no database, no env.
  * Pricing locked: Free 10 min per month, Pro 200 min, Team 300 pooled min per seat (minimum 3 seats).
  * There are no overages and nothing is ever charged for going past a cap.
- * Pro and Team calls hard-stop when their reserved minutes run out. Free is checked only when a call starts:
- * a Free call that began under the cap runs to its normal end and its minutes count toward the month.
+ * Pro and Team calls hard-stop when their reserved minutes run out. A Free call is stopped too: at the Free minutes it
+ * reserved when it started, plus FREE_END_GRACE_SECONDS so the call can end gracefully, and never billed past them.
  * Text practice is never metered on any plan.
  */
 
@@ -85,11 +85,72 @@ export function capFor(plan: PlanTier, seats = 1): number {
 }
 
 /**
- * Whether the plan's minutes also stop a call that is already running. Free does not: its cap is a start gate
- * only. The 24 hour call length limit and the spend kill switch are separate safety limits and still apply.
+ * Whether a call stops exactly when its reserved minutes run out, stored on the call at mint (TrainerSession.capEnforced)
+ * so a plan change mid-call keeps the rule the call started under. True for Pro and Team. False for Free, whose call is
+ * stopped at its reserved minutes plus FREE_END_GRACE_SECONDS (see callLimitSeconds). Both are billed at most their
+ * reservation. (Before the Free mid-call cap, false meant the call was never stopped by the cap at all.)
  */
-export function midCallCapApplies(plan: PlanTier): boolean {
+export function exactCapStop(plan: PlanTier): boolean {
   return plan !== "free";
+}
+
+/**
+ * Seconds a Free call may run past its last Free minute before the server stops it. The heartbeat runs every 10 seconds,
+ * so a stop lands up to 10 s after the limit it checks; 20 s gives the persona time to finish its sentence and the rep
+ * time to say goodbye (the 1 minute warning already asked them to wrap up), and the call still ends within half a minute
+ * of the allowance running out. The grace is never billed: settlement clamps a call to its reserved minutes, and 20 s
+ * past a whole minute would otherwise round up to one more. Pro and Team get no grace, so their stop is unchanged.
+ */
+export const FREE_END_GRACE_SECONDS = 20;
+/**
+ * How long past its last heartbeat a silent Free call is billed when settleStale reaps it (heartbeat_timeout): a tab closed
+ * mid-call with no end event. The client heartbeats every 10 seconds (HEARTBEAT_MS in callMeter.ts), so a call that was
+ * alive at its last heartbeat may have run up to one interval more before the next one would have arrived; 15 s covers
+ * that interval plus 5 s of timer and network jitter, and stays under HEARTBEAT_TIMEOUT_SECONDS, so the bill never reaches
+ * past the point where the server could already call it silent. The result is rounded up to whole started minutes and
+ * clamped to the reservation like any call. Only the first FREE_ABANDON_REDUCED_PER_PERIOD abandoned Free calls of a
+ * billing period get it; later ones are billed their whole reservation, however soon they are reaped (see settle() in
+ * usage.ts for why). Pro and Team calls are not affected: a silent paid call is still billed until the server noticed,
+ * up to its reservation.
+ */
+export const FREE_ABANDON_GRACE_SECONDS = 15;
+/**
+ * How many silent Free calls per user and billing period get the reduced charge (last heartbeat plus
+ * FREE_ABANDON_GRACE_SECONDS). The 4th and later in the same period are billed their whole reservation.
+ */
+export const FREE_ABANDON_REDUCED_PER_PERIOD = 3;
+/** A Free call is warned once this many seconds (or fewer) of its Free minutes are left, not counting the end grace. */
+export const FREE_CAP_WARNING_SECONDS = 60;
+
+/** The grace a call gets past its reserved minutes: FREE_END_GRACE_SECONDS on the Free rule, none on the exact rule. */
+export const endGraceSeconds = (exactStop: boolean): number => (exactStop ? 0 : FREE_END_GRACE_SECONDS);
+
+/**
+ * The most seconds a metered call may run: its reserved minutes, plus the end grace on the Free rule, and never more
+ * than the 24 hour call length limit. This is the maxSeconds the mint returns and the limit the heartbeat enforces.
+ */
+export function callLimitSeconds(reservedMinutes: number, exactStop = true): number {
+  return Math.max(0, Math.min(Math.max(0, reservedMinutes) * 60 + endGraceSeconds(exactStop), MAX_CALL_SECONDS));
+}
+
+/**
+ * Whether a heartbeat is inside the Free 1 minute warning window, from the seconds the server says the call has left
+ * (which include the end grace). True from FREE_CAP_WARNING_SECONDS of Free minutes left until the stop, so a heartbeat
+ * that lands inside the grace is still inside it. Only for a call on the Free rule whose Free minutes are what end it.
+ * The heartbeat sends the warning once per call, on the heartbeat that crosses into this window (see heartbeat() in
+ * usage.ts).
+ */
+export function freeCapWarning(secondsLeft: number): boolean {
+  return secondsLeft > 0 && freeCapWarningReached(secondsLeft);
+}
+
+/**
+ * Whether the Free warning window has been reached with `secondsLeft` (which include the end grace): inside the window,
+ * and also at or past the deadline. Unlike freeCapWarning it stays true once true as time moves on, so "reached now and
+ * not reached at the last stored heartbeat" can hold for at most one heartbeat of a call.
+ */
+export function freeCapWarningReached(secondsLeft: number): boolean {
+  return secondsLeft - FREE_END_GRACE_SECONDS <= FREE_CAP_WARNING_SECONDS;
 }
 
 /**

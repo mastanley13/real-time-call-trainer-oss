@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Scenario } from "@/lib/scenarios";
 import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
-import type { MeterEndReason } from "@/lib/callMeter";
+import { CAP_STOP_SPEECH_FLUSH_MS, END_GRACE_MS, HEARTBEAT_LOST_MESSAGE, type MeterEndReason } from "@/lib/callMeter";
 import { DROPPED_BEFORE_CONNECT_MESSAGE, VoiceAttempt } from "@/lib/voiceAttempt";
 import { LiveTranscript, applyLiveEvent, type LiveServerEvent } from "@/lib/live";
 import { expireSession, storedSessionKey } from "@/lib/sessionExpiry";
@@ -37,6 +37,8 @@ interface Handlers {
   onMinted: (c: MintedCall) => void;
   /** The voice tier this call was minted on, and whether the next call drops to Standard. Labels only, no model id. */
   onVoiceInfo: (info: VoiceInfo) => void;
+  /** About a minute of a Free call's free minutes is left (from the server's heartbeat). Called at most once. */
+  onCapWarning?: (message: string) => void;
 }
 
 /**
@@ -53,8 +55,6 @@ export function voiceInfoFrom(data: { voiceTier?: unknown; nextCallStandard?: un
 }
 
 const EXPIRED = "The voice session expired before it connected. Start the call again.";
-/** Grace period on hang-up so the trainee's last words still get transcribed. */
-const END_GRACE_MS = 1500;
 
 /**
  * One OpenAI Realtime call over WebRTC (https://developers.openai.com/api/docs/guides/realtime-webrtc).
@@ -98,6 +98,14 @@ export class RealtimeCall {
   private attempt: VoiceAttempt;
   /** Aborts a pending SDP request when the call closes, so a closed call never finishes its connection. */
   private abort = new AbortController();
+  /** Why the server stopped a Free call, reported once the hang-up path has flushed the last turns. */
+  private stopMessage?: string;
+  /**
+   * The rep's speech the server has not committed yet (Realtime only): "speaking" from speech_started, "stopped" from
+   * speech_stopped, back to "idle" once input_audio_buffer.committed makes it a pending transcript item.
+   */
+  private repSpeech: "idle" | "speaking" | "stopped" = "idle";
+  private capTimer?: ReturnType<typeof setTimeout>;
 
   constructor(private scenario: Scenario, private h: Handlers, private voiceTier?: "premium" | "standard") {
     this.attempt = new VoiceAttempt({ teardown: () => this.teardown(), onCancelled: (m) => this.h.onCancelled(m) });
@@ -124,7 +132,7 @@ export class RealtimeCall {
     mic.getAudioTracks().forEach((t) => (t.enabled = !this.view.muted));
     this.set({ phase: "connecting" });
 
-    let secret: { clientSecret?: string; liveTicket?: string; voiceApi?: unknown; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown; maxSeconds?: unknown; error?: unknown };
+    let secret: { clientSecret?: string; liveTicket?: string; voiceApi?: unknown; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown; maxSeconds?: unknown; freeRule?: unknown; error?: unknown };
     try {
       // The rep's Standard or Premium pick is a request; the server rechecks entitlement and decides.
       const session = storedSessionKey();
@@ -134,9 +142,20 @@ export class RealtimeCall {
       // while the mint was pending reports this callId now and goes no further (row 7). Without a callId (unmetered) the
       // meter sends nothing, but it still says when the call connected.
       const stillLive = this.attempt.minted(typeof secret.callId === "string" ? secret.callId : undefined, {
-        // The server has already stopped and billed the call; this ends the client side.
-        onStop: (m) => this.fail(m, "user_hangup"),
+        // The server has already stopped and billed the call; this ends the client side. A Free cap stop ends exactly like
+        // a hang-up and says why only after the last turns are flushed (see close), so a first utterance still being
+        // transcribed is kept, saved and graded. Other stops end as before.
+        onStop: (m, freeCap) => {
+          if (!freeCap) return this.fail(m, "user_hangup");
+          this.stopMessage = m;
+          this.endAfterSpeech();
+        },
         onGiveUp: () => this.dropped("The voice connection dropped. Check your network. Your transcript so far is kept."),
+        onWarn: (m) => this.h.onCapWarning?.(m),
+        // A Free call ends itself when its heartbeats keep failing (see CallMeter); a paid call keeps tolerating them.
+        // Heartbeats start only at connect, so this is always the connected-call end (fail: the attempt's cancel
+        // refuses once connected, and the meter reports the end once).
+        ...(secret.freeRule === true ? { onHeartbeatsLost: () => this.fail(HEARTBEAT_LOST_MESSAGE, "network_drop") } : {}),
       });
       if (!stillLive || this.closed) return;
       const redirect = realtimeAuthRedirect(res.status, secret.error);
@@ -280,6 +299,9 @@ export class RealtimeCall {
     let ev: RealtimeServerEvent;
     try { ev = JSON.parse(raw); } catch { return; }
     switch (ev.type) {
+      case "input_audio_buffer.speech_started": this.repSpeech = "speaking"; break;
+      case "input_audio_buffer.speech_stopped": if (this.repSpeech === "speaking") this.repSpeech = "stopped"; break;
+      case "input_audio_buffer.committed": this.repSpeech = "idle"; break;
       case "output_audio_buffer.started": this.set({ speaking: true }); break;
       case "output_audio_buffer.stopped":
       case "output_audio_buffer.cleared": this.set({ speaking: false }); break;
@@ -330,6 +352,25 @@ export class RealtimeCall {
     this.mic?.getAudioTracks().forEach((t) => (t.enabled = !muted));
     this.set({ muted });
   };
+
+  /**
+   * A Free cap stop. If the rep is mid-utterance and the server has not committed it yet (so the assembler has nothing
+   * pending), stop sending mic audio, commit what the server has, and wait up to CAP_STOP_SPEECH_FLUSH_MS for the commit
+   * and its transcript before the normal hang-up (end), which then flushes it. Otherwise hang up as before.
+   */
+  private endAfterSpeech() {
+    if (this.closed || this.ending) return;
+    if (this.live || this.view.phase !== "connected" || this.repSpeech === "idle") return this.end();
+    this.mic?.getAudioTracks().forEach((t) => (t.enabled = false));
+    if (this.repSpeech === "speaking") this.send({ type: "input_audio_buffer.commit" });
+    const until = Date.now() + CAP_STOP_SPEECH_FLUSH_MS;
+    const wait = () => {
+      if (this.closed || this.ending) return;
+      if ((this.repSpeech === "idle" && this.asm.pending === 0) || Date.now() >= until) return this.end();
+      this.capTimer = setTimeout(wait, 100);
+    };
+    wait();
+  }
 
   /** Hang up: stop the mic and the persona now, wait briefly for the last transcript, then close and report. */
   end = () => {
@@ -395,6 +436,8 @@ export class RealtimeCall {
     this.attempt.finish();
     if (notify) this.release(true);
     this.teardown();
+    // After the flush above, so the trainer sees every rep turn before it decides between grading and the briefing.
+    if (notify && this.stopMessage) this.h.onError(this.stopMessage);
     if (notify) this.h.onEnded();
   }
 
@@ -406,6 +449,7 @@ export class RealtimeCall {
     clearInterval(this.flushTimer);
     clearInterval(this.audioTimer);
     clearTimeout(this.endTimer);
+    clearTimeout(this.capTimer);
     // GPT-Live: ask for a graceful close so usage is finalized; closing the connection below also ends billing.
     if (this.live) { try { this.send({ type: "session.close" }); } catch { /* channel already gone */ } }
     try { this.dc?.close(); } catch { /* already closed */ }
@@ -430,7 +474,7 @@ function iceGathered(pc: RTCPeerConnection, timeoutMs = 3000): Promise<void> {
 }
 
 /** Voice session on the OpenAI Realtime API, or GPT-Live when the server sets OPENAI_VOICE_API=live. Drop-in for the ElevenLabs VoiceSession. */
-export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onCancelled, onMinted, onVoiceInfo, registerEnd, render, voiceTier }: {
+export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onCancelled, onMinted, onVoiceInfo, onCapWarning, registerEnd, render, voiceTier }: {
   scenario: Scenario;
   /** The setup's Standard or Premium pick for this call, sent as a request. Read when the call starts. */
   voiceTier?: "premium" | "standard";
@@ -443,14 +487,15 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   onCancelled: (msg: string) => void;
   onMinted?: (c: MintedCall) => void;
   onVoiceInfo?: (info: VoiceInfo) => void;
+  onCapWarning?: (message: string) => void;
   registerEnd: (fn: () => void) => void;
   render: (v: VoiceRender) => React.ReactNode;
 }) {
   const [view, setView] = useState<CallView>({ phase: "mic", speaking: false, muted: false });
   const callRef = useRef<RealtimeCall | null>(null);
   // Latest callbacks without restarting the call when the parent re-renders.
-  const cb = useRef({ onTurn, onEnded, onError, onCancelled, onMinted, onVoiceInfo });
-  useEffect(() => { cb.current = { onTurn, onEnded, onError, onCancelled, onMinted, onVoiceInfo }; });
+  const cb = useRef({ onTurn, onEnded, onError, onCancelled, onMinted, onVoiceInfo, onCapWarning });
+  useEffect(() => { cb.current = { onTurn, onEnded, onError, onCancelled, onMinted, onVoiceInfo, onCapWarning }; });
   // The pick at the moment the call starts; changing it later never restarts or switches a running call.
   const tierRef = useRef(voiceTier);
   useEffect(() => { tierRef.current = voiceTier; });
@@ -465,6 +510,7 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
       onView: (v) => { if (callRef.current === call) setView(v); },
       onMinted: (c) => cb.current.onMinted?.(c),
       onVoiceInfo: (i) => cb.current.onVoiceInfo?.(i),
+      onCapWarning: (m) => cb.current.onCapWarning?.(m),
     }, tierRef.current);
     callRef.current = call;
     setView({ phase: "mic", speaking: false, muted: false });
