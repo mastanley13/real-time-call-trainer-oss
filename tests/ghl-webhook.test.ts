@@ -5,7 +5,7 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   prisma: {
     user: { findUnique: vi.fn(), findMany: vi.fn() },
-    trainerSession: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), findFirst: vi.fn() },
+    trainerSession: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
     auditEvent: { create: vi.fn(), findFirst: vi.fn() },
     $transaction: vi.fn(),
     $queryRaw: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock("@/lib/apiAuth", async (importOriginal) => ({
   requireAuth: () => mocks.authUser,
   isDemoUser: () => false,
 }));
-vi.mock("@/lib/gradeSeal", () => ({ verifySeal: () => true, sealEvaluation: () => "test-seal" }));
+vi.mock("@/lib/gradeSeal", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/gradeSeal")>()), verifySeal: () => true, sealEvaluation: () => "test-seal" }));
 
 import {
   GHL_RETRY_DELAY_MS,
@@ -395,6 +395,12 @@ function gradeStore() {
     const r = rows.filter((x) => x.userId === where.userId && x.overallScore !== null)
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))[0];
     return r ? { id: r.id, organizationId: r.organizationId, scenarioId: r.scenarioId, overallScore: r.overallScore, grade: r.grade, user: { email: users[r.userId]?.email ?? null } } : null;
+  });
+  // The graded-duplicate check (src/lib/transcriptGrade.ts): this user's other graded rows of the same org and persona.
+  mocks.prisma.trainerSession.findMany.mockImplementation(async ({ where }: { where: { userId: string; organizationId: string; scenarioId: string; id: { not: string } } }) => {
+    order.push("transcript-check");
+    return rows.filter((x) => x.userId === where.userId && x.organizationId === where.organizationId && x.scenarioId === where.scenarioId && x.overallScore !== null && x.id !== where.id.not)
+      .map((x) => ({ transcript: x.transcript }));
   });
   mocks.prisma.auditEvent.create.mockImplementation(async ({ data }: { data: (typeof audits)[number] }) => {
     order.push(`audit:${data.action}`);
@@ -796,10 +802,13 @@ describe("first graded call from every grading path", () => {
     expect(mocks.prisma.trainerSession.create).toHaveBeenCalledWith({ data: expect.objectContaining({ overallScore: 74, grade: "B", goalAchieved: true }) });
     expect(mocks.prisma.trainerSession.update).not.toHaveBeenCalled();
     await settleGhlEvents();
-    // The create claims the call's own row under the call's lock (src/lib/callRow.ts); the first-graded-call claim takes
-    // its own lock after the create.
+    // The create claims the call's own row under the call's lock (src/lib/callRow.ts), then the transcript's lock and its
+    // graded-duplicate check (src/lib/transcriptGrade.ts); the first-graded-call claim takes its own lock after the create.
     const create = db.order.indexOf("create");
-    expect(db.order.slice(0, create)).toEqual([expect.stringMatching(/ct-call-grade:\["u-1","rt-1"\]$/), "call-check"]);
+    expect(db.order.slice(0, create)).toEqual([
+      expect.stringMatching(/ct-call-grade:\["u-1","rt-1"\]$/), "call-check",
+      expect.stringMatching(/ct-transcript-grade:\["u-1","[0-9a-f]{64}"\]$/), "transcript-check",
+    ]);
     expect(db.order.indexOf("audit:session.saved")).toBeGreaterThan(create);
     expect(db.order.findIndex((o) => o.includes("ct-first-grade:"))).toBeGreaterThan(create);
   });
@@ -867,14 +876,27 @@ describe("first graded call from every grading path", () => {
     expect(db.markers()).toHaveLength(1);
   });
 
-  it("PATCH saves exactly as before: the grade and its audit row in one transaction, then the claim in the background", async () => {
+  it("PATCH saves the grade and its audit row in one transaction under the transcript's lock, then the claim in the background", async () => {
     on();
     mocks.authUser = { id: "m-1", email: "m-1@example.test", role: "manager" };
     db.seed("s-old", "u-1");
     expect((await patch("s-old")).status).toBe(200);
-    expect(mocks.prisma.$transaction.mock.calls[0][0]).toBeInstanceOf(Array);
+    expect(mocks.prisma.$transaction.mock.calls[0][0]).toBeTypeOf("function");
     await settleGhlEvents();
-    expect(db.order.slice(0, 3)).toEqual(["update", "audit:session.regraded", expect.stringMatching(/^lock:/)]);
+    // The duplicate check runs before the model call and again under the transcript's lock (src/lib/transcriptGrade.ts).
+    expect(db.order.slice(0, 6)).toEqual([
+      "transcript-check", expect.stringMatching(/ct-transcript-grade:/), "transcript-check",
+      "update", "audit:session.regraded", expect.stringMatching(/ct-first-grade:/),
+    ]);
+  });
+
+  it("PATCH of a call that already had a score keeps the array transaction and takes no transcript lock", async () => {
+    on();
+    mocks.authUser = { id: "m-1", email: "m-1@example.test", role: "manager" };
+    db.seed("s-graded", "u-1", { score: 60 });
+    expect((await patch("s-graded")).status).toBe(200);
+    expect(mocks.prisma.$transaction.mock.calls[0][0]).toBeInstanceOf(Array);
+    expect(db.order.slice(0, 2)).toEqual(["update", "audit:session.regraded"]);
   });
 
   it("PATCH by a manager: the activation names the trainee, not the manager", async () => {

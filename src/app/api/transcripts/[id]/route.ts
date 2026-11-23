@@ -13,6 +13,8 @@ import { getCapabilities, llmGradingModel, llmKey } from "@/lib/serverConfig";
 import { SESSION_VIEW_SELECT, sessionView } from "@/lib/sessionView";
 import { notifyFirstGradedCall } from "@/lib/ghlWebhook";
 import { hasCallRow, hasGradedSibling, isCallRow, lockCall } from "@/lib/callRow";
+import { transcriptDigest } from "@/lib/gradeSeal";
+import { hasGradedDuplicate, lockTranscript } from "@/lib/transcriptGrade";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -57,7 +59,10 @@ const REGRADE_WINDOW_MS = 10 * 60_000;
 const fail = (status: number, error: string, message: string, extra?: Record<string, unknown>) =>
   NextResponse.json({ error, message, ...extra }, { status });
 const notAllowed = () => fail(403, "regrade_not_allowed", "This call already has an AI grade. Ask your manager if you think it is wrong.");
-/** A legacy copy's grade would give its call a second graded row (src/lib/callRow.ts); answered like notAllowed. */
+/**
+ * The grade would give a call a second graded row (a legacy copy, src/lib/callRow.ts) or a transcript a second graded
+ * row (src/lib/transcriptGrade.ts); answered like notAllowed.
+ */
 class SecondGrade extends Error {}
 
 /**
@@ -134,6 +139,15 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (!turns.some((t) => t.role === "user" && t.text.trim())) {
     return fail(400, "nothing_to_grade", "The rep didn't say anything on this call, so there's nothing to grade.");
   }
+  // One graded row per transcript (src/lib/transcriptGrade.ts), for everyone, platform admins included: a row with no
+  // score is not graded while the trainee already has another graded row of the same transcript (same organization and
+  // persona), such as the original of a copy saved under a new sessionId. Checked now, so no model call is spent, and
+  // again under the transcript's lock when the grade is written. A row that already has a score keeps its re-grade
+  // rules, since re-grading it adds no graded row.
+  const addsGrade = session.overallScore === null;
+  const digest = transcriptDigest(turns);
+  const transcriptScope = { userId: session.userId, organizationId: session.organizationId, scenarioId: session.scenarioId, excludeId: id };
+  if (addsGrade && (await hasGradedDuplicate(prisma, transcriptScope, digest))) return notAllowed();
   // Long calls are graded on their opening turns and the note says so, the same way /api/evaluate-call grades them.
   const graded = gradable(turns);
 
@@ -189,6 +203,19 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       } satisfies Prisma.InputJsonValue,
     },
   } satisfies Prisma.AuditEventCreateArgs;
+  /**
+   * The grade write. When it adds a grade, it runs under the transcript's lock and only while the trainee still has no
+   * other graded row of this transcript, so re-grades (or a re-grade and a save) of two copies run one after the other
+   * and the second is refused. Lock order: the call's lock, when taken, comes first (transcriptGrade.ts).
+   */
+  const write = async (tx: Prisma.TransactionClient) => {
+    if (addsGrade) {
+      await lockTranscript(tx, session.userId, digest);
+      if (await hasGradedDuplicate(tx, transcriptScope, digest)) throw new SecondGrade();
+    }
+    await tx.trainerSession.update(update);
+    await tx.auditEvent.create(audit);
+  };
   try {
     if (legacyCopy && callKey) {
       // A legacy copy: under the call's lock, the call still has no own row (a save never adds one to a legacy call) and
@@ -198,9 +225,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         await lockCall(tx, session.userId, callKey);
         if (await hasCallRow(tx, session.userId, callKey)) throw new SecondGrade();
         if (await hasGradedSibling(tx, session.userId, callKey, id)) throw new SecondGrade();
-        await tx.trainerSession.update(update);
-        await tx.auditEvent.create(audit);
+        await write(tx);
       });
+    } else if (addsGrade) {
+      await prisma.$transaction(write);
     } else {
       await prisma.$transaction([prisma.trainerSession.update(update), prisma.auditEvent.create(audit)]);
     }

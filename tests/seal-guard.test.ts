@@ -32,6 +32,7 @@ vi.mock("@/lib/grader", async (importOriginal) => {
 
 import { GRADE_SEAL_MAX_AGE_MS, sealEvaluation, stableStringify, transcriptDigest } from "@/lib/gradeSeal";
 import { receiptRowId, sealMintReceipt } from "@/lib/mintReceipt";
+import { GRADED_DUPLICATE_SCAN, hasGradedDuplicate, storedTranscriptDigest } from "@/lib/transcriptGrade";
 import { PREMIUM_REALTIME_MODEL } from "@/lib/voiceModels";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import { splitSeal } from "@/lib/sessionStore";
@@ -625,5 +626,201 @@ describe("PATCH /api/transcripts/[id]: one graded row per call (src/lib/callRow.
       expect(sessions().some((s) => s.id === receiptRowId(LEGACY))).toBe(false);
       expect(graded()).toEqual(["legacy-a"]);
     });
+  });
+
+  describe("one graded row per transcript (src/lib/transcriptGrade.ts)", () => {
+    const expired = (sid: string) => sealedGrade(sid, { evaluatedAt: new Date(T0.getTime() - GRADE_SEAL_MAX_AGE_MS - 1_000).toISOString() });
+    const tampered = (sid: string) => {
+      const g = sealedGrade(sid);
+      return { ...g, evaluation: { ...g.evaluation, overallScore: 100, grade: "A" } };
+    };
+    const crossUser = (sid: string) => sealedGrade(sid, { forUser: "someone-else" });
+    /** Saves the shared transcript under a new sessionId; the body is the save's answer. */
+    const saveNew = async (make: (sid: string) => Record<string, unknown> = () => ({}), extra: Record<string, unknown> = {}) => {
+      const sid = textId();
+      const body = (await (await save({ sessionId: sid, ...make(sid), ...extra })).json()) as { id: string; graded: boolean };
+      return { sid, ...body };
+    };
+    const gradedIds = () => gradedRows().map((s) => s.id).sort();
+    const lockKeys = () => fake.rawQueries.filter((q) => q.sql.includes("pg_advisory_xact_lock")).map((q) => String(q.values[0]));
+    const isTranscriptLock = (k: string) => k.startsWith("ct-transcript-grade:");
+    const isCallLock = (k: string) => k.startsWith("ct-call-grade:");
+    const otherTranscript = [{ role: "assistant", text: "Hello, this is a different caller." }, { role: "user", text: "Thanks for calling, how can I help today?" }];
+
+    it("Tally's case: a solo owner's graded call replayed under a new sessionId is stored ungraded and its copy can't be re-graded", async () => {
+      fake.rows("user").find((u) => u.id === trainee)!.role = "owner";
+      const original = await saveNew((sid) => sealedGrade(sid, { score: 74 }));
+      expect(original).toMatchObject({ id: receiptRowId(original.sid), graded: true });
+      // The same {transcript, evaluation, seal} under a different sessionId: stored ungraded on that sessionId's own row.
+      const grade = sealedGrade(original.sid, { score: 74 });
+      const replaySid = textId();
+      expect(await (await save({ sessionId: replaySid, ...grade })).json()).toEqual({ id: receiptRowId(replaySid), graded: false });
+      as(trainee);
+      const res = await patch(receiptRowId(replaySid));
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual(NOT_ALLOWED);
+      expect(mocks.aiCalls).toBe(0);
+      expect(gradedIds()).toEqual([original.id]);
+      expect(sessions().find((s) => s.id === receiptRowId(replaySid))).toMatchObject({ overallScore: null, grade: null });
+      // The original still follows the trainee rule: its rules-based grade may be re-graded once.
+      expect((await patch(original.id)).status).toBe(200);
+      expect(gradedIds()).toEqual([original.id]);
+    });
+
+    it("stores a fresh, valid seal for the same transcript under a new sessionId ungraded (grading it again doesn't make a second graded row)", async () => {
+      const original = await saveNew(sealedGrade);
+      expect(original.graded).toBe(true);
+      // A seal minted for the new sessionId verifies, but the user already has a graded row of this transcript.
+      const again = await saveNew((sid) => sealedGrade(sid, { score: 90 }));
+      expect(again).toMatchObject({ id: receiptRowId(again.sid), graded: false });
+      expect(audits().at(-1)!.metadata).toEqual({ scenarioId: scenario.id, overallScore: null, gradeRejected: true });
+      expect(gradedIds()).toEqual([original.id]);
+      expect(mocks.notify).toHaveBeenCalledTimes(1);
+      // A different transcript under a new sessionId is still graded.
+      const sid = textId();
+      const evaluation = { method: "heuristic", graderVersion: "heuristic-v2", overallScore: 70, grade: "C", goalAchievement: { achieved: false }, evaluatedAt: new Date().toISOString() };
+      const seal = sealEvaluation({ userId, sessionId: sid, scenarioId: scenario.id, transcript: otherTranscript, evaluation }, KEY);
+      expect(await (await save({ sessionId: sid, transcript: otherTranscript, evaluation, seal })).json()).toEqual({ id: receiptRowId(sid), graded: true });
+      expect(gradedRows()).toHaveLength(2);
+    });
+
+    it("refuses the copy saved from an expired, tampered, cross-user or missing seal while a graded original exists, for owner, manager and admin", async () => {
+      const original = await saveNew(sealedGrade);
+      expect(original.graded).toBe(true);
+      for (const make of [expired, tampered, crossUser, () => ({})]) {
+        as(trainee);
+        const copy = await saveNew(make);
+        expect(copy).toEqual({ sid: copy.sid, id: receiptRowId(copy.sid), graded: false });
+        for (const who of [trainee, manager, admin]) {
+          as(who);
+          const res = await patch(copy.id);
+          expect(res.status).toBe(403);
+          expect(await res.json()).toEqual(NOT_ALLOWED);
+        }
+      }
+      expect(mocks.aiCalls).toBe(0);
+      expect(gradedIds()).toEqual([original.id]);
+    });
+
+    it("lets an expired-seal first save with no graded original be self re-graded once; a second copy is then refused", async () => {
+      const first = await saveNew(expired);
+      expect(first).toMatchObject({ id: receiptRowId(first.sid), graded: false });
+      as(trainee);
+      expect((await patch(first.id)).status).toBe(200);
+      expect(sessions().find((s) => s.id === first.id)).toMatchObject({ overallScore: 88 });
+      const second = await saveNew(expired);
+      expect(second.graded).toBe(false);
+      expect(await (await patch(second.id)).json()).toEqual(NOT_ALLOWED);
+      expect(gradedIds()).toEqual([first.id]);
+      expect(mocks.aiCalls).toBe(1);
+    });
+
+    it("keeps a manager's re-grade of a trainee's genuine call working: graded or ungraded, it is 200", async () => {
+      const gradedCall = await saveNew(sealedGrade);
+      const ungradedCall = await saveNew(undefined, { transcript: otherTranscript });
+      expect([gradedCall.graded, ungradedCall.graded]).toEqual([true, false]);
+      as(manager);
+      for (const id of [gradedCall.id, ungradedCall.id]) {
+        const res = await patch(id);
+        expect(res.status).toBe(200);
+        expect(sessions().find((s) => s.id === id)).toMatchObject({ overallScore: 88 });
+      }
+      expect(gradedIds()).toEqual([gradedCall.id, ungradedCall.id].sort());
+    });
+
+    it("refuses a manager's re-grade of a trainee's replay copy, without a model call", async () => {
+      const original = await saveNew(sealedGrade);
+      const copy = await saveNew(() => sealedGrade(original.sid));
+      expect(copy.graded).toBe(false);
+      as(manager);
+      const res = await patch(copy.id);
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual(NOT_ALLOWED);
+      expect(mocks.aiCalls).toBe(0);
+      expect(gradedIds()).toEqual([original.id]);
+    });
+
+    it("platform admin: refused on a copy like everyone else, and can still re-grade the original", async () => {
+      const original = await saveNew(expired);
+      const copy = await saveNew(expired);
+      as(admin);
+      expect((await patch(original.id)).status).toBe(200);
+      expect(await (await patch(copy.id)).json()).toEqual(NOT_ALLOWED);
+      expect((await patch(original.id)).status).toBe(200);
+      expect(gradedIds()).toEqual([original.id]);
+    });
+
+    for (const actor of ["owner", "manager"] as const) {
+      it(`concurrent re-grades of two copies by the ${actor} store one grade (the second is refused under the transcript's lock)`, async () => {
+        const a = await saveNew();
+        const b = await saveNew();
+        as(actor === "owner" ? trainee : manager);
+        holdGrades(2);
+        const results = await Promise.all([patch(a.id), patch(b.id)]);
+        expect(mocks.aiCalls).toBe(2);
+        expect(results.map((r) => r.status).sort()).toEqual([200, 403]);
+        expect(gradedRows()).toHaveLength(1);
+        expect(lockKeys().filter(isTranscriptLock)).toHaveLength(2);
+      });
+    }
+
+    it("refuses a re-grade of a copy when a sealed save of the same transcript stores its grade during the model call", async () => {
+      const copy = await saveNew();
+      let release!: () => void;
+      mocks.gate = new Promise<void>((r) => (release = r));
+      as(manager);
+      const regrade = patch(copy.id);
+      while (mocks.aiCalls < 1) await new Promise((r) => setTimeout(r, 0));
+      as(trainee);
+      const saved = await saveNew(sealedGrade);
+      expect(saved.graded).toBe(true);
+      release();
+      expect(await (await regrade).json()).toEqual(NOT_ALLOWED);
+      expect(gradedIds()).toEqual([saved.id]);
+    });
+
+    it("stores one graded row when sealed saves of the same transcript under two sessionIds race", async () => {
+      const [s1, s2] = [textId(), textId()];
+      const bodies = await Promise.all([save({ sessionId: s1, ...sealedGrade(s1) }), save({ sessionId: s2, ...sealedGrade(s2) })].map(async (p) => (await p).json()));
+      expect(bodies.map((b) => b.graded).sort()).toEqual([false, true]);
+      expect(gradedRows()).toHaveLength(1);
+      expect(mocks.notify).toHaveBeenCalledTimes(1);
+    });
+
+    it("takes the call's lock before the transcript's lock, in the save and in a legacy re-grade", async () => {
+      await saveNew(sealedGrade);
+      const saveKeys = lockKeys();
+      expect(saveKeys.map((k) => (isCallLock(k) ? "call" : isTranscriptLock(k) ? "transcript" : "other"))).toEqual(["call", "transcript"]);
+      fake.rawQueries.length = 0;
+      fake.seed("trainerSession", { id: "legacy-solo", userId, organizationId: "org-1", scenarioId: scenario.id, transcript: otherTranscript, realtimeSessionId: "text-1761559200001", evaluation: null, overallScore: null, grade: null, goalAchieved: null });
+      as(trainee);
+      expect((await patch("legacy-solo")).status).toBe(200);
+      expect(lockKeys().map((k) => (isCallLock(k) ? "call" : isTranscriptLock(k) ? "transcript" : "other"))).toEqual(["call", "transcript"]);
+    });
+  });
+});
+
+describe("transcriptGrade helpers", () => {
+  it("digests a stored transcript like the seal does, ignoring timestamps, and rejects anything that isn't turns", () => {
+    expect(storedTranscriptDigest(transcript.map((t, i) => ({ ...t, timestamp: `2026-11-22T12:00:0${i}.000Z` })))).toBe(transcriptDigest(transcript));
+    for (const bad of [null, {}, "turns", [{ role: "user" }], [null], [{ role: 1, text: "x" }]]) expect(storedTranscriptDigest(bad)).toBeNull();
+  });
+
+  it(`compares only the ${GRADED_DUPLICATE_SCAN} most recent graded rows of the same user, organization and persona`, async () => {
+    const seedRow = (over: Record<string, unknown>) => fake.seed("trainerSession", { userId, organizationId: "org-1", scenarioId: scenario.id, transcript, overallScore: 60, ...over });
+    const scope = { userId, organizationId: "org-1", scenarioId: scenario.id, excludeId: "self" };
+    const digest = transcriptDigest(transcript);
+    seedRow({ id: "self", overallScore: null });
+    // Not duplicates: ungraded, another user, another organization, another persona.
+    seedRow({ overallScore: null });
+    seedRow({ userId: "someone-else" });
+    seedRow({ organizationId: "org-2" });
+    seedRow({ scenarioId: "another-persona" });
+    expect(await hasGradedDuplicate(fake.db as never, scope, digest)).toBe(false);
+    seedRow({ id: "old-dup", createdAt: new Date(T0.getTime() - 1_000_000) });
+    for (let i = 0; i < GRADED_DUPLICATE_SCAN - 1; i++) seedRow({ transcript: [{ role: "user", text: `call ${i}` }], createdAt: new Date(T0.getTime() - i) });
+    expect(await hasGradedDuplicate(fake.db as never, scope, digest)).toBe(true);
+    seedRow({ transcript: [{ role: "user", text: "one more" }], createdAt: T0 });
+    expect(await hasGradedDuplicate(fake.db as never, scope, digest)).toBe(false);
   });
 });

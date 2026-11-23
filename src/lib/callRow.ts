@@ -50,7 +50,10 @@ export async function hasGradedSibling(db: Reader, userId: string, sessionId: st
 
 const LOCK_PREFIX = "ct-call-grade:";
 
-/** Serializes re-grades of one legacy call until the transaction ends. JSON keeps the two ids apart. */
+/**
+ * Serializes re-grades of one legacy call until the transaction ends. JSON keeps the two ids apart. A transaction that
+ * also takes lockTranscript (transcriptGrade.ts) takes this one first.
+ */
 export async function lockCall(tx: Pick<Prisma.TransactionClient, "$queryRaw">, userId: string, sessionId: string): Promise<void> {
   // SELECT ... FROM the function, so the result column is an int Prisma can read, not void (as in ghlWebhook.ts).
   await tx.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtext(${LOCK_PREFIX + JSON.stringify([userId, sessionId])}::text))`;
