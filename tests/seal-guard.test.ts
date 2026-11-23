@@ -787,6 +787,58 @@ describe("PATCH /api/transcripts/[id]: one graded row per call (src/lib/callRow.
       expect(mocks.notify).toHaveBeenCalledTimes(1);
     });
 
+    describe("organization change between mint and save: the check uses the organization of the row the grade lands on", () => {
+      const moveUser = (org: string) => { fake.rows("user").find((u) => u.id === trainee)!.organizationId = org; };
+      const seedGradedDup = (org: string) => fake.seed("trainerSession", { id: `dup-${org}`, userId, organizationId: org, scenarioId: scenario.id, transcript, overallScore: 70, grade: "C" });
+      const CALL = "cm-call-org-0001";
+      const seedMetered = () => fake.seed("trainerSession", { id: CALL, userId, organizationId: "org-1", transcript: [], evaluation: null, overallScore: null, grade: null, goalAchieved: null });
+      const saveMetered = async () => (await (await save({ sessionId: CALL, callId: CALL, ...sealedGrade(CALL, { callId: CALL }) })).json()) as { id: string; graded: boolean };
+      const SID = "uuid-0000-0000-org1";
+      /** A receipt-only save makes the call's receipt row in org-1; the user then moves; the graded save claims that row. */
+      const claimAfterMove = async (dupOrg: string) => {
+        expect(await (await save({ sessionId: SID, realtimeReceipt: sealMintReceipt(userId, SID, PREMIUM_REALTIME_MODEL)! })).json()).toEqual({ id: receiptRowId(SID), graded: false });
+        seedGradedDup(dupOrg);
+        moveUser("org-2");
+        return (await (await save({ sessionId: SID, ...sealedGrade(SID) })).json()) as { id: string; graded: boolean };
+      };
+
+      it("metered fill: a graded duplicate in the row's (old) organization refuses the grade after the user moved", async () => {
+        seedMetered();
+        seedGradedDup("org-1");
+        moveUser("org-2");
+        expect(await saveMetered()).toEqual({ id: CALL, graded: false });
+        expect(gradedIds()).toEqual(["dup-org-1"]);
+      });
+
+      it("metered fill: a graded duplicate only in the user's new organization doesn't refuse a grade for the old organization's row", async () => {
+        seedMetered();
+        seedGradedDup("org-2");
+        moveUser("org-2");
+        expect(await saveMetered()).toEqual({ id: CALL, graded: true });
+        expect(sessions().find((s) => s.id === CALL)).toMatchObject({ organizationId: "org-1", overallScore: 62 });
+      });
+
+      it("receipt-row claim: a graded duplicate in the existing row's organization refuses the grade", async () => {
+        expect(await claimAfterMove("org-1")).toEqual({ id: expect.any(String), graded: false });
+        expect(sessions().find((s) => s.id === receiptRowId(SID))).toMatchObject({ organizationId: "org-1", overallScore: null });
+        expect(gradedIds()).toEqual(["dup-org-1"]);
+      });
+
+      it("receipt-row claim: a graded duplicate only in the user's new organization doesn't refuse it", async () => {
+        expect(await claimAfterMove("org-2")).toEqual({ id: receiptRowId(SID), graded: true });
+        expect(sessions().find((s) => s.id === receiptRowId(SID))).toMatchObject({ organizationId: "org-1", overallScore: 62 });
+      });
+
+      it("a brand-new row uses the user's current organization", async () => {
+        seedGradedDup("org-1");
+        moveUser("org-2");
+        const fresh = await saveNew(sealedGrade);
+        expect(fresh).toMatchObject({ id: receiptRowId(fresh.sid), graded: true });
+        expect(sessions().find((s) => s.id === fresh.id)).toMatchObject({ organizationId: "org-2" });
+        expect((await saveNew(sealedGrade)).graded).toBe(false);
+      });
+    });
+
     it("takes the call's lock before the transcript's lock, in the save and in a legacy re-grade", async () => {
       await saveNew(sealedGrade);
       const saveKeys = lockKeys();

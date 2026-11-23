@@ -135,23 +135,27 @@ export async function POST(req: NextRequest) {
     // One graded row per transcript (src/lib/transcriptGrade.ts): a verified grade for a transcript this user already has a
     // graded row of (same organization and persona) is stored ungraded, like a replay. That covers a seal from grading the
     // same transcript again under a new sessionId, which verifies for that sessionId. Called inside a transaction that
-    // already holds the call's lock; takes the transcript's lock second.
+    // already holds the call's lock; takes the transcript's lock second. `organizationId` is the organization of the row the
+    // grade lands on: the user's current one for a new row, the row's own for an existing row (a metered row keeps the
+    // organization it was minted in, and a fill or claim never changes it).
     const digest = transcriptDigest(body.transcript);
-    const transcriptScope = { userId: dbUser.id, organizationId: dbUser.organizationId, scenarioId: body.scenario.id };
-    const mayGradeTranscript = async (tx: Prisma.TransactionClient, rowId: string) => {
+    const mayGradeTranscript = async (tx: Prisma.TransactionClient, rowId: string, organizationId: string) => {
       await lockTranscript(tx, dbUser.id, digest);
-      return !(await hasGradedDuplicate(tx, { ...transcriptScope, excludeId: rowId }, digest));
+      return !(await hasGradedDuplicate(tx, { userId: dbUser.id, organizationId, scenarioId: body.scenario.id, excludeId: rowId }, digest));
     };
     // A grade claim on the call's own row `rowId` (the metered fill, or the receipt-row claim below) runs under the call's
     // lock, the one PATCH takes for legacy copies, and stores the grade only while no other row of the call has a score
     // (src/lib/callRow.ts). A graded copy can only be legacy, so otherwise the save is stored ungraded, like a replay.
     // It also needs no other graded row of this user with the same transcript (src/lib/transcriptGrade.ts), checked under
-    // the transcript's lock, taken after the call's lock as everywhere else.
+    // the transcript's lock, taken after the call's lock as everywhere else, in the organization of the existing row being
+    // filled or claimed (read under the lock). A row that is missing or not this user's can't take the grade anyway.
     const underCallLock = <T,>(rowId: string, write: (tx: Prisma.TransactionClient, mayGrade: boolean) => Promise<T>) =>
       prisma.$transaction(async (tx) => {
         await lockCall(tx, dbUser.id, body.sessionId);
         if (await hasGradedSibling(tx, dbUser.id, body.sessionId, rowId)) return write(tx, false);
-        return write(tx, await mayGradeTranscript(tx, rowId));
+        const target = await tx.trainerSession.findUnique({ where: { id: rowId }, select: { userId: true, organizationId: true } });
+        if (!target || target.userId !== dbUser.id) return write(tx, false);
+        return write(tx, await mayGradeTranscript(tx, rowId, target.organizationId));
       });
     if (fillExisting) {
       // The fill, graded or not, is one conditional update that lands only while the row is still unfilled.
@@ -190,7 +194,7 @@ export async function POST(req: NextRequest) {
         const row = await prisma.$transaction(async (tx) => {
           await lockCall(tx, dbUser.id, body.sessionId);
           if (await isLegacyCall(tx, dbUser.id, body.sessionId)) return null;
-          const withGrade = !!ev && (await mayGradeTranscript(tx, rowId));
+          const withGrade = !!ev && (await mayGradeTranscript(tx, rowId, owner.organizationId));
           const inserted = await tx.trainerSession.create({
             data: { id: rowId, ...unmetered, ...fieldsFor(withGrade), ...(receiptModel ? { realtimeModel: receiptModel, voiceTier: tierOfModel(receiptModel) } : {}) },
           });
