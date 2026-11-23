@@ -34,6 +34,19 @@ describe("grade seal", () => {
     expect(verifySeal({ ...input, transcript: [{ role: "user", text: "hi" }] }, seal, KEY, NOW)).toBe(false);
   });
 
+  it("binds the callId: a seal verifies only with the callId it was made with, or with none when it had none", () => {
+    const metered: SealInput = { ...input, sessionId: "cm-call-0001", callId: "cm-call-0001" };
+    const seal = sealEvaluation(metered, KEY)!;
+    expect(verifySeal(metered, seal, KEY, NOW)).toBe(true);
+    expect(verifySeal({ ...metered, callId: "cm-call-0002" }, seal, KEY, NOW)).toBe(false);
+    expect(verifySeal({ ...metered, callId: undefined }, seal, KEY, NOW)).toBe(false);
+    expect(verifySeal({ ...metered, callId: "" }, seal, KEY, NOW)).toBe(false);
+    // And the other way round: a seal made without a callId doesn't verify on a save that names one.
+    const plain = sealEvaluation(input, KEY)!;
+    expect(verifySeal(input, plain, KEY, NOW)).toBe(true);
+    expect(verifySeal({ ...input, callId: "cm-call-0001" }, plain, KEY, NOW)).toBe(false);
+  });
+
   it("ignores transcript timestamps", () => {
     const seal = sealEvaluation(input, KEY)!;
     const stamped = input.transcript.map((t) => ({ ...t, timestamp: "2026-10-27T10:00:00.000Z" }));

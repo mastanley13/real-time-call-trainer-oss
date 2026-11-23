@@ -7,11 +7,10 @@ const mocks = vi.hoisted(() => ({
   chat: vi.fn(),
   user: { id: "u-0", email: "rep@example.test" } as { id: string; email: string },
   prisma: {
-    trainerSession: { findUnique: vi.fn(), update: vi.fn(), findFirst: vi.fn() },
+    trainerSession: { findUnique: vi.fn(), update: vi.fn() },
     user: { findUnique: vi.fn() },
     auditEvent: { create: vi.fn() },
     $transaction: vi.fn(),
-    $queryRaw: vi.fn(),
   },
 }));
 vi.mock("@/lib/llm", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/llm")>()), chat: mocks.chat }));
@@ -105,10 +104,8 @@ describe("gradable", () => {
 });
 
 describe("PATCH /api/transcripts/[id] (server re-grade)", () => {
-  type Row = { id: string; userId: string; organizationId: string; scenarioId: string; transcript: unknown; evaluation: unknown; overallScore: number | null; updatedAt: Date; realtimeSessionId: string | null };
+  type Row = { id: string; userId: string; organizationId: string; scenarioId: string; transcript: unknown; evaluation: unknown; overallScore: number | null; updatedAt: Date };
   let row: Row;
-  /** Other saved rows of the same user (for the one-graded-row-per-call check). */
-  let siblings: Row[];
   let trainee: string;
   /** Audit rows the transaction actually wrote. */
   let audits: { metadata: Record<string, unknown> }[];
@@ -125,14 +122,9 @@ describe("PATCH /api/transcripts/[id] (server re-grade)", () => {
   beforeEach(() => {
     process.env.DATABASE_URL = "postgres://test";
     trainee = signIn().id;
-    row = { id: `s-${n}`, userId: trainee, organizationId: "org-1", scenarioId: scenario.id, transcript: longCall(8, 80), evaluation: AI_GRADE, overallScore: 64, updatedAt: new Date(1_000), realtimeSessionId: `text-call-${n}` };
-    siblings = [];
+    row = { id: `s-${n}`, userId: trainee, organizationId: "org-1", scenarioId: scenario.id, transcript: longCall(8, 80), evaluation: AI_GRADE, overallScore: 64, updatedAt: new Date(1_000) };
     audits = [];
-    for (const fn of [mocks.prisma.trainerSession.findUnique, mocks.prisma.trainerSession.update, mocks.prisma.trainerSession.findFirst, mocks.prisma.user.findUnique, mocks.prisma.auditEvent.create, mocks.prisma.$transaction, mocks.prisma.$queryRaw]) fn.mockReset();
-    mocks.prisma.$queryRaw.mockResolvedValue([]);
-    // The sibling check: another row of this user and call with a score.
-    mocks.prisma.trainerSession.findFirst.mockImplementation(async ({ where }: { where: { userId: string; realtimeSessionId: string; id: { not: string } } }) =>
-      [row, ...siblings].find((r) => r.userId === where.userId && r.realtimeSessionId === where.realtimeSessionId && r.overallScore !== null && r.id !== where.id.not) ?? null);
+    for (const fn of [mocks.prisma.trainerSession.findUnique, mocks.prisma.trainerSession.update, mocks.prisma.user.findUnique, mocks.prisma.auditEvent.create, mocks.prisma.$transaction]) fn.mockReset();
     // Like Prisma on Postgres: each read is a copy; writes run only inside $transaction, in order, and the first that fails
     // stops the rest. update throws P2025 when the row no longer matches its where, and bumps updatedAt when it does.
     mocks.prisma.trainerSession.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => (where.id === row.id ? { ...row } : null));
@@ -143,13 +135,9 @@ describe("PATCH /api/transcripts/[id] (server re-grade)", () => {
       Object.assign(row, data, { updatedAt: new Date(row.updatedAt.getTime() + 1) });
     });
     mocks.prisma.auditEvent.create.mockImplementation(({ data }: { data: (typeof audits)[number] }) => () => audits.push(data));
-    // An interactive transaction: the route's tx runs these deferred writes at once, in order; a throw stops the rest.
-    mocks.prisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
-      fn({
-        $queryRaw: mocks.prisma.$queryRaw,
-        trainerSession: { findFirst: mocks.prisma.trainerSession.findFirst, update: async (args: unknown) => mocks.prisma.trainerSession.update(args)() },
-        auditEvent: { create: async (args: unknown) => mocks.prisma.auditEvent.create(args)() },
-      }));
+    mocks.prisma.$transaction.mockImplementation(async (ops: (() => unknown)[]) => {
+      for (const op of ops) op();
+    });
   });
 
   it("grades a 300-turn stored call on its opening turns with the cap note, instead of refusing it", async () => {
@@ -300,71 +288,6 @@ describe("PATCH /api/transcripts/[id] (server re-grade)", () => {
     const res = await patch();
     expect(res.status).toBe(200);
     expect(mocks.prisma.trainerSession.update.mock.lastCall![0].where).toEqual({ id: row.id });
-  });
-
-  describe("one graded row per call (a replay's ungraded copy has the same realtimeSessionId)", () => {
-    const SIBLING_MSG = "Another saved copy of this call already has a grade, so this copy can't be graded too. Open the graded copy from your progress page.";
-    const graded = (): Row => ({ ...row, id: `${row.id}-graded`, evaluation: RULES_GRADE, overallScore: 41 });
-
-    it("refuses to grade the ungraded copy while another row of the call has a score, for the owner and a manager, before any model call", async () => {
-      row.evaluation = null;
-      row.overallScore = null;
-      siblings = [graded()];
-      for (const [role, self] of [["trainee", true], ["owner", true], ["manager", false]] as const) {
-        actAs(role, "org-1", { self });
-        const res = await patch();
-        expect(res.status).toBe(409);
-        expect(await res.json()).toEqual({ error: "conflict", message: SIBLING_MSG });
-      }
-      expect(mocks.chat).not.toHaveBeenCalled();
-      expect(mocks.prisma.trainerSession.update).not.toHaveBeenCalled();
-      expect(row.overallScore).toBeNull();
-    });
-
-    it("still lets a manager re-grade the row that holds the grade", async () => {
-      actAs("manager", "org-1");
-      siblings = [{ ...row, id: `${row.id}-replay`, evaluation: null, overallScore: null }];
-      const res = await patch();
-      expect(res.status).toBe(200);
-      expect(Object.keys(await res.json()).sort()).toEqual(["evaluation", "id"]);
-      expect(row.evaluation).toMatchObject({ method: "llm" });
-    });
-
-    it("still lets the owner re-grade an ungraded row that is the only row of its call", async () => {
-      actAs("trainee", "org-1", { self: true });
-      row.evaluation = null;
-      row.overallScore = null;
-      // Graded rows of other calls, or of another user under the same id, don't count.
-      siblings = [{ ...graded(), realtimeSessionId: "text-call-other" }, { ...graded(), userId: "someone-else" }];
-      expect((await patch()).status).toBe(200);
-      expect(row.overallScore).toBe(stored().overallScore);
-      // The write ran under the call's lock: user and realtimeSessionId in the key.
-      expect(mocks.prisma.$queryRaw.mock.calls[0][1]).toBe(`ct-call-grade:${JSON.stringify([trainee, row.realtimeSessionId])}`);
-    });
-
-    it("refuses at write time when a sibling got its grade while the model was grading (POST grade vs PATCH grade)", async () => {
-      actAs("trainee", "org-1", { self: true });
-      row.evaluation = null;
-      row.overallScore = null;
-      siblings = [{ ...graded(), evaluation: null, overallScore: null }];
-      // The pre-check passes; then the other row is graded (a POST save under the same sessionId) before this write.
-      holdGrades(1, () => Object.assign(siblings[0], { evaluation: RULES_GRADE, overallScore: 41 }));
-      const res = await patch();
-      expect(res.status).toBe(409);
-      expect(await res.json()).toEqual({ error: "conflict", message: SIBLING_MSG });
-      expect(mocks.prisma.trainerSession.update).not.toHaveBeenCalled();
-      expect(row.overallScore).toBeNull();
-      expect(audits).toHaveLength(0);
-    });
-
-    it("grades a legacy row with no realtimeSessionId without the call check", async () => {
-      actAs("manager", "org-1");
-      row.realtimeSessionId = null;
-      expect((await patch()).status).toBe(200);
-      expect(mocks.prisma.$queryRaw).not.toHaveBeenCalled();
-    });
-
-    const stored = () => row.evaluation as { overallScore: number };
   });
 
   it("keeps everyone else out with the plain 403", async () => {

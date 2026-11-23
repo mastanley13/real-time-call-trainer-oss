@@ -24,6 +24,8 @@ const Body = z.object({
    * id, so it is limited to the characters server-made and client-made call ids use.
    */
   sessionId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(),
+  /** A metered voice call's metering id (the save's `callId`), sealed with the sessionId. Same characters, save's length cap. */
+  callId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -62,11 +64,11 @@ export async function POST(request: NextRequest) {
     if (evaluation.llmFailed) console.warn("[/api/evaluate-call] AI grading failed; returned the rules-based estimate");
     const note = gradedNote(evaluation.note, turns.length, body.transcript.length);
     const out = { evaluatedAt: new Date().toISOString(), ...evaluation, ...(note ? { note } : {}) };
-    // The seal lets POST /api/transcripts store this score once, for this call, within GRADE_SEAL_MAX_AGE_MS of
-    // evaluatedAt; a grade the client edits or invents won't verify. Nothing is stored here, so the CRM activation
-    // event (first graded call) is sent by that save, not by this route.
+    // The seal lets POST /api/transcripts store this score once, for this call (sessionId and callId), within
+    // GRADE_SEAL_MAX_AGE_MS of evaluatedAt; a grade the client edits or invents won't verify. Nothing is stored here, so
+    // the CRM activation event (first graded call) is sent by that save, not by this route.
     const seal = body.sessionId
-      ? sealEvaluation({ userId: auth.id, sessionId: body.sessionId, scenarioId: scenario.id, transcript: body.transcript, evaluation: out })
+      ? sealEvaluation({ userId: auth.id, sessionId: body.sessionId, callId: body.callId, scenarioId: scenario.id, transcript: body.transcript, evaluation: out })
       : undefined;
     return NextResponse.json({ ...out, ...(seal ? { seal } : {}) });
   } catch (error) {

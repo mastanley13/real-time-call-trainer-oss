@@ -324,14 +324,16 @@ export default function TrainerClient() {
     setPhase("grading");
     const call = mode === "voice" ? mintedCallRef.current ?? undefined : undefined;
     mintedCallRef.current = null;
-    // One id for grading and saving: the grade's seal is bound to it, and the save stores the grade only under it.
+    // One id for grading and saving: the grade's seal is bound to it (and to a metered call's callId, which the save
+    // also sends), and the save stores the grade only under it.
     const sessionId = callSessionId(mode, call);
+    const callId = call?.callId;
     let evaluation: Evaluation | null = null;
     try {
       const res = await fetch("/api/evaluate-call", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scenario, transcript, sessionId }),
+        body: JSON.stringify({ scenario, transcript, sessionId, ...(callId ? { callId } : {}) }),
       });
       if (res.ok) evaluation = await res.json();
       else if (res.status === 429) setError((await res.json().catch(() => ({}))).message || "Grading limit reached. The transcript was saved without a score; try again later.");

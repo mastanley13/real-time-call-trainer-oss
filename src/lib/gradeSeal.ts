@@ -3,16 +3,17 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 /**
  * Grade seals. /api/evaluate-call signs every grade it produces with an HMAC keyed by
- * JWT_SECRET, over the user, the call's sessionId, the persona id, a digest of the graded
- * transcript and the whole evaluation. POST /api/transcripts stores a score only when the
- * seal checks out for the sessionId it saves under and the grade is fresh, so a client can't
+ * JWT_SECRET, over the user, the call's sessionId (and metering callId, when the call has one),
+ * the persona id, a digest of the graded transcript and the whole evaluation. POST
+ * /api/transcripts stores a score only when the seal checks out for the sessionId and callId it
+ * saves under and the grade is fresh, so a client can't
  * save a grade it made up (team KPIs and assignment completion read these rows), attach one
  * call's grade to another call, or keep a grade and save it much later. Single use (one graded
  * row per seal) is enforced by the save itself; see the comments in POST /api/transcripts.
  * Without JWT_SECRET nothing is sealed and nothing verifies.
  */
 
-/** v2 binds the sessionId. A v1 seal (no sessionId) never verifies, so it can't be saved under any call. */
+/** v2 binds the sessionId and callId. A v1 seal (neither) never verifies, so it can't be saved under any call. */
 const VERSION = "grade-seal-v2";
 
 /**
@@ -41,6 +42,11 @@ export interface SealInput {
   userId: string;
   /** The call the grade belongs to: the same id the client later saves it under as `sessionId`. */
   sessionId: string;
+  /**
+   * The metering call id of a metered voice call (the `callId` the save names to fill that call's row), else absent.
+   * Sealed as given, so a seal made without one doesn't verify on a save that names one, and the other way round.
+   */
+  callId?: string;
   scenarioId: string;
   transcript: { role: string; text: string }[];
   /** The evaluation exactly as returned to the client, without the seal itself. */
@@ -48,7 +54,7 @@ export interface SealInput {
 }
 
 function mac(key: string, input: SealInput): string {
-  const payload = stableStringify({ v: VERSION, u: input.userId, c: input.sessionId, s: input.scenarioId, t: transcriptDigest(input.transcript), e: input.evaluation });
+  const payload = stableStringify({ v: VERSION, u: input.userId, c: input.sessionId, k: input.callId ?? null, s: input.scenarioId, t: transcriptDigest(input.transcript), e: input.evaluation });
   return createHmac("sha256", key).update(payload).digest("hex");
 }
 
@@ -71,7 +77,7 @@ export function isSealFresh(evaluation: unknown, now = Date.now()): boolean {
 }
 
 /**
- * True only when `seal` is the server's own seal over exactly this user, sessionId, persona, transcript and
+ * True only when `seal` is the server's own seal over exactly this user, sessionId, callId, persona, transcript and
  * evaluation, and the grade is still fresh (isSealFresh). Single use is not checked here: the save enforces it.
  */
 export function verifySeal(input: SealInput, seal: unknown, key = sealKey(), now = Date.now()): boolean {
