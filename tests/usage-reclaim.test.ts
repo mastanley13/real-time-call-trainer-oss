@@ -7,7 +7,8 @@ import { createFakePrisma } from "./fakePrisma";
 const mocks = vi.hoisted(() => ({ fake: null as unknown as ReturnType<typeof import("./fakePrisma").createFakePrisma> }));
 vi.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get: (_t, k) => (mocks.fake.db as Record<string | symbol, unknown>)[k] }) }));
 
-import { beginCall, heartbeat, usageSummary } from "@/lib/usage";
+import { beginCall, endCall, heartbeat, usageSummary } from "@/lib/usage";
+import { LockOrderError } from "./fakePrisma";
 import { CONNECT_WINDOW_SECONDS, NEVER_CONNECTED_RECLAIM_SECONDS } from "@/lib/usagePlan";
 
 const T0 = new Date("2026-10-15T12:00:00Z");
@@ -129,6 +130,75 @@ describe("a new start reclaims a call that never connected", () => {
     expect(await beginCall("u-1", scn, at(46))).toEqual({ ok: false, error: "minutes_reserved" });
     expect(session(first.callId)).toMatchObject({ endedAt: null, connectedAt: at(44) });
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 10 });
+  });
+});
+
+describe("lock order: user row first on every settlement path (fake lock model, not a database)", () => {
+  // The fake models the user row lock as a real waiting lock and fails any transaction that asks for it after updating
+  // allowance or call rows (tests/fakePrisma.ts). Allowance row locks themselves are not modelled, so these tests show
+  // the order that rules the deadlock out and that both transactions complete with the right billing; they do not run
+  // Postgres.
+  const B = new Date("2026-11-10T12:00:00Z"); // a period boundary for the MAR10 anchor
+  const atB = (sec: number) => new Date(B.getTime() + sec * 1000);
+
+  /** A credit-eligible connected call A and a never-connected call C, both from the period before B. */
+  async function setUp() {
+    fake = createFakePrisma();
+    mocks.fake = fake;
+    addUser("u-1", { planTier: "pro" });
+    const c = await beginCall("u-1", scn, atB(-50));
+    const a = await beginCall("u-1", scn, atB(-30));
+    if (!a.ok || !c.ok) throw new Error("mint failed");
+    await heartbeat("u-1", a.callId, "connected", atB(-20));
+    return { a: a.callId, c: c.callId };
+  }
+  /** endCall for A (a network drop 25 s after connect, just past B: it rolls the allowance over and counts drop credits). */
+  const dropA = (a: string) => endCall("u-1", a, "network_drop", atB(5));
+  /** A new start just past B: reclaims C (55 s, no heartbeat) and mints D. */
+  const startD = () => beginCall("u-1", scn, atB(5));
+  const noDeadlock = <T>(p: Promise<T>) => Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("deadlock: did not complete")), 2000))]);
+
+  function billing(ids: { a: string; c: string }, d: string) {
+    const row = (id: string) => { const s = session(id); return { endReason: s.endReason, billableSeconds: s.billableSeconds, billedMinutes: s.billedMinutes, endedAt: s.endedAt, reservedMinutes: s.reservedMinutes }; };
+    const { minutesUsed, minutesReserved, periodStart } = allowanceOf("u-1");
+    const ledger = fake.rows("usageEntry").map((e) => ({ call: e.trainerSessionId === ids.a ? "A" : e.trainerSessionId === ids.c ? "C" : "D", kind: e.kind, minutes: e.minutes }));
+    return { A: row(ids.a), C: row(ids.c), D: row(d), allowance: { minutesUsed, minutesReserved, periodStart }, ledger };
+  }
+
+  for (const first of ["endCall", "beginCall"] as const) {
+    it(`a drop settled during the rollover and a reclaiming start run at once (${first} first): both complete, billing as if one ran after the other`, async () => {
+      // Sequential reference.
+      let ids = await setUp();
+      let ended, begun;
+      if (first === "endCall") { ended = await dropA(ids.a); begun = await startD(); } else { begun = await startD(); ended = await dropA(ids.a); }
+      if (!begun.ok) throw new Error(begun.error);
+      const expected = { result: ended, billing: billing(ids, begun.callId) };
+
+      // Concurrent: the second transaction waits on the user row the first holds, then runs.
+      ids = await setUp();
+      const [e2, b2] = await noDeadlock(first === "endCall"
+        ? Promise.all([dropA(ids.a), startD()])
+        : Promise.all([startD(), dropA(ids.a)]).then(([b, e]) => [e, b] as const));
+      if (!b2.ok) throw new Error(b2.error);
+      expect({ result: e2, billing: billing(ids, b2.callId) }).toEqual(expected);
+      expect(fake.lockOrderViolations).toEqual([]);
+
+      // And the billing itself: A is a credited drop, C a failed connect, D holds the new period's only reservation.
+      expect(e2).toMatchObject({ outcome: "dropped_credited", billedMinutes: 0, endReason: "network_drop", billableSeconds: 25 });
+      expect(session(ids.c)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
+      expect(session(b2.callId)).toMatchObject({ endedAt: null, reservedMinutes: 60 });
+      expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 60, periodStart: B });
+    });
+  }
+
+  it("the old order (allowance written, then the user row locked for the drop credit) is caught by the lock-order audit", async () => {
+    await setUp();
+    const allowanceId = allowanceOf("u-1").id;
+    await expect(fake.db.$transaction(async (tx) => {
+      const t = tx as typeof fake.db;
+      await t.usageAllowance.updateMany({ where: { id: allowanceId }, data: { version: { increment: 1 } } });
+      await t.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${"u-1"} FOR UPDATE`;
+    })).rejects.toBeInstanceOf(LockOrderError);
   });
 });
 
