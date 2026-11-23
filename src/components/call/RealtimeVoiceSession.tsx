@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Scenario } from "@/lib/scenarios";
 import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
-import { CallMeter, onPageHide, type MeterEndReason } from "@/lib/callMeter";
+import { CallMeter, LEFT_BEFORE_CONNECT_MESSAGE, onPageHide, type MeterEndReason } from "@/lib/callMeter";
 import { LiveTranscript, applyLiveEvent, type LiveServerEvent } from "@/lib/live";
 import { expireSession, storedSessionKey } from "@/lib/sessionExpiry";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, realtimeAuthRedirect, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
@@ -50,8 +50,6 @@ export function voiceInfoFrom(data: { voiceTier?: unknown; nextCallStandard?: un
 }
 
 const EXPIRED = "The voice session expired before it connected. Start the call again.";
-/** Shown only if the page comes back (the back/forward cache) after it was hidden while the call was being set up. */
-const LEFT_DURING_MINT = "The call stopped because you left the page before it connected. Start the call again.";
 /** Grace period on hang-up so the trainee's last words still get transcribed. */
 const END_GRACE_MS = 1500;
 
@@ -88,6 +86,8 @@ export class RealtimeCall {
   private audioTimer?: ReturnType<typeof setInterval>;
   /** Reports connect, heartbeats and the end to the server, which meters the call. A no-op without a callId. */
   private meter?: CallMeter;
+  /** Aborts a pending SDP request when the call closes, so a closed call never finishes its connection. */
+  private abort = new AbortController();
 
   constructor(private scenario: Scenario, private h: Handlers, private voiceTier?: "premium" | "standard") {}
 
@@ -130,10 +130,12 @@ export class RealtimeCall {
           // The server has already stopped and billed the call; this ends the client side.
           onStop: (m) => this.fail(m, "user_hangup"),
           onGiveUp: () => this.fail("The voice connection dropped. Check your network. Your transcript so far is kept.", "network_drop"),
+          // The page was hidden while connecting: the meter reported failed_connect, and this attempt ends for good.
+          onAbandon: () => this.abandonBeforeConnect(),
         });
       }
       if (this.closed) return this.meter?.end("failed_connect");
-      if (hiddenDuringMint && res.ok) return this.fail(LEFT_DURING_MINT, "failed_connect");
+      if (hiddenDuringMint && res.ok) return this.fail(LEFT_BEFORE_CONNECT_MESSAGE, "failed_connect");
       const redirect = realtimeAuthRedirect(res.status, secret.error);
       if (redirect) return this.signInAgain(redirect, session);
       if (!res.ok || !(secret.clientSecret || secret.liveTicket)) return this.fail(secret.message || "Could not start the voice call. Try again, or switch to Text.");
@@ -191,7 +193,7 @@ export class RealtimeCall {
         await iceGathered(pc);
         if (this.closed) return;
         const liveSession = storedSessionKey();
-        const res = await fetch("/api/live/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ liveTicket: secret.liveTicket, sessionId: secret.sessionId, scenario: this.scenario, sdp: pc.localDescription?.sdp ?? offer.sdp }) });
+        const res = await fetch("/api/live/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ liveTicket: secret.liveTicket, sessionId: secret.sessionId, scenario: this.scenario, sdp: pc.localDescription?.sdp ?? offer.sdp }), signal: this.abort.signal });
         const data = await res.json().catch(() => ({}));
         if (this.closed) return;
         const redirect = data.error === "realtime_secret_expired" ? null : realtimeAuthRedirect(res.status, data.error);
@@ -202,7 +204,7 @@ export class RealtimeCall {
       }
       // Same-origin relay of the documented SDP exchange; see src/app/api/realtime/sdp/route.ts.
       const sdpSession = storedSessionKey();
-      const res = await fetch("/api/realtime/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientSecret: secret.clientSecret, sdp: offer.sdp }) });
+      const res = await fetch("/api/realtime/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientSecret: secret.clientSecret, sdp: offer.sdp }), signal: this.abort.signal });
       const data = await res.json().catch(() => ({}));
       if (this.closed) return;
       const redirect = realtimeAuthRedirect(res.status, data.error);
@@ -351,6 +353,17 @@ export class RealtimeCall {
     this.close(repSpoke);
   }
 
+  /**
+   * The page was hidden before the call connected, and the meter has reported failed_connect. The attempt ends for good
+   * (pending SDP request aborted, peer connection and mic closed), so a page restored from the back/forward cache cannot
+   * connect it: every later event of a closed call is ignored. The trainer goes back to the briefing with the reason.
+   */
+  private abandonBeforeConnect() {
+    if (this.closed) return;
+    this.h.onError(LEFT_BEFORE_CONNECT_MESSAGE);
+    this.close(false);
+  }
+
   /** `session` is the client session key (storedSessionKey) read when the rejected request started. */
   private signInAgain(path: "/login" | "/access", session: string | null) {
     // No call has connected yet. Stop the microphone and release peer resources
@@ -372,6 +385,7 @@ export class RealtimeCall {
     this.meter?.end("user_hangup");
     if (notify) this.release(true);
     this.closed = true;
+    this.abort.abort();
     clearInterval(this.flushTimer);
     clearInterval(this.audioTimer);
     clearTimeout(this.endTimer);

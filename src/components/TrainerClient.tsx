@@ -47,23 +47,15 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
   registerEnd: (fn: () => void) => void;
   render: (v: { orbState: AgentState; status: { label: string; tone: "ok" | "signal" | "caution" }; muted: boolean; toggleMute: () => void; end: () => void; getInputVolume: () => number; getOutputVolume: () => number }) => React.ReactNode;
 }) {
-  const cbRef = useRef({ onEnded, onError });
-  useEffect(() => { cbRef.current = { onEnded, onError }; });
+  const cbRef = useRef({ onEnded, onError, onTurn });
+  useEffect(() => { cbRef.current = { onEnded, onError, onTurn }; });
+  const endRef = useRef<() => void>(() => {});
   // Server-side voice metering (see lib/callMeter.ts), every exit before the call connects, and ending the call screen
   // exactly once (see elevenLabsStart.ts).
-  const [call] = useState(() => new ElevenLabsStart({ onEnded: () => cbRef.current.onEnded(), onError: (m) => cbRef.current.onError(m) }));
+  const [call] = useState(() => new ElevenLabsStart({ onEnded: () => cbRef.current.onEnded(), onError: (m) => cbRef.current.onError(m), endSession: () => endRef.current() }));
   const userEndedRef = useRef(false);
-  const endRef = useRef<() => void>(() => {});
-  const conv = useConversation({
-    onConnect: () => call.connected(),
-    onMessage: ({ message, role }) => {
-      // ElevenLabs has no packet-level event; the first agent message is the first remote audio.
-      if (role !== "user") call.meter.audio();
-      onTurn({ role: role === "user" ? "user" : "assistant", text: message });
-    },
-    onError: (m: unknown) => call.providerError(typeof m === "string" ? m : "Voice connection error"),
-    onDisconnect: () => call.disconnected(userEndedRef.current ? "user_hangup" : "network_drop"),
-  });
+  // No callbacks here: each attempt passes its own to startSession, bound to its id, so a cancelled attempt is ignored.
+  const conv = useConversation();
   const { startSession, endSession, status, isSpeaking, isMuted, setMuted, getInputVolume, getOutputVolume } = conv;
   const startedRef = useRef(false);
   useEffect(() => { endRef.current = () => { void endSession(); }; }, [endSession]);
@@ -91,6 +83,7 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
         const info = voiceInfoFrom(data);
         if (info) onVoiceInfo?.(info);
         startSession({
+          ...call.sessionCallbacks(data.attempt, { onTurn: (t) => cbRef.current.onTurn(t), userEnded: () => userEndedRef.current }),
           conversationToken: data.token,
           connectionType: "webrtc",
           overrides: {

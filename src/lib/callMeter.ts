@@ -17,6 +17,22 @@ const HEARTBEAT_MS = 10_000;
 /** A dropped connection that has not recovered after this long ends the call (rule 3). */
 export const RECOVER_MS = 10_000;
 
+/** Shown if the page comes back (the back/forward cache) after it was hidden while the call was still connecting. */
+export const LEFT_BEFORE_CONNECT_MESSAGE = "The call stopped because you left the page before it connected. Start the call again.";
+
+export interface MeterHandlers {
+  /** The server says the allowance ran out. */
+  onStop: (message: string) => void;
+  /** The connection did not recover in time. */
+  onGiveUp: () => void;
+  /**
+   * The page was hidden before the call connected, and the meter has just reported failed_connect. The owner must cancel
+   * the connection attempt for good (provider connection, mic, call screen): if the page comes back from the
+   * back/forward cache, nothing from this attempt may resume, since the server has closed it at 0 seconds.
+   */
+  onAbandon?: () => void;
+}
+
 /**
  * Calls `fn` when the page is hidden for good (tab closed, navigated away, or put in the back/forward cache). Returns
  * the unsubscribe. A no-op outside a browser.
@@ -42,17 +58,23 @@ export class CallMeter {
   private recoverTimer?: ReturnType<typeof setTimeout>;
   private unlistenPageHide: () => void = () => {};
 
-  /** onStop: the server says the allowance ran out. onGiveUp: the connection did not recover in time. */
-  constructor(private callId: string | undefined, private h: { onStop: (message: string) => void; onGiveUp: () => void }) {
-    // Closing the tab or navigating away before the call connected: report it now, with a keepalive request.
-    if (callId) this.unlistenPageHide = onPageHide(() => this.abandon());
+  constructor(private callId: string | undefined, private h: MeterHandlers) {
+    // Closing the tab or navigating away before the call connected: report it now, with a keepalive request, and have
+    // the owner cancel the attempt so a page restored from the back/forward cache cannot connect it unmetered.
+    if (callId) this.unlistenPageHide = onPageHide(() => this.pageHidden());
+  }
+
+  private pageHidden() {
+    if (this.ended || this.connected) return;
+    this.end("failed_connect");
+    this.h.onAbandon?.();
   }
 
   open() { this.opened = true; this.maybeConnect(); }
   audio() { this.heard = true; this.maybeConnect(); }
 
   /**
-   * The call is going away (unmount, page hide) without a reason of its own. Before it connected, that is a failed
+   * The call is going away (unmount) without a reason of its own. Before it connected, that is a failed
    * connect and is reported now. A connected call is left to its own end event or the server's heartbeat timeout.
    */
   abandon() {
