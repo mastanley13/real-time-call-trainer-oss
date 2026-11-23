@@ -6,7 +6,7 @@ import { ConversationProvider, useConversation } from "@elevenlabs/react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Scenario, ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { listScenarios } from "@/lib/scenarioStore";
-import { getLocalSession, saveSession, type CoachLog, type MintedCall, type StoredTurn } from "@/lib/sessionStore";
+import { callSessionId, getLocalSession, saveSession, type CoachLog, type MintedCall, type StoredTurn } from "@/lib/sessionStore";
 import type { Evaluation } from "@/lib/grader-types";
 import type { CoachMode } from "@/lib/coach-types";
 import type { AgentState } from "@/components/CallOrb";
@@ -322,12 +322,18 @@ export default function TrainerClient() {
       return;
     }
     setPhase("grading");
+    const call = mode === "voice" ? mintedCallRef.current ?? undefined : undefined;
+    mintedCallRef.current = null;
+    // One id for grading and saving: the grade's seal is bound to it (and to a metered call's callId, which the save
+    // also sends), and the save stores the grade only under it.
+    const sessionId = callSessionId(mode, call);
+    const callId = call?.callId;
     let evaluation: Evaluation | null = null;
     try {
       const res = await fetch("/api/evaluate-call", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scenario, transcript }),
+        body: JSON.stringify({ scenario, transcript, sessionId, ...(callId ? { callId } : {}) }),
       });
       if (res.ok) evaluation = await res.json();
       else if (res.status === 429) setError((await res.json().catch(() => ({}))).message || "Grading limit reached. The transcript was saved without a score; try again later.");
@@ -343,9 +349,7 @@ export default function TrainerClient() {
       cues: c.cues.map((q) => ({ triggerTurn: q.triggerTurn, type: q.type, title: q.title, used: q.status === "used" })),
     };
     const useServer = !!capabilities?.database && !capabilities?.demoMode;
-    const call = mode === "voice" ? mintedCallRef.current ?? undefined : undefined;
-    mintedCallRef.current = null;
-    const id = await saveSession({ mode, durationSeconds: duration, scenario, transcript, evaluation, coach: coachLog }, useServer, { call });
+    const id = await saveSession({ mode, durationSeconds: duration, scenario, transcript, evaluation, coach: coachLog }, useServer, { call, sessionId });
     router.push(`/trainer/debrief/${id}`);
   }, [scenario, mode, capabilities, router, coachMode]);
 

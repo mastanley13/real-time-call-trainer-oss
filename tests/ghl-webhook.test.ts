@@ -385,7 +385,12 @@ function gradeStore() {
     Object.assign(r, data, { updatedAt: new Date() });
     return { ...r };
   });
-  mocks.prisma.trainerSession.findFirst.mockImplementation(async ({ where }: { where: { userId: string } }) => {
+  mocks.prisma.trainerSession.findFirst.mockImplementation(async ({ where }: { where: { userId: string; realtimeSessionId?: string; id?: unknown } }) => {
+    if (where.realtimeSessionId !== undefined || where.id !== undefined) {
+      // The call-row checks (src/lib/callRow.ts). Rows here name no call, so none matches.
+      order.push("call-check");
+      return null;
+    }
     order.push("first-session");
     const r = rows.filter((x) => x.userId === where.userId && x.overallScore !== null)
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))[0];
@@ -772,7 +777,8 @@ describe("first graded call from every grading path", () => {
     mocks.chat.mockResolvedValue(llmReply());
   });
   const activations = () => db.activations();
-  const claimed = () => mocks.prisma.$queryRaw.mock.calls.length;
+  // First-graded-call claims only; the call's own-row lock (src/lib/callRow.ts) is not a claim.
+  const claimed = () => mocks.prisma.$queryRaw.mock.calls.filter((c) => String(c[1]).startsWith("ct-first-grade:")).length;
 
   it("POST: the first graded save schedules the claim and sends ct-activated once; a second graded call does not", async () => {
     on();
@@ -790,9 +796,12 @@ describe("first graded call from every grading path", () => {
     expect(mocks.prisma.trainerSession.create).toHaveBeenCalledWith({ data: expect.objectContaining({ overallScore: 74, grade: "B", goalAchieved: true }) });
     expect(mocks.prisma.trainerSession.update).not.toHaveBeenCalled();
     await settleGhlEvents();
-    expect(db.order[0]).toBe("create");
-    expect(db.order.indexOf("audit:session.saved")).toBeGreaterThan(0);
-    expect(db.order.findIndex((o) => o.startsWith("lock:"))).toBeGreaterThan(0);
+    // The create claims the call's own row under the call's lock (src/lib/callRow.ts); the first-graded-call claim takes
+    // its own lock after the create.
+    const create = db.order.indexOf("create");
+    expect(db.order.slice(0, create)).toEqual([expect.stringMatching(/ct-call-grade:\["u-1","rt-1"\]$/), "call-check"]);
+    expect(db.order.indexOf("audit:session.saved")).toBeGreaterThan(create);
+    expect(db.order.findIndex((o) => o.includes("ct-first-grade:"))).toBeGreaterThan(create);
   });
 
   it("POST: an ungraded save (no grade, or a grade that failed) schedules nothing", async () => {

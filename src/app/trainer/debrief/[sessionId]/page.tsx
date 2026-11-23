@@ -198,8 +198,9 @@ export default function DebriefPage() {
   const gs = ev ? goalStatusOf(ev) : null;
   const stamp = gs && { achieved: ["Goal achieved", "border-ok text-ok"], partial: ["Goal partly met", "border-signal text-signal"], not_achieved: ["Goal missed", "border-caution text-caution"] }[gs];
   const heuristic = ev && (ev.method !== "llm" || isLegacyGrader(ev));
-  // Browser sessions re-grade a rules-based grade only. Server sessions follow the PATCH rule: managers and admins
-  // always, the trainee only while the call has no AI grade. The server checks again and its 403 shows below the button.
+  // Browser sessions re-grade a rules-based grade only. Server sessions follow the PATCH rule: managers and admins on
+  // other people's calls always, anyone on their own call only while it has no AI grade. The server checks again and
+  // its 403 shows below the button.
   const mayRegrade = view.local
     ? !!heuristic
     : canRegrade({ managesOrg: canManageTeam(user?.role, !!user?.isPlatformAdmin), ownsSession: !!user && view.ownerId === user.id }, ev);

@@ -52,6 +52,12 @@ function matches(row: Row, where: Where): boolean {
 
 export function createFakePrisma() {
   let seq = 0;
+  // Strictly increasing write stamps, so two writes in the same (possibly faked) millisecond still differ.
+  let lastStamp = 0;
+  const nextStamp = () => {
+    lastStamp = Math.max(Date.now(), lastStamp + 1);
+    return new Date(lastStamp);
+  };
   let data: Record<string, Row[]> = Object.fromEntries(Object.keys(UNIQUE).map((t) => [t, []]));
   const failOnce: Record<string, number> = {};
   // Open transaction snapshots, innermost last, and one-shot hooks that run another writer's committed work.
@@ -97,6 +103,8 @@ export function createFakePrisma() {
     };
     const find = (where: Where) => rows().find((r) => matches(r, where));
     const apply = (r: Row, patch: Record<string, unknown>) => {
+      // TrainerSession.updatedAt is @updatedAt: every update and updateMany sets it, as Prisma does.
+      if (name === "trainerSession" && !("updatedAt" in patch)) r.updatedAt = nextStamp();
       for (const [k, v] of Object.entries(patch)) {
         if (v === undefined) continue;
         if (v && typeof v === "object" && !isDate(v) && ("increment" in v || "decrement" in v)) {
@@ -107,6 +115,7 @@ export function createFakePrisma() {
     };
     return {
       findUnique: async (args: { where: Where; include?: { organization?: boolean } }) => { log("findUnique"); return withInclude(find(args.where) ?? null, args); },
+      findFirst: async (args: { where: Where }) => { log("findFirst"); return copy(find(args.where)); },
       findUniqueOrThrow: async (args: { where: Where; include?: { organization?: boolean } }) => {
         log("findUniqueOrThrow");
         const r = find(args.where);
@@ -120,7 +129,7 @@ export function createFakePrisma() {
       },
       count: async (args: { where?: Where } = {}) => rows().filter((r) => matches(r, args.where ?? {})).length,
       create: async (args: { data: Record<string, unknown> }) => {
-        const row = { id: `${name}-${++seq}`, ...DEFAULTS[name](), ...Object.fromEntries(Object.entries(args.data).filter(([, v]) => v !== undefined)) } as Row;
+        const row = { id: `${name}-${++seq}`, ...DEFAULTS[name](), ...(name === "trainerSession" ? { updatedAt: nextStamp() } : {}), ...Object.fromEntries(Object.entries(args.data).filter(([, v]) => v !== undefined)) } as Row;
         for (const keys of UNIQUE[name]) {
           if (keys.some((k) => row[k] === null || row[k] === undefined)) continue;
           if (rows().some((r) => keys.every((k) => r[k] === row[k]))) throw dupError();
@@ -133,7 +142,8 @@ export function createFakePrisma() {
         await fire(name, "update", args);
         if (failOnce[name] > 0) { failOnce[name] -= 1; throw new Error("injected failure"); }
         const r = find(args.where);
-        if (!r) throw new Error(`${name} not found`);
+        // Like Prisma: an update whose where matches no row (missing, or changed since read) is P2025.
+        if (!r) throw new Prisma.PrismaClientKnownRequestError(`${name} not found`, { code: "P2025", clientVersion: "test" });
         apply(r, args.data);
         return { ...r };
       },
@@ -172,20 +182,63 @@ export function createFakePrisma() {
       calls.push(`raw:${strings.join("?")}`);
       return [];
     },
-    /** Runs fn on the same store; a throw restores the data as it was, like a rolled-back transaction. */
-    $transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+    /**
+     * Runs fn on the same store; a throw restores the data as it was, like a rolled-back transaction. Inside it,
+     * pg_advisory_xact_lock really waits: transactions asking for the same key run one after the other, and the lock
+     * is released when the transaction ends. The rollback snapshot is retaken when the lock is granted, so a rollback
+     * does not undo what the transaction it waited for committed. That is right while the lock is the transaction's
+     * first statement, as in every caller (ghlWebhook.ts, callRow.ts).
+     */
+    $transaction: async <T>(fn: ((tx: unknown) => Promise<T>) | Promise<unknown>[]): Promise<T> => {
+      // The array form: its operations already ran, in order, on the same store (no rollback is modelled for it).
+      if (Array.isArray(fn)) return (await Promise.all(fn)) as T;
       const entry = { snapshot: structuredClone(data) };
+      const releases: (() => void)[] = [];
+      // A transaction that throws before it wrote anything has nothing to undo, and restoring the snapshot would drop
+      // what concurrent requests committed meanwhile; so only a transaction that wrote is rolled back.
+      let wrote = false;
+      const WRITES = new Set(["create", "update", "updateMany", "deleteMany"]);
+      const tracked = Object.fromEntries(Object.entries(db).map(([k, v]) => [k, typeof v === "object" && v
+        // A write that throws (P2002, not found) changed nothing, so only a write that returned counts.
+        ? Object.fromEntries(Object.entries(v).map(([m, f]) => [m, WRITES.has(m) && typeof f === "function" ? async (...a: unknown[]) => { const r = await (f as (...x: unknown[]) => Promise<unknown>)(...a); wrote = true; return r; } : f]))
+        : v]));
+      const tx = {
+        ...tracked,
+        $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          const out = await db.$queryRaw(strings, ...values);
+          if (strings.join("?").includes("pg_advisory_xact_lock")) {
+            releases.push(await acquireAdvisory(String(values[0])));
+            entry.snapshot = structuredClone(data);
+          }
+          return out;
+        },
+      };
       open.push(entry);
       try {
-        return await fn(db);
+        return await fn(tx);
       } catch (e) {
-        data = entry.snapshot;
+        if (wrote) data = entry.snapshot;
         throw e;
       } finally {
         open.splice(open.indexOf(entry), 1);
+        for (const release of releases) release();
       }
     },
   };
+  /** Advisory lock tails by key: each waiter chains on the previous holder and releases its own turn. */
+  const advisory = new Map<string, Promise<void>>();
+  async function acquireAdvisory(key: string): Promise<() => void> {
+    const prev = advisory.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const mine = new Promise<void>((r) => (release = r));
+    const tail = prev.then(() => mine);
+    advisory.set(key, tail);
+    await prev;
+    return () => {
+      release();
+      if (advisory.get(key) === tail) advisory.delete(key);
+    };
+  }
 
   return {
     db,
@@ -194,7 +247,7 @@ export function createFakePrisma() {
     /** Direct access to rows for arranging and asserting. */
     rows: (name: keyof typeof UNIQUE) => data[name],
     seed: (name: keyof typeof UNIQUE, row: Record<string, unknown>) => {
-      const r = { id: `${name}-${++seq}`, ...DEFAULTS[name](), ...row } as Row;
+      const r = { id: `${name}-${++seq}`, ...DEFAULTS[name](), ...(name === "trainerSession" ? { updatedAt: nextStamp() } : {}), ...row } as Row;
       data[name].push(r);
       return r;
     },
