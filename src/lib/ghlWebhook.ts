@@ -21,6 +21,14 @@ import { effectivePlan, type PlanTier } from "./usagePlan";
  * later, and nothing waits on GHL, so a GHL outage can never fail signup, grading or the Stripe webhook. Each payload has
  * a deterministic eventId (also sent as the Idempotency-Key header) so a workflow can drop repeats.
  *
+ * Attempts: signup, plan changes and voice_cap_hit get one POST. first_graded_call (ct-activated) gets at most one retry
+ * of the same POST (same body, eventId and Idempotency-Key), inside the same background work, after GHL_RETRY_DELAY_MS
+ * and with its own GHL_TIMEOUT_MS bound, and only when the first attempt clearly did not deliver: a connection refused,
+ * DNS failure or unreachable network before any response (cause.code ECONNREFUSED, ENOTFOUND, EAI_AGAIN, ENETUNREACH or
+ * EHOSTUNREACH), or HTTP 429, 502, 503 or 504. Never after any timeout, including a connect timeout
+ * (UND_ERR_CONNECT_TIMEOUT), because GHL may have accepted the request; never after a 500, another 4xx or a 2xx. The
+ * retry repeats only the POST: claimFirstGradedCall runs once and its marker is written once.
+ *
  * Tags: every payload carries `tags: string[]` so the GHL workflow can apply them to the contact as they are. The one
  * mapping is ghlTagsFor below:
  * - signup:            ct-signed-up, app-calltrainer, then ct-signup-email or ct-signup-google (by signupMethod)
@@ -284,13 +292,46 @@ export function voiceCapHitPayload(
   };
 }
 
+/** Wait before the one retry of a first_graded_call POST (see postGhlEvent). */
+export const GHL_RETRY_DELAY_MS = 500;
+
+/** Events whose POST gets one retry when the first attempt clearly did not deliver. Only ct-activated. */
+const RETRY_ONCE: ReadonlySet<GhlEventType> = new Set<GhlEventType>(["first_graded_call"]);
+
+/** Answers that mean GHL (or its edge) did not take the request: rate limited, bad gateway, unavailable, gateway timeout. */
+const RETRY_STATUSES: ReadonlySet<number> = new Set([429, 502, 503, 504]);
+
+/**
+ * Connection-phase failures: the request never reached a server, so it cannot have been accepted. Read from the
+ * structured `cause.code` of fetch's TypeError, never from message text. A reset or socket error after the request
+ * was sent is not here, because GHL may already have run the workflow. No timeout of any kind is here either, not even a
+ * connect timeout (UND_ERR_CONNECT_TIMEOUT): a timeout is never retried.
+ */
+const NOT_SENT_CODES: ReadonlySet<string> = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH"]);
+
+/** "delivered" (2xx), "retryable" (clearly not delivered), or "final" (anything else, including a timeout). */
+type GhlAttempt = "delivered" | "retryable" | "final";
+
+const notSentError = (e: unknown): boolean => {
+  if (!(e instanceof TypeError)) return false;
+  const code = (e.cause as { code?: unknown } | undefined)?.code;
+  return typeof code === "string" && NOT_SENT_CODES.has(code);
+};
+
 /**
  * Posts one payload and resolves when done. Never rejects: a timeout, network error or non-2xx answer is logged
  * with the event type and status only (never the URL, body or GHL's answer).
+ *
+ * first_graded_call only: when the first attempt clearly did not deliver (a connection-phase network error before any
+ * response, see NOT_SENT_CODES, or HTTP 429, 502, 503 or 504), the same body and headers (same eventId and
+ * Idempotency-Key) are posted once more after GHL_RETRY_DELAY_MS, with their own GHL_TIMEOUT_MS bound. Never on any
+ * timeout, connect timeout included, a 500, another 4xx or 2xx. This only repeats the POST; the claim and its marker are
+ * never touched again. Other events (signup, plan changes, voice_cap_hit) get one attempt.
  */
 export async function postGhlEvent(payload: GhlPayload, env: Env = process.env): Promise<void> {
   const url = ghlWebhookUrl(env);
   if (!url) return;
+  let init: RequestInit;
   try {
     const body = JSON.stringify(payload);
     const headers: Record<string, string> = {
@@ -304,13 +345,27 @@ export async function postGhlEvent(payload: GhlPayload, env: Env = process.env):
       headers["x-calltrainer-timestamp"] = timestamp;
       headers["x-calltrainer-signature"] = signGhlBody(secret, timestamp, body);
     }
-    const res = await fetch(url, { method: "POST", headers, body, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(GHL_TIMEOUT_MS) });
-    await res.body?.cancel().catch(() => undefined);
-    if (!res.ok) console.error(`[ghl] ${payload.event} webhook answered status ${res.status}`);
-  } catch (e) {
-    const timedOut = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
-    console.error(`[ghl] ${payload.event} webhook ${timedOut ? "timed out" : "failed"}`);
+    init = { method: "POST", headers, body, redirect: "error", cache: "no-store" };
+  } catch {
+    console.error(`[ghl] ${payload.event} webhook failed`);
+    return;
   }
+  const attempt = async (label: string): Promise<GhlAttempt> => {
+    try {
+      const res = await fetch(url, { ...init, signal: AbortSignal.timeout(GHL_TIMEOUT_MS) });
+      await res.body?.cancel().catch(() => undefined);
+      if (res.ok) return "delivered";
+      console.error(`[ghl] ${payload.event} ${label} answered status ${res.status}`);
+      return RETRY_STATUSES.has(res.status) ? "retryable" : "final";
+    } catch (e) {
+      const timedOut = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+      console.error(`[ghl] ${payload.event} ${label} ${timedOut ? "timed out" : "failed"}`);
+      return !timedOut && notSentError(e) ? "retryable" : "final";
+    }
+  };
+  if ((await attempt("webhook")) !== "retryable" || !RETRY_ONCE.has(payload.event)) return;
+  await new Promise((resolve) => setTimeout(resolve, GHL_RETRY_DELAY_MS));
+  if ((await attempt("webhook retry")) === "delivered") console.info(`[ghl] ${payload.event} webhook retry delivered`);
 }
 
 const inflight = new Set<Promise<void>>();
@@ -471,8 +526,9 @@ const GRADES = new Set(["A", "B", "C", "D", "F"]);
  *    the marker is inserted (resource = that session) and the payload is returned for sending after commit.
  * The lock plus the marker make exactly one claimer ever, by commit order, whichever grade write triggered it. Null when
  * events are off (no marker is written, so the event can still go out once GHL is configured), when the marker exists,
- * or when the user has no graded session. Delivery is at most once: the marker commits before the POST, so a POST that
- * fails or times out is not retried.
+ * or when the user has no graded session. The claim is at most once: the marker commits before the POST and is never
+ * written or claimed again. postGhlEvent may repeat the POST of this same payload once when the first attempt clearly did
+ * not deliver (see the file header); a timeout or any other failure is not retried, and the marker stays either way.
  *
  * Rollout: users graded before this shipped have no marker, so their next graded call sends one first_graded_call (same
  * eventId first_graded_call:{userId}, ct-activated tag) naming their earliest graded session.
