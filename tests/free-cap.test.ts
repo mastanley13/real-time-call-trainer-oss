@@ -24,7 +24,7 @@ vi.mock("@/lib/apiAuth", async () => ({
 }));
 
 import { FREE_ABANDON_REDUCED_MARKER, beginCall, checkCap, creditManual, endCall, ensureAllowance, freeAbandonClaimKey, heartbeat, resolveAllowance, usageSummary } from "@/lib/usage";
-import { FREE_ABANDON_GRACE_SECONDS, FREE_CAP_WARNING_SECONDS, FREE_END_GRACE_SECONDS, FREE_MINUTES, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, callLimitSeconds, capFor, endGraceSeconds, exactCapStop, freeCapWarning, freeCapWarningReached } from "@/lib/usagePlan";
+import { FREE_ABANDON_GRACE_SECONDS, FREE_ABANDON_REDUCED_PER_PERIOD, FREE_CAP_WARNING_SECONDS, FREE_END_GRACE_SECONDS, FREE_MINUTES, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, callLimitSeconds, capFor, endGraceSeconds, exactCapStop, freeCapWarning, freeCapWarningReached } from "@/lib/usagePlan";
 import { CAP_STOPPED_MESSAGE, FREE_CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE, isCapMessage } from "@/lib/billingUi";
 import { setPremiumEventSink, type PremiumEvent } from "@/lib/billingEvents";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
@@ -894,9 +894,9 @@ describe("a Free call that goes silent is billed to its last heartbeat plus a sh
   // usage read, as heartbeat_timeout. It is billed through its last heartbeat plus FREE_ABANDON_GRACE_SECONDS, rounded up
   // to whole started minutes and clamped to its reservation, however late the reap. Before, it was billed through the
   // reap, up to the reservation: Funnel's retest call heartbeated for 125 s, was reaped 240 s later and billed 7 minutes.
-  // The reduced charge applies to the first abandoned Free call of a billing period only; later ones in the same period
-  // are billed their whole reservation whenever they are reaped, because a modified client can stop heartbeating and
-  // keep talking. Paid calls and every other way a call ends are unchanged.
+  // The reduced charge applies to the first FREE_ABANDON_REDUCED_PER_PERIOD (3) abandoned Free calls of a billing period;
+  // the 4th and later in the same period are billed their whole reservation whenever they are reaped, because a modified
+  // client can stop heartbeating and keep talking. Paid calls and every other way a call ends are unchanged.
   /**
    * Starts a call at `start` seconds, heartbeats every 10 seconds and once more at `start + lastSec`, then says nothing
    * more. Starting a call reaps this user's earlier silent call (settleStale in beginCall).
@@ -1010,93 +1010,127 @@ describe("a Free call that goes silent is billed to its last heartbeat plus a sh
     expect(allowanceOf("u-2")).toMatchObject({ minutesUsed: 60, minutesReserved: 0 });
   });
 
-  it("only the first abandoned Free call of a period is reduced; the second, reaped 31 s after its last heartbeat, bills its whole reservation", async () => {
-    await freeUserWith(0);
-    const first = await silentAfterHeartbeat("u-1", 50);
-    // Starting the second call reaps the first: the reduced charge, 50 s + 15 s = 65 s, 2 minutes.
-    const second = await silentAfterHeartbeat("u-1", 125, 3600);
-    expect(session(first.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 65, billedMinutes: 2 });
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 2, minutesReserved: 8 });
-    // Reaped as soon as it counts as silent. Billing through the reap would be 156 s (3 minutes), the reduced rule 140 s
-    // (3 minutes); it is billed its whole 8 minute reservation. The row keeps the reap as its end.
-    const reap = 3600 + 125 + HEARTBEAT_TIMEOUT_SECONDS + 1;
+  /** The reduced-charge markers written so far (one per reduced settlement). */
+  const markers = () => fake.rows("auditEvent").filter((e) => e.action === FREE_ABANDON_REDUCED_MARKER);
+  /**
+   * `n` silent calls, one an hour from `from`, each with its last heartbeat 50 s in. Starting each call reaps the one
+   * before it; the last is left open. Returns the call ids.
+   */
+  async function silentCalls(n: number, from = 0) {
+    const ids: string[] = [];
+    for (let k = 0; k < n; k++) ids.push((await silentAfterHeartbeat("u-1", 50, from + k * 3600)).callId);
+    return ids;
+  }
+
+  it("the limit is 3 reduced silent calls per period", () => {
+    expect(FREE_ABANDON_REDUCED_PER_PERIOD).toBe(3);
+  });
+
+  it("calls 1 to 3 of a period are reduced and each writes a marker; the 4th, reaped 31 s after its last heartbeat, bills its whole reservation and writes none", async () => {
+    await freeUserWith(-50); // 60 Free minutes left (a manual credit), so 4 calls fit
+    const ids = await silentCalls(4);
+    // Calls 1 to 3: 50 s + 15 s = 65 s, 2 minutes each, reaped by the next start.
+    for (const id of ids.slice(0, 3)) expect(session(id)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 65, billedMinutes: 2 });
+    const october = freeAbandonClaimKey(allowanceOf("u-1").id as string, allowanceOf("u-1").periodStart as Date);
+    expect(markers()).toEqual(ids.slice(0, 3).map((id) => expect.objectContaining({ userId: "u-1", resource: october, metadata: { trainerSessionId: id } })));
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: -44, minutesReserved: 54 });
+    // The 4th, reaped as soon as it counts as silent: its whole 54 minute reservation, not 65 s. The row keeps the reap.
+    const reap = 3 * 3600 + 50 + HEARTBEAT_TIMEOUT_SECONDS + 1;
     await usageSummary("u-1", at(reap));
-    expect(session(second.callId)).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(reap), billableSeconds: 480, billedMinutes: 8, abuseFlagged: false });
+    expect(session(ids[3])).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(reap), billableSeconds: 54 * 60, billedMinutes: 54, abuseFlagged: false });
+    expect(markers()).toHaveLength(3);
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
     expect(fake.rows("user")[0].voiceBlockedUntil ?? null).toBeNull();
   });
 
-  it("a second abandoned Free call reaped the next day bills its whole reservation too", async () => {
-    await freeUserWith(0);
-    await silentAfterHeartbeat("u-1", 50);
-    const second = await silentAfterHeartbeat("u-1", 125, 3600); // reaps the first (2 minutes), reserves the other 8
+  it("the 4th silent call of a period reaped the next day bills its whole reservation too", async () => {
+    await freeUserWith(0); // 10 Free minutes: calls 1 to 3 bill 2 each, the 4th reserves the last 4
+    const ids = await silentCalls(4);
     await usageSummary("u-1", at(24 * 3600));
-    expect(session(second.callId)).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(24 * 3600), billableSeconds: 480, billedMinutes: 8, abuseFlagged: false });
+    expect(session(ids[3])).toMatchObject({ endReason: "heartbeat_timeout", endedAt: at(24 * 3600), billableSeconds: 240, billedMinutes: 4, abuseFlagged: false });
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
   });
 
-  it("with more Free minutes left, every abandoned call after the first costs its whole reservation", async () => {
-    await freeUserWith(-20); // 30 minutes left (a manual credit)
-    await silentAfterHeartbeat("u-1", 50); // reduced: 2 minutes, it held all 30
-    const second = await silentAfterHeartbeat("u-1", 20, 3600); // reaps the first; reserves the 28 left
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: -18, minutesReserved: 28 });
-    await usageSummary("u-1", at(3600 + 20 + HEARTBEAT_TIMEOUT_SECONDS + 1));
-    expect(session(second.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 28 * 60, billedMinutes: 28 });
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
-  });
-
-  it("the next billing period gets one reduced abandoned call again", async () => {
+  it("the next billing period gets 3 reduced silent calls again", async () => {
     await freeUserWith(0);
-    await silentAfterHeartbeat("u-1", 50); // October: the reduced one (2 minutes)
-    const october = await silentAfterHeartbeat("u-1", 125, 3600); // October: its whole 8 minute reservation
-    await usageSummary("u-1", at(3600 + 365));
-    expect(session(october.callId)).toMatchObject({ billableSeconds: 480, billedMinutes: 8 });
+    const octKey = freeAbandonClaimKey(allowanceOf("u-1").id as string, allowanceOf("u-1").periodStart as Date);
+    const october = await silentCalls(4);
+    await usageSummary("u-1", at(3 * 3600 + 81));
+    // 3 reduced (2 minutes each), then the 4th bills the 4 minutes it reserved.
+    expect(october.map((id) => session(id).billedMinutes)).toEqual([2, 2, 2, 4]);
     // The month resets on the 10th at 12:00 UTC, 26 days after T0.
     const nov10 = 26 * 24 * 3600;
     expect(at(nov10).toISOString()).toBe("2026-11-10T12:00:00.000Z");
-    const november = await silentAfterHeartbeat("u-1", 125, nov10 + 60);
-    await usageSummary("u-1", at(nov10 + 60 + 365));
-    expect(session(november.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 140, billedMinutes: 3 });
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 3, minutesReserved: 0 });
+    const november = await silentCalls(4, nov10 + 60);
+    await usageSummary("u-1", at(nov10 + 60 + 3 * 3600 + 81));
+    expect(november.map((id) => session(id).billableSeconds)).toEqual([65, 65, 65, 240]);
+    expect(november.map((id) => session(id).billedMinutes)).toEqual([2, 2, 2, 4]);
+    const novKey = freeAbandonClaimKey(allowanceOf("u-1").id as string, at(nov10));
+    expect(markers().map((m) => m.resource)).toEqual([octKey, octKey, octKey, novKey, novKey, novKey]);
   });
 
-  it("the claim survives the retention purge: after the first call's row is deleted, the second still bills its whole reservation", async () => {
-    await freeUserWith(0);
+  it("the markers survive the retention purge and still count: after the rows of calls 1 to 3 are deleted, the 4th bills its whole reservation", async () => {
+    await freeUserWith(-50);
     fake.rows("organization")[0].sessionRetentionDays = 1; // shorter than any billing period
-    const first = await silentAfterHeartbeat("u-1", 50);
-    await usageSummary("u-1", at(3600));
-    expect(session(first.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 65, billedMinutes: 2 });
-    const claims = () => fake.rows("auditEvent").filter((e) => e.action === FREE_ABANDON_REDUCED_MARKER);
-    const october = freeAbandonClaimKey(allowanceOf("u-1").id as string, allowanceOf("u-1").periodStart as Date);
-    expect(claims()).toEqual([expect.objectContaining({ userId: "u-1", resource: october, metadata: { trainerSessionId: first.callId } })]);
+    const ids = await silentCalls(3);
+    await usageSummary("u-1", at(2 * 3600 + 81));
+    expect(ids.map((id) => session(id).billedMinutes)).toEqual([2, 2, 2]);
+    expect(markers()).toHaveLength(3);
 
-    // Two days later the nightly purge deletes the call row; the AuditEvent claim stays.
+    // Two days later the nightly purge deletes the call rows; the AuditEvent markers stay.
     vi.stubEnv("CRON_SECRET", "cron-test-secret-not-real");
     vi.setSystemTime(at(2 * 24 * 3600));
     const res = await purge(new NextRequest("https://trainer.example/api/cron/purge-expired", { headers: { authorization: "Bearer cron-test-secret-not-real" } }));
     expect(res.status).toBe(200);
     vi.setSystemTime(T0);
-    expect(fake.rows("trainerSession").find((s) => s.id === first.callId)).toBeUndefined();
+    for (const id of ids) expect(fake.rows("trainerSession").find((s) => s.id === id)).toBeUndefined();
     expect(fake.rows("trainerSession").filter((s) => s.endReason === "heartbeat_timeout")).toEqual([]);
-    expect(claims()).toHaveLength(1);
+    expect(markers()).toHaveLength(3);
 
-    // A second silent call in the same period, reaped 31 s after its last heartbeat: its whole 8 minute reservation.
+    // A 4th silent call in the same period, reaped 31 s after its last heartbeat: its whole 54 minute reservation.
     const start = 2 * 24 * 3600 + 100;
-    const second = await silentAfterHeartbeat("u-1", 125, start);
+    const fourth = await silentAfterHeartbeat("u-1", 125, start);
     await usageSummary("u-1", at(start + 125 + HEARTBEAT_TIMEOUT_SECONDS + 1));
-    expect(session(second.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 480, billedMinutes: 8 });
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
-    expect(claims()).toHaveLength(1); // a full-reservation settlement claims nothing
+    expect(session(fourth.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 54 * 60, billedMinutes: 54 });
+    expect(markers()).toHaveLength(3); // a full-reservation settlement writes none
 
-    // The next period has no claim yet: its first abandoned call is reduced again, and claims it.
+    // The next period starts with no markers: its first silent call is reduced again and writes one.
     const nov10 = 26 * 24 * 3600;
     const november = await silentAfterHeartbeat("u-1", 125, nov10 + 60);
     await usageSummary("u-1", at(nov10 + 60 + 365));
     expect(session(november.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 140, billedMinutes: 3 });
-    expect(claims().map((c) => c.resource)).toEqual([october, freeAbandonClaimKey(allowanceOf("u-1").id as string, at(nov10))]);
+    expect(markers()).toHaveLength(4);
+    expect(markers()[3].resource).toBe(freeAbandonClaimKey(allowanceOf("u-1").id as string, at(nov10)));
   });
 
-  it("a never-connected call or a hung-up call does not use up the period's reduced abandoned call", async () => {
+  it("parallel reaps of 5 stale calls give exactly 3 reduced charges and 3 markers", async () => {
+    await freeUserWith(-290); // 300 Free minutes left: 5 open calls of 60 reserved minutes each
+    // Calls A to E start a second apart; their last heartbeats run backwards (A at 500 s, E at 100 s). Each reap below
+    // sees a different set of stale calls, so the first call each one settles is a different call: E, D, C, B, A.
+    const lastBeats = [500, 400, 300, 200, 100];
+    const ids: string[] = [];
+    for (let k = 0; k < 5; k++) {
+      const begun = await beginCall("u-1", scn, at(k));
+      if (!begun.ok) throw new Error(begun.error);
+      ids.push(begun.callId);
+    }
+    for (let k = 0; k < 5; k++) await heartbeat("u-1", ids[k], "connected", at(lastBeats[k]));
+    expect(allowanceOf("u-1").minutesReserved).toBe(300);
+    fake.enableRowLocks();
+
+    const reaps = await Promise.allSettled([...lastBeats].reverse().map((t) => usageSummary("u-1", at(t + HEARTBEAT_TIMEOUT_SECONDS + 1))));
+    expect(reaps.map((r) => r.status)).toEqual(Array(5).fill("fulfilled"));
+    expect(fake.ops.some((o) => o.op.startsWith("deadlock:"))).toBe(false);
+    const billed = ids.map((id) => session(id).billedMinutes as number);
+    expect(ids.every((id) => session(id).endReason === "heartbeat_timeout")).toBe(true);
+    expect(billed.filter((m) => m < 60)).toHaveLength(3);
+    expect(billed.filter((m) => m === 60)).toHaveLength(2);
+    expect(markers()).toHaveLength(3);
+    // The markers name exactly the 3 calls that were reduced.
+    expect(markers().map((m) => (m.metadata as { trainerSessionId: string }).trainerSessionId).sort()).toEqual(ids.filter((_, k) => billed[k] < 60).sort());
+  });
+
+  it("a never-connected call or a hung-up call does not count toward the period's reduced silent calls", async () => {
     await freeUserWith(0);
     const never = await beginCall("u-1", scn, at(0));
     if (!never.ok) throw new Error(never.error);

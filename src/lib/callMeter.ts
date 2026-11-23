@@ -17,7 +17,7 @@ export const RECOVER_MS = 10_000;
 /**
  * A Free call ends itself after this many heartbeats in a row fail (a fetch error or a non-OK answer): about 30 seconds
  * without reaching the server, the same as the server's silence timeout. The server bills a silent Free call only up to
- * its last heartbeat (once per period), so an honest client must not keep the voice session running past that.
+ * its last heartbeat (up to 3 times per period), so an honest client must not keep the voice session running past that.
  */
 export const MAX_FAILED_HEARTBEATS = 3;
 /**
