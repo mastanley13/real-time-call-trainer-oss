@@ -298,14 +298,20 @@ describe("billing a call", () => {
 
   it("a drop settlement locks the user row before counting; other endings take no lock (each mint takes one)", async () => {
     addUser("u-1");
-    await runCall("u-1", { endAt: 20, reason: "user_hangup", beats: false });
-    expect(fake.rawQueries).toHaveLength(1); // the mint's lock only
+    // Each heartbeat also locks its own call row (heartbeats of one call run one at a time); that is not a user lock.
+    const userLocks = () => fake.rawQueries.filter((q) => q.sql.includes('FROM "User"'));
+    const callLocks = () => fake.rawQueries.filter((q) => q.sql.includes('FROM "TrainerSession"'));
+    const first = await runCall("u-1", { endAt: 20, reason: "user_hangup", beats: false });
+    expect(userLocks()).toHaveLength(1); // the mint's lock only
     const { callId } = await runCall("u-1", { endAt: 20, reason: "network_drop", start: 100, beats: false });
-    expect(fake.rawQueries).toHaveLength(3); // + the second mint's lock + the drop's lock
-    for (const q of fake.rawQueries) {
+    expect(userLocks()).toHaveLength(3); // + the second mint's lock + the drop's lock
+    for (const q of userLocks()) {
       expect(q.sql).toContain("FOR UPDATE");
       expect(q.values).toEqual(["u-1"]);
     }
+    // The only other locks are the two "connected" heartbeats', each on its own call row.
+    expect(callLocks().map((q) => q.values)).toEqual([[first.callId], [callId]]);
+    expect(fake.rawQueries).toHaveLength(userLocks().length + callLocks().length);
     expect(session(callId).billedMinutes).toBe(0);
   });
 

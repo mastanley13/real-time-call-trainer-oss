@@ -24,7 +24,7 @@ vi.mock("@/lib/apiAuth", async () => ({
 }));
 
 import { beginCall, checkCap, creditManual, endCall, ensureAllowance, heartbeat, resolveAllowance, usageSummary } from "@/lib/usage";
-import { FREE_CAP_WARNING_SECONDS, FREE_END_GRACE_SECONDS, FREE_MINUTES, MAX_CALL_SECONDS, callLimitSeconds, capFor, endGraceSeconds, exactCapStop, freeCapWarning } from "@/lib/usagePlan";
+import { FREE_CAP_WARNING_SECONDS, FREE_END_GRACE_SECONDS, FREE_MINUTES, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, callLimitSeconds, capFor, endGraceSeconds, exactCapStop, freeCapWarning } from "@/lib/usagePlan";
 import { CAP_STOPPED_MESSAGE, FREE_CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE, isCapMessage } from "@/lib/billingUi";
 import { setPremiumEventSink, type PremiumEvent } from "@/lib/billingEvents";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
@@ -426,122 +426,93 @@ describe("the Free 1 minute warning goes out once per call", () => {
     expect(await heartbeat("u-1", begun.callId, "ok", at(80))).toMatchObject({ stop: true, reason: "cap_reached", freeCap: true });
   });
 
-  it("two overlapping heartbeats that read the same previous one give one warning", async () => {
-    await freeUserWith(0);
+  // The races below run heartbeats concurrently (Promise.all) with the fake's row locks on, so overlapping heartbeats
+  // really contend for the call row's FOR UPDATE lock the way they do in Postgres.
+  async function lockedCall(used: number, ...times: number[]) {
+    await freeUserWith(used);
     const begun = await beginCall("u-1", scn, at(0));
     if (!begun.ok) throw new Error(begun.error);
-    await heartbeat("u-1", begun.callId, "connected", at(0));
-    expect(await heartbeat("u-1", begun.callId, "ok", at(530))).toEqual({ found: true, stop: false, secondsLeft: limit - 530 });
+    for (const t of times) await heartbeat("u-1", begun.callId, t === 0 ? "connected" : "ok", at(t));
+    fake.enableRowLocks();
+    return begun.callId;
+  }
+  const beatAt = (callId: string, t: number, state: "connected" | "ok" | "recovering" = "ok") => heartbeat("u-1", callId, state, at(t));
 
-    // The 541 s heartbeat reads the row (previous heartbeat 530 s), then the 545 s one commits before its write.
-    const overlapping: Array<Awaited<ReturnType<typeof heartbeat>>> = [];
-    fake.interleave("trainerSession", "updateMany", async () => { overlapping.push(await heartbeat("u-1", begun.callId, "ok", at(545))); },
-      (args) => args.where.id === begun.callId);
-    const late = await heartbeat("u-1", begun.callId, "ok", at(541));
-    // The interleaved commit is replayed into each open snapshot; it is one heartbeat, and it warned.
-    expect(overlapping.at(-1)).toEqual({ found: true, stop: false, secondsLeft: limit - 545, capWarning: true });
-    // The overlapped one no longer matched the row it read: nothing recorded, answered from the row as it is, no warning.
-    expect(late).toEqual({ found: true, stop: false, secondsLeft: limit - 541 });
-    // The older heartbeat never moved lastHeartbeatAt back.
-    expect(session(begun.callId).lastHeartbeatAt).toEqual(at(545));
-    expect(await heartbeat("u-1", begun.callId, "ok", at(560))).toEqual({ found: true, stop: false, secondsLeft: limit - 560 });
+  it("each heartbeat locks the call row, and overlapping heartbeats give one warning", async () => {
+    const callId = await lockedCall(0, 0, 530);
+    const [a, b] = await Promise.all([beatAt(callId, 541), beatAt(callId, 545)]);
+    expect([a, b]).toEqual([
+      { found: true, stop: false, secondsLeft: limit - 541, capWarning: true },
+      { found: true, stop: false, secondsLeft: limit - 545 },
+    ]);
+    expect(session(callId).lastHeartbeatAt).toEqual(at(545));
+    expect(fake.rawQueries).toContainEqual({ sql: 'SELECT "id" FROM "TrainerSession" WHERE "id" = ? FOR UPDATE', values: [callId] });
+    expect(await beatAt(callId, 560)).toEqual({ found: true, stop: false, secondsLeft: limit - 560 });
   });
 
-  it("two overlapping heartbeats with the same time give one warning", async () => {
-    await freeUserWith(0);
-    const begun = await beginCall("u-1", scn, at(0));
-    if (!begun.ok) throw new Error(begun.error);
-    await heartbeat("u-1", begun.callId, "connected", at(0));
-    await heartbeat("u-1", begun.callId, "ok", at(530));
-
-    const overlapping: Array<Awaited<ReturnType<typeof heartbeat>>> = [];
-    fake.interleave("trainerSession", "updateMany", async () => { overlapping.push(await heartbeat("u-1", begun.callId, "ok", at(545))); },
-      (args) => args.where.id === begun.callId);
-    const twin = await heartbeat("u-1", begun.callId, "ok", at(545));
-    expect(overlapping.at(-1)).toEqual({ found: true, stop: false, secondsLeft: limit - 545, capWarning: true });
-    expect(twin).toEqual({ found: true, stop: false, secondsLeft: limit - 545 });
-    // A third one at the very same time arriving later is not recorded either (strictly later only), and does not warn.
-    expect(await heartbeat("u-1", begun.callId, "ok", at(545))).toEqual({ found: true, stop: false, secondsLeft: limit - 545 });
-    expect(session(begun.callId).lastHeartbeatAt).toEqual(at(545));
+  it("overlapping heartbeats with the same time give one warning", async () => {
+    const callId = await lockedCall(0, 0, 530);
+    const answers = await Promise.all([beatAt(callId, 545), beatAt(callId, 545), beatAt(callId, 545)]);
+    expect(warned(answers)).toHaveLength(1);
+    expect(answers.every((a) => a.found && !a.stop && a.secondsLeft === limit - 545)).toBe(true);
+    expect(session(callId).lastHeartbeatAt).toEqual(at(545));
+    expect(await beatAt(callId, 555)).toEqual({ found: true, stop: false, secondsLeft: limit - 555 });
   });
 
   it("an older heartbeat that arrives after a newer one does not move lastHeartbeatAt back, so no second warning", async () => {
-    await freeUserWith(0);
-    const begun = await beginCall("u-1", scn, at(0));
-    if (!begun.ok) throw new Error(begun.error);
-    await heartbeat("u-1", begun.callId, "connected", at(0));
-    await heartbeat("u-1", begun.callId, "ok", at(530));
-    expect(await heartbeat("u-1", begun.callId, "ok", at(545))).toMatchObject({ capWarning: true });
-    // Sent at 538 s (outside the window), delivered after the 545 s one: answered, not recorded.
-    expect(await heartbeat("u-1", begun.callId, "recovering", at(538))).toEqual({ found: true, stop: false, secondsLeft: limit - 538 });
-    expect(session(begun.callId)).toMatchObject({ lastHeartbeatAt: at(545), degradedAt: null });
+    const callId = await lockedCall(0, 0, 530);
+    expect(await beatAt(callId, 545)).toMatchObject({ capWarning: true });
+    // Sent at 538 s (outside the window), delivered after the 545 s one: answered for its own time, no warning.
+    expect(await beatAt(callId, 538, "recovering")).toEqual({ found: true, stop: false, secondsLeft: limit - 538 });
+    expect(session(callId).lastHeartbeatAt).toEqual(at(545));
     // Had lastHeartbeatAt gone back to 538 s, this one would cross into the window again.
-    expect(await heartbeat("u-1", begun.callId, "ok", at(555))).toEqual({ found: true, stop: false, secondsLeft: limit - 555 });
+    expect(await beatAt(callId, 555)).toEqual({ found: true, stop: false, secondsLeft: limit - 555 });
+    // Concurrently, in either order, too.
+    const answers = await Promise.all([beatAt(callId, 570), beatAt(callId, 565)]);
+    expect(warned(answers)).toEqual([]);
+    expect(session(callId).lastHeartbeatAt).toEqual(at(570));
   });
 
-  it("an older heartbeat that commits first: the newer one retries from the fresh row, lands, and is the crossing one", async () => {
-    await freeUserWith(0);
-    const begun = await beginCall("u-1", scn, at(0));
-    if (!begun.ok) throw new Error(begun.error);
-    await heartbeat("u-1", begun.callId, "connected", at(0));
-    await heartbeat("u-1", begun.callId, "ok", at(520));
+  for (const order of [["ok", "connected"], ["connected", "ok"]] as const) {
+    it(`a connected heartbeat concurrent with an ok one at the same time still records connectedAt (${order.join(" first, ")})`, async () => {
+      const callId = await lockedCall(0);
+      const answers = await Promise.all(order.map((state) => beatAt(callId, 5, state)));
+      expect(answers).toEqual([{ found: true, stop: false, secondsLeft: limit }, { found: true, stop: false, secondsLeft: limit }]);
+      expect(session(callId)).toMatchObject({ connectedAt: at(5), lastHeartbeatAt: at(5) });
+      // The deadline runs from the recorded connection, not from the mint-time cutoff.
+      expect(await beatAt(callId, 15)).toEqual({ found: true, stop: false, secondsLeft: limit - 10 });
+      expect(await beatAt(callId, 5 + limit)).toMatchObject({ stop: true, reason: "cap_reached", freeCap: true });
+    });
+  }
 
-    // The 541 s heartbeat reads the row (520 s), then the 535 s one commits before its write.
-    const overlapping: Array<Awaited<ReturnType<typeof heartbeat>>> = [];
-    fake.interleave("trainerSession", "updateMany", async () => { overlapping.push(await heartbeat("u-1", begun.callId, "ok", at(535))); },
-      (args) => args.where.id === begun.callId);
-    const newer = await heartbeat("u-1", begun.callId, "ok", at(541));
-    expect(overlapping.at(-1)).toEqual({ found: true, stop: false, secondsLeft: limit - 535 }); // outside the window
-    // Retried against the 535 s row, which is still outside the window: it lands and warns.
-    expect(newer).toEqual({ found: true, stop: false, secondsLeft: limit - 541, capWarning: true });
-    expect(session(begun.callId).lastHeartbeatAt).toEqual(at(541)); // the newest heartbeat received, not the older one
-    expect(await heartbeat("u-1", begun.callId, "ok", at(551))).toEqual({ found: true, stop: false, secondsLeft: limit - 551 });
-    expect(await heartbeat("u-1", begun.callId, "ok", at(561))).toEqual({ found: true, stop: false, secondsLeft: limit - 561 });
-  });
-
-  it("a connected heartbeat that loses to an earlier non-connected one still records connectedAt", async () => {
-    await freeUserWith(0);
-    const begun = await beginCall("u-1", scn, at(0));
-    if (!begun.ok) throw new Error(begun.error);
-    // The 5 s "connected" heartbeat reads the call unconnected, then an "ok" at 3 s commits before its write.
-    fake.interleave("trainerSession", "updateMany", async () => { await heartbeat("u-1", begun.callId, "ok", at(3)); },
-      (args) => args.where.id === begun.callId);
-    expect(await heartbeat("u-1", begun.callId, "connected", at(5))).toEqual({ found: true, stop: false, secondsLeft: limit });
-    expect(session(begun.callId)).toMatchObject({ connectedAt: at(5), lastHeartbeatAt: at(5) });
-    // Billed from the connection, not from the mint-time cutoff.
-    expect(await heartbeat("u-1", begun.callId, "ok", at(15))).toEqual({ found: true, stop: false, secondsLeft: limit - 10 });
-  });
-
-  it("a connecting heartbeat that loses to another one keeps the recorded connection time and its deadline", async () => {
-    await freeUserWith(0);
-    const begun = await beginCall("u-1", scn, at(0));
-    if (!begun.ok) throw new Error(begun.error);
-    // Two "connected" heartbeats read the call unconnected; the 3 s one commits before the 5 s one writes.
-    const overlapping: Array<Awaited<ReturnType<typeof heartbeat>>> = [];
-    fake.interleave("trainerSession", "updateMany", async () => { overlapping.push(await heartbeat("u-1", begun.callId, "connected", at(3))); },
-      (args) => args.where.id === begun.callId);
-    const second = await heartbeat("u-1", begun.callId, "connected", at(5));
-    expect(overlapping.at(-1)).toEqual({ found: true, stop: false, secondsLeft: limit });
-    // Retried from the fresh row: recorded as the latest heartbeat, but the connection stays at 3 s, not its own 5 s.
+  it("two connected heartbeats at once keep the first recorded connection time", async () => {
+    const callId = await lockedCall(0);
+    const [first, second] = await Promise.all([beatAt(callId, 3, "connected"), beatAt(callId, 5, "connected")]);
+    expect(first).toEqual({ found: true, stop: false, secondsLeft: limit });
     expect(second).toEqual({ found: true, stop: false, secondsLeft: limit - 2 });
-    expect(session(begun.callId)).toMatchObject({ connectedAt: at(3), lastHeartbeatAt: at(5) });
-    expect(await heartbeat("u-1", begun.callId, "ok", at(13))).toEqual({ found: true, stop: false, secondsLeft: limit - 10 });
-    expect(session(begun.callId).connectedAt).toEqual(at(3));
-    // The stop lands at the deadline from the recorded connection time.
-    expect(await heartbeat("u-1", begun.callId, "ok", at(3 + limit))).toMatchObject({ stop: true, reason: "cap_reached", freeCap: true });
+    expect(session(callId)).toMatchObject({ connectedAt: at(3), lastHeartbeatAt: at(5) });
   });
 
-  it("a heartbeat that loses the race at the deadline still stops the call from the fresh row", async () => {
-    await freeUserWith(9);
-    const begun = await beginCall("u-1", scn, at(0));
-    if (!begun.ok) throw new Error(begun.error);
-    await heartbeat("u-1", begun.callId, "connected", at(0));
-    await heartbeat("u-1", begun.callId, "ok", at(70));
-    // An older heartbeat (75 s) landed between this one's read and write; at 80 s the Free limit is reached.
-    fake.interleave("trainerSession", "updateMany", async () => { await heartbeat("u-1", begun.callId, "ok", at(75)); },
-      (args) => args.where.id === begun.callId);
-    expect(await heartbeat("u-1", begun.callId, "ok", at(80))).toMatchObject({ found: true, stop: true, reason: "cap_reached", freeCap: true });
-    expect(session(begun.callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 1, billableSeconds: 60 });
+  it("sustained contention never drops the newest heartbeat, and the warning still goes out once", async () => {
+    const callId = await lockedCall(0, 0, 100);
+    // 40 heartbeats from 110 s to 500 s and 18 more from 505 s to 590 s (across the window at 540 s), all at once and
+    // in a scrambled order.
+    const times = [...Array.from({ length: 40 }, (_, i) => 110 + i * 10), ...Array.from({ length: 18 }, (_, i) => 505 + i * 5)]
+      .sort((x, y) => ((x * 7919) % 101) - ((y * 7919) % 101));
+    const answers = await Promise.all(times.map((t) => beatAt(callId, t)));
+    expect(answers.map((a) => (a.found && !a.stop ? a.secondsLeft : null))).toEqual(times.map((t) => limit - t));
+    expect(warned(answers)).toHaveLength(1);
+    expect(session(callId).lastHeartbeatAt).toEqual(at(Math.max(...times)));
+    // The silence timeout runs from the newest heartbeat: the call is not reaped before it.
+    await usageSummary("u-1", at(Math.max(...times) + HEARTBEAT_TIMEOUT_SECONDS - 1));
+    expect(session(callId).endedAt ?? null).toBeNull();
+  });
+
+  it("overlapping heartbeats at the deadline stop the call once", async () => {
+    const callId = await lockedCall(9, 0, 70);
+    const answers = await Promise.all([beatAt(callId, 75), beatAt(callId, 80), beatAt(callId, 80)]);
+    expect(answers.filter((a) => a.found && a.stop && a.reason === "cap_reached")).toHaveLength(1);
+    expect(session(callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 1, billableSeconds: 60, lastHeartbeatAt: at(80) });
   });
 
   it("paid calls never warn, from the first heartbeat to the stop", async () => {

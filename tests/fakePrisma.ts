@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Prisma } from "@prisma/client";
 
 /**
@@ -159,6 +160,11 @@ export function createFakePrisma() {
   }
 
   const rawQueries: { sql: string; values: unknown[] }[] = [];
+  // Row locks (see $queryRaw): which transaction holds each FOR UPDATE row, and what each transaction releases at its end.
+  const txScope = new AsyncLocalStorage<object>();
+  let rowLocking = false;
+  const rowLocks = new Map<string, { owner: object; released: Promise<void> }>();
+  const releasers = new Map<object, Array<() => void>>();
   const db = {
     user: table("user"),
     organization: table("organization"),
@@ -167,23 +173,45 @@ export function createFakePrisma() {
     trainerSession: table("trainerSession"),
     stripeEvent: table("stripeEvent"),
     auditEvent: table("auditEvent"),
-    /** Records raw queries (row locks); the fake has no concurrent transactions to block. */
+    /**
+     * Records raw queries (row and advisory locks). With enableRowLocks(), a SELECT ... FOR UPDATE also takes that row's
+     * lock for the calling transaction until it ends: another transaction asking for the same row waits, the way
+     * Postgres blocks it, and the same transaction may ask again. Off by default, because interleave() hooks model a
+     * commit landing between a read and a write, which a held row lock would block.
+     */
     $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
-      rawQueries.push({ sql: strings.join("?"), values });
-      calls.push(`raw:${strings.join("?")}`);
+      const sql = strings.join("?");
+      rawQueries.push({ sql, values });
+      calls.push(`raw:${sql}`);
+      const owner = txScope.getStore();
+      if (rowLocking && owner && /FOR UPDATE/.test(sql)) {
+        const key = `${sql}:${values.join(",")}`;
+        for (let held = rowLocks.get(key); held && held.owner !== owner; held = rowLocks.get(key)) await held.released;
+        if (!rowLocks.has(key)) {
+          let release!: () => void;
+          const released = new Promise<void>((r) => { release = r; });
+          rowLocks.set(key, { owner, released });
+          const mine = releasers.get(owner) ?? [];
+          mine.push(() => { rowLocks.delete(key); release(); });
+          releasers.set(owner, mine);
+        }
+      }
       return [];
     },
     /** Runs fn on the same store; a throw restores the data as it was, like a rolled-back transaction. */
     $transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
       const entry = { snapshot: structuredClone(data) };
       open.push(entry);
+      const owner = {};
       try {
-        return await fn(db);
+        return await txScope.run(owner, () => fn(db));
       } catch (e) {
         data = entry.snapshot;
         throw e;
       } finally {
         open.splice(open.indexOf(entry), 1);
+        for (const release of releasers.get(owner) ?? []) release();
+        releasers.delete(owner);
       }
     },
   };
@@ -207,5 +235,7 @@ export function createFakePrisma() {
       hooks.push({ table, method, when, run });
     },
     failNextUpdate: (name: keyof typeof UNIQUE) => { failOnce[name] = 1; },
+    /** Makes SELECT ... FOR UPDATE block other transactions until the holder ends (see $queryRaw). */
+    enableRowLocks: () => { rowLocking = true; },
   };
 }
