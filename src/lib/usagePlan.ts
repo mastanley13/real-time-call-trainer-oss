@@ -128,7 +128,16 @@ export function callLimitSeconds(reservedMinutes: number, exactStop = true): num
  * usage.ts).
  */
 export function freeCapWarning(secondsLeft: number): boolean {
-  return secondsLeft > 0 && secondsLeft - FREE_END_GRACE_SECONDS <= FREE_CAP_WARNING_SECONDS;
+  return secondsLeft > 0 && freeCapWarningReached(secondsLeft);
+}
+
+/**
+ * Whether the Free warning window has been reached with `secondsLeft` (which include the end grace): inside the window,
+ * and also at or past the deadline. Unlike freeCapWarning it stays true once true as time moves on, so "reached now and
+ * not reached at the last stored heartbeat" can hold for at most one heartbeat of a call.
+ */
+export function freeCapWarningReached(secondsLeft: number): boolean {
+  return secondsLeft - FREE_END_GRACE_SECONDS <= FREE_CAP_WARNING_SECONDS;
 }
 
 /**

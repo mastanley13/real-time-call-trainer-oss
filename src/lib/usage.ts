@@ -8,7 +8,7 @@ import { trialDeadlineBinds, trialMaxSeconds, trialSampleEligible } from "./prem
 import {
   CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, MAX_CONNECT_LAG_SECONDS, MAX_RESERVE_MINUTES,
   DAILY_SESSION_MINT_CAP, MIN_PREMIUM_SECONDS, OVERRUN_GRACE_SECONDS, PREMIUM_MINUTES_PER_UNIT, VOICE_BLOCK_SECONDS,
-  FREE_ABANDON_GRACE_SECONDS, callLimitSeconds, capFor, effectivePlan, exactCapStop, freeCapWarning, maxMinutesAfter, periodFor, settleCall, splitAcrossBoundary,
+  FREE_ABANDON_GRACE_SECONDS, callLimitSeconds, capFor, effectivePlan, exactCapStop, freeCapWarningReached, maxMinutesAfter, periodFor, settleCall, splitAcrossBoundary,
   type CallEndReasonId, type CallOutcome, type PlanTier,
 } from "./usagePlan";
 
@@ -705,16 +705,21 @@ const leftSeconds = (limit: number, t: Date, from: Date): number =>
 /**
  * Whether this heartbeat carries the Free 1 minute warning. The warning comes from the call's own reservation on the
  * server clock, never from a client timer. Not on a trial call whose 300 second deadline ends it first: that one ends as
- * max_duration with its own notice. Once per call: it goes only to the heartbeat that is inside the window (`row`, after
- * its write) while the stored last heartbeat in `locked` (the same row as read under the lock, before the write) is not;
- * no previous heartbeat counts as outside, so a call that starts inside the window warns on its first heartbeat.
- * Heartbeats are serialized by the call-row lock and the stored value only moves forward, so once one heartbeat has
- * warned the stored value is inside the window and no later heartbeat warns again.
+ * max_duration with its own notice. Once per call: it goes only to a heartbeat that has reached the window at its own
+ * time (`now`) and is not stopping the call (time left), while the stored last heartbeat in `locked` (the same row as
+ * read under the lock, before the write) had not reached it. "Reached" (freeCapWarningReached) includes being at or past
+ * the deadline, so it never turns false again as time moves on. Heartbeats are serialized by the call-row lock and the
+ * stored value only moves forward (max), so once a stored heartbeat has reached the window no later heartbeat warns,
+ * even an older one that arrives after a deadline heartbeat. No previous heartbeat counts as not reached, so a call
+ * that starts inside the window warns on its first heartbeat. Both times are measured from the call's current billing
+ * start, so the comparison is on one timeline.
  */
 function capWarningDue(locked: OpenSession, row: OpenSession, now: Date, lim: { limit: number; exactStop: boolean; trialBound: boolean }): boolean {
   if (lim.exactStop || lim.trialBound) return false;
-  if (!freeCapWarning(leftSeconds(lim.limit, now, billingStart(row)))) return false;
-  return !locked.lastHeartbeatAt || !freeCapWarning(leftSeconds(lim.limit, locked.lastHeartbeatAt, billingStart(locked)));
+  const start = billingStart(row);
+  const left = leftSeconds(lim.limit, now, start);
+  if (left <= 0 || !freeCapWarningReached(left)) return false;
+  return !locked.lastHeartbeatAt || !freeCapWarningReached(leftSeconds(lim.limit, locked.lastHeartbeatAt, start));
 }
 
 /** The trial deadline applied to a base limit: min(existing deadline, 300 s). trialBound says the trial cap binds. */
@@ -811,14 +816,14 @@ class ConnectedSinceCheckError extends Error {
  * used. (A row settled the old way before this rule existed counts too, which only ever bills more, never less.) A
  * call from before calls recorded their period (allowancePeriodStart null) is treated as already used.
  *
- * Concurrency: the user row is locked first (as for the dropped-call count), so two settlements of this user's calls
- * run one after the other and the second sees the first one's row. A Free call reserves all the Free minutes left, so
- * a user rarely has two open Free calls at once anyway. Residual race: a settlement that does not take this path (an
- * end event) does not lock the user row, but it never writes heartbeat_timeout, so it cannot change this count.
+ * Concurrency: the caller (settle) holds the user row lock, taken before any allowance or call row lock, so two
+ * settlements of this user's calls run one after the other and the second sees the first one's row. A Free call
+ * reserves all the Free minutes left, so a user rarely has two open Free calls at once anyway. Residual race: a
+ * settlement that does not take this path (an end event) does not lock the user row, but it never writes
+ * heartbeat_timeout, so it cannot change this count.
  */
 async function freeAbandonReducedUsed(tx: Tx, s: OpenSession): Promise<boolean> {
   if (!s.allowanceId || !s.allowancePeriodStart) return true;
-  await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${s.userId} FOR UPDATE`;
   const earlier = await tx.trainerSession.count({
     where: {
       userId: s.userId,
@@ -841,6 +846,13 @@ interface SettleOpts { neverConnectedOnly?: boolean }
 
 async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId, now: Date, opts: SettleOpts = {}): Promise<CallResult | null> {
   if (opts.neverConnectedOnly && (original.connectedAt || original.lastHeartbeatAt)) throw new ConnectedSinceCheckError();
+  // A Free call reaped as silent (see below) needs the user row lock for the once-per-period check. It is taken here,
+  // before chargeTarget, whose rollover can lock the allowance and call rows: the same order as beginCall (user row,
+  // then allowance, then call rows). Taken after them, it deadlocked with a voice start that held the user row and
+  // waited for the allowance. Paid calls and every other end reason skip this and lock as before. (The dropped-call
+  // count below still locks the user row after chargeTarget, as on main.)
+  const freeAbandon = !exactStopOf(original) && requested === "heartbeat_timeout" && provedConnected(original);
+  if (freeAbandon) await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${original.userId} FOR UPDATE`;
   const target = await chargeTarget(tx, original, now);
   if (!target) return null;
   const { allowance, samePeriod } = target;
@@ -873,7 +885,7 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   // reap-timing weakness (a usage read right after the 30 s silence bills only up to the reap), left as is here.
   let billedEnd = naturalEnd;
   let fullReservation = false;
-  if (!exactStopOf(s) && requested === "heartbeat_timeout" && connected) {
+  if (freeAbandon) {
     if (await freeAbandonReducedUsed(tx, s)) {
       fullReservation = true;
       billedEnd = new Date(start.getTime() + s.reservedMinutes * 60 * 1000);

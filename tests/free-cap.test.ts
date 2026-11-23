@@ -24,7 +24,7 @@ vi.mock("@/lib/apiAuth", async () => ({
 }));
 
 import { beginCall, checkCap, creditManual, endCall, ensureAllowance, heartbeat, resolveAllowance, usageSummary } from "@/lib/usage";
-import { FREE_ABANDON_GRACE_SECONDS, FREE_CAP_WARNING_SECONDS, FREE_END_GRACE_SECONDS, FREE_MINUTES, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, callLimitSeconds, capFor, endGraceSeconds, exactCapStop, freeCapWarning } from "@/lib/usagePlan";
+import { FREE_ABANDON_GRACE_SECONDS, FREE_CAP_WARNING_SECONDS, FREE_END_GRACE_SECONDS, FREE_MINUTES, HEARTBEAT_TIMEOUT_SECONDS, MAX_CALL_SECONDS, callLimitSeconds, capFor, endGraceSeconds, exactCapStop, freeCapWarning, freeCapWarningReached } from "@/lib/usagePlan";
 import { CAP_STOPPED_MESSAGE, FREE_CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE, isCapMessage } from "@/lib/billingUi";
 import { setPremiumEventSink, type PremiumEvent } from "@/lib/billingEvents";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
@@ -508,6 +508,31 @@ describe("the Free 1 minute warning goes out once per call", () => {
     expect(session(callId).endedAt ?? null).toBeNull();
   });
 
+  it("an older in-window heartbeat that arrives after a deadline heartbeat does not warn a second time", async () => {
+    const callId = await lockedCall(0, 0, 530);
+    // In the window (75 s left, 55 s of Free minutes): the one warning.
+    expect(await beatAt(callId, 545)).toEqual({ found: true, stop: false, secondsLeft: limit - 545, capWarning: true });
+    // The deadline heartbeat (625 s) records its time and stops the call after it commits; the older heartbeat (600 s,
+    // in the window) takes the call row in between and sees the stored 625 s, which has reached the window too.
+    const answers = await Promise.all([beatAt(callId, 625), beatAt(callId, 600)]);
+    expect(warned(answers)).toEqual([]);
+    expect(answers.filter((a) => a.found && a.stop && a.reason === "cap_reached")).toHaveLength(1);
+    expect(session(callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 10, lastHeartbeatAt: at(625) });
+  });
+
+  it("a call never warned before gets no warning from an older heartbeat behind its deadline heartbeat", async () => {
+    const callId = await lockedCall(0, 0, 530);
+    const answers = await Promise.all([beatAt(callId, 625), beatAt(callId, 600)]);
+    expect(warned(answers)).toEqual([]);
+    expect(answers.filter((a) => a.found && a.stop && a.reason === "cap_reached")).toHaveLength(1);
+  });
+
+  it("the window, once reached, stays reached, the deadline included", () => {
+    // secondsLeft includes the 20 s end grace: the window opens at 80 s left.
+    expect([81, 80, 1, 0, -5].map(freeCapWarningReached)).toEqual([false, true, true, true, true]);
+    expect([81, 80, 1, 0, -5].map(freeCapWarning)).toEqual([false, true, true, false, false]);
+  });
+
   it("overlapping heartbeats at the deadline stop the call once", async () => {
     const callId = await lockedCall(9, 0, 70);
     const answers = await Promise.all([beatAt(callId, 75), beatAt(callId, 80), beatAt(callId, 80)]);
@@ -611,6 +636,102 @@ describe("heartbeat lock order: the call-row lock is never held while another ro
     expect(fake.ops.findIndex((o) => o.tx === lockTx.tx && o.op === "commit")).toBeGreaterThan(waited);
     expect(onlyTheCallRow(lockTx.ops)).toEqual([]);
     expect(session(begun.callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 1, billableSeconds: 60 });
+  });
+});
+
+describe("settling a silent Free call locks the user row first, in a voice start's order", () => {
+  const tick = () => new Promise<void>((r) => setImmediate(r));
+  /** Waits (a bounded number of turns) until some transaction is blocked on this row. */
+  async function untilWaitingFor(key: string) {
+    for (let i = 0; i < 200 && !fake.ops.some((o) => o.op === `wait:${key}`); i++) await tick();
+  }
+  type Script = (tx: typeof fake.db) => Promise<void>;
+  const transaction = (fn: Script) => (fake.db.$transaction as (fn: Script) => Promise<void>)(fn);
+  const lockUser = (tx: typeof fake.db) => tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${"u-1"} FOR UPDATE`;
+
+  it("the lock model: allowance then user deadlocks with a voice start's user then allowance; user then allowance does not", async () => {
+    addUser("u-1");
+    await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
+    const allowanceId = allowanceOf("u-1").id;
+    const bumpAllowance = (tx: typeof fake.db) => tx.usageAllowance.updateMany({ where: { id: allowanceId }, data: { version: { increment: 1 } } });
+    fake.enableRowLocks();
+
+    /** A voice start (user row, then the allowance) against a settlement that locks in `order`. */
+    async function race(order: "allowance-first" | "user-first") {
+      let startHasUser!: () => void;
+      const userTaken = new Promise<void>((r) => { startHasUser = r; });
+      const start = transaction(async (tx) => {
+        await lockUser(tx);
+        startHasUser();
+        await untilWaitingFor("user:u-1"); // the settlement is blocked on the user row
+        await bumpAllowance(tx);
+      });
+      await userTaken;
+      const settlement = transaction(async (tx) => {
+        if (order === "allowance-first") { await bumpAllowance(tx); await lockUser(tx); } else { await lockUser(tx); await bumpAllowance(tx); }
+      });
+      return Promise.allSettled([start, settlement]);
+    }
+
+    // The previous order: the settlement held the allowance (its rollover) when it asked for the user row.
+    const before = await race("allowance-first");
+    expect(before.some((r) => r.status === "rejected" && (r.reason as { code?: string }).code === "P2034")).toBe(true);
+    expect(fake.ops.some((o) => o.op.startsWith("deadlock:"))).toBe(true);
+
+    fake.ops.length = 0;
+    const after = await race("user-first");
+    expect(after.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(fake.ops.some((o) => o.op.startsWith("deadlock:"))).toBe(false);
+  });
+
+  it("a stale Free call reaped across a period boundary waits for a voice start's user row without holding the allowance", async () => {
+    // The month resets on Nov 10 at 12:00 UTC. A Free call with 2 minutes reserved goes silent just before it, and is
+    // reaped just after, so its settlement rolls the allowance over (locking it and the call row) inside chargeTarget.
+    const nov10 = 26 * 24 * 3600;
+    await freeUserWith(8);
+    const begun = await beginCall("u-1", scn, at(nov10 - 100));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(nov10 - 100));
+    for (const t of [90, 80, 70, 60]) await heartbeat("u-1", begun.callId, "ok", at(nov10 - t));
+    const allowanceId = allowanceOf("u-1").id;
+    fake.enableRowLocks();
+
+    // A voice start in beginCall's order: the user row, then (once the settlement is blocked) the allowance.
+    let startHasUser!: () => void;
+    const userTaken = new Promise<void>((r) => { startHasUser = r; });
+    const start = transaction(async (tx) => {
+      await lockUser(tx);
+      startHasUser();
+      await untilWaitingFor("user:u-1");
+      await tx.usageAllowance.updateMany({ where: { id: allowanceId }, data: { version: { increment: 1 } } });
+    });
+    await userTaken;
+    const reap = usageSummary("u-1", at(nov10 + 60));
+
+    const [started, read] = await Promise.allSettled([start, reap]);
+    expect(started.status).toBe("fulfilled");
+    expect(read.status).toBe("fulfilled");
+    expect(fake.ops.some((o) => o.op.startsWith("deadlock:"))).toBe(false);
+    // The settlement asked for the user row before it touched the allowance.
+    const settleTx = fake.ops.find((o) => o.op === "wait:user:u-1")!.tx;
+    const mine = fake.ops.filter((o) => o.tx === settleTx).map((o) => o.op);
+    expect(mine.indexOf("wait:user:u-1")).toBeLessThan(mine.indexOf(`lock:usageAllowance:${allowanceId}`));
+    // Reduced charge: last heartbeat 60 s before the reset plus 15 s, 55 s, 1 minute, in the period it ran in.
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 55, billedMinutes: 1 });
+  });
+
+  it("a paid call reaped across the boundary keeps main's lock order: no user row lock in its settlement", async () => {
+    const nov10 = 26 * 24 * 3600;
+    addUser("u-1", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
+    const begun = await beginCall("u-1", scn, at(nov10 - 100));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(nov10 - 100));
+    await heartbeat("u-1", begun.callId, "ok", at(nov10 - 60));
+    const before = fake.rawQueries.length;
+    await usageSummary("u-1", at(nov10 + 60));
+    expect(fake.rawQueries.slice(before).filter((q) => q.sql.includes('FROM "User"'))).toEqual([]);
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 160, billedMinutes: 3 });
   });
 });
 
