@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CAP_STOP_DISCONNECT_MS, CallMeter, CapStopEnd, END_GRACE_MS, readHeartbeat } from "@/lib/callMeter";
+import { CAP_STOP_DISCONNECT_MS, CAP_STOP_SPEECH_FLUSH_MS, CallMeter, CapStopEnd, END_GRACE_MS, readHeartbeat } from "@/lib/callMeter";
 import { FREE_END_GRACE_SECONDS } from "@/lib/usagePlan";
 import { RealtimeCall } from "@/components/call/RealtimeVoiceSession";
 import { CAP_STOPPED_MESSAGE, FREE_CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE } from "@/lib/billingUi";
@@ -277,6 +277,52 @@ describe("RealtimeCall: a cap stop ends the call through the hang-up path", () =
     expect(h.onTurn).toHaveBeenCalledWith({ role: "user", text: "Thanks for your time today." });
     expect(order).toEqual(["turn:user", "error", "ended"]);
     expect(h.onError).toHaveBeenCalledWith(FREE_CAP_STOPPED_MESSAGE);
+  });
+
+  /** Types of the client events sent on the data channel. */
+  const sent = () => (channel.send as unknown as { mock: { calls: [string][] } }).mock.calls.map(([d]) => (JSON.parse(d) as { type: string }).type);
+  const phasesOf = (h: ReturnType<typeof handlers>) => h.onView.mock.calls.map(([v]) => (v as { phase: string }).phase);
+  /** The rep is mid-utterance: the server saw speech start and has committed nothing, so the assembler is empty. */
+  const repStillSpeaking = () => { channel.readyState = "open"; serverEvent({ type: "input_audio_buffer.speech_started", item_id: "item-rep-1" }); };
+
+  it("a Free cap stop while the rep is still speaking (nothing committed): mic off, buffer committed, then the transcript is kept and graded", async () => {
+    track.enabled = true;
+    const order: string[] = [];
+    const { h } = await liveCall([{ stop: true, reason: "cap_reached", message: FREE_CAP_STOPPED_MESSAGE, freeCap: true }], repStillSpeaking);
+    h.onTurn.mockImplementation((t: { role: string }) => { order.push(`turn:${t.role}`); });
+    h.onError.mockImplementation(() => { order.push("error"); });
+    h.onEnded.mockImplementation(() => { order.push("ended"); });
+    // Waiting inside the flush window: the mic sends nothing more, the server is asked to commit, the call is still open.
+    expect(track.enabled).toBe(false);
+    expect(sent()).toContain("input_audio_buffer.commit");
+    expect(phasesOf(h)).not.toContain("ending");
+    expect(h.onEnded).not.toHaveBeenCalled();
+    // The server commits the speech and transcribes it within the window.
+    serverEvent({ type: "input_audio_buffer.committed", item_id: "item-rep-1" });
+    serverEvent({ type: "conversation.item.input_audio_transcription.completed", item_id: "item-rep-1", transcript: "Let me check with my manager." });
+    await vi.waitFor(() => expect(h.onEnded).toHaveBeenCalledTimes(1));
+    expect(h.onTurn).toHaveBeenCalledWith({ role: "user", text: "Let me check with my manager." });
+    expect(order).toEqual(["turn:user", "error", "ended"]);
+    expect(phasesOf(h)).toContain("ending"); // then the normal hang-up path
+  });
+
+  it("the speech flush window expires when no commit or transcript arrives, then the call hangs up as usual", async () => {
+    const { h } = await liveCall([{ stop: true, reason: "cap_reached", message: FREE_CAP_STOPPED_MESSAGE, freeCap: true }], repStillSpeaking);
+    const stoppedAt = Date.now();
+    await vi.waitFor(() => expect(h.onEnded).toHaveBeenCalledTimes(1), { timeout: CAP_STOP_SPEECH_FLUSH_MS + 2_000, interval: 50 });
+    expect(Date.now() - stoppedAt).toBeGreaterThanOrEqual(CAP_STOP_SPEECH_FLUSH_MS - 150);
+    expect(Date.now() - stoppedAt).toBeLessThan(CAP_STOP_SPEECH_FLUSH_MS + END_GRACE_MS + 500);
+    expect(h.onError).toHaveBeenCalledWith(FREE_CAP_STOPPED_MESSAGE);
+    expect(h.onTurn).not.toHaveBeenCalled(); // nothing was transcribed, so the trainer goes back to the briefing
+    expect(CAP_STOP_SPEECH_FLUSH_MS + END_GRACE_MS).toBeLessThan(FREE_END_GRACE_SECONDS * 1000 / 2);
+  }, 10_000);
+
+  it("a paid cap stop with speech in flight is unchanged from main: no commit, no wait", async () => {
+    const { h } = await liveCall([{ stop: true, reason: "cap_reached", message: CAP_STOPPED_MESSAGE }], repStillSpeaking);
+    await vi.waitFor(() => expect(h.onError).toHaveBeenCalledWith(CAP_STOPPED_MESSAGE));
+    expect(sent()).not.toContain("input_audio_buffer.commit");
+    expect(phasesOf(h)).not.toContain("ending");
+    expect(phasesOf(h).at(-1)).toBe("closed");
   });
 
   it("a Free stop seen only as reason 'ended' with freeCap (the cap_reached answer was lost) still takes the hang-up path and keeps the transcript", async () => {

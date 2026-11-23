@@ -44,6 +44,11 @@ export interface MeterHandlers {
 
 /** Grace on hang-up (both voice engines) so the trainee's last words still get transcribed before the call closes. */
 export const END_GRACE_MS = 1500;
+/**
+ * Realtime only: how long a Free cap stop waits for the rep's uncommitted speech to be committed and transcribed before
+ * the normal hang-up (which adds at most END_GRACE_MS). 4.5 s in all, well inside FREE_END_GRACE_SECONDS.
+ */
+export const CAP_STOP_SPEECH_FLUSH_MS = 3_000;
 /** How long a Free cap stop waits for the voice session to disconnect before it reports and ends the call anyway. */
 export const CAP_STOP_DISCONNECT_MS = 3_000;
 

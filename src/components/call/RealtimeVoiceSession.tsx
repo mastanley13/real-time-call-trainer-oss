@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Scenario } from "@/lib/scenarios";
 import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
-import { CallMeter, END_GRACE_MS, type MeterEndReason } from "@/lib/callMeter";
+import { CAP_STOP_SPEECH_FLUSH_MS, CallMeter, END_GRACE_MS, type MeterEndReason } from "@/lib/callMeter";
 import { LiveTranscript, applyLiveEvent, type LiveServerEvent } from "@/lib/live";
 import { expireSession, storedSessionKey } from "@/lib/sessionExpiry";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, realtimeAuthRedirect, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
@@ -88,6 +88,12 @@ export class RealtimeCall {
   private meter?: CallMeter;
   /** Why the server stopped a Free call, reported once the hang-up path has flushed the last turns. */
   private stopMessage?: string;
+  /**
+   * The rep's speech the server has not committed yet (Realtime only): "speaking" from speech_started, "stopped" from
+   * speech_stopped, back to "idle" once input_audio_buffer.committed makes it a pending transcript item.
+   */
+  private repSpeech: "idle" | "speaking" | "stopped" = "idle";
+  private capTimer?: ReturnType<typeof setTimeout>;
 
   constructor(private scenario: Scenario, private h: Handlers, private voiceTier?: "premium" | "standard") {}
 
@@ -142,7 +148,7 @@ export class RealtimeCall {
       onStop: (m, freeCap) => {
         if (!freeCap) return this.fail(m, "user_hangup");
         this.stopMessage = m;
-        this.end();
+        this.endAfterSpeech();
       },
       onGiveUp: () => this.fail("The voice connection dropped. Check your network. Your transcript so far is kept.", "network_drop"),
       onWarn: (m) => this.h.onCapWarning?.(m),
@@ -271,6 +277,9 @@ export class RealtimeCall {
     let ev: RealtimeServerEvent;
     try { ev = JSON.parse(raw); } catch { return; }
     switch (ev.type) {
+      case "input_audio_buffer.speech_started": this.repSpeech = "speaking"; break;
+      case "input_audio_buffer.speech_stopped": if (this.repSpeech === "speaking") this.repSpeech = "stopped"; break;
+      case "input_audio_buffer.committed": this.repSpeech = "idle"; break;
       case "output_audio_buffer.started": this.set({ speaking: true }); break;
       case "output_audio_buffer.stopped":
       case "output_audio_buffer.cleared": this.set({ speaking: false }); break;
@@ -318,6 +327,25 @@ export class RealtimeCall {
     this.mic?.getAudioTracks().forEach((t) => (t.enabled = !muted));
     this.set({ muted });
   };
+
+  /**
+   * A Free cap stop. If the rep is mid-utterance and the server has not committed it yet (so the assembler has nothing
+   * pending), stop sending mic audio, commit what the server has, and wait up to CAP_STOP_SPEECH_FLUSH_MS for the commit
+   * and its transcript before the normal hang-up (end), which then flushes it. Otherwise hang up as before.
+   */
+  private endAfterSpeech() {
+    if (this.closed || this.ending) return;
+    if (this.live || this.view.phase !== "connected" || this.repSpeech === "idle") return this.end();
+    this.mic?.getAudioTracks().forEach((t) => (t.enabled = false));
+    if (this.repSpeech === "speaking") this.send({ type: "input_audio_buffer.commit" });
+    const until = Date.now() + CAP_STOP_SPEECH_FLUSH_MS;
+    const wait = () => {
+      if (this.closed || this.ending) return;
+      if ((this.repSpeech === "idle" && this.asm.pending === 0) || Date.now() >= until) return this.end();
+      this.capTimer = setTimeout(wait, 100);
+    };
+    wait();
+  }
 
   /** Hang up: stop the mic and the persona now, wait briefly for the last transcript, then close and report. */
   end = () => {
@@ -370,6 +398,7 @@ export class RealtimeCall {
     clearInterval(this.flushTimer);
     clearInterval(this.audioTimer);
     clearTimeout(this.endTimer);
+    clearTimeout(this.capTimer);
     // GPT-Live: ask for a graceful close so usage is finalized; closing the connection below also ends billing.
     if (this.live) { try { this.send({ type: "session.close" }); } catch { /* channel already gone */ } }
     try { this.dc?.close(); } catch { /* already closed */ }
