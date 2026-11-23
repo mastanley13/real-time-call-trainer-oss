@@ -13,7 +13,7 @@ import type { AgentState } from "@/components/CallOrb";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import Briefing from "@/components/call/Briefing";
 import Deck from "@/components/call/Deck";
-import { CallMeter } from "@/lib/callMeter";
+import { CallMeter, CapStopEnd } from "@/lib/callMeter";
 import RealtimeVoiceSession, { voiceInfoFrom, type VoiceInfo, type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
@@ -55,6 +55,10 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
   const endRef = useRef<() => void>(() => {});
   const warnRef = useRef(onCapWarning);
   useEffect(() => { warnRef.current = onCapWarning; });
+  // A Free cap stop ends after the disconnect (see CapStopEnd). Latest callbacks, so a deferred end uses current props.
+  const capStopRef = useRef<CapStopEnd | null>(null);
+  const latestRef = useRef({ onError, onEnded });
+  useEffect(() => { latestRef.current = { onError, onEnded }; });
   const conv = useConversation({
     onConnect: () => meterRef.current.open(),
     onMessage: ({ message, role }) => {
@@ -63,7 +67,11 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
       onTurn({ role: role === "user" ? "user" : "assistant", text: message });
     },
     onError: (m: unknown) => { meterRef.current.end("provider_error"); onError(typeof m === "string" ? m : "Voice connection error"); },
-    onDisconnect: () => { meterRef.current.end(userEndedRef.current ? "user_hangup" : "network_drop"); onEnded(); },
+    onDisconnect: () => {
+      meterRef.current.end(userEndedRef.current ? "user_hangup" : "network_drop");
+      if (capStopRef.current?.disconnected()) return; // a Free cap stop reports and ends the call itself
+      onEnded();
+    },
   });
   const { startSession, endSession, status, isSpeaking, isMuted, setMuted, getInputVolume, getOutputVolume } = conv;
   const startedRef = useRef(false);
@@ -82,10 +90,16 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
         if (!res.ok) throw new Error(data.message || "Could not get a voice token.");
         const info = voiceInfoFrom(data);
         if (info) onVoiceInfo?.(info);
+        const capStop = new CapStopEnd({
+          hangUp: () => { userEndedRef.current = true; endRef.current(); },
+          report: (m) => latestRef.current.onError(m),
+          ended: () => { meterRef.current.end("user_hangup"); latestRef.current.onEnded(); },
+        });
+        capStopRef.current = capStop;
         meterRef.current = new CallMeter(data.callId, {
-          // The server has already stopped and billed the call. Ended exactly like a hang-up (user_hangup), so the
-          // transcript is saved, graded and sent to the debrief.
-          onStop: (m) => { userEndedRef.current = true; endRef.current(); onError(m); },
+          // The server has already stopped and billed the call. A paid stop ends as before. A Free cap stop ends like a
+          // hang-up and says why only after the disconnect, so a first utterance still arriving is saved and graded.
+          onStop: (m, freeCap) => capStop.stop(m, freeCap, () => { userEndedRef.current = true; endRef.current(); onError(m); }),
           onGiveUp: () => endRef.current(),
           onWarn: (m) => warnRef.current?.(m),
         });

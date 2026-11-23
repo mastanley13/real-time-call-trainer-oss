@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CallMeter, readHeartbeat } from "@/lib/callMeter";
+import { CAP_STOP_DISCONNECT_MS, CallMeter, CapStopEnd, readHeartbeat } from "@/lib/callMeter";
 import { RealtimeCall } from "@/components/call/RealtimeVoiceSession";
 import { CAP_STOPPED_MESSAGE, FREE_CAP_STOPPED_MESSAGE, FREE_CAP_WARNING_MESSAGE } from "@/lib/billingUi";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
@@ -98,6 +98,72 @@ describe("CallMeter", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     meter.end("user_hangup");
     expect(server.calls).toHaveLength(0);
+  });
+});
+
+describe("CapStopEnd: the ElevenLabs session's stop (wired as in TrainerClient's VoiceSession)", () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); });
+
+  /**
+   * A stand-in for TrainerClient and an ElevenLabs session. The trainer's onError goes back to the briefing when no rep
+   * turn is in yet (unmounting the session, so later messages are lost); onEnded grades when a rep turn is in. The
+   * session delivers the rep's pending first utterance 200 ms after endSession, then disconnects 100 ms later.
+   */
+  function elevenLabsCall(opts: { disconnects?: boolean } = {}) {
+    const t = { turns: [] as string[], phase: "live" as "live" | "idle", graded: false, errors: [] as string[], meterEnds: [] as string[], order: [] as string[] };
+    let userEnded = false;
+    const onError = (m: string) => { t.errors.push(m); t.order.push("error"); if (!t.turns.length) t.phase = "idle"; };
+    const onEnded = () => { t.order.push("ended"); if (t.phase === "live" && t.turns.length) t.graded = true; };
+    const meterEnd = (r: string) => { if (!t.meterEnds.length) t.meterEnds.push(r); };
+    const capStop = new CapStopEnd({
+      hangUp: () => { userEnded = true; endSession(); },
+      report: (m) => onError(m),
+      ended: () => { meterEnd("user_hangup"); onEnded(); },
+    });
+    const onDisconnect = () => { meterEnd(userEnded ? "user_hangup" : "network_drop"); if (capStop.disconnected()) return; onEnded(); };
+    function endSession() {
+      setTimeout(() => { if (t.phase === "live") { t.turns.push("user: Could you send the quote again?"); t.order.push("turn"); } }, 200);
+      if (opts.disconnects !== false) setTimeout(onDisconnect, 300);
+    }
+    // The exact paid lambda from VoiceSession (unchanged from main).
+    const onStop = (m: string, freeCap: boolean) => capStop.stop(m, freeCap, () => { userEnded = true; endSession(); onError(m); });
+    return { t, onStop };
+  }
+
+  it("a Free stop while the first utterance is still pending keeps it, then reports the message and grades the call", async () => {
+    const { t, onStop } = elevenLabsCall();
+    onStop(FREE_CAP_STOPPED_MESSAGE, true);
+    expect(t.errors).toEqual([]); // nothing reported while the hang-up is in flight
+    await vi.advanceTimersByTimeAsync(300);
+    expect(t.order).toEqual(["turn", "error", "ended"]);
+    expect(t.errors).toEqual([FREE_CAP_STOPPED_MESSAGE]);
+    expect(t.graded).toBe(true);
+    expect(t.meterEnds).toEqual(["user_hangup"]);
+    // A late duplicate stop or disconnect changes nothing.
+    onStop(FREE_CAP_STOPPED_MESSAGE, true);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(t.order).toEqual(["turn", "error", "ended"]);
+  });
+
+  it("a Free stop whose disconnect never comes still reports and ends after the bounded wait, once", async () => {
+    const { t, onStop } = elevenLabsCall({ disconnects: false });
+    onStop(FREE_CAP_STOPPED_MESSAGE, true);
+    await vi.advanceTimersByTimeAsync(CAP_STOP_DISCONNECT_MS - 1);
+    expect(t.errors).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(t.order).toEqual(["turn", "error", "ended"]);
+    expect(t.graded).toBe(true);
+    expect(t.meterEnds).toEqual(["user_hangup"]);
+  });
+
+  it("a paid stop is unchanged from main: the message at once, so a still-pending first utterance is not waited for", async () => {
+    const { t, onStop } = elevenLabsCall();
+    onStop(CAP_STOPPED_MESSAGE, false);
+    expect(t.errors).toEqual([CAP_STOPPED_MESSAGE]); // reported synchronously, as on main
+    await vi.advanceTimersByTimeAsync(300);
+    expect(t.order).toEqual(["error", "ended"]); // main's behavior: back to the briefing, nothing graded
+    expect(t.graded).toBe(false);
+    expect(t.meterEnds).toEqual(["user_hangup"]);
   });
 });
 

@@ -42,6 +42,42 @@ export interface MeterHandlers {
   onWarn?: (message: string) => void;
 }
 
+/** How long a Free cap stop waits for the voice session to disconnect before it reports and ends the call anyway. */
+export const CAP_STOP_DISCONNECT_MS = 3_000;
+
+/**
+ * Ends a voice session that the server stopped. A paid stop runs `paid` right away (the engine's own path, as before). A
+ * Free cap stop hangs up the way the rep would, and reports the message and ends the call only once the session has
+ * disconnected, so its last transcript turns are already in before the trainer decides between grading and the
+ * briefing. If the disconnect never comes, it does both after CAP_STOP_DISCONNECT_MS. Once per call.
+ */
+export class CapStopEnd {
+  private message?: string;
+  private done = false;
+  private timer?: ReturnType<typeof setTimeout>;
+
+  constructor(private h: { hangUp: () => void; report: (message: string) => void; ended: () => void }, private timeoutMs = CAP_STOP_DISCONNECT_MS) {}
+
+  stop(message: string, freeCap: boolean, paid: (message: string) => void) {
+    if (!freeCap) return paid(message);
+    if (this.message !== undefined) return;
+    this.message = message;
+    this.h.hangUp();
+    this.timer = setTimeout(() => this.disconnected(), this.timeoutMs);
+  }
+
+  /** The session disconnected. True when this ended a Free cap stop, so the caller must not end the call again. */
+  disconnected(): boolean {
+    if (this.message === undefined) return false;
+    if (this.done) return true;
+    this.done = true;
+    clearTimeout(this.timer);
+    this.h.report(this.message);
+    this.h.ended();
+    return true;
+  }
+}
+
 export class CallMeter {
   private opened = false;
   private heard = false;
