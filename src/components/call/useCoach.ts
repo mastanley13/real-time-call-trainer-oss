@@ -88,18 +88,109 @@ export function retireStaleCues(cues: LiveCue[], repLines: number[], after = STA
   return cues.some(stale) ? cues.map((c) => (stale(c) ? { ...c, status: "dismissed" as const } : c)) : cues;
 }
 
+/** The talk-track step a "step:N" cue key points at, if any. */
+const stepOfKey = (key: string | undefined) => (key?.startsWith("step:") ? Number(key.slice(5)) : NaN);
+
+/** A "step:N" cue whose step is already done in these (merged) steps. */
+export function isDoneStepCue(key: string | undefined, steps: boolean[]): boolean {
+  const n = stepOfKey(key);
+  return Number.isInteger(n) && !!steps[n];
+}
+
 /**
- * Orders coach results: each request takes a number when it starts, and a result is applied only if it is newer than
- * the last one applied. `invalidate` (on reset) drops every result still in flight.
+ * Whether a result's new cue is still worth showing: not stale against the current rep lines, and not a step cue
+ * for a step the merged result already has done (a windowed result may not have seen it done). A cue that fails
+ * is dropped like a cooldown drop: never shown, key not recorded.
  */
-export function resultGate() {
-  let issued = 0;
+export function freshCue(r: Pick<CoachResult, "cue" | "cueKey" | "steps">, repLines: number[]): boolean {
+  return !!r.cue && !isStaleCue(r.cue, repLines) && !isDoneStepCue(r.cueKey, r.steps);
+}
+
+/** One coach request: which call (generation) it belongs to, and its order among all requests. */
+export interface CoachTicket { gen: number; seq: number }
+
+/**
+ * One coach request in flight per call, results in order, and nothing from a previous call. `reset` starts a new
+ * call: requests still in flight become stale, so their result or error is ignored, finishing them neither clears the
+ * new call's in-flight flag nor triggers a rerun, and the new call can start its own request at once.
+ */
+export function requestGate() {
+  let gen = 0;
+  let seq = 0;
   let applied = 0;
+  /** seq of the current call's request in flight. */
+  let running: number | null = null;
+  let pending = false;
   return {
-    issue: () => ++issued,
-    accept: (seq: number) => (seq > applied ? ((applied = seq), true) : false),
-    invalidate: () => void (applied = issued),
+    /** A ticket for a new request, or null (and a rerun is queued) while the current call has one in flight. */
+    start(): CoachTicket | null {
+      if (running !== null) {
+        pending = true;
+        return null;
+      }
+      running = ++seq;
+      return { gen, seq: running };
+    },
+    isCurrent: (t: CoachTicket) => t.gen === gen,
+    /** True for a result of the current call that is newer than the last one applied; marks it applied. */
+    accept(t: CoachTicket): boolean {
+      if (t.gen !== gen || t.seq <= applied) return false;
+      applied = t.seq;
+      return true;
+    },
+    /** Ends a request. True when the current call queued a rerun meanwhile. A stale ticket changes nothing. */
+    finish(t: CoachTicket): boolean {
+      if (t.gen !== gen || running !== t.seq) return false;
+      running = null;
+      const rerun = pending;
+      pending = false;
+      return rerun;
+    },
+    reset() {
+      gen++;
+      running = null;
+      pending = false;
+    },
   };
+}
+
+export type CoachRequestGate = ReturnType<typeof requestGate>;
+export type CoachOutcome = { ok: true; result: CoachResult } | { ok: false; message: string };
+export const COACH_OFFLINE_MESSAGE = "The coach is offline for this turn.";
+
+/**
+ * The lifecycle of one coach request. Only the current call's newest result reaches onResult, and only the current
+ * call's failures reach onError (an HTTP error message, or COACH_OFFLINE_MESSAGE when request or onResult throws).
+ * When the current call queued a rerun meanwhile, `rerun` is called; it should go through a ref to the latest run.
+ */
+export async function coachCycle(
+  gate: CoachRequestGate,
+  request: () => Promise<CoachOutcome>,
+  handlers: { onResult: (r: CoachResult) => void; onError: (message: string) => void },
+  rerun: () => void,
+): Promise<void> {
+  const ticket = gate.start();
+  if (!ticket) return;
+  try {
+    const out = await request();
+    if (out.ok) {
+      if (gate.accept(ticket)) handlers.onResult(out.result);
+    } else if (gate.isCurrent(ticket)) handlers.onError(out.message);
+  } catch {
+    if (gate.isCurrent(ticket)) handlers.onError(COACH_OFFLINE_MESSAGE);
+  } finally {
+    if (gate.finish(ticket)) rerun();
+  }
+}
+
+/** POSTs one coach request. An HTTP error is an outcome; a network failure or bad JSON rejects. */
+async function postCoach(body: unknown): Promise<CoachOutcome> {
+  const res = await fetch("/api/coach/turn", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    return { ok: false, message: res.status === 429 ? data.message || "The coach is taking a breather. It will pick up again shortly." : "The coach couldn't update this turn." };
+  }
+  return { ok: true, result: (await res.json()) as CoachResult };
 }
 
 /** One chip per criterion on a line: the newer delta replaces the older one, largest gains first. */
@@ -138,8 +229,6 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
   const [chips, setChips] = useState<Record<number, RubricChip[]>>({});
   const [latencies, setLatencies] = useState<number[]>([]);
   const [error, setError] = useState("");
-  const inFlight = useRef(false);
-  const pending = useRef(false);
   const lastCueAt = useRef(0);
   const keys = useRef<string[]>([]);
   const prevScores = useRef<Record<string, number>>({});
@@ -148,7 +237,7 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
   /** Insert positions of text replies, so results for older snapshots land on the right lines. */
   const inserts = useRef<number[]>([]);
   const resultRef = useRef<CoachResult | null>(null);
-  const gate = useRef(resultGate());
+  const gate = useRef(requestGate());
   const turnsRef = useRef(turns);
   turnsRef.current = turns;
 
@@ -158,7 +247,7 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
     setResult(null); setCues([]); setChips({}); setLatencies([]); setError("");
     keys.current = []; prevScores.current = {}; lastCueAt.current = 0;
     base.current = { turn: -1, scores: {} }; inserts.current = [];
-    gate.current.invalidate();
+    gate.current.reset();
   }, [setResult]);
 
   /**
@@ -176,33 +265,13 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
 
   const run = useCallback(async () => {
     if (!scenario || opts.mode === "blind") return;
-    if (inFlight.current) { pending.current = true; return; }
     const snapshot = turnsRef.current.filter((t) => t.text.trim());
     if (!snapshot.some((t) => t.role === "user")) return;
-    inFlight.current = true;
-    const seq = gate.current.issue();
     const mark = inserts.current.length;
     const win = coachWindow(snapshot.map(({ role, text }) => ({ role, text })));
-    try {
-      const res = await fetch("/api/coach/turn", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          scenario,
-          transcript: win.transcript,
-          lineOffset: win.offset,
-          allowCue: opts.mode === "coached",
-          recentCueKeys: keys.current.slice(-20),
-        }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(res.status === 429 ? data.message || "The coach is taking a breather. It will pick up again shortly." : "The coach couldn't update this turn.");
-        return;
-      }
-      const raw: CoachResult = await res.json();
-      // One request runs at a time, so results already arrive in order; this also drops one that outlived a reset.
-      if (!gate.current.accept(seq)) return;
+    const body = { scenario, transcript: win.transcript, lineOffset: win.offset, allowCue: opts.mode === "coached", recentCueKeys: keys.current.slice(-20) };
+
+    const apply = (raw: CoachResult) => {
       setError("");
       // Replies inserted while this request was in flight moved later turns down; line numbers follow them.
       const later = inserts.current.slice(mark);
@@ -223,15 +292,13 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
       // r is already shifted past replies inserted since then, so its lines match the current transcript.
       const repLines = repLinesOf(turnsRef.current);
       // A "next step" cue is stale once that talk-track step is done, and any non-objection cue once the rep has moved on.
-      setCues((cs) => retireStaleCues(cs.map((c) => {
-        const step = c.status === "active" && c.key?.startsWith("step:") ? Number(c.key.slice(5)) : NaN;
-        return Number.isInteger(step) && r.steps[step] ? { ...c, status: "dismissed" as const } : c;
-      }), repLines));
+      setCues((cs) => retireStaleCues(cs.map((c) => (c.status === "active" && isDoneStepCue(c.key, r.steps) ? { ...c, status: "dismissed" as const } : c)), repLines));
       prevScores.current = Object.fromEntries(r.estimate.criteria.map((c) => [c.id, c.score]));
       if (lastUser !== undefined && deltas.length) setChips((c) => ({ ...c, [lastUser]: mergeChips(c[lastUser] ?? [], deltas) }));
 
-      // A cue that is already stale on arrival is dropped like a cooldown drop: never shown, key not recorded.
-      if (r.cue && opts.mode === "coached" && !isStaleCue(r.cue, repLines)) {
+      // r is the merged result, so a step done before the prompt window still counts. A cue that is stale or for a
+      // done step is dropped like a cooldown drop: never shown, key not recorded.
+      if (r.cue && opts.mode === "coached" && freshCue(r, repLines)) {
         const now = Date.now();
         const isObjection = r.cue.type === "objection";
         if (isObjection || now - lastCueAt.current >= COOLDOWN_MS) {
@@ -248,14 +315,14 @@ export function useCoach(scenario: Scenario | undefined, turns: StoredTurn[], op
           });
         }
       }
-    } catch {
-      setError("The coach is offline for this turn.");
-    } finally {
-      inFlight.current = false;
-      // Turns that landed while this request was in flight: the rerun reads turnsRef when it starts, so it coaches the newest snapshot.
-      if (pending.current) { pending.current = false; void run(); }
-    }
+    };
+
+    // Turns that landed while this request was in flight: the rerun goes through runRef (this call's scenario and
+    // mode) and reads turnsRef when it starts, so it coaches the newest snapshot. A request from before a reset is ignored.
+    await coachCycle(gate.current, () => postCoach(body), { onResult: apply, onError: setError }, () => void runRef.current());
   }, [scenario, opts.mode, setResult]);
+  const runRef = useRef(run);
+  runRef.current = run;
 
   // Retire stale cues as the call moves, not only when a coach run succeeds: a slow or failed run must not leave one current.
   useEffect(() => {

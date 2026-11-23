@@ -3,15 +3,19 @@ import { coachHeuristic, trailingWindow, type CoachTurnInput } from "@/lib/coach
 import type { CoachResult } from "@/lib/coach-types";
 import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 import {
+  COACH_OFFLINE_MESSAGE,
   STALE_AFTER_REP_TURNS,
   WINDOW_CHARS,
   WINDOW_TURNS,
+  coachCycle,
   coachWindow,
+  freshCue,
+  isDoneStepCue,
   isStaleCue,
   mergeChips,
   mergeWindowed,
   repLinesOf,
-  resultGate,
+  requestGate,
   retireStaleCues,
   shiftIndex,
   shiftResult,
@@ -207,21 +211,102 @@ describe("stale cues against the current transcript", () => {
   });
 });
 
-describe("resultGate", () => {
-  it("applies results in order and drops one older than the last applied", () => {
-    const g = resultGate();
-    const a = g.issue();
-    const b = g.issue();
-    expect(g.accept(b)).toBe(true);
-    expect(g.accept(a)).toBe(false);
-    expect(g.accept(g.issue())).toBe(true);
+describe("freshCue against the merged steps", () => {
+  const stepCue = (n: number): Pick<CoachResult, "cue" | "cueKey"> => ({ cue: { type: "next_question", title: `Next: step ${n}`, message: "", triggerTurn: 40 }, cueKey: `step:${n}` });
+
+  it("drops a step cue for a step done before the prompt window", () => {
+    // Step 1 was done on an early line; the windowed LLM result no longer sees it and cues it again.
+    const prev = result({ steps: [true, true] });
+    const next = result({ ...stepCue(1), windowStart: 31, steps: [true, false] });
+    const merged = mergeWindowed(prev, next, 0);
+    expect(merged.steps).toEqual([true, true]);
+    expect(freshCue(merged, [])).toBe(false);
+    expect(freshCue(next, [])).toBe(true);
   });
 
-  it("drops a result that was in flight when the call was reset", () => {
-    const g = resultGate();
-    const before = g.issue();
-    g.invalidate();
-    expect(g.accept(before)).toBe(false);
-    expect(g.accept(g.issue())).toBe(true);
+  it("keeps a step cue for a step not done yet, and cues that are not step cues", () => {
+    expect(freshCue({ ...stepCue(1), steps: [true, false] }, [])).toBe(true);
+    expect(freshCue({ ...stepCue(0), cueKey: "objection:price", steps: [true, true] }, [])).toBe(true);
+    expect(isDoneStepCue("step:x", [true])).toBe(false);
+    expect(isDoneStepCue(undefined, [true])).toBe(false);
+  });
+
+  it("still drops a stale cue and allows no cue", () => {
+    expect(freshCue({ ...stepCue(1), steps: [false, false] }, [41, 43])).toBe(false);
+    expect(freshCue({ cue: null, steps: [] }, [])).toBe(false);
+  });
+});
+
+describe("requestGate", () => {
+  it("runs one request per call and applies results in order", () => {
+    const g = requestGate();
+    const a = g.start()!;
+    expect(g.start()).toBeNull();
+    expect(g.finish(a)).toBe(true);
+    const b = g.start()!;
+    expect(g.accept(b)).toBe(true);
+    expect(g.accept(a)).toBe(false);
+    expect(g.finish(b)).toBe(false);
+  });
+});
+
+describe("coachCycle and reset", () => {
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<T>((res, rej) => ((resolve = res), (reject = rej)));
+    return { promise, resolve, reject };
+  }
+  type Out = Awaited<ReturnType<Parameters<typeof coachCycle>[1]>>;
+  /** Starts one cycle whose request settles when the test says so; records what reached the call's state. */
+  const cycle = (g: ReturnType<typeof requestGate>, events: string[], tag: string) => {
+    const d = deferred<Out>();
+    const done = coachCycle(g, () => d.promise, { onResult: () => events.push(`${tag}:result`), onError: (m) => events.push(`${tag}:error:${m}`) }, () => events.push(`${tag}:rerun`));
+    return { ...d, done };
+  };
+
+  it("applies a result and reruns once when turns landed while it was in flight", async () => {
+    const g = requestGate();
+    const events: string[] = [];
+    const first = cycle(g, events, "a");
+    await cycle(g, events, "queued").done;
+    first.resolve({ ok: true, result: result() });
+    await first.done;
+    expect(events).toEqual(["a:result", "a:rerun"]);
+  });
+
+  it.each([
+    ["success", (d: ReturnType<typeof deferred<Out>>) => d.resolve({ ok: true, result: result() })],
+    ["HTTP error", (d: ReturnType<typeof deferred<Out>>) => d.resolve({ ok: false, message: "The coach couldn't update this turn." })],
+    ["rejection", (d: ReturnType<typeof deferred<Out>>) => d.reject(new TypeError("Failed to fetch"))],
+  ])("ignores a %s from before a reset, and never reruns or unblocks through the old call", async (_name, settle) => {
+    const g = requestGate();
+    const events: string[] = [];
+    const old = cycle(g, events, "old");
+    // A turn landed during the old request, so it queued a rerun for the old call.
+    await cycle(g, events, "old-queued").done;
+    g.reset();
+    // The new call starts its own request at once instead of waiting for the old one.
+    const fresh = cycle(g, events, "new");
+    settle(old);
+    await old.done;
+    expect(events).toEqual([]);
+    // The old request finishing did not clear the new call's in-flight flag: another run still queues behind it.
+    await cycle(g, events, "new-queued").done;
+    expect(events).toEqual([]);
+    fresh.resolve({ ok: false, message: "The coach couldn't update this turn." });
+    await fresh.done;
+    expect(events).toEqual(["new:error:The coach couldn't update this turn.", "new:rerun"]);
+  });
+
+  it("reports a rejection or a throwing result handler of the current call as offline", async () => {
+    const g = requestGate();
+    const events: string[] = [];
+    const c = cycle(g, events, "a");
+    c.reject(new TypeError("Failed to fetch"));
+    await c.done;
+    expect(events).toEqual([`a:error:${COACH_OFFLINE_MESSAGE}`]);
+    await coachCycle(g, async () => ({ ok: true, result: result() }), { onResult: () => { throw new Error("boom"); }, onError: (m) => events.push(m) }, () => {});
+    expect(events.at(-1)).toBe(COACH_OFFLINE_MESSAGE);
   });
 });
