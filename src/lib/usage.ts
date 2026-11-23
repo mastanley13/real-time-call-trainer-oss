@@ -576,9 +576,6 @@ function endedAnswer(s: Pick<OpenSession, "endReason" | "capEnforced">): Heartbe
     : { found: true, stop: true, reason: "ended", settlement: null };
 }
 
-/** Compare-and-set tries for one heartbeat's write before it records itself unconditionally (see heartbeat()). */
-const HEARTBEAT_WRITE_ATTEMPTS = 3;
-
 export async function heartbeat(userId: string, callId: string, state: HeartbeatState, now = new Date()): Promise<HeartbeatResult> {
   return runMetered(async (tx) => {
     const s = await tx.trainerSession.findUnique({ where: { id: callId } });
@@ -590,69 +587,78 @@ export async function heartbeat(userId: string, callId: string, state: Heartbeat
       return endedAnswer(s);
     }
 
+    // Everything this heartbeat writes is worked out from the row `s` as read, and the write lands only while the row is
+    // still that row (see below), so nothing here is ever applied over a newer state.
     const data: Prisma.TrainerSessionUpdateManyMutationInput = { lastHeartbeatAt: now };
-    let connectedAt = s.connectedAt;
-    if (!connectedAt && state === "connected" && now.getTime() - s.createdAt.getTime() <= CONNECT_WINDOW_SECONDS * 1000) {
-      connectedAt = now;
-      data.connectedAt = now;
-    }
+    const establishes = !s.connectedAt && state === "connected" && now.getTime() - s.createdAt.getTime() <= CONNECT_WINDOW_SECONDS * 1000;
+    if (establishes) data.connectedAt = now;
     if (state === "recovering") {
       if (!s.degradedAt) data.degradedAt = now;
     } else if (s.degradedAt) {
       data.degradedAt = null;
     }
-    // Written only while the call is still open. A settlement (settleStale, closeNeverConnectedCall, an end event) that
-    // committed since the read above has closed the row and released its reservation: the heartbeat then records
-    // nothing, no connection included, and tells the client to stop.
-    // The write also requires lastHeartbeatAt to still be the value read (compare and set), so a write that lands knows
-    // exactly which heartbeat it follows, which is what makes the Free warning below go out once. When an overlapping
-    // heartbeat landed first, this one no longer matches (Postgres re-checks the condition after the other commits): the
-    // row is read again and the write retried against the new value.
-    let prev = { at: s.lastHeartbeatAt, connectedAt: s.connectedAt };
-    let landed = false;
-    for (let attempt = 0; attempt < HEARTBEAT_WRITE_ATTEMPTS; attempt++) {
-      const written = await tx.trainerSession.updateMany({ where: { id: s.id, endedAt: null, lastHeartbeatAt: prev.at ?? null }, data });
-      if (written.count > 0) { landed = true; break; }
-      const current = await tx.trainerSession.findUnique({
-        where: { id: s.id }, select: { endedAt: true, endReason: true, capEnforced: true, lastHeartbeatAt: true, connectedAt: true },
-      });
-      // Often an overlapping heartbeat that just stopped the call: read how it ended so a Free cap stop keeps its flag.
-      if (!current || current.endedAt) return endedAnswer(current ?? s);
-      prev = { at: current.lastHeartbeatAt, connectedAt: current.connectedAt };
-    }
-    if (!landed) {
-      // Still overlapping after every attempt: record the heartbeat as before, and claim no warning with it.
-      const written = await tx.trainerSession.updateMany({ where: { id: s.id, endedAt: null }, data });
-      if (written.count === 0) {
-        const closed = await tx.trainerSession.findUnique({ where: { id: s.id }, select: { endReason: true, capEnforced: true } });
-        return endedAnswer(closed ?? s);
-      }
-    }
+    // Monotonic claim. The write lands only while the call is open (endedAt null) and lastHeartbeatAt is still the value
+    // read in `s`, and only when that value is null or strictly before `now`. Heartbeats are the only writers of
+    // lastHeartbeatAt, connectedAt and degradedAt (a settlement closes the row instead, which endedAt null catches), and
+    // every landed write moves lastHeartbeatAt strictly forward, so an unchanged lastHeartbeatAt means the row is exactly
+    // the snapshot this heartbeat computed from. Of two overlapping heartbeats that read the same row, Postgres lets the
+    // first write land and re-checks the second's condition after that commit, so the second no longer matches; two with
+    // the same `now` cannot both land, and an older heartbeat that arrives after a newer one never lands.
+    // So lastHeartbeatAt never moves backward or repeats: it is always the latest heartbeat the server recorded. That is
+    // what abandoned-call billing reads (the silence timeout in settleStale, the last confirmed time in billedEnd), and
+    // neither is loosened: the value is always the time of a heartbeat that really arrived, never later than the newest
+    // one and never earlier than one already recorded. Only an older heartbeat that lost the race goes unrecorded, and
+    // the newer one it lost to already proves the client was alive later than it did.
+    const claimable = !s.lastHeartbeatAt || s.lastHeartbeatAt.getTime() < now.getTime();
+    const written = claimable
+      ? await tx.trainerSession.updateMany({
+        where: { id: s.id, endedAt: null, lastHeartbeatAt: s.lastHeartbeatAt ?? null, ...(establishes ? { connectedAt: null } : {}) },
+        data,
+      })
+      : { count: 0 };
 
-    const { limit, exactStop, trialBound } = await limitSeconds(tx, s, now);
-    const leftAt = (t: Date, from: Date) => Math.min(limit, MAX_CALL_SECONDS) - Math.max(0, Math.floor((t.getTime() - from.getTime()) / 1000));
-    const start = billingStart({ createdAt: s.createdAt, connectedAt });
-    const left = leftAt(now, start);
-    if (left > 0) {
-      // The Free warning comes from the call's own reservation on the server clock, never from a client timer. Not on a
-      // trial call whose 300 second deadline ends it first: that one ends as max_duration with its own notice. Once per
-      // call: only the heartbeat that crosses into the warning window warns, i.e. the one whose write replaced a
-      // heartbeat that was still outside it (its time, measured from the billing start the row had then). A call with no
-      // heartbeat yet has warned nobody, so a call that starts inside the window warns on its first heartbeat. Two
-      // overlapping heartbeats cannot both replace the same one, so they cannot both warn.
-      const warnedBefore = !!prev.at && freeCapWarning(leftAt(prev.at, billingStart({ createdAt: s.createdAt, connectedAt: prev.connectedAt })));
-      const warn = landed && !exactStop && !trialBound && freeCapWarning(left) && !warnedBefore;
-      return warn ? { found: true, stop: false, secondsLeft: left, capWarning: true } as const : { found: true, stop: false, secondsLeft: left } as const;
+    if (written.count === 0) {
+      // Not recorded. The row changed since the read: a settlement closed it, or another heartbeat landed (or this one is
+      // older than the last one recorded). Answer from the row as it is now, with no write and no warning.
+      const fresh = await tx.trainerSession.findUnique({ where: { id: s.id } });
+      // Often an overlapping heartbeat that just stopped the call: read how it ended so a Free cap stop keeps its flag.
+      if (!fresh || fresh.endedAt) return endedAnswer(fresh ?? s);
+      return answerOrStop(tx, fresh, now, false);
     }
-    const elapsed = Math.max(0, Math.floor((now.getTime() - start.getTime()) / 1000));
-    // Free and paid calls stop the same way when their minutes run out (cap_reached); Free only gets its end grace
-    // first. A trial call that reaches its trial deadline ends the normal way (max_duration), never with a quota error.
-    const reason = trialBound ? "max_duration" : limit - elapsed <= 0 ? "cap_reached" : "max_duration";
-    const settlement = await settle(tx, { ...s, connectedAt, lastHeartbeatAt: now, degradedAt: null }, reason, now);
-    return reason === "cap_reached" && !exactStop
-      ? { found: true, stop: true, reason, settlement, freeCap: true } as const
-      : { found: true, stop: true, reason, settlement } as const;
+    return answerOrStop(tx, { ...s, ...(establishes ? { connectedAt: now } : {}), lastHeartbeatAt: now, degradedAt: null }, now, true, s);
   });
+}
+
+/**
+ * The heartbeat's answer for an open call, from `row` as it stands after this heartbeat (the snapshot plus what this
+ * heartbeat wrote, or a fresh read when nothing was written): seconds left, or the stop (settled here) once the call's
+ * limit is reached. `replaced` is the row this heartbeat's write replaced, only when the write landed.
+ */
+async function answerOrStop(tx: Tx, row: OpenSession, now: Date, landed: boolean, replaced?: OpenSession): Promise<HeartbeatResult> {
+  const { limit, exactStop, trialBound } = await limitSeconds(tx, row, now);
+  const leftAt = (t: Date, from: Date) => Math.min(limit, MAX_CALL_SECONDS) - Math.max(0, Math.floor((t.getTime() - from.getTime()) / 1000));
+  const start = billingStart(row);
+  const left = leftAt(now, start);
+  if (left > 0) {
+    // The Free warning comes from the call's own reservation on the server clock, never from a client timer. Not on a
+    // trial call whose 300 second deadline ends it first: that one ends as max_duration with its own notice. Once per
+    // call: only the heartbeat that crosses into the warning window warns, i.e. the one whose write landed and replaced a
+    // heartbeat that was still outside it (measured from the billing start of the same snapshot the write was based on).
+    // A call with no heartbeat yet has warned nobody, so a call that starts inside the window warns on its first
+    // heartbeat. Each recorded heartbeat replaces a different, strictly earlier one, and the window only ever gets
+    // closer, so exactly one recorded heartbeat can cross into it.
+    const warnedBefore = !!replaced?.lastHeartbeatAt && freeCapWarning(leftAt(replaced.lastHeartbeatAt, billingStart(replaced)));
+    const warn = landed && !!replaced && !exactStop && !trialBound && freeCapWarning(left) && !warnedBefore;
+    return warn ? { found: true, stop: false, secondsLeft: left, capWarning: true } as const : { found: true, stop: false, secondsLeft: left } as const;
+  }
+  const elapsed = Math.max(0, Math.floor((now.getTime() - start.getTime()) / 1000));
+  // Free and paid calls stop the same way when their minutes run out (cap_reached); Free only gets its end grace
+  // first. A trial call that reaches its trial deadline ends the normal way (max_duration), never with a quota error.
+  const reason = trialBound ? "max_duration" : limit - elapsed <= 0 ? "cap_reached" : "max_duration";
+  const settlement = await settle(tx, row, reason, now);
+  return reason === "cap_reached" && !exactStop
+    ? { found: true, stop: true, reason, settlement, freeCap: true } as const
+    : { found: true, stop: true, reason, settlement } as const;
 }
 
 /**
