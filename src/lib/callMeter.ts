@@ -15,26 +15,27 @@ const HEARTBEAT_MS = 10_000;
 export const RECOVER_MS = 10_000;
 
 /** What one heartbeat answer asks the call to do. */
-export type HeartbeatAnswer = { kind: "stop"; message: string } | { kind: "warn"; message: string } | { kind: "ok" };
+export type HeartbeatAnswer = { kind: "stop"; message: string; freeCap: boolean } | { kind: "warn"; message: string } | { kind: "ok" };
 
 /**
- * Reads a /api/usage/heartbeat answer. stop: the server has stopped and billed the call. warn: a Free call has about a
- * minute of free minutes left (the server decides that from the call's reservation; the client keeps no timer of its own).
+ * Reads a /api/usage/heartbeat answer. stop: the server has stopped and billed the call (freeCap: a Free call stopped at
+ * its free minutes). warn: a Free call has about a minute of free minutes left (the server decides that from the call's
+ * reservation; the client keeps no timer of its own).
  */
 export function readHeartbeat(data: unknown): HeartbeatAnswer {
-  const d = (data ?? {}) as { stop?: unknown; capWarning?: unknown; message?: unknown };
+  const d = (data ?? {}) as { stop?: unknown; capWarning?: unknown; message?: unknown; freeCap?: unknown };
   const message = typeof d.message === "string" && d.message ? d.message : undefined;
-  if (d.stop === true) return { kind: "stop", message: message ?? CAP_STOPPED_MESSAGE };
+  if (d.stop === true) return { kind: "stop", message: message ?? CAP_STOPPED_MESSAGE, freeCap: d.freeCap === true };
   if (d.capWarning === true) return { kind: "warn", message: message ?? FREE_CAP_WARNING_MESSAGE };
   return { kind: "ok" };
 }
 
 export interface MeterHandlers {
   /**
-   * The server stopped the call (its minutes ran out, or the call length limit). Called once per call. The caller ends
-   * the call the same way as a hang-up, so the transcript is saved and graded.
+   * The server stopped the call (its minutes ran out, or the call length limit). Called once per call. freeCap: a Free
+   * call stopped at its free minutes, which the caller ends the same way as a hang-up so the transcript is saved and graded.
    */
-  onStop: (message: string) => void;
+  onStop: (message: string, freeCap: boolean) => void;
   /** The connection did not recover in time. */
   onGiveUp: () => void;
   /** About a minute of a Free call's free minutes is left. Called at most once per call. */
@@ -98,7 +99,7 @@ export class CallMeter {
       this.stopped = true;
       clearInterval(this.timer);
       clearTimeout(this.recoverTimer);
-      this.h.onStop(a.message);
+      this.h.onStop(a.message, a.freeCap);
     } else if (a.kind === "warn" && !this.warned) {
       this.warned = true;
       this.h.onWarn?.(a.message);

@@ -48,7 +48,8 @@ export async function POST(req: NextRequest) {
     const message = r.reason === "cap_reached" ? (r.freeCap ? FREE_CAP_STOPPED_MESSAGE : CAP_STOPPED_MESSAGE)
       : r.reason === "max_duration" ? "This call reached the maximum call length."
       : undefined;
-    return NextResponse.json({ stop: true, reason: r.reason, message });
+    // freeCap: a Free call stopped at its free minutes. The client ends it through the hang-up path (see callMeter.ts).
+    return NextResponse.json({ stop: true, reason: r.reason, message, ...(r.freeCap ? { freeCap: true } : {}) });
   }
   // capWarning: about a minute of a Free call's free minutes is left, worked out on the server (see heartbeat()).
   if (r.capWarning) return NextResponse.json({ stop: false, secondsLeft: r.secondsLeft, capWarning: true, message: FREE_CAP_WARNING_MESSAGE });

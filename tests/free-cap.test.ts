@@ -496,14 +496,30 @@ describe("a Free call that goes silent is billed up to its reservation, never pa
     expect(fake.rows("user")[0].voiceBlockedUntil ?? null).toBeNull();
   });
 
-  it("a Free tab closed mid-call and reaped a day later bills at most the 10 minutes and does not block the next call", async () => {
+  it("1 minute used, then silent and reaped the next day: billed from the last heartbeat as on main, never past the reservation", async () => {
     await freeUserWith(0);
-    const begun = await goSilentAfter(5 * 60);
-    await usageSummary("u-1", at(24 * 3600));
-    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 10, abuseFlagged: false });
-    expect(allowanceOf("u-1").minutesUsed).toBe(10);
+    const begun = await goSilentAfter(60); // last heartbeat at 50 s
+    const reaped = 24 * 3600;
+    await usageSummary("u-1", at(reaped));
+    const s = session(begun.callId);
+    // Main's bound: confirmed time (50 s) plus a silent stretch of at most the reservation (10 minutes), not the whole
+    // day until the reap. Main billed that in full (650 s, 11 minutes); the reservation clamp now caps it at 10.
+    const lastHeartbeat = 50;
+    const mainBound = Math.min(reaped, lastHeartbeat + 10 * 60);
+    expect(mainBound).toBe(650);
+    expect(s).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: Math.min(mainBound, 10 * 60), billedMinutes: 10, abuseFlagged: false });
+    expect(s.billedMinutes as number).toBeLessThanOrEqual(Math.ceil(mainBound / 60));
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
     // Refused for having no minutes left, not for a voice block.
-    expect(await beginCall("u-1", scn, at(24 * 3600 + 5))).toEqual({ ok: false, error: "cap_reached" });
+    expect(await beginCall("u-1", scn, at(reaped + 5))).toEqual({ ok: false, error: "cap_reached" });
+  });
+
+  it("a silent Free call reaped soon after its last heartbeat is billed only through the reap, not its whole reservation", async () => {
+    await freeUserWith(0);
+    const begun = await goSilentAfter(60); // last heartbeat at 50 s
+    await usageSummary("u-1", at(50 + 31)); // reaped as soon as it counts as silent
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 81, billedMinutes: 2 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 2, minutesReserved: 0 });
   });
 
   it("a call that only sent its connect heartbeat is still bounded by its reservation", async () => {
@@ -814,7 +830,7 @@ describe("voice_cap_hit: a used-up allowance is reported with ids only, and neve
 
     vi.setSystemTime(at(limit));
     const stopped = await (await beat(begun.callId, "ok")).json();
-    expect(stopped).toEqual({ stop: true, reason: "cap_reached", message: FREE_CAP_STOPPED_MESSAGE });
+    expect(stopped).toEqual({ stop: true, reason: "cap_reached", message: FREE_CAP_STOPPED_MESSAGE, freeCap: true });
     expect(isCapMessage(stopped.message)).toBe(true); // the call screen adds the Upgrade link
     vi.setSystemTime(at(limit + 10));
     expect(await (await beat(begun.callId, "ok")).json()).toMatchObject({ stop: true, reason: "ended" });

@@ -87,6 +87,8 @@ export class RealtimeCall {
   private audioTimer?: ReturnType<typeof setInterval>;
   /** Reports connect, heartbeats and the end to the server, which meters the call. A no-op without a callId. */
   private meter?: CallMeter;
+  /** Why the server stopped a Free call, reported once the hang-up path has flushed the last turns. */
+  private stopMessage?: string;
 
   constructor(private scenario: Scenario, private h: Handlers, private voiceTier?: "premium" | "standard") {}
 
@@ -134,9 +136,14 @@ export class RealtimeCall {
     const info = voiceInfoFrom(secret);
     if (info) this.h.onVoiceInfo(info);
     this.meter = new CallMeter(secret.callId, {
-      // The server has already stopped and billed the call. End the client side exactly like a hang-up (the last words
-      // are still transcribed, then the call is saved and graded), and say why it ended.
-      onStop: (m) => { this.end(); this.h.onError(m); },
+      // The server has already stopped and billed the call; this ends the client side. A Free cap stop ends exactly like
+      // a hang-up and says why only after the last turns are flushed (see close), so a first utterance still being
+      // transcribed is kept, saved and graded. Other stops end as before.
+      onStop: (m, freeCap) => {
+        if (!freeCap) return this.fail(m, "user_hangup");
+        this.stopMessage = m;
+        this.end();
+      },
       onGiveUp: () => this.fail("The voice connection dropped. Check your network. Your transcript so far is kept.", "network_drop"),
       onWarn: (m) => this.h.onCapWarning?.(m),
     });
@@ -374,6 +381,8 @@ export class RealtimeCall {
     if (this.audio) { this.audio.pause(); this.audio.srcObject = null; }
     if (this.ctx && this.ctx.state !== "closed") void this.ctx.close().catch(() => {});
     this.set({ phase: "closed", speaking: false });
+    // After the flush above, so the trainer sees every rep turn before it decides between grading and the briefing.
+    if (notify && this.stopMessage) this.h.onError(this.stopMessage);
     if (notify) this.h.onEnded();
   }
 }

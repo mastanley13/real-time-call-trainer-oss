@@ -709,9 +709,16 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   const connected = provedConnected(s);
   const reason: CallEndReasonId = connected ? requested : "failed_connect";
 
-  // The reservation limits what every call is billed, Free included (settleCall below): a Free call's end grace runs
-  // past its reserved minutes but is clamped off, so a Free call never adds more than it reserved at its start.
-  const endedAt = connected ? naturalEnd : now;
+  // A Free call reaped as silent is billed as on main: its time through the last heartbeat the server saw, plus a
+  // silent stretch of at most the call's reservation, because the server cannot tell how long a silent call really ran.
+  let billedEnd = naturalEnd;
+  if (!exactStopOf(s) && requested === "heartbeat_timeout") {
+    const confirmedMs = Math.max(start.getTime(), s.lastHeartbeatAt?.getTime() ?? 0);
+    billedEnd = new Date(Math.min(naturalEnd.getTime(), confirmedMs + s.reservedMinutes * 60 * 1000));
+  }
+  // The reservation then limits what every call is billed, Free included (settleCall below): a Free call's end grace
+  // runs past its reserved minutes but is clamped off, so a Free call never adds more than it reserved at its start.
+  const endedAt = connected ? billedEnd : now;
   // The connect heartbeat sets lastHeartbeatAt to the start itself, so only a later one proves the client kept running.
   const heartbeatSeen = !!s.lastHeartbeatAt && s.lastHeartbeatAt.getTime() > start.getTime();
   // Only a drop that could still be credited needs the 24 hour count (DAILY_DROP_CREDIT_CAP). The user row is locked
