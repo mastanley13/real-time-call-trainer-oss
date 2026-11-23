@@ -492,11 +492,11 @@ describe("coach prompt window on a long call", () => {
   });
   const lineOf = (i: number) => OFFSET + i + 1;
   const firstSeen = lineOf(80 - COACH_PROMPT_TURNS);
-  const reply = () =>
+  const reply = (triggerTurn = 105) =>
     JSON.stringify({
       criteria: scenario.rubric.map((c, i) => ({ id: c.id, score: 60, quote: i === 0 ? NEW_QUOTE : i === 1 ? OLD_QUOTE : null })),
-      steps: Array.from({ length: STEP_COUNT }, () => false),
-      cue: { type: "next_question", title: "Ask about timing", message: "Ask when they need it done.", suggestedLine: null, triggerTurn: 105, criterionId: null, key: "next_question:timing" },
+      steps: Array.from({ length: STEP_COUNT }, (_, i) => i === 0),
+      cue: { type: "next_question", title: "Ask about timing", message: "Ask when they need it done.", suggestedLine: null, triggerTurn, criterionId: null, key: "next_question:timing" },
     });
   const runLong = () => coachTurn(scenario, longCall, { allowCue: true, lineOffset: OFFSET });
   const promptOf = (s: Sent) => (s.body.messages as { role: string; content: string }[]).find((m) => m.role === "user")!.content;
@@ -522,7 +522,7 @@ describe("coach prompt window on a long call", () => {
     expect(lines[lines.length - 1]).toMatch(new RegExp(`^\\[${lineOf(79)}\\]`));
   });
 
-  it("verifies evidence and triggerTurn against the lines the model saw, and reports where they start", async () => {
+  it("verifies evidence against the lines the model saw, and reports where they start", async () => {
     replies(() => completion(reply()));
     const r = await runLong();
     expect(r.source).toBe("llm");
@@ -531,7 +531,33 @@ describe("coach prompt window on a long call", () => {
     expect(seenCriterion).toMatchObject({ confirmed: true, evidenceLine: lineOf(69), score: 60 });
     // A quote the model could not have seen is not trusted; the client keeps the older evidence (mergeWindowed).
     expect(oldCriterion).toMatchObject({ confirmed: false, evidenceLine: undefined });
-    expect(r.cue?.triggerTurn).toBe(firstSeen);
+  });
+
+  it.each([
+    ["before the prompt window", 105],
+    ["just before the prompt window", firstSeen - 1],
+    ["past the last line", lineOf(79) + 1],
+  ])("drops a cue whose triggerTurn is %s, keeping the LLM estimate and steps", async (_where, triggerTurn) => {
+    replies(() => completion(reply(triggerTurn)));
+    const r = await runLong();
+    // Not clamped to the first visible line and not a heuristic fallback: just no cue from this run.
+    expect(r.source).toBe("llm");
+    expect(r.cue).toBeNull();
+    expect(r.cueKey).toBeUndefined();
+    expect(r.steps[0]).toBe(true);
+    expect(r.estimate.criteria[0]).toMatchObject({ confirmed: true, score: 60 });
+    expect(sent).toHaveLength(1);
+    expect(logs.filter((l) => l.startsWith("[coach]"))).toEqual([]);
+  });
+
+  it.each([
+    ["the first line it saw", firstSeen],
+    ["its last line", lineOf(79)],
+  ])("keeps a cue triggered on %s, with the absolute line", async (_where, triggerTurn) => {
+    replies(() => completion(reply(triggerTurn)));
+    const r = await runLong();
+    expect(r.cue?.triggerTurn).toBe(triggerTurn);
+    expect(r.cueKey).toBe("next_question:timing");
   });
 
   it("keeps the heuristic fallback on the whole transcript the route received", async () => {

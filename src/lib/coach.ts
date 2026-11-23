@@ -710,16 +710,17 @@ function parseLlmCue(raw: unknown, spoken: Line[], rubric: RubricCriterion[], re
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-  const firstLine = spoken[0]?.line ?? 1;
-  const lastLine = spoken[spoken.length - 1]?.line ?? 1;
   const turn = Math.round(Number(r.triggerTurn));
+  // The trigger must be a line the model was shown. One outside the prompt window (older, or past the last line) is
+  // dropped, not clamped: clamping would pin an old cue to an unrelated line and dodge the client's stale-cue check.
+  if (!spoken.some((t) => t.line === turn)) return null;
   const criterionId = str(r.criterionId);
   const parsed = CueSchema.safeParse({
     type: r.type,
     title: clip(str(r.title), 80),
     message: clip(str(r.message), 240),
     suggestedLine: str(r.suggestedLine) ? clip(str(r.suggestedLine), 300) : undefined,
-    triggerTurn: Number.isFinite(turn) ? Math.min(Math.max(turn, firstLine), lastLine) : lastLine,
+    triggerTurn: turn,
     criterionId: rubric.some((c) => c.id === criterionId) ? criterionId : undefined,
   });
   if (!parsed.success) return null;
