@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  clearStoredSession,
   expiredLoginHref,
+  markNewSession,
+  storedSessionKey,
   installSessionExpiryGuard,
   isSessionExpiryBody,
   isSessionGuardedUrl,
@@ -60,6 +63,13 @@ describe("isSessionGuardedUrl", () => {
   );
 
   it.each(["/trainer", "/apis/x", "/api", "/login"])("ignores non-API path %s", (url) => expect(isSessionGuardedUrl(url, ORIGIN)).toBe(false));
+
+  it("resolves relative URLs against the document base URL, like the browser", () => {
+    expect(isSessionGuardedUrl("api/me", ORIGIN, `${ORIGIN}/trainer`)).toBe(true); // requests /api/me
+    expect(isSessionGuardedUrl("api/me", ORIGIN, `${ORIGIN}/trainer/call`)).toBe(false); // requests /trainer/api/me
+    expect(isSessionGuardedUrl("../api/me", ORIGIN, `${ORIGIN}/trainer/call`)).toBe(true);
+    expect(isSessionGuardedUrl("api/auth/login", ORIGIN, `${ORIGIN}/login`)).toBe(false);
+  });
 
   it("resolves dot segments before matching", () => {
     expect(isSessionGuardedUrl("/api/coach/../auth/login", ORIGIN)).toBe(false);
@@ -237,6 +247,25 @@ describe("installSessionExpiryGuard", () => {
     expect(store.get("authToken")).toBe("header.new-payload.signature");
   });
 
+  it.each([
+    ["/trainer", "api/me", 1],
+    ["/trainer/call", "api/me", 0],
+  ])("on %s, a relative fetch(%j) is judged by the URL the browser requests", async (path, url, redirects) => {
+    const s = setup({ path });
+    s.target.document = { baseURI: `${ORIGIN}${path}` };
+    await s.target.fetch(url);
+    await settle();
+    expect(s.assign).toHaveBeenCalledTimes(redirects);
+  });
+
+  it("falls back to location.href when there is no document base URL", async () => {
+    const s = setup({ path: "/trainer/call" });
+    s.target.location.href = `${ORIGIN}/trainer/call`;
+    await s.target.fetch("api/me");
+    await settle();
+    expect(s.assign).not.toHaveBeenCalled();
+  });
+
   it("ignores a 401 for a request that started signed out, even if a session exists by the time it lands", async () => {
     let release!: (r: Response) => void;
     const { target, inner, assign, onExpired, store } = setup({ signedIn: false });
@@ -256,6 +285,88 @@ describe("installSessionExpiryGuard", () => {
     expect(await res.json()).toEqual({ ok: true });
     await settle();
     expect(assign).not.toHaveBeenCalled();
+  });
+});
+
+describe("client session generation", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function storage(initial: Record<string, string> = {}) {
+    const store = new Map(Object.entries(initial));
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => store.set(k, v),
+      removeItem: (k: string) => store.delete(k),
+    });
+    return store;
+  }
+
+  it("keys the session on the token alone when no generation is stored (sessions from before this change)", () => {
+    storage({ authToken: "header.payload.signature" });
+    expect(storedSessionKey()).toBe("header.payload.signature");
+  });
+
+  it("is null when signed out, and changes on every sign-in even with the same token", () => {
+    const store = storage();
+    expect(storedSessionKey()).toBeNull();
+    store.set("authToken", "header.payload.signature");
+    markNewSession();
+    const first = storedSessionKey();
+    markNewSession();
+    expect(storedSessionKey()).not.toBe(first);
+    expect(storedSessionKey()).toMatch(/^header\.payload\.signature\n/);
+  });
+
+  it("clearStoredSession removes the token, user data and generation", () => {
+    const store = storage({ authToken: "t", userData: "{}", authSessionGen: "g" });
+    clearStoredSession();
+    expect([...store.keys()]).toEqual([]);
+  });
+
+  it("ignores a delayed 401 after sign-out and a re-sign-in that produced the same token", async () => {
+    const store = storage({ authToken: "header.payload.signature", userData: "{}" });
+    markNewSession();
+    let release!: (r: Response) => void;
+    const assign = vi.fn();
+    const onExpired = vi.fn(clearStoredSession);
+    const target: SessionGuardTarget = {
+      fetch: vi.fn(() => new Promise<Response>((r) => { release = r; })) as unknown as typeof fetch,
+      location: { origin: ORIGIN, pathname: "/trainer", search: "", assign },
+    };
+    installSessionExpiryGuard(target, { currentSession: storedSessionKey, isDemo: () => false, onExpired });
+    const pending = target.fetch("/api/coach/turn");
+    // Sign out, then sign in again within the same second: the JWT is byte-for-byte the same.
+    clearStoredSession();
+    store.set("authToken", "header.payload.signature");
+    store.set("userData", "{}");
+    markNewSession();
+    release(json(401, EXPIRED));
+    await pending;
+    await settle();
+    expect(onExpired).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
+    expect(store.get("authToken")).toBe("header.payload.signature");
+  });
+
+  it("still expires the same session, generation included", async () => {
+    const store = storage({ authToken: "header.payload.signature", userData: "{}" });
+    markNewSession();
+    const assign = vi.fn();
+    const target: SessionGuardTarget = {
+      fetch: vi.fn(async () => json(401, EXPIRED)) as unknown as typeof fetch,
+      location: { origin: ORIGIN, pathname: "/trainer", search: "", assign },
+    };
+    installSessionExpiryGuard(target, { currentSession: storedSessionKey, isDemo: () => false, onExpired: clearStoredSession });
+    await target.fetch("/api/coach/turn");
+    await settle();
+    expect(assign).toHaveBeenCalledOnce();
+    expect(store.size).toBe(0);
+  });
+
+  it("AuthContext starts a new generation whenever it persists a session", () => {
+    const SRC = readFileSync("src/contexts/AuthContext.tsx", "utf8");
+    expect(SRC).toMatch(/const persistSession = [^]*?localStorage\.setItem\("authToken", token\);[^]*?markNewSession\(\);[^]*?\};/);
+    expect(SRC).toContain("currentSession: storedSessionKey,");
   });
 });
 
@@ -296,7 +407,7 @@ describe("AuthContext install timing", () => {
 
   it("the provider registers clearSession for the guard and reads demo mode at call time", () => {
     const SRC = readFileSync("src/contexts/AuthContext.tsx", "utf8");
-    expect(SRC).toMatch(/if \(typeof window !== "undefined"\) \{\s*installSessionExpiryGuard\(window, \{\s*currentSession: storedSessionToken,\s*isDemo: \(\) => demoModeActive,/);
+    expect(SRC).toMatch(/if \(typeof window !== "undefined"\) \{\s*installSessionExpiryGuard\(window, \{\s*currentSession: storedSessionKey,\s*isDemo: \(\) => demoModeActive,/);
     expect(SRC).toContain("demoModeActive = !!caps?.demoMode;");
     expect(SRC).toContain("clearActiveSession = clearSession;");
   });

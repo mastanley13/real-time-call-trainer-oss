@@ -26,11 +26,12 @@ const onPath = (pathname: string, base: string) => pathname === base || pathname
 /**
  * True for same-origin /api/ requests where a 401 means a stale session. /api/auth/* (login, MFA, register,
  * reset, session restore, logout, Google) and /api/access answer 401 as a normal result, so they are excluded.
+ * Relative URLs resolve against `base`, the document base URL, the same way the browser resolves them.
  */
-export function isSessionGuardedUrl(rawUrl: string, origin: string): boolean {
+export function isSessionGuardedUrl(rawUrl: string, origin: string, base: string = origin): boolean {
   let url: URL;
   try {
-    url = new URL(rawUrl, origin);
+    url = new URL(rawUrl, base);
   } catch {
     return false;
   }
@@ -92,14 +93,17 @@ export function expiredLoginHref(pathname: string, search: string): string | nul
 
 export interface SessionGuardTarget {
   fetch: typeof fetch;
-  location: { origin: string; pathname: string; search: string; assign: (url: string) => void };
+  location: { origin: string; pathname: string; search: string; href?: string; assign: (url: string) => void };
+  /** Relative request URLs resolve against document.baseURI, falling back to location.href. */
+  document?: { baseURI?: string };
 }
 
 export interface SessionGuardOptions {
   /**
-   * The current client session (localStorage authToken), or null when signed out. Read when a request starts
-   * and again when its 401 is handled; only the same session is expired, so a late 401 from before a sign-out
-   * and new sign-in never clears the new session. Signed-out visitors are never redirected.
+   * The current client session key (storedSessionKey: the token plus its sign-in generation), or null when
+   * signed out. Read when a request starts and again when its 401 is handled; only the same session is
+   * expired, so a late 401 from before a sign-out and new sign-in never clears the new session, even when
+   * the new token is identical. Signed-out visitors are never redirected.
    */
   currentSession: () => string | null;
   /** Demo mode has no sessions to expire. */
@@ -123,12 +127,37 @@ export function resetSessionExpiryRedirect(): void {
   redirecting = false;
 }
 
-/** The localStorage session token, or null when signed out or storage is unavailable. */
-export function storedSessionToken(): string | null {
+/**
+ * Changes on every sign-in. Two sign-ins by the same user in the same second can produce the same JWT, so the
+ * token alone does not tell one client session from the next.
+ */
+const SESSION_GEN_KEY = "authSessionGen";
+
+/**
+ * Identifies the client session: the localStorage token plus its sign-in generation, or the token alone for a
+ * session stored before generations existed. Null when signed out or storage is unavailable.
+ */
+export function storedSessionKey(): string | null {
   try {
-    return localStorage.getItem("authToken");
+    const token = localStorage.getItem("authToken");
+    if (!token) return null;
+    const gen = localStorage.getItem(SESSION_GEN_KEY);
+    return gen ? `${token}\n${gen}` : token;
   } catch {
     return null;
+  }
+}
+
+/** Starts a new sign-in generation. Call whenever a session is persisted. */
+export function markNewSession(): void {
+  const gen =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  try {
+    localStorage.setItem(SESSION_GEN_KEY, gen);
+  } catch {
+    /* Without storage there is no client session to tell apart. */
   }
 }
 
@@ -137,13 +166,14 @@ export function clearStoredSession(): void {
   try {
     localStorage.removeItem("authToken");
     localStorage.removeItem("userData");
+    localStorage.removeItem(SESSION_GEN_KEY);
   } catch {
     /* AuthContext treats unavailable storage as signed out. */
   }
 }
 
 /** Used by expireSession when no guard is installed. */
-const STORAGE_OPTIONS: SessionGuardOptions = { currentSession: storedSessionToken, isDemo: () => false, onExpired: clearStoredSession };
+const STORAGE_OPTIONS: SessionGuardOptions = { currentSession: storedSessionKey, isDemo: () => false, onExpired: clearStoredSession };
 
 function requestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
@@ -214,7 +244,8 @@ export function installSessionExpiryGuard(target: SessionGuardTarget | undefined
     let guarded = false;
     let session: string | null = null;
     try {
-      guarded = isSessionGuardedUrl(requestUrl(input), target.location.origin);
+      const base = target.document?.baseURI || target.location.href || target.location.origin;
+      guarded = isSessionGuardedUrl(requestUrl(input), target.location.origin, base);
       session = guarded ? live.currentSession() : null;
     } catch {
       guarded = false;

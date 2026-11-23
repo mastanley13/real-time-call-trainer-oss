@@ -3,7 +3,7 @@
 import * as React from "react";
 import { createContext, useCallback, useContext, useState, useEffect } from "react";
 import { isTokenFresh } from "@/lib/clientSession";
-import { clearStoredSession, installSessionExpiryGuard, storedSessionToken } from "@/lib/sessionExpiry";
+import { clearStoredSession, installSessionExpiryGuard, markNewSession, storedSessionKey } from "@/lib/sessionExpiry";
 
 export interface LoginCredentials {
   email: string;
@@ -88,7 +88,7 @@ let clearActiveSession: (() => void) | null = null;
 
 if (typeof window !== "undefined") {
   installSessionExpiryGuard(window, {
-    currentSession: storedSessionToken,
+    currentSession: storedSessionKey,
     isDemo: () => demoModeActive,
     onExpired: () => (clearActiveSession ?? clearStoredSession)(),
   });
@@ -149,6 +149,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   const persistSession = (sessionUser: User, token: string) => {
     localStorage.setItem("authToken", token);
     localStorage.setItem("userData", JSON.stringify(sessionUser));
+    // Login, MFA, register and Google completion all land here: a new generation tells this session from any earlier one.
+    markNewSession();
     setUser(sessionUser);
     setIsAuthenticated(true);
   };

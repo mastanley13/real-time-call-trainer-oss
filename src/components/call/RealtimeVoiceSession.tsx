@@ -6,7 +6,7 @@ import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
 import { CallMeter, type MeterEndReason } from "@/lib/callMeter";
 import { LiveTranscript, applyLiveEvent, type LiveServerEvent } from "@/lib/live";
-import { expireSession, storedSessionToken } from "@/lib/sessionExpiry";
+import { expireSession, storedSessionKey } from "@/lib/sessionExpiry";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, realtimeAuthRedirect, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
 
 /** Same render-prop contract as the ElevenLabs VoiceSession in TrainerClient. */
@@ -112,7 +112,7 @@ export class RealtimeCall {
     let secret: { clientSecret?: string; liveTicket?: string; voiceApi?: unknown; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown; maxSeconds?: unknown; error?: unknown };
     try {
       // The rep's Standard or Premium pick is a request; the server rechecks entitlement and decides.
-      const session = storedSessionToken();
+      const session = storedSessionKey();
       const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario, ...(this.voiceTier ? { voiceTier: this.voiceTier } : {}) }) });
       secret = await res.json().catch(() => ({}));
       if (this.closed) return;
@@ -176,7 +176,7 @@ export class RealtimeCall {
         // GPT-Live: the server starts the session with the full offer (src/app/api/live/sdp/route.ts).
         await iceGathered(pc);
         if (this.closed) return;
-        const liveSession = storedSessionToken();
+        const liveSession = storedSessionKey();
         const res = await fetch("/api/live/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ liveTicket: secret.liveTicket, sessionId: secret.sessionId, scenario: this.scenario, sdp: pc.localDescription?.sdp ?? offer.sdp }) });
         const data = await res.json().catch(() => ({}));
         if (this.closed) return;
@@ -187,7 +187,7 @@ export class RealtimeCall {
         return;
       }
       // Same-origin relay of the documented SDP exchange; see src/app/api/realtime/sdp/route.ts.
-      const sdpSession = storedSessionToken();
+      const sdpSession = storedSessionKey();
       const res = await fetch("/api/realtime/sdp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientSecret: secret.clientSecret, sdp: offer.sdp }) });
       const data = await res.json().catch(() => ({}));
       if (this.closed) return;
@@ -337,7 +337,7 @@ export class RealtimeCall {
     this.close(repSpoke);
   }
 
-  /** `session` is the client session token read when the rejected request started. */
+  /** `session` is the client session key (storedSessionKey) read when the rejected request started. */
   private signInAgain(path: "/login" | "/access", session: string | null) {
     // No call has connected yet. Stop the microphone and release peer resources
     // before leaving; do not submit an empty practice session for grading.

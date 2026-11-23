@@ -93,6 +93,39 @@ describe("voice startup session recovery", () => {
     expect(stop).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["an unrelated 401 at session start", () => vi.fn(async () => Response.json({ error: "voice_not_allowed" }, { status: 401 }))],
+    ["a malformed 401 at session start", () => vi.fn(async () => new Response("<html>401</html>", { status: 401 }))],
+    ["an unrelated 401 during the SDP exchange", () => vi.fn()
+      .mockResolvedValueOnce(Response.json({ clientSecret: "ek_fictional_test_only" }))
+      .mockResolvedValueOnce(Response.json({ error: "voice_not_allowed" }, { status: 401 }))],
+    ["an unrelated 401 during the Live SDP exchange", () => vi.fn()
+      .mockResolvedValueOnce(Response.json({ voiceApi: "live", liveTicket: "lt_fictional_test_only", sessionId: "s1" }))
+      .mockResolvedValueOnce(Response.json({ error: "voice_not_allowed" }, { status: 401 }))],
+  ])("treats %s as an ordinary failure: no sign-out, no redirect", async (_label, makeFetch) => {
+    vi.stubGlobal("RTCPeerConnection", class {
+      iceGatheringState = "complete";
+      addTrack() {}
+      createDataChannel() { return { readyState: "connecting", close: closeChannel }; }
+      async createOffer() { return { type: "offer", sdp: "v=0 test offer" }; }
+      async setLocalDescription() {}
+      localDescription = { sdp: "v=0 test offer" };
+      close = closePeer;
+    });
+    const h = handlers();
+    const fetchMock = makeFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    await new RealtimeCall(scenario, h).start();
+    // Each case reached the request that answered 401: the mint, then /api/realtime/sdp or /api/live/sdp.
+    const urls = fetchMock.mock.calls.map((c: unknown[]) => c[0]);
+    expect(urls[urls.length - 1]).toBe(_label.includes("Live") ? "/api/live/sdp" : _label.includes("SDP") ? "/api/realtime/sdp" : "/api/realtime/session");
+    expect(assign).not.toHaveBeenCalled();
+    expect(removeItem).not.toHaveBeenCalled();
+    expect(h.onError).toHaveBeenCalledOnce();
+    expect(h.onError).not.toHaveBeenCalledWith(expect.stringMatching(/sign in/i));
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
   it("keeps provider failures on the trainer instead of sending the user to sign in", async () => {
     const h = handlers();
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "realtime_upstream_error", message: "Voice is temporarily unavailable." }, { status: 502 })));
