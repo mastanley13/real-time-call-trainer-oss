@@ -115,7 +115,16 @@ export class RealtimeCall {
       const session = storedSessionKey();
       const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario, ...(this.voiceTier ? { voiceTier: this.voiceTier } : {}) }) });
       secret = await res.json().catch(() => ({}));
-      if (this.closed) return;
+      // The meter exists as soon as the server says it minted, so every exit from here on reports the end. A hang-up or
+      // unmount during the mint request closed this call before it knew the callId: report that now (failed_connect).
+      if (typeof secret.callId === "string") {
+        this.meter = new CallMeter(secret.callId, {
+          // The server has already stopped and billed the call; this ends the client side.
+          onStop: (m) => this.fail(m, "user_hangup"),
+          onGiveUp: () => this.fail("The voice connection dropped. Check your network. Your transcript so far is kept.", "network_drop"),
+        });
+      }
+      if (this.closed) return this.meter?.end("failed_connect");
       const redirect = realtimeAuthRedirect(res.status, secret.error);
       if (redirect) return this.signInAgain(redirect, session);
       if (!res.ok || !(secret.clientSecret || secret.liveTicket)) return this.fail(secret.message || "Could not start the voice call. Try again, or switch to Text.");
@@ -133,11 +142,6 @@ export class RealtimeCall {
     }
     const info = voiceInfoFrom(secret);
     if (info) this.h.onVoiceInfo(info);
-    this.meter = new CallMeter(secret.callId, {
-      // The server has already stopped and billed the call; this ends the client side.
-      onStop: (m) => this.fail(m, "user_hangup"),
-      onGiveUp: () => this.fail("The voice connection dropped. Check your network. Your transcript so far is kept.", "network_drop"),
-    });
     if (secret.expiresAt && secret.expiresAt * 1000 <= Date.now()) return this.fail(EXPIRED, "failed_connect");
 
     try {

@@ -4,6 +4,9 @@
  *
  * Connected means the data channel is open AND the first remote audio arrived. Call `open()` and `audio()`
  * as each happens; the first heartbeat is sent when both have.
+ *
+ * Before that first heartbeat, any end is reported as failed_connect (the server settles it that way anyway: 0 s,
+ * reservation released), and leaving the page reports it too, so a failed first try never holds the rep's minutes.
  */
 
 import { CAP_STOPPED_MESSAGE } from "./billingUi";
@@ -24,13 +27,26 @@ export class CallMeter {
   private recoverTimer?: ReturnType<typeof setTimeout>;
 
   /** onStop: the server says the allowance ran out. onGiveUp: the connection did not recover in time. */
-  constructor(private callId: string | undefined, private h: { onStop: (message: string) => void; onGiveUp: () => void }) {}
+  constructor(private callId: string | undefined, private h: { onStop: (message: string) => void; onGiveUp: () => void }) {
+    // Closing the tab or navigating away before the call connected: report it now, with a keepalive request.
+    if (callId && typeof window !== "undefined" && typeof window.addEventListener === "function") window.addEventListener("pagehide", this.onPageHide);
+  }
+
+  private onPageHide = () => this.abandon();
 
   open() { this.opened = true; this.maybeConnect(); }
   audio() { this.heard = true; this.maybeConnect(); }
 
+  /**
+   * The call is going away (unmount, page hide) without a reason of its own. Before it connected, that is a failed
+   * connect and is reported now. A connected call is left to its own end event or the server's heartbeat timeout.
+   */
+  abandon() {
+    if (!this.connected) this.end("failed_connect");
+  }
+
   private maybeConnect() {
-    if (!this.callId || this.connected || !this.opened || !this.heard) return;
+    if (!this.callId || this.ended || this.connected || !this.opened || !this.heard) return;
     this.connected = true;
     void this.beat("connected");
     this.timer = setInterval(() => void this.beat(this.recovering ? "recovering" : "ok"), HEARTBEAT_MS);
@@ -63,13 +79,18 @@ export class CallMeter {
     }
   }
 
-  /** Stops the timers and tells the server why the call ended. Safe to call more than once. */
+  /**
+   * Stops the timers and tells the server why the call ended. Safe to call more than once: only the first call sends.
+   * Before the first heartbeat the reason sent is failed_connect, whatever ended it (a hang-up, a drop, a provider error).
+   */
   end(reason: MeterEndReason) {
     if (this.ended) return;
     this.ended = true;
     clearInterval(this.timer);
     clearTimeout(this.recoverTimer);
     if (!this.callId) return;
-    void fetch("/api/usage/end", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId: this.callId, reason }), keepalive: true }).catch(() => {});
+    if (typeof window !== "undefined" && typeof window.removeEventListener === "function") window.removeEventListener("pagehide", this.onPageHide);
+    const sent: MeterEndReason = this.connected ? reason : "failed_connect";
+    void fetch("/api/usage/end", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId: this.callId, reason: sent }), keepalive: true }).catch(() => {});
   }
 }

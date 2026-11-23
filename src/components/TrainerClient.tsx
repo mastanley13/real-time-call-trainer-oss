@@ -13,7 +13,7 @@ import type { AgentState } from "@/components/CallOrb";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import Briefing from "@/components/call/Briefing";
 import Deck from "@/components/call/Deck";
-import { CallMeter } from "@/lib/callMeter";
+import { ElevenLabsStart } from "@/components/call/elevenLabsStart";
 import RealtimeVoiceSession, { voiceInfoFrom, type VoiceInfo, type VoiceRender } from "@/components/call/RealtimeVoiceSession";
 import { useCoach, type LiveCue } from "@/components/call/useCoach";
 import { chooseVoiceEngine, type VoiceEngine } from "@/lib/realtime";
@@ -47,25 +47,33 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
   registerEnd: (fn: () => void) => void;
   render: (v: { orbState: AgentState; status: { label: string; tone: "ok" | "signal" | "caution" }; muted: boolean; toggleMute: () => void; end: () => void; getInputVolume: () => number; getOutputVolume: () => number }) => React.ReactNode;
 }) {
-  // Server-side voice metering (see lib/callMeter.ts). Replaced per call once the token route returns a callId.
-  const meterRef = useRef<CallMeter>(new CallMeter(undefined, { onStop: () => {}, onGiveUp: () => {} }));
+  const onEndedRef = useRef(onEnded);
+  useEffect(() => { onEndedRef.current = onEnded; });
+  // Server-side voice metering (see lib/callMeter.ts) and every exit before the call connects (see elevenLabsStart.ts).
+  const [call] = useState(() => new ElevenLabsStart({ onEnded: () => onEndedRef.current() }));
   const userEndedRef = useRef(false);
   const endRef = useRef<() => void>(() => {});
   const conv = useConversation({
-    onConnect: () => meterRef.current.open(),
+    onConnect: () => call.meter.open(),
     onMessage: ({ message, role }) => {
       // ElevenLabs has no packet-level event; the first agent message is the first remote audio.
-      if (role !== "user") meterRef.current.audio();
+      if (role !== "user") call.meter.audio();
       onTurn({ role: role === "user" ? "user" : "assistant", text: message });
     },
-    onError: (m: unknown) => { meterRef.current.end("provider_error"); onError(typeof m === "string" ? m : "Voice connection error"); },
-    onDisconnect: () => { meterRef.current.end(userEndedRef.current ? "user_hangup" : "network_drop"); onEnded(); },
+    onError: (m: unknown) => { call.meter.end("provider_error"); onError(typeof m === "string" ? m : "Voice connection error"); },
+    onDisconnect: () => { call.meter.end(userEndedRef.current ? "user_hangup" : "network_drop"); onEnded(); },
   });
   const { startSession, endSession, status, isSpeaking, isMuted, setMuted, getInputVolume, getOutputVolume } = conv;
   const startedRef = useRef(false);
   useEffect(() => { endRef.current = () => { void endSession(); }; }, [endSession]);
 
-  useEffect(() => registerEnd(() => { userEndedRef.current = true; endSession(); }), [endSession, registerEnd]);
+  useEffect(() => registerEnd(() => { userEndedRef.current = true; call.hangUp(); endSession(); }), [endSession, registerEnd, call]);
+
+  // Unmount (the rep left the call or the page navigated) before the call connected reports it as failed_connect.
+  useEffect(() => {
+    call.mount();
+    return () => call.unmount();
+  }, [call]);
 
   useEffect(() => {
     if (!active || startedRef.current) return;
@@ -73,16 +81,14 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
     (async () => {
       try {
         userEndedRef.current = false;
-        const res = await fetch(`/api/elevenlabs/token?${new URLSearchParams({ scenarioId: scenario.id, title: scenario.title, ...(voiceTier ? { voiceTier } : {}) })}`);
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.message || "Could not get a voice token.");
-        const info = voiceInfoFrom(data);
-        if (info) onVoiceInfo?.(info);
-        meterRef.current = new CallMeter(data.callId, {
+        const data = await call.mint(`/api/elevenlabs/token?${new URLSearchParams({ scenarioId: scenario.id, title: scenario.title, ...(voiceTier ? { voiceTier } : {}) })}`, {
           // The server has already stopped and billed the call.
           onStop: (m) => { userEndedRef.current = true; endRef.current(); onError(m); },
           onGiveUp: () => endRef.current(),
         });
+        if (!data) return; // hung up or left while the token was on its way; already reported
+        const info = voiceInfoFrom(data);
+        if (info) onVoiceInfo?.(info);
         startSession({
           conversationToken: data.token,
           connectionType: "webrtc",
@@ -93,10 +99,13 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
         });
       } catch (e) {
         startedRef.current = false;
+        // A failed mint was already closed by the token route; a start that failed after the mint is reported here.
+        call.failed();
+        if (call.isCancelled) return;
         onError(e instanceof Error ? e.message : "Failed to start the call.");
       }
     })();
-  }, [active, scenario, startSession, onError, onVoiceInfo, voiceTier]);
+  }, [active, scenario, startSession, onError, onVoiceInfo, voiceTier, call]);
 
   useEffect(() => {
     if (!active) startedRef.current = false;
@@ -110,7 +119,7 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onV
     : isMuted ? { label: "Muted", tone: "caution" as const }
     : isSpeaking ? { label: `${name} is speaking`, tone: "signal" as const }
     : { label: "Your turn", tone: "ok" as const };
-  return <>{render({ orbState, status: statusLabel, muted: isMuted, toggleMute: () => setMuted(!isMuted), end: () => endSession(), getInputVolume, getOutputVolume })}</>;
+  return <>{render({ orbState, status: statusLabel, muted: isMuted, toggleMute: () => setMuted(!isMuted), end: () => { call.hangUp(); endSession(); }, getInputVolume, getOutputVolume })}</>;
 }
 
 export default function TrainerClient() {
