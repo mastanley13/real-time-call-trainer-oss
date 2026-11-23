@@ -95,6 +95,16 @@ export function exactCapStop(plan: PlanTier): boolean {
  * past a whole minute would otherwise round up to one more. Pro and Team get no grace, so their stop is unchanged.
  */
 export const FREE_END_GRACE_SECONDS = 20;
+/**
+ * How long past its last heartbeat a silent Free call is billed when settleStale reaps it (heartbeat_timeout): a tab closed
+ * mid-call with no end event. The client heartbeats every 10 seconds (HEARTBEAT_MS in callMeter.ts), so a call that was
+ * alive at its last heartbeat may have run up to one interval more before the next one would have arrived; 15 s covers
+ * that interval plus 5 s of timer and network jitter, and stays under HEARTBEAT_TIMEOUT_SECONDS, so the bill never reaches
+ * past the point where the server could already call it silent. The result is rounded up to whole started minutes and
+ * clamped to the reservation like any call. Pro and Team calls are not affected: a silent paid call is still billed
+ * until the server noticed, up to its reservation.
+ */
+export const FREE_ABANDON_GRACE_SECONDS = 15;
 /** A Free call is warned once this many seconds (or fewer) of its Free minutes are left, not counting the end grace. */
 export const FREE_CAP_WARNING_SECONDS = 60;
 

@@ -373,14 +373,26 @@ describe("billing a call", () => {
     expect(result?.billedMinutes).toBe(10);
   });
 
-  it("an abandoned call is settled the next time its owner asks for usage, billed until then", async () => {
+  it("an abandoned Free call is settled the next time its owner asks for usage, billed to its last heartbeat plus the grace", async () => {
     addUser("u-1");
     const begun = await beginCall("u-1", scn, at(0));
     if (!begun.ok) throw new Error();
     await heartbeat("u-1", begun.callId, "connected", at(0));
     await heartbeat("u-1", begun.callId, "ok", at(70));
     await usageSummary("u-1", at(500));
-    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 9 });
+    // 70 s + FREE_ABANDON_GRACE_SECONDS (15 s) = 85 s: 2 started minutes, not the 500 s until the reap.
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 85, billedMinutes: 2 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 2, minutesReserved: 0 });
+  });
+
+  it("an abandoned paid call is settled the next time its owner asks for usage, billed until then", async () => {
+    addUser("u-1", { planTier: "pro" });
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error();
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    await heartbeat("u-1", begun.callId, "ok", at(70));
+    await usageSummary("u-1", at(500));
+    expect(session(begun.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 500, billedMinutes: 9 });
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 9, minutesReserved: 0 });
   });
 });

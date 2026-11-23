@@ -485,13 +485,14 @@ describe("heartbeat trust: usage is settled from the server's mint time", () => 
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
   });
 
-  it("a silent Free call is still bounded by its reservation: a closed tab is not billed for a day", async () => {
+  it("a silent Free call is billed to its last heartbeat plus the grace: a closed tab is not billed for a day", async () => {
     addUser("u-1");
     const c = await begin("u-1");
     await heartbeat("u-1", c.callId, "connected", at(0));
     await usageSummary("u-1", at(3 * 3600));
-    expect(session(c.callId)).toMatchObject({ endReason: "heartbeat_timeout", billedMinutes: 10, abuseFlagged: false });
-    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
+    // Connect heartbeat at 0 s plus FREE_ABANDON_GRACE_SECONDS (15 s): 1 started minute, not the 10 it reserved.
+    expect(session(c.callId)).toMatchObject({ endReason: "heartbeat_timeout", billableSeconds: 15, billedMinutes: 1, abuseFlagged: false });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 1, minutesReserved: 0 });
   });
 
   it("the maximum length is the minutes left at mint time, capped at 60", async () => {
