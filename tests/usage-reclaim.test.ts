@@ -234,3 +234,34 @@ describe("two tabs start at once", () => {
     expect(calls[0]).toBe('raw:SELECT "id" FROM "User" WHERE "id" = ? FOR UPDATE');
   });
 });
+
+describe("endCall on a never-connected call is single-use", () => {
+  it("a second failed_connect end returns the stored result and does not release minutes twice", async () => {
+    addUser("u-1");
+    const first = await mint("u-1", 0);
+    expect(allowanceOf("u-1").minutesReserved).toBe(10);
+    const once = await endCall("u-1", first.callId, "failed_connect", at(10));
+    expect(once).toMatchObject({ outcome: "failed_connect", endReason: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
+    expect(entries(first.callId)).toHaveLength(0);
+    const twice = await endCall("u-1", first.callId, "failed_connect", at(12));
+    expect(twice).toMatchObject({ outcome: "failed_connect", endReason: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
+    expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 0, minutesReserved: 0 });
+    expect(session(first.callId).endedAt).toEqual(at(10));
+    // A later start does not reclaim an already-ended call; it just mints a new one.
+    const second = await mint("u-1", 50);
+    expect(session(first.callId)).toMatchObject({ endReason: "failed_connect", billedMinutes: 0, billableSeconds: 0 });
+    expect(session(first.callId).endedAt).toEqual(at(10));
+    expect(session(second.callId).endedAt).toBeNull();
+    expect(allowanceOf("u-1").minutesReserved).toBe(10);
+  });
+
+  it("endCall of someone else's never-connected call is null and leaves the reservation", async () => {
+    addUser("u-1");
+    addUser("u-2");
+    const first = await mint("u-1", 0);
+    expect(await endCall("u-2", first.callId, "failed_connect", at(10))).toBeNull();
+    expect(session(first.callId).endedAt).toBeNull();
+    expect(allowanceOf("u-1").minutesReserved).toBe(10);
+  });
+});
