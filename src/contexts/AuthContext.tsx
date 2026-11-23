@@ -3,7 +3,7 @@
 import * as React from "react";
 import { createContext, useCallback, useContext, useState, useEffect } from "react";
 import { isTokenFresh } from "@/lib/clientSession";
-import { installSessionExpiryGuard } from "@/lib/sessionExpiry";
+import { clearStoredSession, installSessionExpiryGuard, storedSessionToken } from "@/lib/sessionExpiry";
 
 export interface LoginCredentials {
   email: string;
@@ -85,19 +85,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 // load in the browser, before any component mounts, so requests from child mount effects are covered too.
 let demoModeActive = false;
 let clearActiveSession: (() => void) | null = null;
-
-function storedSessionToken(): string | null {
-  try {
-    return localStorage.getItem("authToken");
-  } catch {
-    return null;
-  }
-}
-
-function clearStoredSession() {
-  localStorage.removeItem("authToken");
-  localStorage.removeItem("userData");
-}
 
 if (typeof window !== "undefined") {
   installSessionExpiryGuard(window, {

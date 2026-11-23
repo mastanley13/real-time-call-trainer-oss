@@ -109,7 +109,7 @@ describe("expiredLoginHref", () => {
     expect(expiredLoginHref("/login", "?next=%2Ftrainer")).toBeNull();
   });
 
-  it.each(["/register", "/forgot-password", "/reset-password", "/access"])("goes to /login with no next from %s", (path) => {
+  it.each(["/register", "/forgot-password", "/reset-password", "/access", "/auth/complete"])("goes to /login with no next from %s", (path) => {
     expect(expiredLoginHref(path, "?plan=pro")).toBe("/login?reason=expired");
   });
 });

@@ -16,7 +16,7 @@ export const SESSION_401_ERRORS: readonly string[] = ["Authentication required",
 export const EXPIRED_REASON = "expired";
 
 /** Pages where an expired-session redirect must not carry a next, because they are the sign-in flow itself. */
-const AUTH_PAGES = ["/login", "/register", "/forgot-password", "/reset-password", "/access"];
+const AUTH_PAGES = ["/login", "/register", "/forgot-password", "/reset-password", "/access", "/auth/complete"];
 
 /** Largest 401 body we read when deciding. requireAuth's bodies are well under this. */
 const MAX_BODY_BYTES = 2048;
@@ -115,15 +115,70 @@ type Wrapped = typeof fetch & { [WRAPPED]?: SessionGuardOptions };
 /** Set once a redirect is under way, so parallel 401s don't stack navigations. */
 let redirecting = false;
 
+/** The installed guard, so expireSession uses the same target and options as the fetch wrapper. */
+let active: { target: SessionGuardTarget; wrapped: Wrapped } | null = null;
+
 /** Test hook: forget a previous redirect. */
 export function resetSessionExpiryRedirect(): void {
   redirecting = false;
 }
 
+/** The localStorage session token, or null when signed out or storage is unavailable. */
+export function storedSessionToken(): string | null {
+  try {
+    return localStorage.getItem("authToken");
+  } catch {
+    return null;
+  }
+}
+
+/** Removes the client session from localStorage. */
+export function clearStoredSession(): void {
+  try {
+    localStorage.removeItem("authToken");
+    localStorage.removeItem("userData");
+  } catch {
+    /* AuthContext treats unavailable storage as signed out. */
+  }
+}
+
+/** Used by expireSession when no guard is installed. */
+const STORAGE_OPTIONS: SessionGuardOptions = { currentSession: storedSessionToken, isDemo: () => false, onExpired: clearStoredSession };
+
 function requestUrl(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.href;
   return input.url;
+}
+
+/**
+ * What happened to a session 401: "expired" cleared the session (and navigated unless already on /login),
+ * "pending" means a redirect was already under way, "stale" means the request did not use the current
+ * session (signed out at the time, or a newer sign-in since, or demo mode) so nothing was touched.
+ */
+export type ExpireOutcome = "expired" | "pending" | "stale";
+
+function expireIfSameSession(session: string | null, target: SessionGuardTarget, opts: SessionGuardOptions): ExpireOutcome {
+  if (redirecting) return "pending";
+  if (!session || opts.isDemo() || opts.currentSession() !== session) return "stale";
+  opts.onExpired();
+  const href = expiredLoginHref(target.location.pathname ?? "", target.location.search ?? "");
+  if (href) {
+    redirecting = true;
+    target.location.assign(href);
+  }
+  return "expired";
+}
+
+/**
+ * For callers that already read a session 401 themselves (the voice call): expire the session the request
+ * started with, through the same once-guard, same-session check and /login?next=&reason=expired redirect
+ * as the fetch wrapper, so only one navigation happens and a newer session is never cleared.
+ */
+export function expireSession(sessionAtRequestStart: string | null): ExpireOutcome {
+  const target = active?.target ?? (typeof window !== "undefined" ? (window as unknown as SessionGuardTarget) : undefined);
+  if (!target?.location) return "stale";
+  return expireIfSameSession(sessionAtRequestStart, target, active?.wrapped[WRAPPED] ?? STORAGE_OPTIONS);
 }
 
 /**
@@ -138,12 +193,7 @@ export async function handleGuarded401(
 ): Promise<void> {
   if (redirecting || !session) return;
   if (!(await responseIsSessionExpiry(res))) return;
-  if (redirecting || opts.isDemo() || opts.currentSession() !== session) return;
-  opts.onExpired();
-  const href = expiredLoginHref(target.location.pathname, target.location.search);
-  if (!href) return;
-  redirecting = true;
-  target.location.assign(href);
+  expireIfSameSession(session, target, opts);
 }
 
 /**
@@ -183,7 +233,9 @@ export function installSessionExpiryGuard(target: SessionGuardTarget | undefined
   };
   wrapped[WRAPPED] = opts;
   target.fetch = wrapped;
+  active = { target, wrapped };
   return () => {
     if (target.fetch === wrapped) target.fetch = original;
+    if (active?.wrapped === wrapped) active = null;
   };
 }
