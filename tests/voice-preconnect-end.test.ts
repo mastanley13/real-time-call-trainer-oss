@@ -156,6 +156,19 @@ describe("CallMeter before the first heartbeat", () => {
     expect(add).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("isConnected needs the channel open AND the first audio, with or without a callId; nothing is sent without one", () => {
+    for (const id of ["call-1", undefined]) {
+      const m = new CallMeter(id, noop);
+      m.open();
+      expect(m.isConnected).toBe(false);
+      m.audio();
+      expect(m.isConnected).toBe(true);
+      m.end("user_hangup");
+    }
+    expect(beats()).toEqual([{ callId: "call-1", state: "connected" }]);
+    expect(ends()).toEqual([{ callId: "call-1", reason: "user_hangup", keepalive: true }]);
+  });
 });
 
 describe("OpenAI Realtime and GPT-Live: every exit before connect reports failed_connect once", () => {
@@ -311,6 +324,48 @@ describe("OpenAI Realtime and GPT-Live: every exit before connect reports failed
     expect(lastPc!.remoteSet).toBe(0);
     expect(beats()).toEqual([]);
     expect(ends()).toEqual(FAILED_ONCE("call-rt"));
+  });
+
+  it("hang-up with the data channel open but no remote audio yet is still a pre-connect exit: closed at once, back to the briefing", async () => {
+    stubFetch(answered);
+    const h = handlers();
+    const call = new RealtimeCall(scenario, h);
+    await call.start();
+    lastPc!.dc.readyState = "open";
+    lastPc!.dc.onopen!();
+    expect(h.onView).toHaveBeenCalledWith(expect.objectContaining({ phase: "connected" }));
+    call.end();
+    expect(h.onView).not.toHaveBeenCalledWith(expect.objectContaining({ phase: "ending" })); // no connected-call grace
+    expect(lastPc!.closed).toBe(true);
+    expect(track.stop).toHaveBeenCalled();
+    expect(h.onEnded).toHaveBeenCalledOnce();
+    expect(ends()).toEqual(FAILED_ONCE("call-rt"));
+    // Late remote audio and a late transcript event are ignored.
+    lastPc!.ontrack?.({ streams: [{ getTracks: () => [] }] });
+    await flush();
+    expect(beats()).toEqual([]);
+    expect(h.onTurn).not.toHaveBeenCalled();
+    expect(ends()).toHaveLength(1);
+  });
+
+  it("after the meter connected, a hang-up is the normal connected hang-up (grace for the last words, then user_hangup)", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
+    stubFetch(answered);
+    const h = handlers();
+    const call = new RealtimeCall(scenario, h);
+    await call.start();
+    lastPc!.dc.readyState = "open";
+    lastPc!.dc.onopen!();
+    lastPc!.ontrack!({ streams: [{ getTracks: () => [] }] });
+    await vi.advanceTimersByTimeAsync(600);
+    expect(beats()).toEqual([{ callId: "call-rt", state: "connected" }]);
+    call.end();
+    // The connected path: the "ending" phase (mic muted, grace while a transcript is pending; none is pending here).
+    expect(h.onView).toHaveBeenCalledWith(expect.objectContaining({ phase: "ending" }));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(lastPc!.closed).toBe(true);
+    expect(h.onEnded).toHaveBeenCalledOnce();
+    expect(ends()).toEqual([{ callId: "call-rt", reason: "user_hangup", keepalive: true }]);
   });
 
   it("a page hide after the call connected leaves the call running", async () => {
@@ -523,15 +578,42 @@ describe("ElevenLabs: every exit before connect reports failed_connect once", ()
     expect(beats()).toEqual([]);
   });
 
-  it("after onConnect, a hang-up leaves ending the screen to the SDK's onDisconnect, as before", async () => {
-    const { call, sdk, h, setUserEnded } = await started();
+  it("hang-up after onConnect but before the first agent audio is still a pre-connect exit: cancelled, back to the briefing at once", async () => {
+    const { call, sdk, h, onTurn, setUserEnded } = await started();
     sdk.onConnect();
     setUserEnded();
-    call.hangUp(); // still before the first agent audio: the meter reports failed_connect now
+    call.hangUp();
+    expect(ends()).toEqual(FAILED_ONCE("call-el"));
+    expect(h.endSession).toHaveBeenCalledOnce();
+    // The screen ends now, so a disconnect that never comes cannot leave the rep on the call screen.
+    expect(h.onEnded).toHaveBeenCalledOnce();
+    expect(call.isCancelled).toBe(true);
+    // A late agent message is ignored: no transcript turn, no connect heartbeat.
+    sdk.onMessage({ message: "Hi, this is the buyer.", role: "agent" });
+    sdk.onDisconnect();
+    expect(onTurn).not.toHaveBeenCalled();
+    expect(beats()).toEqual([]);
+    expect(ends()).toHaveLength(1);
+    expect(h.onEnded).toHaveBeenCalledOnce();
+  });
+
+  it("after the meter connected, a hang-up is the normal connected hang-up: the screen and the reason come from onDisconnect", async () => {
+    const { call, sdk, h, onTurn, setUserEnded } = await started();
+    sdk.onConnect();
+    sdk.onMessage({ message: "Hi, this is the buyer.", role: "agent" });
+    expect(call.meter.isConnected).toBe(true);
+    setUserEnded();
+    call.hangUp();
+    expect(call.isCancelled).toBe(false);
+    expect(h.endSession).not.toHaveBeenCalled(); // the component ends the session, as before
     expect(h.onEnded).not.toHaveBeenCalled();
+    expect(ends()).toEqual([]);
+    // The last words still arrive while the session closes.
+    sdk.onMessage({ message: "Thanks, bye.", role: "user" });
+    expect(onTurn).toHaveBeenLastCalledWith({ role: "user", text: "Thanks, bye." });
     sdk.onDisconnect();
     expect(h.onEnded).toHaveBeenCalledOnce();
-    expect(ends()).toEqual(FAILED_ONCE("call-el"));
+    expect(ends()).toEqual([{ callId: "call-el", reason: "user_hangup", keepalive: true }]);
   });
 
   it("a connected call's hang-up is reported with its own reason through onDisconnect, once", async () => {
@@ -691,11 +773,15 @@ describe("the same rules on both engines for every exit before connect", () => {
     tornDown: () => boolean;
   }
 
-  async function realtime(): Promise<Driven> {
+  /** "connecting": the transport is not up yet. "transport up": channel or SDK connected, first audio not arrived. */
+  type Stage = "connecting" | "transport up";
+
+  async function realtime(stage: Stage): Promise<Driven> {
     stubFetch((url) => (url === "/api/realtime/session" ? Response.json({ clientSecret: "ek_fictional_test_only", callId: "call-x", sessionId: "call-x" }) : Response.json({ sdp: "v=0 answer" })));
     const h = handlers();
     const call = new RealtimeCall(scenario, h);
     await call.start();
+    if (stage === "transport up") { lastPc!.dc.readyState = "open"; lastPc!.dc.onopen!(); }
     return {
       exit: async (e) => { if (e === "hang-up") call.end(); else if (e === "page hide") page.dispatchEvent(new Event("pagehide")); else call.close(false); await flush(); },
       late: async () => { lastPc!.dc.readyState = "open"; lastPc!.dc.onopen?.(); lastPc!.ontrack?.({ streams: [{ getTracks: () => [] }] }); await flush(); },
@@ -704,7 +790,7 @@ describe("the same rules on both engines for every exit before connect", () => {
     };
   }
 
-  async function elevenLabs(): Promise<Driven> {
+  async function elevenLabs(stage: Stage): Promise<Driven> {
     stubFetch(() => Response.json({ token: "tok_fictional_test_only", callId: "call-x" }));
     const h = elHandlers();
     const call = new ElevenLabsStart(h);
@@ -712,6 +798,7 @@ describe("the same rules on both engines for every exit before connect", () => {
     const data = await call.mint("/api/elevenlabs/token", noop);
     const onTurn = vi.fn();
     const sdk = call.sessionCallbacks(data!.attempt, { onTurn, userEnded: () => false });
+    if (stage === "transport up") sdk.onConnect();
     return {
       exit: async (e) => { if (e === "hang-up") call.hangUp(); else if (e === "page hide") page.dispatchEvent(new Event("pagehide")); else call.unmount(); await flush(); },
       late: async () => { sdk.onConnect(); sdk.onMessage({ message: "Hi, this is the buyer.", role: "agent" }); await flush(); expect(onTurn).not.toHaveBeenCalled(); },
@@ -727,9 +814,10 @@ describe("the same rules on both engines for every exit before connect", () => {
   };
 
   for (const [engine, drive] of [["Realtime", realtime], ["ElevenLabs", elevenLabs]] as const) {
+    for (const stage of ["connecting", "transport up"] as const)
     for (const exit of ["hang-up", "page hide", "unmount"] as const) {
-      it(`${engine}, ${exit} while connecting: failed_connect once, connection torn down, same screen result, nothing resumes`, async () => {
-        const d = await drive();
+      it(`${engine}, ${exit} (${stage}, no audio yet): failed_connect once, connection torn down, same screen result, nothing resumes`, async () => {
+        const d = await drive(stage);
         await d.exit(exit);
         expect(ends()).toEqual(FAILED_ONCE("call-x"));
         expect(d.tornDown()).toBe(true);

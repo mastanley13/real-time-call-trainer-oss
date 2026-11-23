@@ -25,7 +25,9 @@ export interface SessionCallbacks {
  * A cancelled attempt is final: its SDK session is ended, every later callback (connect, message, error, disconnect) is
  * ignored, and a late onConnect ends that SDK session again. A token that arrives for it is reported and never started.
  *
- * After the call connected (the meter sent its first heartbeat), the SDK's own end events apply as before.
+ * "Before connect" means meter.isConnected is false (SDK connected AND first agent audio arrived), for every exit and on
+ * both engines; a call whose SDK connected but has not yet played audio is still before connect. After the call
+ * connected, the SDK's own end events apply as before.
  */
 export class ElevenLabsStart {
   /** The metered call, once the token route answered with a callId. A no-op meter until then. */
@@ -35,8 +37,6 @@ export class ElevenLabsStart {
   private unmounted = false;
   /** The page was hidden (closed, navigated away) while the token request was pending. */
   private hiddenDuringMint = false;
-  /** The SDK reported the connection (onConnect). From then on a hang-up's screen end comes from its onDisconnect. */
-  private sdkConnected = false;
   /** The screen was ended (onEnded or the page-hide error): every later SDK callback is ignored. */
   private screenEnded = false;
 
@@ -75,7 +75,6 @@ export class ElevenLabsStart {
     this.meter = new CallMeter(undefined, { onStop: () => {}, onGiveUp: () => {} });
     this.cancelled = false;
     this.hiddenDuringMint = false;
-    this.sdkConnected = false;
     // A page hide while the token is on its way cancels the attempt at once (as RealtimeCall does during its mic prompt and
     // mint); the token, if it still arrives, is then reported and never started.
     const unlisten = onPageHide(() => {
@@ -105,7 +104,6 @@ export class ElevenLabsStart {
       onConnect: () => {
         // A cancelled attempt that connects late is ended at once; it was already reported and its screen is gone.
         if (!live()) return this.h.endSession();
-        this.sdkConnected = true;
         this.meter.open();
       },
       onMessage: ({ message, role }) => {
@@ -131,15 +129,13 @@ export class ElevenLabsStart {
   failed() { this.meter.abandon(); }
 
   /**
-   * The rep hung up. Before the SDK reported a connection the attempt is cancelled and the screen ends here. After
-   * onConnect the SDK's onDisconnect ends the screen as before; a call that had not yet sent its first heartbeat is still
-   * reported as failed_connect now.
+   * The rep hung up. Before the call connected (meter.isConnected: SDK connected AND the first agent audio arrived; also
+   * while the SDK is connected but silent) the attempt is cancelled and the screen ends here, without waiting for an SDK
+   * callback that may never come. After that it is the normal connected hang-up: the caller ends the SDK session, and the
+   * SDK's onDisconnect reports user_hangup and ends the screen, as before.
    */
   hangUp() {
-    if (this.sdkConnected) {
-      this.meter.abandon();
-      return;
-    }
+    if (this.meter.isConnected) return;
     this.cancel();
     this.endScreen();
   }

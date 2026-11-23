@@ -70,7 +70,11 @@ export class CallMeter {
     this.h.onAbandon?.();
   }
 
-  /** The first heartbeat was sent: the call counts as connected for billing. */
+  /**
+   * The call connected: the data channel (or SDK) is open AND the first remote audio arrived, which is when the first
+   * heartbeat is sent. Both engines use this one definition: before it, every exit (hang-up, page hide, unmount) is a
+   * pre-connect exit that cancels the attempt. Tracked without a callId too (demo mode), where nothing is sent.
+   */
   get isConnected() { return this.connected; }
 
   open() { this.opened = true; this.maybeConnect(); }
@@ -85,8 +89,9 @@ export class CallMeter {
   }
 
   private maybeConnect() {
-    if (!this.callId || this.ended || this.connected || !this.opened || !this.heard) return;
+    if (this.ended || this.connected || !this.opened || !this.heard) return;
     this.connected = true;
+    if (!this.callId) return;
     void this.beat("connected");
     this.timer = setInterval(() => void this.beat(this.recovering ? "recovering" : "ok"), HEARTBEAT_MS);
   }

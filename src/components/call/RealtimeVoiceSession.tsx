@@ -126,16 +126,15 @@ export class RealtimeCall {
       // unmount or page hide during the mint request closed this call before it knew the callId: report that now
       // (failed_connect). An answer that never reaches the page (the tab closed first) is reclaimed by the server on the
       // next voice start once it is over 45 s old with no heartbeat (bills 0).
-      if (typeof secret.callId === "string") {
-        this.meter = new CallMeter(secret.callId, {
-          // The server has already stopped and billed the call; this ends the client side.
-          onStop: (m) => this.fail(m, "user_hangup"),
-          onGiveUp: () => this.fail("The voice connection dropped. Check your network. Your transcript so far is kept.", "network_drop"),
-          // The page was hidden while connecting (pageHidden below has usually closed the call already).
-          onAbandon: () => this.pageHidden(),
-        });
-      }
-      if (this.closed) return this.meter?.end("failed_connect");
+      // Without a callId (demo mode) the meter sends nothing, but it still says when the call connected (isConnected).
+      this.meter = new CallMeter(typeof secret.callId === "string" ? secret.callId : undefined, {
+        // The server has already stopped and billed the call; this ends the client side.
+        onStop: (m) => this.fail(m, "user_hangup"),
+        onGiveUp: () => this.fail("The voice connection dropped. Check your network. Your transcript so far is kept.", "network_drop"),
+        // The page was hidden while connecting (pageHidden below has usually closed the call already).
+        onAbandon: () => this.pageHidden(),
+      });
+      if (this.closed) return this.meter.end("failed_connect");
       const redirect = realtimeAuthRedirect(res.status, secret.error);
       if (redirect) return this.signInAgain(redirect, session);
       if (!res.ok || !(secret.clientSecret || secret.liveTicket)) return this.fail(secret.message || "Could not start the voice call. Try again, or switch to Text.");
@@ -329,7 +328,9 @@ export class RealtimeCall {
   end = () => {
     if (this.closed || this.ending) return;
     this.ending = true;
-    if (this.view.phase !== "connected") return this.close(true);
+    // Before the call connected (meter.isConnected: data channel open AND first remote audio; the same definition as
+    // ElevenLabsStart), the hang-up ends the attempt at once: no grace, nothing to wait for, back to the briefing.
+    if (!this.meter?.isConnected) return this.close(true);
     this.mic?.getAudioTracks().forEach((t) => (t.enabled = false));
     if (this.audio) this.audio.muted = true;
     this.set({ phase: "ending", speaking: false });
@@ -353,8 +354,8 @@ export class RealtimeCall {
   }
 
   /**
-   * The page was hidden (closed tab, navigation, back/forward cache). Before the call connected (the meter's first
-   * heartbeat; without a meter, the connected phase), the attempt ends for good at any step: a mic stream that arrives
+   * The page was hidden (closed tab, navigation, back/forward cache). Before the call connected (meter.isConnected:
+   * data channel open AND first remote audio; no meter yet means not connected), the attempt ends for good at any step: a mic stream that arrives
    * later is stopped, no mint is made, a minted call is reported as failed_connect once, a pending SDP request is aborted,
    * and the peer connection and mic are closed. A page restored from the back/forward cache cannot resume it, since every
    * later event of a closed call is ignored. The trainer goes back to the briefing with the reason, without grading.
@@ -362,8 +363,7 @@ export class RealtimeCall {
    */
   private pageHidden() {
     if (this.closed) return;
-    const connected = this.meter ? this.meter.isConnected : this.view.phase === "connected";
-    if (connected) return;
+    if (this.meter?.isConnected) return;
     this.h.onError(LEFT_BEFORE_CONNECT_MESSAGE);
     this.close(false);
   }
