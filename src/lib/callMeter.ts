@@ -17,6 +17,21 @@ const HEARTBEAT_MS = 10_000;
 /** A dropped connection that has not recovered after this long ends the call (rule 3). */
 export const RECOVER_MS = 10_000;
 
+/**
+ * Calls `fn` when the page is hidden for good (tab closed, navigated away, or put in the back/forward cache). Returns
+ * the unsubscribe. A no-op outside a browser.
+ *
+ * Used while a mint request is pending, when there is no callId to report yet: if the answer still reaches this page,
+ * the minted call is ended at once as failed_connect. If the page is gone before the answer arrives, nothing can report
+ * it; the server's safety net then closes it on the user's next voice start once it is over
+ * NEVER_CONNECTED_RECLAIM_SECONDS (45 s) old with no heartbeat (failed_connect, 0 s, 0 minutes).
+ */
+export function onPageHide(fn: () => void): () => void {
+  if (typeof window === "undefined" || typeof window.addEventListener !== "function") return () => {};
+  window.addEventListener("pagehide", fn);
+  return () => { if (typeof window.removeEventListener === "function") window.removeEventListener("pagehide", fn); };
+}
+
 export class CallMeter {
   private opened = false;
   private heard = false;
@@ -25,14 +40,13 @@ export class CallMeter {
   private ended = false;
   private timer?: ReturnType<typeof setInterval>;
   private recoverTimer?: ReturnType<typeof setTimeout>;
+  private unlistenPageHide: () => void = () => {};
 
   /** onStop: the server says the allowance ran out. onGiveUp: the connection did not recover in time. */
   constructor(private callId: string | undefined, private h: { onStop: (message: string) => void; onGiveUp: () => void }) {
     // Closing the tab or navigating away before the call connected: report it now, with a keepalive request.
-    if (callId && typeof window !== "undefined" && typeof window.addEventListener === "function") window.addEventListener("pagehide", this.onPageHide);
+    if (callId) this.unlistenPageHide = onPageHide(() => this.abandon());
   }
-
-  private onPageHide = () => this.abandon();
 
   open() { this.opened = true; this.maybeConnect(); }
   audio() { this.heard = true; this.maybeConnect(); }
@@ -89,7 +103,7 @@ export class CallMeter {
     clearInterval(this.timer);
     clearTimeout(this.recoverTimer);
     if (!this.callId) return;
-    if (typeof window !== "undefined" && typeof window.removeEventListener === "function") window.removeEventListener("pagehide", this.onPageHide);
+    this.unlistenPageHide();
     const sent: MeterEndReason = this.connected ? reason : "failed_connect";
     void fetch("/api/usage/end", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ callId: this.callId, reason: sent }), keepalive: true }).catch(() => {});
   }

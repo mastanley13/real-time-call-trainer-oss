@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Scenario } from "@/lib/scenarios";
 import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
-import { CallMeter, type MeterEndReason } from "@/lib/callMeter";
+import { CallMeter, onPageHide, type MeterEndReason } from "@/lib/callMeter";
 import { LiveTranscript, applyLiveEvent, type LiveServerEvent } from "@/lib/live";
 import { expireSession, storedSessionKey } from "@/lib/sessionExpiry";
 import { TurnAssembler, applyRealtimeEvent, averageLevel, micErrorMessage, openingInstructions, realtimeAuthRedirect, type AssembledTurn, type RealtimeServerEvent } from "@/lib/realtime";
@@ -50,6 +50,8 @@ export function voiceInfoFrom(data: { voiceTier?: unknown; nextCallStandard?: un
 }
 
 const EXPIRED = "The voice session expired before it connected. Start the call again.";
+/** Shown only if the page comes back (the back/forward cache) after it was hidden while the call was being set up. */
+const LEFT_DURING_MINT = "The call stopped because you left the page before it connected. Start the call again.";
 /** Grace period on hang-up so the trainee's last words still get transcribed. */
 const END_GRACE_MS = 1500;
 
@@ -110,11 +112,17 @@ export class RealtimeCall {
     this.set({ phase: "connecting" });
 
     let secret: { clientSecret?: string; liveTicket?: string; voiceApi?: unknown; expiresAt?: number; message?: string; callId?: string; receipt?: unknown; sessionId?: unknown; voiceTier?: unknown; nextCallStandard?: unknown; voiceTrial?: unknown; maxSeconds?: unknown; error?: unknown };
+    // A page hide while the mint is pending has no callId to report yet. It marks the attempt, and an answer that still
+    // reaches this page is ended at once as failed_connect. An answer that never reaches the page (the tab closed first)
+    // is reclaimed by the server on the next voice start once it is over 45 s old with no heartbeat (bills 0).
+    let hiddenDuringMint = false;
+    const unlistenPageHide = onPageHide(() => { hiddenDuringMint = true; });
     try {
       // The rep's Standard or Premium pick is a request; the server rechecks entitlement and decides.
       const session = storedSessionKey();
       const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario, ...(this.voiceTier ? { voiceTier: this.voiceTier } : {}) }) });
       secret = await res.json().catch(() => ({}));
+      unlistenPageHide();
       // The meter exists as soon as the server says it minted, so every exit from here on reports the end. A hang-up or
       // unmount during the mint request closed this call before it knew the callId: report that now (failed_connect).
       if (typeof secret.callId === "string") {
@@ -125,10 +133,12 @@ export class RealtimeCall {
         });
       }
       if (this.closed) return this.meter?.end("failed_connect");
+      if (hiddenDuringMint && res.ok) return this.fail(LEFT_DURING_MINT, "failed_connect");
       const redirect = realtimeAuthRedirect(res.status, secret.error);
       if (redirect) return this.signInAgain(redirect, session);
       if (!res.ok || !(secret.clientSecret || secret.liveTicket)) return this.fail(secret.message || "Could not start the voice call. Try again, or switch to Text.");
     } catch {
+      unlistenPageHide();
       return this.fail("Could not reach the server to start the voice call. Check your connection, then try again.");
     }
     if (this.closed) return;

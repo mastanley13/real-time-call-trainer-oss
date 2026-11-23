@@ -16,6 +16,7 @@ const track = { enabled: true, stop: vi.fn() };
 const mic = { getTracks: () => [track], getAudioTracks: () => [track] };
 const handlers = () => ({ onTurn: vi.fn(), onEnded: vi.fn(), onError: vi.fn(), onView: vi.fn(), onMinted: vi.fn(), onVoiceInfo: vi.fn() });
 const noop = { onStop: () => {}, onGiveUp: () => {} };
+const elHandlers = () => ({ onEnded: vi.fn(), onError: vi.fn() });
 
 type Route = (url: string, init?: RequestInit) => Promise<Response> | Response;
 /** fetch stub: /api/usage/* answers 200; anything else goes to `route`. */
@@ -230,6 +231,45 @@ describe("OpenAI Realtime and GPT-Live: every exit before connect reports failed
     expect(ends()).toEqual([{ callId: "call-rt", reason: "failed_connect", keepalive: true }]);
   });
 
+  it("closing the tab while the mint request is pending: a mint that still arrives is reported once and never continues", async () => {
+    const mint = deferred<Response>();
+    stubFetch((url) => (url === "/api/realtime/session" ? mint.promise : Response.json({ sdp: "v=0 answer" })));
+    const h = handlers();
+    const call = new RealtimeCall(scenario, h);
+    const started = call.start();
+    await flush();
+    page.dispatchEvent(new Event("pagehide"));
+    mint.resolve(minted());
+    await started;
+    page.dispatchEvent(new Event("pagehide"));
+    call.close(false);
+    expect(ends()).toEqual([{ callId: "call-rt", reason: "failed_connect", keepalive: true }]);
+    expect(fetchMock.mock.calls.map(([u]) => u)).not.toContain("/api/realtime/sdp");
+    expect(h.onMinted).not.toHaveBeenCalled();
+    // Seen only if the page comes back from the back/forward cache: the trainer returns to the briefing with it.
+    expect(h.onError).toHaveBeenCalledWith("The call stopped because you left the page before it connected. Start the call again.");
+  });
+
+  it("a page hide during a mint that fails reports nothing and keeps the server's message", async () => {
+    const mint = deferred<Response>();
+    stubFetch(() => mint.promise);
+    const h = handlers();
+    const started = new RealtimeCall(scenario, h).start();
+    await flush();
+    page.dispatchEvent(new Event("pagehide"));
+    mint.resolve(Response.json({ error: "minutes_reserved", message: "Your minutes are held by another call." }, { status: 409 }));
+    await started;
+    expect(ends()).toEqual([]);
+    expect(h.onError).toHaveBeenCalledWith("Your minutes are held by another call.");
+  });
+
+  it("the pending-mint page listener is removed once the mint answers", async () => {
+    const remove = vi.spyOn(window, "removeEventListener");
+    stubFetch(() => Response.json({ error: "minutes_reserved" }, { status: 409 }));
+    await new RealtimeCall(scenario, handlers()).start();
+    expect(remove).toHaveBeenCalledWith("pagehide", expect.any(Function));
+  });
+
   it("a mic that is refused never mints, so there is nothing to report", async () => {
     vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: vi.fn(async () => { throw Object.assign(new Error("denied"), { name: "NotAllowedError" }); }) } });
     const h = handlers();
@@ -246,14 +286,14 @@ describe("ElevenLabs: every exit before connect reports failed_connect once", ()
   it("hang-up while the token request is in flight ends the call screen, and the minted call is reported once and never started", async () => {
     const answer = deferred<Response>();
     stubFetch(() => answer.promise);
-    const onEnded = vi.fn();
-    const call = new ElevenLabsStart({ onEnded });
+    const h = elHandlers();
+    const call = new ElevenLabsStart(h);
     call.mount();
     const pending = call.mint(URL, noop);
     await flush();
     call.hangUp();
     call.hangUp();
-    expect(onEnded).toHaveBeenCalledOnce();
+    expect(h.onEnded).toHaveBeenCalledOnce();
     answer.resolve(token());
     expect(await pending).toBeNull();
     call.unmount();
@@ -263,8 +303,8 @@ describe("ElevenLabs: every exit before connect reports failed_connect once", ()
   it("unmount while the token request is in flight reports the minted call once", async () => {
     const answer = deferred<Response>();
     stubFetch(() => answer.promise);
-    const onEnded = vi.fn();
-    const call = new ElevenLabsStart({ onEnded });
+    const h = elHandlers();
+    const call = new ElevenLabsStart(h);
     call.mount();
     const pending = call.mint(URL, noop);
     await flush();
@@ -272,13 +312,13 @@ describe("ElevenLabs: every exit before connect reports failed_connect once", ()
     answer.resolve(token());
     expect(await pending).toBeNull();
     expect(ends()).toEqual([{ callId: "call-el", reason: "failed_connect", keepalive: true }]);
-    expect(onEnded).not.toHaveBeenCalled();
+    expect(h.onEnded).not.toHaveBeenCalled();
   });
 
   it("a StrictMode unmount and remount during the token request does not cancel the call", async () => {
     const answer = deferred<Response>();
     stubFetch(() => answer.promise);
-    const call = new ElevenLabsStart({ onEnded: vi.fn() });
+    const call = new ElevenLabsStart(elHandlers());
     call.mount();
     const pending = call.mint(URL, noop);
     call.unmount();
@@ -289,32 +329,108 @@ describe("ElevenLabs: every exit before connect reports failed_connect once", ()
     call.unmount();
   });
 
-  it("hang-up while the SDK is connecting reports failed_connect once, even if onDisconnect follows", async () => {
+  it("hang-up while the SDK is connecting reports failed_connect once and ends the screen at once, with no SDK callback", async () => {
     stubFetch(token);
-    const onEnded = vi.fn();
-    const call = new ElevenLabsStart({ onEnded });
+    const h = elHandlers();
+    const call = new ElevenLabsStart(h);
     call.mount();
     await call.mint(URL, noop);
     call.hangUp();
-    call.meter.end("user_hangup"); // the SDK's onDisconnect, if it comes
-    call.unmount();
+    expect(h.onEnded).toHaveBeenCalledOnce();
     expect(ends()).toEqual([{ callId: "call-el", reason: "failed_connect", keepalive: true }]);
-    expect(onEnded).not.toHaveBeenCalled(); // the SDK's onDisconnect ends the screen for a started session
+    expect(call.isCancelled).toBe(true);
   });
 
-  it("a provider error before connect is reported as failed_connect once", async () => {
+  it("after that hang-up, a late disconnect or error callback from the same attempt is ignored", async () => {
     stubFetch(token);
-    const call = new ElevenLabsStart({ onEnded: vi.fn() });
+    const h = elHandlers();
+    const call = new ElevenLabsStart(h);
     call.mount();
     await call.mint(URL, noop);
-    call.meter.end("provider_error"); // useConversation onError
-    call.meter.end("network_drop"); // and onDisconnect
+    call.hangUp();
+    call.disconnected("user_hangup");
+    call.providerError("Session failed to start");
+    call.hangUp();
+    call.unmount();
+    expect(h.onEnded).toHaveBeenCalledOnce();
+    expect(h.onError).not.toHaveBeenCalled();
     expect(ends()).toEqual([{ callId: "call-el", reason: "failed_connect", keepalive: true }]);
+  });
+
+  it("after onConnect, a hang-up leaves ending the screen to the SDK's onDisconnect, as before", async () => {
+    stubFetch(token);
+    const h = elHandlers();
+    const call = new ElevenLabsStart(h);
+    call.mount();
+    await call.mint(URL, noop);
+    call.connected();
+    call.hangUp(); // still before the first agent audio: the meter reports failed_connect now
+    expect(h.onEnded).not.toHaveBeenCalled();
+    call.disconnected("user_hangup");
+    expect(h.onEnded).toHaveBeenCalledOnce();
+    expect(ends()).toEqual([{ callId: "call-el", reason: "failed_connect", keepalive: true }]);
+  });
+
+  it("a connected call's hang-up is reported with its own reason through onDisconnect, once", async () => {
+    stubFetch(token);
+    const h = elHandlers();
+    const call = new ElevenLabsStart(h);
+    call.mount();
+    await call.mint(URL, noop);
+    call.connected();
+    call.meter.audio();
+    call.hangUp();
+    call.disconnected("user_hangup");
+    call.disconnected("network_drop");
+    expect(h.onEnded).toHaveBeenCalledOnce();
+    expect(ends()).toEqual([{ callId: "call-el", reason: "user_hangup", keepalive: true }]);
+  });
+
+  it("a provider error before connect is reported as failed_connect once and shown; the disconnect after it ends the screen", async () => {
+    stubFetch(token);
+    const h = elHandlers();
+    const call = new ElevenLabsStart(h);
+    call.mount();
+    await call.mint(URL, noop);
+    call.providerError("Voice connection error");
+    call.disconnected("network_drop");
+    expect(ends()).toEqual([{ callId: "call-el", reason: "failed_connect", keepalive: true }]);
+    expect(h.onError).toHaveBeenCalledWith("Voice connection error");
+    expect(h.onEnded).toHaveBeenCalledOnce();
+  });
+
+  it("closing the tab while the token request is pending: a token that still arrives is reported once and never started", async () => {
+    const answer = deferred<Response>();
+    stubFetch(() => answer.promise);
+    const h = elHandlers();
+    const call = new ElevenLabsStart(h);
+    call.mount();
+    const pending = call.mint(URL, noop);
+    await flush();
+    page.dispatchEvent(new Event("pagehide"));
+    answer.resolve(token());
+    expect(await pending).toBeNull();
+    page.dispatchEvent(new Event("pagehide"));
+    call.unmount();
+    expect(ends()).toEqual([{ callId: "call-el", reason: "failed_connect", keepalive: true }]);
+    // The page came back (back/forward cache): the call screen ends instead of waiting on a call that never starts.
+    expect(h.onEnded).toHaveBeenCalledOnce();
+  });
+
+  it("a page hide after the token arrived is handled by the meter, not by the pending-mint listener", async () => {
+    stubFetch(token);
+    const h = elHandlers();
+    const call = new ElevenLabsStart(h);
+    call.mount();
+    expect(await call.mint(URL, noop)).not.toBeNull();
+    page.dispatchEvent(new Event("pagehide"));
+    expect(ends()).toEqual([{ callId: "call-el", reason: "failed_connect", keepalive: true }]);
+    expect(h.onEnded).not.toHaveBeenCalled();
   });
 
   it("a start that fails after the mint is reported once", async () => {
     stubFetch(token);
-    const call = new ElevenLabsStart({ onEnded: vi.fn() });
+    const call = new ElevenLabsStart(elHandlers());
     call.mount();
     await call.mint(URL, noop);
     call.failed();
@@ -324,7 +440,7 @@ describe("ElevenLabs: every exit before connect reports failed_connect once", ()
 
   it("unmount or closing the tab while connecting reports failed_connect once", async () => {
     stubFetch(token);
-    const call = new ElevenLabsStart({ onEnded: vi.fn() });
+    const call = new ElevenLabsStart(elHandlers());
     call.mount();
     await call.mint(URL, noop);
     page.dispatchEvent(new Event("pagehide"));
@@ -334,7 +450,7 @@ describe("ElevenLabs: every exit before connect reports failed_connect once", ()
 
   it("a failed mint throws and reports nothing: the token route already closed it", async () => {
     stubFetch(() => Response.json({ error: "minutes_reserved", message: "Your minutes are held by another call." }, { status: 409 }));
-    const call = new ElevenLabsStart({ onEnded: vi.fn() });
+    const call = new ElevenLabsStart(elHandlers());
     call.mount();
     await expect(call.mint(URL, noop)).rejects.toThrow("Your minutes are held by another call.");
     call.failed();
@@ -344,10 +460,10 @@ describe("ElevenLabs: every exit before connect reports failed_connect once", ()
 
   it("a connected call is left to its own end event on unmount", async () => {
     stubFetch(token);
-    const call = new ElevenLabsStart({ onEnded: vi.fn() });
+    const call = new ElevenLabsStart(elHandlers());
     call.mount();
     await call.mint(URL, noop);
-    call.meter.open();
+    call.connected();
     call.meter.audio();
     call.unmount();
     expect(ends()).toEqual([]);
