@@ -1,9 +1,9 @@
 import "server-only";
 import { z } from "zod";
-import { CueSchema, type CoachResult, type Cue, type CriterionEstimate } from "./coach-types";
+import { CUE_TYPES, CueSchema, type CoachResult, type Cue, type CriterionEstimate } from "./coach-types";
 import { APOLOGY_STEP_RE, isApology } from "./apology";
 import { detectSlotOffer, gradeHeuristically } from "./grader";
-import { chat, extractJson } from "./llm";
+import { chatFull, parseFirstJsonObject, type ChatMessage, type JsonSchemaFormat } from "./llm";
 import { normalizeWeights, talkTrackSteps, type Objection, type ObjectionType, type RubricCriterion, type Scenario } from "./scenarios";
 import { llmKey } from "./serverConfig";
 
@@ -51,8 +51,35 @@ const LONG_TURN_WORDS = 70;
 const STACKED_QUESTIONS = 3;
 const WHISPER_RATIO = 0.7;
 const WHISPER_MIN_TURNS = 4;
-/** A live cue that arrives late is useless; fall back to the heuristic instead of waiting out llm.ts's 60 s timeout. */
+/**
+ * A live cue that arrives late is useless; fall back to the heuristic instead of waiting out llm.ts's 60 s timeout.
+ * This is the budget for the whole LLM path, the one retry included.
+ */
 const LLM_TIMEOUT_MS = 15_000;
+/**
+ * Completion budget for a coach reply. Hidden reasoning tokens count against it on the OpenAI base and grow with the
+ * call: at 1000 a long call's first attempt ran out after about 9.5 s with no usable JSON, so the first attempt gets
+ * room for reasoning plus the reply (a few hundred tokens). It is a cap, not a target: a short reply costs no more.
+ */
+export const COACH_MAX_TOKENS = 2500;
+/** Completion budget for the retry after an empty or truncated reply. Same model, at least as much room. */
+export const COACH_RETRY_MAX_TOKENS = 4000;
+/**
+ * The retry is skipped, and the heuristic answers at once, when less than this is left of LLM_TIMEOUT_MS. Coach
+ * replies on a long call took 6 to 9 s at p50, and every retry that started with about 5.4 s left timed out (7 of 7
+ * in one call), so a shorter retry only delays the fallback cue until the deadline.
+ */
+export const COACH_RETRY_MIN_MS = 6000;
+/** Low reasoning effort keeps hidden reasoning (and latency) small; the coach's job is pattern-matching, not proofs. */
+const COACH_REASONING_EFFORT = "low" as const;
+/**
+ * The LLM prompt carries at most this much of the transcript (the most recent lines, absolute line numbers kept).
+ * Reasoning and latency grew with the call; a live cue only needs the last few exchanges. The heuristic fallback
+ * and talkRatio still use everything the route received, and the client keeps evidence from earlier lines
+ * (mergeWindowed, via CoachResult.windowStart).
+ */
+export const COACH_PROMPT_TURNS = 30;
+export const COACH_PROMPT_CHARS = 6000;
 
 // ---------------------------------------------------------------------------
 // Text helpers (same normalisation as grader.ts, reimplemented so grader stays untouched)
@@ -524,13 +551,114 @@ export function coachHeuristic(scenario: Scenario, transcript: CoachTurnInput[],
 // LLM path
 // ---------------------------------------------------------------------------
 
+/**
+ * The reply shape, matching COACH_JSON_SCHEMA. Every key is required with its type checked, so an incomplete
+ * reply such as {} on a custom provider or the json_object fallback is a schema failure (and retried), not an
+ * all-zero LLM estimate. Nulls are accepted where the strict schema allows them.
+ */
 const LlmCoachOutput = z.object({
-  criteria: z
-    .array(z.object({ id: z.coerce.string(), score: z.coerce.number().catch(0), quote: z.string().nullish() }))
-    .default([]),
-  steps: z.array(z.unknown()).default([]),
-  cue: z.unknown().optional(),
+  criteria: z.array(z.object({ id: z.string(), score: z.number(), quote: z.string().nullish() })),
+  steps: z.array(z.boolean()),
+  cue: z.union([
+    z.null(),
+    z.object({
+      type: z.enum(CUE_TYPES),
+      title: z.string(),
+      message: z.string(),
+      suggestedLine: z.string().nullish(),
+      triggerTurn: z.number(),
+      criterionId: z.string().nullish(),
+      key: z.string(),
+    }),
+  ]),
 });
+
+const nullableString = { type: ["string", "null"] };
+
+/**
+ * LlmCoachOutput as a strict structured-outputs schema: every property required, no extra properties, and the
+ * optional fields nullable. LlmCoachOutput and parseLlmCue accept those nulls.
+ */
+export const COACH_JSON_SCHEMA: JsonSchemaFormat = {
+  name: "coach_turn",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["criteria", "steps", "cue"],
+    properties: {
+      criteria: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "score", "quote"],
+          properties: { id: { type: "string" }, score: { type: "number" }, quote: nullableString },
+        },
+      },
+      steps: { type: "array", items: { type: "boolean" } },
+      cue: {
+        anyOf: [
+          { type: "null" },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["type", "title", "message", "suggestedLine", "triggerTurn", "criterionId", "key"],
+            properties: {
+              type: { type: "string", enum: [...CUE_TYPES] },
+              title: { type: "string" },
+              message: { type: "string" },
+              suggestedLine: nullableString,
+              triggerTurn: { type: "integer" },
+              criterionId: nullableString,
+              key: { type: "string" },
+            },
+          },
+        ],
+      },
+    },
+  },
+};
+
+/**
+ * Parses a coach reply. Throws only a safe code: LLM_TRUNCATED (stopped at the token budget), LLM_EMPTY,
+ * LLM_BAD_JSON or LLM_SCHEMA. Never a SyntaxError or ZodError, whose messages can quote the reply.
+ */
+export function parseCoachReply(
+  text: string,
+  truncated: boolean,
+  expected?: { criterionIds: string[]; stepCount: number },
+): z.infer<typeof LlmCoachOutput> {
+  if (!text.trim()) throw new Error(truncated ? "LLM_TRUNCATED" : "LLM_EMPTY");
+  let raw: unknown;
+  try {
+    raw = parseFirstJsonObject(text);
+  } catch {
+    throw new Error(truncated ? "LLM_TRUNCATED" : "LLM_BAD_JSON");
+  }
+  // A reply cut off at the token budget that does not fully validate is a budget problem: the retry gets more room.
+  const invalid = truncated ? "LLM_TRUNCATED" : "LLM_SCHEMA";
+  const out = LlmCoachOutput.safeParse(raw);
+  if (!out.success) throw new Error(invalid);
+  // Structured outputs check types, not the scenario: every requested rubric id and talk-track step must be there.
+  // Unknown or duplicate ids and extra steps are ignored (the first entry per id is used).
+  if (expected) {
+    const ids = new Set(out.data.criteria.map((c) => c.id));
+    if (!expected.criterionIds.every((id) => ids.has(id)) || out.data.steps.length < expected.stepCount) throw new Error(invalid);
+  }
+  return out.data;
+}
+
+/** Reply problems worth one more attempt. Quota, configuration, HTTP and timeout failures are not retried. */
+const RETRYABLE_COACH_CODES: ReadonlySet<string> = new Set(["LLM_BAD_JSON", "LLM_SCHEMA", "LLM_EMPTY", "LLM_TRUNCATED"]);
+
+/** A log-safe code for a coach failure: our own LLM_* and COACH_* codes as they are, otherwise only the error class. */
+export function coachFailureCode(e: unknown): string {
+  const message = e instanceof Error ? e.message : "";
+  if (/^(?:LLM|COACH)_[A-Z0-9_]{1,48}$/.test(message)) return message;
+  if (e instanceof z.ZodError) return "LLM_SCHEMA";
+  const name = e instanceof Error ? e.name : typeof e;
+  return `non_llm_error:${/^[A-Za-z]{1,40}$/.test(name) ? name : "unknown"}`;
+}
 
 function buildPrompt(scenario: Scenario, spoken: Line[], steps: string[], rubric: RubricCriterion[], opts: CoachOptions) {
   const recent = opts.recentCueKeys ?? [];
@@ -563,7 +691,7 @@ function buildPrompt(scenario: Scenario, spoken: Line[], steps: string[], rubric
     `RECENT CUE KEYS: ${recent.length ? recent.join(", ") : "(none)"}`,
     `CUE ALLOWED: ${opts.allowCue ? "yes" : "no"}`,
     // A long call arrives as its most recent lines; say so, or the model reads the window as the whole call.
-    `${(spoken[0]?.line ?? 1) > 1 ? `TRANSCRIPT, most recent lines only (lines 1-${spoken[0].line - 1} happened earlier and are not shown; line numbers in brackets)` : "TRANSCRIPT (line numbers in brackets)"}:\n${spoken.map((t) => `[${t.line}] ${t.role === "user" ? "TRAINEE" : "CALLER"}: ${t.text}`).join("\n")}`,
+    `${(spoken[0]?.line ?? 1) > 1 ? `TRANSCRIPT, most recent lines only (lines 1-${spoken[0].line - 1} happened earlier and are not shown, and progress in them is tracked separately; line numbers in brackets)` : "TRANSCRIPT (line numbers in brackets)"}:\n${spoken.map((t) => `[${t.line}] ${t.role === "user" ? "TRAINEE" : "CALLER"}: ${t.text}`).join("\n")}`,
   ].join("\n\n");
   return { system, user };
 }
@@ -582,16 +710,17 @@ function parseLlmCue(raw: unknown, spoken: Line[], rubric: RubricCriterion[], re
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-  const firstLine = spoken[0]?.line ?? 1;
-  const lastLine = spoken[spoken.length - 1]?.line ?? 1;
   const turn = Math.round(Number(r.triggerTurn));
+  // The trigger must be a line the model was shown. One outside the prompt window (older, or past the last line) is
+  // dropped, not clamped: clamping would pin an old cue to an unrelated line and dodge the client's stale-cue check.
+  if (!spoken.some((t) => t.line === turn)) return null;
   const criterionId = str(r.criterionId);
   const parsed = CueSchema.safeParse({
     type: r.type,
     title: clip(str(r.title), 80),
     message: clip(str(r.message), 240),
     suggestedLine: str(r.suggestedLine) ? clip(str(r.suggestedLine), 300) : undefined,
-    triggerTurn: Number.isFinite(turn) ? Math.min(Math.max(turn, firstLine), lastLine) : lastLine,
+    triggerTurn: turn,
     criterionId: rubric.some((c) => c.id === criterionId) ? criterionId : undefined,
   });
   if (!parsed.success) return null;
@@ -612,26 +741,59 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptions): Promise<Omit<CoachResult, "latencyMs">> {
   const rubric = normalizeWeights(scenario.rubric);
   const steps = talkTrackSteps(scenario.callScript);
-  const { system, user } = buildPrompt(scenario, spoken, steps, rubric, opts);
-  // 1000 leaves headroom for reasoning tokens from current chat models plus the JSON cue payload.
-  const text = await withTimeout(
-    chat([{ role: "system", content: system }, { role: "user", content: user }], { json: true, maxTokens: 1000, temperature: 0.2 }),
-    LLM_TIMEOUT_MS,
-  );
-  const out = LlmCoachOutput.parse(extractJson(text));
+  // Only the recent lines go to the model. Quotes and triggerTurn are checked against what it saw, in absolute lines.
+  const trimmed = trailingWindow(spoken, COACH_PROMPT_TURNS, COACH_PROMPT_CHARS).turns;
+  const seen = trimmed.length ? trimmed : spoken.slice(-1);
+  const { system, user } = buildPrompt(scenario, seen, steps, rubric, opts);
+  const messages: ChatMessage[] = [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+  // One retry for an unusable reply, inside the same overall budget: the retry gets only the time that is left.
+  const deadline = Date.now() + LLM_TIMEOUT_MS;
+  // Aborted once the coach is done (result, fallback or timeout): no provider request starts after that.
+  const abort = new AbortController();
+  let maxTokens = COACH_MAX_TOKENS;
+  let out: z.infer<typeof LlmCoachOutput>;
+  try {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const { text, truncated } = await withTimeout(
+          chatFull(messages, {
+            json: true,
+            jsonSchema: COACH_JSON_SCHEMA,
+            maxTokens,
+            temperature: 0.2,
+            reasoningEffort: COACH_REASONING_EFFORT,
+            signal: abort.signal,
+            nullContentAsEmpty: true,
+          }),
+          Math.max(0, deadline - Date.now()),
+        );
+        out = parseCoachReply(text, truncated, { criterionIds: rubric.map((c) => c.id), stepCount: steps.length });
+        break;
+      } catch (e) {
+        const code = coachFailureCode(e);
+        // Too little time left for a realistic retry: fall back now instead of burning the rest of the deadline.
+        if (attempt >= 2 || !RETRYABLE_COACH_CODES.has(code) || deadline - Date.now() < COACH_RETRY_MIN_MS) throw e;
+        console.warn("[coach] LLM coach reply unusable, retrying once:", code);
+        // Reasoning tokens can use up the whole budget and leave no content: give the retry more room, same model.
+        if (code === "LLM_EMPTY" || code === "LLM_TRUNCATED") maxTokens = COACH_RETRY_MAX_TOKENS;
+      }
+    }
+  } finally {
+    abort.abort();
+  }
 
   const criteria: CriterionEstimate[] = rubric.map((c) => {
     const r = out.criteria.find((x) => x.id === c.id);
-    const evidenceLine = verifyQuote(r?.quote, spoken);
+    const evidenceLine = verifyQuote(r?.quote, seen);
     const confirmed = evidenceLine !== undefined;
     const raw = Math.max(0, Math.min(100, Math.round(Number.isFinite(r?.score) ? (r?.score as number) : 0)));
     return { id: c.id, name: c.name, weight: c.weight, score: confirmed ? raw : Math.min(raw, PROVISIONAL_MAX), confirmed, evidenceLine };
   });
-  const flags = steps.map((_, i) => {
-    const v = out.steps[i];
-    return v === true || v === "true" || v === 1;
-  });
-  const picked = opts.allowCue ? parseLlmCue(out.cue, spoken, rubric, new Set(opts.recentCueKeys ?? [])) : null;
+  const flags = steps.map((_, i) => out.steps[i] === true);
+  const picked = opts.allowCue ? parseLlmCue(out.cue, seen, rubric, new Set(opts.recentCueKeys ?? [])) : null;
 
   return {
     estimate: { overall: weightedOverall(criteria), criteria },
@@ -640,6 +802,7 @@ async function coachWithLlm(scenario: Scenario, spoken: Line[], opts: CoachOptio
     cueKey: picked?.key,
     talkRatio: talkRatioOf(spoken),
     source: "llm",
+    windowStart: seen[0].line,
   };
 }
 
@@ -652,7 +815,8 @@ export async function coachTurn(scenario: Scenario, transcript: CoachTurnInput[]
       const result = await coachWithLlm(scenario, spoken, opts);
       return { ...result, latencyMs: Date.now() - t0 };
     } catch (e) {
-      console.error("[coach] LLM coach failed, falling back to heuristic:", (e as Error).message);
+      // A safe code only: never the reply, the prompt, or a parser message that quotes either.
+      console.error("[coach] LLM coach failed, falling back to heuristic:", coachFailureCode(e));
     }
   }
   return { ...coachHeuristic(scenario, transcript, opts), latencyMs: Date.now() - t0 };
