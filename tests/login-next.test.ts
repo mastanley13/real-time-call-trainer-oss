@@ -106,4 +106,15 @@ describe("login page render", () => {
       expect(googleNext(html())).toBe("(none)");
     },
   );
+
+  it("shows the session-expired notice only for reason=expired, and keeps next", () => {
+    mocks.query = new URLSearchParams({ next: TRY_NEXT, reason: "expired" }).toString();
+    const h = html();
+    expect(h).toContain("Your session expired. Sign in again.");
+    expect(googleNext(h)).toBe(TRY_NEXT);
+    for (const q of ["", "reason=other", "reason=EXPIRED"]) {
+      mocks.query = q;
+      expect(html()).not.toContain("Your session expired");
+    }
+  });
 });
