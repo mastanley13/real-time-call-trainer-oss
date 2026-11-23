@@ -2,9 +2,11 @@ import "server-only";
 import { createHmac } from "node:crypto";
 import { after } from "next/server";
 import { prisma } from "./db";
-import { billingEventsEnabled, type BillingEventSink, type BillingLifecycleEvent, type BillingLifecycleKind } from "./billingEvents";
+import { billingEventsEnabled, type BillingEventSink, type BillingLifecycleEvent, type BillingLifecycleKind, type PremiumEventSink } from "./billingEvents";
 import type { SignupIntent } from "./pricing";
-import type { PlanTier } from "./usagePlan";
+import { billingActive } from "./serverConfig";
+import { storedPlanEntitled } from "./subscriptionStatus";
+import { effectivePlan, type PlanTier } from "./usagePlan";
 
 /**
  * Lifecycle events for the CRM, pushed to one GoHighLevel Inbound Webhook URL. There is no GHL token or API
@@ -19,12 +21,13 @@ import type { PlanTier } from "./usagePlan";
  * later, and nothing waits on GHL, so a GHL outage can never fail signup, grading or the Stripe webhook. Each payload has
  * a deterministic eventId (also sent as the Idempotency-Key header) so a workflow can drop repeats.
  *
- * Attempts: signup and plan changes get one POST. first_graded_call (ct-activated) gets at most one retry of the same
- * POST (same body, eventId and Idempotency-Key), inside the same background work, after GHL_RETRY_DELAY_MS and with its
- * own GHL_TIMEOUT_MS bound, and only when the first attempt clearly did not deliver: a connection refused, DNS failure
- * or unreachable network before any response (cause.code ECONNREFUSED, ENOTFOUND, EAI_AGAIN, ENETUNREACH or
+ * Attempts: signup, plan changes and voice_cap_hit get one POST. first_graded_call (ct-activated) gets at most one retry
+ * of the same POST (same body, eventId and Idempotency-Key), inside the same background work, after GHL_RETRY_DELAY_MS
+ * and with its own GHL_TIMEOUT_MS bound, and only when the first attempt clearly did not deliver: a connection refused,
+ * DNS failure or unreachable network before any response (cause.code ECONNREFUSED, ENOTFOUND, EAI_AGAIN, ENETUNREACH or
  * EHOSTUNREACH), or HTTP 429, 502, 503 or 504. Never after any timeout, including a connect timeout
- * (UND_ERR_CONNECT_TIMEOUT), because GHL may have accepted the request; never after a 500, another 4xx or a 2xx. The retry repeats only the POST: claimFirstGradedCall runs once and its marker is written once.
+ * (UND_ERR_CONNECT_TIMEOUT), because GHL may have accepted the request; never after a 500, another 4xx or a 2xx. The
+ * retry repeats only the POST: claimFirstGradedCall runs once and its marker is written once.
  *
  * Tags: every payload carries `tags: string[]` so the GHL workflow can apply them to the contact as they are. The one
  * mapping is ghlTagsFor below:
@@ -34,6 +37,7 @@ import type { PlanTier } from "./usagePlan";
  *     pro  -> ct-paid-pro, app-calltrainer   (also a Team to Pro downgrade)
  *     team -> ct-paid-team, app-calltrainer
  *     free -> ct-churned, app-calltrainer
+ * - voice_cap_hit:     app-calltrainer only (no event tag; the workflow branches on `event` and `reason`)
  * There is no trial tag: a trialing subscription is not tagged differently, and no trial event exists.
  *
  * Personal data: every event carries the contact's lowercased email (Keel decision) so each GHL workflow can match the
@@ -46,7 +50,7 @@ type Env = Record<string, string | undefined>;
 /** Hard cap on one POST. A slow GHL is abandoned, never waited on. */
 export const GHL_TIMEOUT_MS = 2500;
 
-export type GhlEventType = "signup" | "first_graded_call" | BillingLifecycleKind;
+export type GhlEventType = "signup" | "first_graded_call" | "voice_cap_hit" | BillingLifecycleKind;
 
 interface GhlBase {
   /** Stable id for dedupe: the same real-world event always has the same id. Also the Idempotency-Key header. */
@@ -135,7 +139,30 @@ export interface GhlPlanChangePayload extends GhlBase {
   stripeRef: string;
 }
 
-export type GhlPayload = GhlSignupPayload | GhlFirstGradedCallPayload | GhlPlanChangePayload;
+/** Why the voice allowance counted as used up: a refused start at a mint route, or a running call the heartbeat stopped. */
+export type VoiceCapHitReason = "cap_reached" | "cap_reached_in_call";
+
+/**
+ * The voice minute allowance is used up (the voice_cap_hit premium event, see src/lib/premiumEventTypes.ts). A refused
+ * start can be retried many times, so eventId is voice_cap_hit:{userId}:{reason}:{UTC date of the cap hit}, the same date
+ * as occurredAt (both from the time the event was queued, not when it is sent): a workflow that drops repeats
+ * sees at most one per user, reason and day. Never a transcript, call or session id, model or provider detail.
+ */
+export interface GhlVoiceCapHitPayload extends GhlBase {
+  event: "voice_cap_hit";
+  userId: string;
+  organizationId: string | null;
+  /**
+   * Lowercased contact email, looked up at send time in the background like a plan change's. Null when the user no longer
+   * exists, or the lookup failed or took longer than GHL_TIMEOUT_MS; the event is still sent.
+   */
+  email: string | null;
+  /** The plan whose allowance ran out (Team for a pooled member), from stored fields at send time. Null when unknown. */
+  plan: PlanTier | null;
+  reason: VoiceCapHitReason;
+}
+
+export type GhlPayload = GhlSignupPayload | GhlFirstGradedCallPayload | GhlPlanChangePayload | GhlVoiceCapHitPayload;
 
 let warnedBadUrl = false;
 
@@ -172,6 +199,7 @@ export const GHL_APP_TAG = "app-calltrainer";
 export type GhlTagInput =
   | Pick<GhlSignupPayload, "event" | "signupMethod">
   | Pick<GhlFirstGradedCallPayload, "event">
+  | Pick<GhlVoiceCapHitPayload, "event">
   | Pick<GhlPlanChangePayload, "event" | "toPlan">;
 
 const PLAN_TAG: Record<PlanTier, string> = { pro: "ct-paid-pro", team: "ct-paid-team", free: "ct-churned" };
@@ -186,6 +214,8 @@ export function ghlTagsFor(p: GhlTagInput): string[] {
       return ["ct-signed-up", GHL_APP_TAG, p.signupMethod === "google" ? "ct-signup-google" : "ct-signup-email"];
     case "first_graded_call":
       return ["ct-activated", GHL_APP_TAG];
+    case "voice_cap_hit":
+      return [GHL_APP_TAG];
     default:
       return [PLAN_TAG[p.toPlan], GHL_APP_TAG];
   }
@@ -247,6 +277,21 @@ export function planChangePayload(e: BillingLifecycleEvent, email: string | null
   };
 }
 
+export function voiceCapHitPayload(
+  input: { userId: string; organizationId: string | null; email: string | null; plan: PlanTier | null; reason: VoiceCapHitReason },
+  now = new Date(),
+): GhlVoiceCapHitPayload {
+  return {
+    ...base(`voice_cap_hit:${input.userId}:${input.reason}:${now.toISOString().slice(0, 10)}`, "voice_cap_hit", now),
+    tags: ghlTagsFor({ event: "voice_cap_hit" }),
+    userId: input.userId,
+    organizationId: input.organizationId,
+    email: input.email ? input.email.toLowerCase() : null,
+    plan: input.plan,
+    reason: input.reason,
+  };
+}
+
 /** Wait before the one retry of a first_graded_call POST (see postGhlEvent). */
 export const GHL_RETRY_DELAY_MS = 500;
 
@@ -278,10 +323,10 @@ const notSentError = (e: unknown): boolean => {
  * with the event type and status only (never the URL, body or GHL's answer).
  *
  * first_graded_call only: when the first attempt clearly did not deliver (a connection-phase network error before any
- * response, or HTTP 429, 502, 503 or 504), the same body and headers (same eventId and Idempotency-Key) are posted once
- * more after GHL_RETRY_DELAY_MS, with their own GHL_TIMEOUT_MS bound. Never on any timeout, connect timeout included, a 500,
- * another 4xx or 2xx. This only repeats the POST; the claim and its marker are never touched again. Other events get
- * one attempt.
+ * response, see NOT_SENT_CODES, or HTTP 429, 502, 503 or 504), the same body and headers (same eventId and
+ * Idempotency-Key) are posted once more after GHL_RETRY_DELAY_MS, with their own GHL_TIMEOUT_MS bound. Never on any
+ * timeout, connect timeout included, a 500, another 4xx or 2xx. This only repeats the POST; the claim and its marker are
+ * never touched again. Other events (signup, plan changes, voice_cap_hit) get one attempt.
  */
 export async function postGhlEvent(payload: GhlPayload, env: Env = process.env): Promise<void> {
   const url = ghlWebhookUrl(env);
@@ -401,6 +446,58 @@ export async function planChangeEmail(e: BillingLifecycleEvent): Promise<string 
  */
 export const ghlBillingSink: BillingEventSink = (event) => {
   emitGhlEvent(async () => planChangePayload(event, await planChangeEmail(event)));
+};
+
+/**
+ * Contact details for a voice cap hit: the user's email and organization, and their plan by the same rule as
+ * resolveAllowance in usage.ts (Team while the org's Team plan is entitled, else the user's own entitled plan). One
+ * read-only select, nothing written. Null when the user is gone, the read fails, or it takes longer than GHL_TIMEOUT_MS.
+ * Never throws.
+ */
+export async function voiceCapHitContact(userId: string, now = new Date()): Promise<{ email: string; organizationId: string | null; plan: PlanTier } | null> {
+  try {
+    return await within((async () => {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          email: true, organizationId: true, planTier: true, subscriptionStatus: true, stripeSubscriptionId: true, pastDueSince: true,
+          organization: { select: { planTier: true, subscriptionStatus: true, stripeSubscriptionId: true, pastDueSince: true } },
+        },
+      });
+      if (!user) return null;
+      const billingOn = billingActive();
+      const org = user.organization;
+      const plan: PlanTier = org?.planTier === "team" && storedPlanEntitled(org, now) && billingOn
+        ? "team"
+        : effectivePlan(storedPlanEntitled(user, now) ? user.planTier : "free", billingOn);
+      return { email: user.email, organizationId: user.organizationId, plan };
+    })(), GHL_TIMEOUT_MS);
+  } catch {
+    console.error("[ghl] voice_cap_hit contact lookup failed; sending without email");
+    return null;
+  }
+}
+
+const CAP_HIT_REASONS: ReadonlySet<string> = new Set<VoiceCapHitReason>(["cap_reached", "cap_reached_in_call"]);
+
+/**
+ * The premium event sink: forwards voice_cap_hit (subject user, a known reason) to the GHL emitter and ignores every
+ * other premium event. Registered once, in billing.ts. queuePremiumEvent already calls it from after(), once the
+ * response is sent; emitGhlEvent then hands the lookup and POST to a nested after() (supported by Next.js, the request
+ * stays alive until that queue is idle), so nothing here runs before the response. A no-op while GHL events are off.
+ */
+export const ghlPremiumSink: PremiumEventSink = (event) => {
+  if (event.name !== "voice_cap_hit" || event.subject !== "user" || !event.subjectId || !CAP_HIT_REASONS.has(event.reason ?? "")) return;
+  const userId = event.subjectId;
+  const reason = event.reason as VoiceCapHitReason;
+  // The time of the cap hit, stamped when it was queued (queuePremiumEvent), drives occurredAt and the dedupe date.
+  // An event with no valid stamp falls back to the time the sink was called.
+  const stamped = event.occurredAt ? new Date(event.occurredAt) : null;
+  const now = stamped && !Number.isNaN(stamped.getTime()) ? stamped : new Date();
+  emitGhlEvent(async () => {
+    const contact = await voiceCapHitContact(userId, now);
+    return voiceCapHitPayload({ userId, organizationId: contact?.organizationId ?? null, email: contact?.email ?? null, plan: contact?.plan ?? null, reason }, now);
+  });
 };
 
 /**
