@@ -292,6 +292,52 @@ describe("a running Free call is stopped at its Free minutes plus the end grace"
     expect(allowanceOf("u-1")).toMatchObject({ minutesUsed: 10, minutesReserved: 0 });
   });
 
+  it("a lost stop answer: every later heartbeat of a Free cap-stopped call still says freeCap (reason ended); paid and silent ones do not", async () => {
+    await freeUserWith(9);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    // This answer never reaches the client.
+    expect(await heartbeat("u-1", begun.callId, "ok", at(80))).toMatchObject({ stop: true, reason: "cap_reached", freeCap: true });
+    for (const t of [90, 100]) {
+      expect(await heartbeat("u-1", begun.callId, "ok", at(t))).toEqual({ found: true, stop: true, reason: "ended", settlement: null, freeCap: true });
+    }
+
+    // A paid cap stop's later answers carry no freeCap (the paid client path is unchanged).
+    addUser("u-2", { planTier: "pro" });
+    await ensureAllowance(fake.db as never, { userId: "u-2" }, at(0));
+    allowanceOf("u-2").minutesUsed = 199;
+    const pro = await beginCall("u-2", scn, at(0));
+    if (!pro.ok) throw new Error(pro.error);
+    await heartbeat("u-2", pro.callId, "connected", at(0));
+    expect(await heartbeat("u-2", pro.callId, "ok", at(60))).toMatchObject({ reason: "cap_reached" });
+    expect(await heartbeat("u-2", pro.callId, "ok", at(70))).toEqual({ found: true, stop: true, reason: "ended", settlement: null });
+
+    // A Free call reaped as silent was not stopped at the cap, so it carries no freeCap either.
+    addUser("u-3");
+    const quiet = await beginCall("u-3", scn, at(0));
+    if (!quiet.ok) throw new Error(quiet.error);
+    await heartbeat("u-3", quiet.callId, "connected", at(0));
+    await usageSummary("u-3", at(300));
+    expect(session(quiet.callId).endReason).toBe("heartbeat_timeout");
+    expect(await heartbeat("u-3", quiet.callId, "ok", at(301))).toEqual({ found: true, stop: true, reason: "ended", settlement: null });
+  });
+
+  it("an overlapping heartbeat that read the call open while another one stopped it still answers freeCap", async () => {
+    await freeUserWith(9);
+    const begun = await beginCall("u-1", scn, at(0));
+    if (!begun.ok) throw new Error(begun.error);
+    await heartbeat("u-1", begun.callId, "connected", at(0));
+    const before = { ...session(begun.callId) }; // what the overlapping heartbeat read: still open
+    expect(await heartbeat("u-1", begun.callId, "ok", at(80))).toMatchObject({ reason: "cap_reached", freeCap: true });
+    const reads = vi.spyOn(fake.db.trainerSession as unknown as { findUnique: (...a: unknown[]) => unknown }, "findUnique");
+    reads.mockImplementationOnce(async () => before);
+    // Its write finds the row closed, so it answers "ended", and reads how the call ended to keep freeCap.
+    expect(await heartbeat("u-1", begun.callId, "ok", at(80))).toEqual({ found: true, stop: true, reason: "ended", settlement: null, freeCap: true });
+    reads.mockRestore();
+    expect(session(begun.callId)).toMatchObject({ endReason: "cap_reached", billedMinutes: 1 });
+  });
+
   it("paid calls are unchanged: no warning, no grace, stopped exactly at the reservation", async () => {
     addUser("u-1", { planTier: "pro" });
     await ensureAllowance(fake.db as never, { userId: "u-1" }, at(0));
@@ -832,8 +878,9 @@ describe("voice_cap_hit: a used-up allowance is reported with ids only, and neve
     const stopped = await (await beat(begun.callId, "ok")).json();
     expect(stopped).toEqual({ stop: true, reason: "cap_reached", message: FREE_CAP_STOPPED_MESSAGE, freeCap: true });
     expect(isCapMessage(stopped.message)).toBe(true); // the call screen adds the Upgrade link
+    // If that answer is lost, the next ones still tell the client it was a Free cap stop, with the Free wording.
     vi.setSystemTime(at(limit + 10));
-    expect(await (await beat(begun.callId, "ok")).json()).toMatchObject({ stop: true, reason: "ended" });
+    expect(await (await beat(begun.callId, "ok")).json()).toEqual({ stop: true, reason: "ended", message: FREE_CAP_STOPPED_MESSAGE, freeCap: true });
     vi.setSystemTime(at(limit + 20));
     await beat(begun.callId, "ok");
     await flush();

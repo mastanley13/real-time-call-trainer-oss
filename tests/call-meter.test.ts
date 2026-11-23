@@ -180,6 +180,30 @@ describe("RealtimeCall: a cap stop ends the call through the hang-up path", () =
     expect(h.onError).toHaveBeenCalledWith(FREE_CAP_STOPPED_MESSAGE);
   });
 
+  it("a Free stop seen only as reason 'ended' with freeCap (the cap_reached answer was lost) still takes the hang-up path and keeps the transcript", async () => {
+    const order: string[] = [];
+    const { h, server } = await liveCall(
+      [{ stop: true, reason: "ended", message: FREE_CAP_STOPPED_MESSAGE, freeCap: true }],
+      () => serverEvent({ type: "input_audio_buffer.committed", item_id: "item-rep-1" }),
+    );
+    h.onTurn.mockImplementation((t: { role: string }) => { order.push(`turn:${t.role}`); });
+    h.onError.mockImplementation(() => { order.push("error"); });
+    h.onEnded.mockImplementation(() => { order.push("ended"); });
+    expect(h.onError).not.toHaveBeenCalled();
+    serverEvent({ type: "conversation.item.input_audio_transcription.completed", item_id: "item-rep-1", transcript: "Can we talk next week?" });
+    await vi.waitFor(() => expect(h.onEnded).toHaveBeenCalledTimes(1));
+    expect(order).toEqual(["turn:user", "error", "ended"]);
+    const phases = h.onView.mock.calls.map(([v]) => (v as { phase: string }).phase);
+    expect(phases).toContain("ending");
+    expect(server.ends()).toEqual([{ url: "/api/usage/end", body: { callId: "call-1", reason: "user_hangup" } }]);
+  });
+
+  it("a stop with reason 'ended' and no freeCap ends as on main (fail)", async () => {
+    const { h } = await liveCall([{ stop: true, reason: "ended" }]);
+    await vi.waitFor(() => expect(h.onError).toHaveBeenCalledWith(CAP_STOPPED_MESSAGE));
+    expect(h.onView.mock.calls.map(([v]) => (v as { phase: string }).phase)).not.toContain("ending");
+  });
+
   it("a paid cap stop ends exactly as on main: no hang-up grace, the message, and no grading before the rep spoke", async () => {
     const { h, server } = await liveCall([{ stop: true, reason: "cap_reached", message: CAP_STOPPED_MESSAGE }]);
     await vi.waitFor(() => expect(h.onError).toHaveBeenCalledWith(CAP_STOPPED_MESSAGE));

@@ -561,6 +561,18 @@ export type HeartbeatResult =
  * runs from the server's mint time whether or not the client ever says "connected". Only the heartbeat that stops the
  * call answers cap_reached or max_duration; every later one answers "ended".
  */
+/**
+ * The answer for a call that is already settled. A Free call the server stopped at its cap keeps freeCap on every later
+ * answer, so a client whose stopping answer was lost or overtaken still ends it through the hang-up path. The reason
+ * stays "ended", so the route fires voice_cap_hit only for the first stop.
+ */
+function endedAnswer(s: Pick<OpenSession, "endReason" | "capEnforced">): HeartbeatResult {
+  const freeCap = !exactStopOf(s) && s.endReason === "cap_reached";
+  return freeCap
+    ? { found: true, stop: true, reason: "ended", settlement: null, freeCap: true }
+    : { found: true, stop: true, reason: "ended", settlement: null };
+}
+
 export async function heartbeat(userId: string, callId: string, state: HeartbeatState, now = new Date()): Promise<HeartbeatResult> {
   return runMetered(async (tx) => {
     const s = await tx.trainerSession.findUnique({ where: { id: callId } });
@@ -569,7 +581,7 @@ export async function heartbeat(userId: string, callId: string, state: Heartbeat
       // The server already settled this call. Still heartbeating well past the end of its reservation means the
       // browser kept the provider session running, whether the server clamped it or reaped it as silent.
       if (SERVER_ENDED.has(s.endReason ?? "") && pastReservation(s, now)) await flagOverrun(tx, s, now);
-      return { found: true, stop: true, reason: "ended", settlement: null } as const;
+      return endedAnswer(s);
     }
 
     const data: Prisma.TrainerSessionUpdateManyMutationInput = { lastHeartbeatAt: now };
@@ -587,7 +599,11 @@ export async function heartbeat(userId: string, callId: string, state: Heartbeat
     // committed since the read above has closed the row and released its reservation: the heartbeat then records
     // nothing, no connection included, and tells the client to stop.
     const written = await tx.trainerSession.updateMany({ where: { id: s.id, endedAt: null }, data });
-    if (written.count === 0) return { found: true, stop: true, reason: "ended", settlement: null } as const;
+    if (written.count === 0) {
+      // Often an overlapping heartbeat that just stopped the call: read how it ended so a Free cap stop keeps its flag.
+      const closed = await tx.trainerSession.findUnique({ where: { id: s.id }, select: { endReason: true, capEnforced: true } });
+      return endedAnswer(closed ?? s);
+    }
 
     const { limit, exactStop, trialBound } = await limitSeconds(tx, s, now);
     const start = billingStart({ createdAt: s.createdAt, connectedAt });

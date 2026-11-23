@@ -45,7 +45,9 @@ export async function POST(req: NextRequest) {
     if (r.reason === "cap_reached") {
       queuePremiumEvent({ name: "voice_cap_hit", subject: "user", subjectId: auth.id, reason: "cap_reached_in_call" });
     }
-    const message = r.reason === "cap_reached" ? (r.freeCap ? FREE_CAP_STOPPED_MESSAGE : CAP_STOPPED_MESSAGE)
+    // A Free cap stop keeps its wording on the later "ended" answers too, for a client that missed the first one.
+    const message = r.freeCap ? FREE_CAP_STOPPED_MESSAGE
+      : r.reason === "cap_reached" ? CAP_STOPPED_MESSAGE
       : r.reason === "max_duration" ? "This call reached the maximum call length."
       : undefined;
     // freeCap: a Free call stopped at its free minutes. The client ends it through the hang-up path (see callMeter.ts).
