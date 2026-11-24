@@ -119,6 +119,29 @@ describe("home page (Practice Desk layout, #90 copy)", () => {
     for (const src of [pageSrc, deckSrc, cssSrc]) expect(src).not.toMatch(/practise/i);
   });
 
+  it("keeps What runs each job between how it works and the features, with main's rows and note", () => {
+    const how = html.indexOf('id="how-h"');
+    const models = html.indexOf('id="models-h"');
+    const feat = html.indexOf('id="feat-h"');
+    expect(models).toBeGreaterThan(how);
+    expect(feat).toBeGreaterThan(models);
+    expect(html).toContain('aria-labelledby="models-h"');
+    expect(html).toMatch(/<h2 id="models-h"[^>]*>What runs each job<\/h2>/);
+    // Inline <span class="mono"> tags become spaces when stripped; drop the space that lands before punctuation.
+    const section = textOf(html.slice(models, feat)).replace(/ ([,.])/g, "$1");
+    expect(text).toContain("Under the hood");
+    for (const [job, engine, note] of [
+      ["Live coach", "Your chat model", "Per-turn cues and rubric estimate, as validated JSON"],
+      ["Grading", "Your chat model", "Full-transcript rubric grade with verbatim evidence checks"],
+      ["Persona wizard", "Your chat model", "Builds a persona, objections and rubric from your context"],
+      ["Voice", "OpenAI Realtime", "Over WebRTC, the default when an OpenAI key is set. ElevenLabs Agents also supported"],
+    ]) {
+      expect(section, job).toContain(`${job} ${engine} ${note}`);
+    }
+    expect(section).toContain("Coaching, grades, wizard drafts and text-call replies say whether AI produced them or a rules-based fallback did. Point LLM_BASE_URL at any OpenAI-compatible API, with its own LLM_API_KEY, and set LLM_MODEL to swap models.");
+    for (const env of ["LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"]) expect(html).toContain(`<span class="mono">${env}</span>`);
+  });
+
   it("has exactly one h1 and ordered headings", () => {
     expect(html.match(/<h1\b/g)).toHaveLength(1);
     const levels = [...html.matchAll(/<h([1-6])\b/g)].map((m) => Number(m[1]));

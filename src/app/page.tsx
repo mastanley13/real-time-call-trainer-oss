@@ -22,6 +22,14 @@ const STEPS = [
   { title: "Debrief", body: "Every score cites your own words. Jump to the moment you lost points and retry the call from that turn." },
 ];
 
+// Provider names only, never model ids: operators pick models with LLM_MODEL and REALTIME_MODEL on the server.
+const MODELS = [
+  { job: "Live coach", engine: "Your chat model", note: "Per-turn cues and rubric estimate, as validated JSON" },
+  { job: "Grading", engine: "Your chat model", note: "Full-transcript rubric grade with verbatim evidence checks" },
+  { job: "Persona wizard", engine: "Your chat model", note: "Builds a persona, objections and rubric from your context" },
+  { job: "Voice", engine: "OpenAI Realtime", note: "Over WebRTC, the default when an OpenAI key is set. ElevenLabs Agents also supported" },
+];
+
 const FEATURES = [
   { icon: LibraryBig, title: `${LIBRARY.length} AI buyers across ${families} sales jobs`, body: "From SDR cold calls to insurance renewals, portal leads and past-due calls. Filter by role, industry, difficulty and the objection they throw." },
   { icon: Radar, title: "A live coach, not a script", body: "A live score on every turn, talk-track progress and a line your rep can use. Train Blind, Guided or Coached, so you choose how much help each rep gets." },
@@ -35,8 +43,7 @@ const H2 = "text-2xl font-bold leading-8 sm:text-[27px] sm:leading-9";
 /**
  * Practice Desk landing. Static and server-rendered: no client code, so nothing here can ask for the microphone.
  * The .landing-desk wrapper scopes its tokens, type, radii, gutters and focus ring (landing-desk.css); the footer
- * stays outside it so the shared chrome looks the same as on every other page. Model and provider details live in
- * the README ("What runs each job").
+ * stays outside it so the shared chrome looks the same as on every other page.
  */
 export default function Home() {
   return (
@@ -77,6 +84,27 @@ export default function Home() {
                 </li>
               ))}
             </ol>
+          </div>
+        </section>
+
+        <section aria-labelledby="models-h" className="desk-wrap">
+          <div className="border-t border-line pb-16 pt-6">
+            <div className="flex flex-wrap items-end justify-between gap-x-10 gap-y-3">
+              <div className="min-w-0">
+                <p className={LABEL}>Under the hood</p>
+                <h2 id="models-h" className={`mt-1 ${H2}`}>What runs each job</h2>
+              </div>
+              <p className="max-w-[60ch] text-sm leading-6 text-ink-soft">Coaching, grades, wizard drafts and text-call replies say whether AI produced them or a rules-based fallback did. Point <span className="mono">LLM_BASE_URL</span> at any OpenAI-compatible API, with its own <span className="mono">LLM_API_KEY</span>, and set <span className="mono">LLM_MODEL</span> to swap models.</p>
+            </div>
+            <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4 lg:gap-6">
+              {MODELS.map((m) => (
+                <div key={m.job} className="desk-panel min-w-0 p-5">
+                  <p className="text-sm font-semibold leading-5 text-ink">{m.job}</p>
+                  <p className="desk-badge mt-2">{m.engine}</p>
+                  <p className="mt-3 text-ink-soft">{m.note}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
 
