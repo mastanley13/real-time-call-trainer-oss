@@ -259,7 +259,7 @@ function FacetGroup({ title, values, counts, selected, onToggle, chips = false, 
   const shown = limit && !more ? values.slice(0, limit) : values;
   if (!values.length) return null;
   return (
-    <fieldset>
+    <fieldset className="min-w-0">
       <legend className="label">{title}</legend>
       {chips ? (
         <div className="flex flex-wrap gap-1.5">

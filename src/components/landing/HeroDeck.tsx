@@ -27,8 +27,6 @@ export const EXAMPLE_CUE = {
   suggestedLine: "Fair question. The diagnostic visit is $89, and it's credited toward the repair if you go ahead.",
 };
 
-const TURN_DELAY_MS = 140;
-
 export default function HeroDeck() {
   return (
     <section aria-labelledby="example-h" className="deck min-w-0 overflow-hidden rounded-sheet border border-line shadow-pop">
@@ -55,8 +53,8 @@ export default function HeroDeck() {
         {EXAMPLE_TURNS.map((t, i) => {
           const me = t.role === "rep";
           return (
-            <li key={t.at} style={{ animationDelay: `${120 + i * TURN_DELAY_MS}ms` }}
-              className={`grid grid-cols-[44px_minmax(0,1fr)] gap-3 rounded-lg px-2 py-2.5 motion-safe:animate-fade-up sm:grid-cols-[56px_minmax(0,1fr)] ${t.objection ? "bg-alert-soft/60 ring-1 ring-alert/40" : ""}`}>
+            <li key={t.at}
+              className={`grid grid-cols-[44px_minmax(0,1fr)] gap-3 rounded-lg px-2 py-2.5 sm:grid-cols-[56px_minmax(0,1fr)] ${t.objection ? "bg-alert-soft/60 ring-1 ring-alert/40" : ""}`}>
               <p className="pt-0.5 font-mono text-[11px] leading-tight text-ink-muted" aria-hidden="true">T{i + 1}<br />{t.at}</p>
               <div className="min-w-0">
                 <p className={`font-mono text-[11px] font-medium uppercase tracking-wide ${me ? "text-primary" : "text-ink-muted"}`}>
@@ -71,7 +69,7 @@ export default function HeroDeck() {
 
       <div className="border-t border-line bg-surface px-4 py-4 sm:px-5">
         <p className="font-mono text-[10px] font-medium uppercase tracking-[0.1em] text-ink-muted">Coach, only you see it</p>
-        <div role="note" aria-label="Coach cue" style={{ animationDelay: `${180 + EXAMPLE_TURNS.length * TURN_DELAY_MS}ms` }}
+        <div role="note" aria-label="Coach cue"
           className="mt-2.5 rounded-panel border-l-2 border-alert/60 bg-sunken p-3 text-alert shadow-inner-top motion-safe:animate-cue-in">
           <div className="flex items-start gap-2">
             <ShieldAlert size={18} strokeWidth={1.75} className="mt-0.5 shrink-0" aria-hidden />
