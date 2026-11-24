@@ -233,7 +233,7 @@ export default function TeamPage() {
       <section className="panel overflow-hidden" aria-labelledby="roster-h">
         <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-4 py-3 sm:px-5">
           <h2 id="roster-h" className="text-sm font-bold">Roster</h2>
-          <p className="font-mono text-[11px] text-ink-muted">{data.kpis.activeReps} of {data.kpis.totalReps} practised in the last {data.days} days</p>
+          <p className="font-mono text-[11px] text-ink-muted">{data.kpis.activeReps} of {data.kpis.totalReps} practiced in the last {data.days} days</p>
         </div>
         <RosterTable rows={data.roster} days={data.days} viewerId={viewer.id} onAssign={(id) => setSheet({ assigneeId: id })} />
       </section>

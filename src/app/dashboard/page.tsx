@@ -183,7 +183,7 @@ export default function DashboardPage() {
 
   const counted = useMemo(() => (rows ?? []).filter((r) => showLegacy || !r.legacy), [rows, showLegacy]);
   const stats = useMemo(() => {
-    // Every call counts as a session and toward time practised; only scores that count (aggregateScore) enter score math.
+    // Every call counts as a session and toward time practiced; only scores that count (aggregateScore) enter score math.
     const avg = averageScore(counted);
     const best = bestScore(counted);
     const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -193,7 +193,7 @@ export default function DashboardPage() {
       { label: "Sessions", value: String(rows?.length ?? 0), spark: byDay((rs) => rs.length) },
       { label: "Average score", value: avg !== null ? String(avg) : "None", spark: byDay(averageScore), max: 100 },
       { label: "Best score", value: best !== null ? String(best) : "None", spark: byDay((rs) => bestScore(rs) ?? 0), max: 100 },
-      { label: "Time practised", value: formatDuration(counted.reduce((a, r) => a + r.durationSeconds, 0)), spark: byDay((rs) => rs.reduce((a, r) => a + r.durationSeconds, 0)) },
+      { label: "Time practiced", value: formatDuration(counted.reduce((a, r) => a + r.durationSeconds, 0)), spark: byDay((rs) => rs.reduce((a, r) => a + r.durationSeconds, 0)) },
     ];
   }, [counted, rows]);
 
@@ -249,7 +249,7 @@ export default function DashboardPage() {
               <TrendChart rows={counted} />
             </section>
             <section className="panel flex flex-col p-4 sm:p-5" aria-labelledby="next-h">
-              <h2 id="next-h" className="eyebrow">Practise this next</h2>
+              <h2 id="next-h" className="eyebrow">Practice this next</h2>
               {weakest ? (
                 <>
                   <p className="mt-2 text-sm">Your weakest area is <strong>{weakest.name}</strong>, averaging <span className="mono">{weakest.avg}</span> over {weakest.n} call{weakest.n === 1 ? "" : "s"}.</p>

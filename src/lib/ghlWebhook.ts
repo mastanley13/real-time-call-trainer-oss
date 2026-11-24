@@ -98,7 +98,7 @@ export interface GhlFirstGradedCallPayload extends GhlBase {
   email: string;
   /** The saved call (TrainerSession id). */
   sessionId: string;
-  /** Persona id the call was practised against. */
+  /** Persona id the call was practiced against. */
   scenarioId: string;
   /** 0 to 100, rounded. */
   overallScore: number;

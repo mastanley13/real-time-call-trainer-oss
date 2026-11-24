@@ -233,7 +233,7 @@ function Scene({
   }, [gl])
 
   const uniforms = useMemo(() => {
-    // Noise is raw data (not colour): repeat-wrap, plain linear filtering (mipmaps
+    // Noise is raw data (not color): repeat-wrap, plain linear filtering (mipmaps
     // cause seams where atan() wraps), and no sRGB decode.
     perlinNoiseTexture.wrapS = THREE.RepeatWrapping
     perlinNoiseTexture.wrapT = THREE.RepeatWrapping
@@ -337,7 +337,7 @@ void main() {
     ) - 0.5;
     vec2 p = uv + w * warpAmp * 2.0;
 
-    // Smooth vertical + radial gradient between the two colours.
+    // Smooth vertical + radial gradient between the two colors.
     float vertical = smoothstep(-0.9, 0.9, p.y + 0.12 * sin(uTime * 0.4 + uOffsets[1]));
     float radial = smoothstep(0.0, 1.0, length(p));
     float g = clamp(mix(vertical, radial, 0.35), 0.0, 1.0);

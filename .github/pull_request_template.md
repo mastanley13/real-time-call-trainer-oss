@@ -22,12 +22,12 @@ CI runs the first five on every pull request.
 - [ ] UI: colors only through design tokens, works at 375 px, in dark mode and by keyboard; copy is sentence case with no em dashes
 - [ ] API routes: `requireAuth`, zod validation, rate limits on cost-bearing and write routes, org scoping, no secrets or raw provider errors in responses or logs
 - [ ] No secrets, `.env` files or real customer data in the diff
-- [ ] Docs updated (README env table, TESTING.md, AGENTS.md) if behaviour or config changed
+- [ ] Docs updated (README env table, TESTING.md, AGENTS.md) if behavior or config changed
 
 ### Persona packs (delete if not relevant)
 
 - [ ] Entry is in `src/lib/personas/<role>.ts`, its id starts with `<role>-`, and `status` is `"draft"`
 - [ ] `npm run validate:personas` shows 0 warnings for it
-- [ ] Practised once in text mode without a key: each objection comes up and the coach cues it
+- [ ] Practiced once in text mode without a key: each objection comes up and the coach cues it
 - [ ] Passes the bias and regulated-industry checks in [docs/PERSONA_PACKS.md](https://github.com/mastanley13/real-time-call-trainer-oss/blob/main/docs/PERSONA_PACKS.md#draft-to-reviewed-checklist)
 - [ ] All names, numbers and addresses are fictional

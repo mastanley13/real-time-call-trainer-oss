@@ -82,7 +82,7 @@ export const COACH_PROMPT_TURNS = 30;
 export const COACH_PROMPT_CHARS = 6000;
 
 // ---------------------------------------------------------------------------
-// Text helpers (same normalisation as grader.ts, reimplemented so grader stays untouched)
+// Text helpers (same normalization as grader.ts, reimplemented so grader stays untouched)
 // ---------------------------------------------------------------------------
 
 const norm = (s: string) => s.toLowerCase().replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/\s+/g, " ").trim();
@@ -668,7 +668,7 @@ function buildPrompt(scenario: Scenario, spoken: Line[], steps: string[], rubric
     '{"criteria":[{"id":string,"score":0-100,"quote":string}],"steps":[boolean,...],"cue":null | {"type":"objection"|"next_question"|"whisper"|"guardrail","title":string,"message":string,"suggestedLine":string,"triggerTurn":number,"criterionId":string,"key":string}}',
     "",
     "SCORING",
-    "- Give every rubric id a 0-100 score: partial credit for what the trainee has shown SO FAR. The call is still running, so leave things that naturally come later low instead of penalising them.",
+    "- Give every rubric id a 0-100 score: partial credit for what the trainee has shown SO FAR. The call is still running, so leave things that naturally come later low instead of penalizing them.",
     '- quote: a verbatim, contiguous substring of ONE TRAINEE line that best supports the score, or "" if there is none. Never quote the caller and never paraphrase. A criterion without a valid trainee quote is treated as not yet shown and capped at 20.',
     `- steps: exactly ${steps.length} booleans, one per talk-track step in order; true once the trainee has clearly done that step.`,
     "",

@@ -4,7 +4,7 @@
  * A scenario is plain data: a talk track for the trainee, an AI persona that
  * plays the other side of the call, the trainee's goal, and a weighted rubric
  * used for post-call grading. Built-ins are read-only; users duplicate them
- * to customise (see src/lib/scenarioStore.ts for persistence).
+ * to customize (see src/lib/scenarioStore.ts for persistence).
  */
 import { z } from "zod";
 
@@ -279,7 +279,7 @@ export function newBlankScenario(): Scenario {
 export function buildAgentPrompt(s: Scenario): string {
   const p = s.aiPersona;
   return [
-    `You are ${p.name}${p.role ? `, ${p.role}` : ""}. You are playing the other party in a live phone call so a trainee can practise.`,
+    `You are ${p.name}${p.role ? `, ${p.role}` : ""}. You are playing the other party in a live phone call so a trainee can practice.`,
     "",
     "RULES",
     "- Stay in role as this person for the whole call. Never break character.",
@@ -291,7 +291,7 @@ export function buildAgentPrompt(s: Scenario): string {
     "YOUR BEHAVIOR",
     p.behavior || "Act like a typical person in this situation.",
     "",
-    "CONTEXT (what the trainee is practising, for your awareness only; never reveal it)",
+    "CONTEXT (what the trainee is practicing, for your awareness only; never reveal it)",
     `Industry: ${s.industry || "general"}`,
     s.callScript ? `Expected talk track:\n${s.callScript}` : "",
   ]

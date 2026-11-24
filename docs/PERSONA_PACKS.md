@@ -37,7 +37,7 @@ Limits come from `ScenarioSchema`. "Validator" marks rules that only `npm run va
 | `aiPersona.voiceId` | string, up to 80, optional | ElevenLabs voice id override. Leave it out unless you have a reason. |
 | `aiPersona.realtimeVoice` | string, up to 40, optional | OpenAI Realtime voice for this persona, one of `REALTIME_VOICES` in `src/lib/realtime.ts` (`alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar`). Leave it out to use the server's `REALTIME_VOICE` (default `marin`); an unknown name falls back the same way. |
 | `traineeGoal` | string, up to 1000 | What a win looks like, in observable terms. |
-| `rubric` | 1 to 12 criteria | Each criterion: `id` (1 to 60, unique; snake_case), `name` (1 to 120), `description` (up to 600; observable behaviour the grader can quote), `weight` (0 to 100). Validator: weights sum to exactly 100 (use whole numbers) and ids are unique. |
+| `rubric` | 1 to 12 criteria | Each criterion: `id` (1 to 60, unique; snake_case), `name` (1 to 120), `description` (up to 600; observable behavior the grader can quote), `weight` (0 to 100). Validator: weights sum to exactly 100 (use whole numbers) and ids are unique. |
 | `objections` | up to 8 | Each: `type` (one of `OBJECTION_TYPES`), `line` (1 to 300, the words the persona says), `prepAnswer` (up to 400, what a good rep could say). Validator: at least one objection; warns when a prep answer is empty. |
 | `sampleReplies` | up to 20 strings, each up to 500 | Lines the scripted caller uses when there is no AI key. Validator: warns below 4 and when no line covers price, availability, objection or closing (details below). |
 | `status` | `reviewed` \| `draft` | **The schema defaults to `reviewed`, so pack entries must set `status: "draft"` explicitly.** Only maintainers change it to `reviewed`. Drafts show a "Draft persona" notice and the "Draft (needs review)" facet. |
@@ -127,7 +127,7 @@ New and changed personas start as `draft`. A maintainer flips them to `reviewed`
 **Stereotypes and bias**
 - [ ] No traits, attitudes or difficulty tied to age, gender, ethnicity, nationality, religion, disability, accent, class or family status.
 - [ ] No written-out accents, dialect spellings or "broken English".
-- [ ] Names are varied across the pack without being used as shorthand for behaviour.
+- [ ] Names are varied across the pack without being used as shorthand for behavior.
 - [ ] Hostility is proportionate to the situation and never targets the rep's identity. No slurs or harassment.
 - [ ] Hardship (debt, illness, job loss) is portrayed with dignity, and the rubric rewards empathy.
 
@@ -135,8 +135,8 @@ New and changed personas start as `draft`. A maintainer flips them to `reviewed`
 - [ ] Nothing promises or guarantees approval, rates, coverage, returns, savings, tax outcomes or clinical results. Prices are estimates with the conditions stated.
 - [ ] The talk track and rubric reward the disclosures a compliant rep makes (for example "estimate subject to underwriting", "coverage starts once bound and paid"), and reward declining when the persona pushes for a promise.
 - [ ] Collections calls verify identity before discussing a debt, use no threats or false urgency, and offer options.
-- [ ] Recruiting calls never ask about protected characteristics; real estate calls never steer by neighbourhood demographics; medical device calls make no off-label claims.
-- [ ] The pack does not cite statutes or claim that practising it makes a rep compliant. This is training content, not legal advice.
+- [ ] Recruiting calls never ask about protected characteristics; real estate calls never steer by neighborhood demographics; medical device calls make no off-label claims.
+- [ ] The pack does not cite statutes or claim that practicing it makes a rep compliant. This is training content, not legal advice.
 
 **Privacy**
 - [ ] No real customer data, real call transcripts, real companies used without permission, or real people.
@@ -164,6 +164,6 @@ To fix an existing persona, open it in the library, press **Pack file** to see i
 1. Fork the repo and create a branch such as `persona/insurance-renewal-premium-jump`.
 2. Add your entry to the end of the array in `src/lib/personas/<role>.ts` (the JSON from the wizard is a valid TypeScript object literal).
 3. Run `npm run validate:personas`, `npm run typecheck` and `npm test`.
-4. Run `DEMO_MODE=true npm run dev`, open the persona from `/library`, and practise it once in text mode with no key. Check the opening line, that each objection comes up, and that the coach cues it.
+4. Run `DEMO_MODE=true npm run dev`, open the persona from `/library`, and practice it once in text mode with no key. Check the opening line, that each objection comes up, and that the coach cues it.
 5. Open a pull request. Fill in the template, including the checklist above. If you are asking for a persona rather than writing one, use the **Persona request** issue form instead.
 6. CI runs the validator, and Codex review (when the maintainers have enabled it) comments on bias, compliance and schema issues. A maintainer reviews and merges it as a draft, then marks it `reviewed` once the checklist passes.

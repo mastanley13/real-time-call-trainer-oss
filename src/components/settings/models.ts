@@ -24,7 +24,7 @@ const JOBS: Omit<JobRow, "ai" | "engine">[] = [
   { id: "coach", name: "Live coach", detail: "Reads each of your turns during the call and suggests the next move.", fallbackName: "Rules-based coach", fallback: "Cues come from keyword triggers, the talk track and the persona's known objections." },
   { id: "grading", name: "Post-call grading", detail: "Scores the full transcript against the rubric and quotes your lines as evidence.", fallbackName: "Rules-based grader", fallback: "Scores how many rubric topics you covered and quotes your own lines. The debrief marks it as an estimate." },
   { id: "wizard", name: "Persona wizard", detail: "Drafts a new practice persona from your description or a web page.", fallbackName: "Template wizard", fallback: "Builds the persona from your answers with fixed templates, so you can still edit and save it." },
-  { id: "caller", name: "Text caller", detail: "Plays the persona when you practise by typing instead of talking.", fallbackName: "Scripted caller", fallback: "Answers from the persona's sample lines, matched to what you say." },
+  { id: "caller", name: "Text caller", detail: "Plays the persona when you practice by typing instead of talking.", fallbackName: "Scripted caller", fallback: "Answers from the persona's sample lines, matched to what you say." },
 ];
 
 type CapsLike = Record<string, unknown> | null | undefined;

@@ -33,7 +33,7 @@ export type Cue = z.infer<typeof CueSchema>;
 export interface CriterionEstimate {
   id: string;
   name: string;
-  /** Normalised weight (all criteria sum to 100). */
+  /** Normalized weight (all criteria sum to 100). */
   weight: number;
   /** 0-100 partial-credit estimate so far. */
   score: number;

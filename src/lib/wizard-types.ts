@@ -1,6 +1,6 @@
 /**
  * AI persona wizard contract shared by the wizard UI and /api/persona/generate.
- * The output is an ordinary Scenario, so a generated persona can be practised,
+ * The output is an ordinary Scenario, so a generated persona can be practiced,
  * edited, or exported as a pack file without conversion.
  */
 import { z } from "zod";

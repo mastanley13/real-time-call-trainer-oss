@@ -311,7 +311,7 @@ function PersonaCard({ s, onOpen, onDuplicate }: { s: Scenario; onOpen: () => vo
         <span className="pointer-events-none truncate font-mono text-[11px] text-ink-muted">{s.industry || "General"} · {s.durationMin} min</span>
         <span className="flex shrink-0 items-center gap-1">
           <button className="btn-quiet btn-sm !px-2" onClick={onDuplicate} title="Duplicate and edit" aria-label={`Duplicate and edit ${s.title}`}><Copy size={14} aria-hidden /></button>
-          <Link href={`/trainer?scenario=${encodeURIComponent(s.id)}`} className="btn-primary btn-sm" aria-label={`Practise ${s.title}`}><Play size={13} aria-hidden /> Practise</Link>
+          <Link href={`/trainer?scenario=${encodeURIComponent(s.id)}`} className="btn-primary btn-sm" aria-label={`Practice ${s.title}`}><Play size={13} aria-hidden /> Practice</Link>
         </span>
       </div>
     </article>

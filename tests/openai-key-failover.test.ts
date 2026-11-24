@@ -259,7 +259,7 @@ describe("failover triggers", () => {
 
 /* ---------- 3. Non-triggers ---------- */
 
-describe("non-triggers keep today's behaviour", () => {
+describe("non-triggers keep today's behavior", () => {
   const html = () => new Response(`<html><body>${MARKER} insufficient_quota</body></html>`, { status: 429, headers: { "content-type": "text/html" } });
   const cases: [string, () => Response, string][] = [
     ["429 rate_limit_exceeded", () => errJson(429, { code: "rate_limit_exceeded", type: "requests" }), "LLM_HTTP_429"],
@@ -435,7 +435,7 @@ describe("POST /api/realtime/session", () => {
     const res = await mint();
     expect(res.status).toBe(503);
     expect(res.headers.get("Retry-After")).toBe("300");
-    expect(JSON.parse(await text(res))).toEqual({ error: "realtime_unavailable", message: "Voice is unavailable right now. Switch to Text to keep practising." });
+    expect(JSON.parse(await text(res))).toEqual({ error: "realtime_unavailable", message: "Voice is unavailable right now. Switch to Text to keep practicing." });
     expect(calls.map((c) => [c.url, c.slot, c.init.redirect])).toEqual([[CLIENT_SECRETS, 0, "error"], [CLIENT_SECRETS, 1, "error"], [CLIENT_SECRETS, 2, "error"]]);
     expect(mocks.beginCall).toHaveBeenCalledTimes(1);
     expect(mocks.endCall).toHaveBeenCalledTimes(1);

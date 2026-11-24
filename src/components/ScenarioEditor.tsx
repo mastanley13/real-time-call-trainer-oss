@@ -183,7 +183,7 @@ export default function ScenarioEditor() {
             {!readOnly && <button className="btn-primary" onClick={save}><Save size={16} /> Save</button>}
           </div>
         </div>
-        {readOnly && <p className="banner-warn">Library personas can’t be edited. Duplicate one to customise it.</p>}
+        {readOnly && <p className="banner-warn">Library personas can’t be edited. Duplicate one to customize it.</p>}
         {formError && <p role="alert" className="rounded-lg border border-alert/40 bg-alert-soft p-3 text-sm font-medium">{formError}</p>}
         {saved && <p role="status" className="rounded-lg bg-ok-soft p-3 text-sm">Saved to this browser.</p>}
 

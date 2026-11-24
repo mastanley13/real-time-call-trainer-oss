@@ -141,7 +141,7 @@ describe("heuristic grader", () => {
     expect(sorry.criteria[0].score).toBeLessThanOrEqual(plain.criteria[0].score);
   });
 
-  it("penalises padding the call with the same sentence", () => {
+  it("penalizes padding the call with the same sentence", () => {
     const clean = gradeHeuristically(scenario, CALL);
     const padded = gradeHeuristically(scenario, [...CALL, ...Array.from({ length: 5 }, (): Turn[] => [{ role: "user", text: FEE }, { role: "assistant", text: "Okay." }]).flat()]);
     expect(padded.overallScore).toBeLessThan(clean.overallScore);

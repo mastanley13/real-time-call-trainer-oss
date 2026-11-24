@@ -55,7 +55,7 @@ function VoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onC
   // Server-side voice metering (see lib/callMeter.ts) and every exit before the call connects (see lib/voiceAttempt.ts).
   const [call] = useState(() => new ElevenLabsStart({ onEnded: () => cbRef.current.onEnded(), onError: (m) => cbRef.current.onError(m), onCancelled: (m) => cbRef.current.onCancelled(m), endSession: () => endRef.current() }));
   const userEndedRef = useRef(false);
-  // No callbacks here: each attempt passes its own to startSession, bound to its id, so a cancelled attempt is ignored.
+  // No callbacks here: each attempt passes its own to startSession, bound to its id, so a canceled attempt is ignored.
   const conv = useConversation();
   const { startSession, endSession, status, isSpeaking, isMuted, setMuted, getInputVolume, getOutputVolume } = conv;
   const startedRef = useRef(false);
@@ -163,7 +163,7 @@ export default function TrainerClient() {
 
   useEffect(() => () => clearTimeout(talkTimer.current), []);
 
-  // Pick the scenario: ?retry=<session>&turn=<n>, else ?scenario=<id>, else the last one practised, else the first reviewed one.
+  // Pick the scenario: ?retry=<session>&turn=<n>, else ?scenario=<id>, else the last one practiced, else the first reviewed one.
   // Re-runs when the query changes, so the command palette can switch persona without a full page load.
   const query = useSearchParams()?.toString() ?? "";
   const phaseRef = useRef<Phase>("idle");
@@ -189,7 +189,7 @@ export default function TrainerClient() {
       setMode(initialCallMode({ textParam: wantsTextMode(params), saved, hasPracticed }));
     } else if (wantsTextMode(params)) setMode("text");
     const asked = params.get("scenario");
-    // Without ?scenario=, use the persona practised last.
+    // Without ?scenario=, use the persona practiced last.
     const wanted = () => {
       if (asked) return asked;
       try { return localStorage.getItem(LAST_SCENARIO); } catch { return null; }

@@ -79,7 +79,7 @@ describe("voice startup session recovery", () => {
     expect(h.onEnded).not.toHaveBeenCalled();
   });
 
-  it("does not redirect a call that was already cancelled while the request was pending", async () => {
+  it("does not redirect a call that was already canceled while the request was pending", async () => {
     let reply!: (response: Response) => void;
     const response = new Promise<Response>((resolve) => { reply = resolve; });
     const fetchMock = vi.fn(() => response);

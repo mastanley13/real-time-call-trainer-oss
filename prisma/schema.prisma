@@ -334,7 +334,7 @@ model StripeEvent {
 //  Training assignments
 // ─────────────────────────────────────────────────────────────────────────
 
-/// A persona a manager asks one rep (or the whole team) to practise.
+/// A persona a manager asks one rep (or the whole team) to practice.
 /// Completion is derived, never stored: a TrainerSession by the assignee with
 /// the same scenarioId created after the assignment counts as done.
 model TrainingAssignment {

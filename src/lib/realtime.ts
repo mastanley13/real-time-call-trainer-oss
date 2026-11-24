@@ -83,7 +83,7 @@ export function openingInstructions(name: string, line: string): string {
   return `You are ${name} and the phone call just connected. Say exactly the following line, word for word, in your own natural voice, then stop and wait for the other person to reply. Do not add anything before or after it.\n\n"${line.trim()}"`;
 }
 
-/** Average of analyser frequency bins on a 0..1 scale (same measure ElevenLabs uses for its volume getters). */
+/** Average of analyzer frequency bins on a 0..1 scale (same measure ElevenLabs uses for its volume getters). */
 export function averageLevel(bins: ArrayLike<number>): number {
   if (!bins.length) return 0;
   let sum = 0;

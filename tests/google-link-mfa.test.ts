@@ -20,7 +20,7 @@ const user = (r: Row) => ({
 const post = (token: string, code = "123456") =>
   challengeRoute(new NextRequest("http://localhost/api/auth/mfa/challenge", { method: "POST", body: JSON.stringify({ challengeToken: token, code }) }));
 
-/** An in-memory row that honours updateMany's where clause, so a lost race really returns count 0. */
+/** An in-memory row that honors updateMany's where clause, so a lost race really returns count 0. */
 function fakeDb(initial: Row) {
   const state = { ...initial };
   mocks.prisma.user.findUnique.mockImplementation(async () => user({ ...state }));

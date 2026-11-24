@@ -33,7 +33,7 @@ export class ElevenLabsStart {
   /** The current attempt's meter (a meter with no callId before the first token request). */
   get meter() { return this.attempt?.meter ?? this.placeholder; }
 
-  /** The current attempt was cancelled before it connected. */
+  /** The current attempt was canceled before it connected. */
   get isCancelled() { return !!this.attempt?.isCancelled; }
 
   /** Mounted (again, under StrictMode): the attempt carries on. */
@@ -51,7 +51,7 @@ export class ElevenLabsStart {
 
   /**
    * Asks the server for a token (it reserves the minutes and returns the callId) in a new attempt; an older attempt still
-   * before connect is superseded (row 15). Null when the attempt was cancelled while the request was in flight (rows 1,
+   * before connect is superseded (row 15). Null when the attempt was canceled while the request was in flight (rows 1,
    * 2, 3); the minted call is then reported as failed_connect at once (row 7). Throws on a failed mint (row 6), which the
    * token route has already closed on the server; the caller passes the message to failed().
    */
@@ -76,7 +76,7 @@ export class ElevenLabsStart {
     return {
       onConnect: () => {
         const a = current();
-        // A cancelled or superseded attempt that connects late is ended at once (row 17).
+        // A canceled or superseded attempt that connects late is ended at once (row 17).
         if (!a) return this.h.endSession();
         a.meter.open();
       },
@@ -110,7 +110,7 @@ export class ElevenLabsStart {
   failed(message: string) { this.attempt?.cancel("error", message); }
 
   /**
-   * The rep hung up. Before connect (row 1) the attempt is cancelled and the screen goes back to the briefing at once,
+   * The rep hung up. Before connect (row 1) the attempt is canceled and the screen goes back to the briefing at once,
    * without waiting for an SDK callback that may never come. After connect it is the normal connected hang-up: the
    * caller ends the SDK session, and onDisconnect reports user_hangup and ends the screen, as before.
    */

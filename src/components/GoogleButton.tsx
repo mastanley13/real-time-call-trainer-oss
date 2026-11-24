@@ -46,7 +46,7 @@ export default function GoogleButton({ next, label = "Continue with Google", car
 
 /** Human messages for the ?error= codes the Google callback sends back to /login. */
 export const GOOGLE_ERRORS: Record<string, string> = {
-  google_cancelled: "Google sign-in was cancelled. Try again, or use your email and password.",
+  google_cancelled: "Google sign-in was canceled. Try again, or use your email and password.",
   google_expired: "That Google sign-in took too long or was opened in another tab. Try again.",
   google_failed: "Google sign-in didn't work. Try again, or use your email and password.",
   google_unverified: "Your Google account's email isn't verified. Verify it with Google, or sign up with email.",
