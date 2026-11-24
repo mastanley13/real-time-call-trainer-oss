@@ -4,7 +4,9 @@ import Link from "next/link";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
-import { Copy, Plus, Trash2, Save, Play } from "lucide-react";
+import { Check, Copy, Lock, Plus, Trash2, Save, Play } from "lucide-react";
+import { PersonaAvatar } from "@/components/ui/Persona";
+import { FormSkeleton } from "@/components/ui/Skeleton";
 import { CALL_TYPES, CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, OBJECTION_TYPES, Scenario, ScenarioSchema, newBlankScenario } from "@/lib/scenarios";
 import { ZodIssue } from "zod";
 import { deleteCustomScenario, duplicateScenario, listScenarios, saveCustomScenario } from "@/lib/scenarioStore";
@@ -17,9 +19,12 @@ const FIELD_IDS: [string, string][] = [
   ["aiPersona.openingLine", "po"], ["aiPersona.voiceId", "pv"], ["traineeGoal", "g"], ["callScript", "s"],
 ];
 const LABELS: Record<string, string> = {
-  title: "Title", industry: "Industry", "aiPersona.name": "Caller name", "aiPersona.role": "Caller role", "aiPersona.behavior": "Behavior",
-  "aiPersona.openingLine": "Opening line", "aiPersona.voiceId": "Voice ID", traineeGoal: "Trainee goal", callScript: "Call script", sampleReplies: "Scripted replies",
+  title: "Scenario title", industry: "Industry", "aiPersona.name": "Name", "aiPersona.role": "Who they are", "aiPersona.behavior": "Behavior",
+  "aiPersona.openingLine": "Opening line", "aiPersona.voiceId": "Voice ID", traineeGoal: "Rep goal", callScript: "Talk track", sampleReplies: "Scripted replies",
 };
+
+/** Categorical criterion hue (--cat-1 to --cat-8), in the same order the Library, the Wizard and the Debrief use. */
+const critHue = (i: number) => `rgb(var(--cat-${(i % 8) + 1}))`;
 
 function friendlyIssue(i: ZodIssue, key: string): string {
   const m = key.match(/^rubric\.(\d+)\.(\w+)$/);
@@ -102,7 +107,7 @@ export default function ScenarioEditor() {
     }
   }, [hydrated, draft]);
 
-  if (!draft) return null;
+  if (!draft) return <FormSkeleton />;
   const readOnly = !!draft.builtIn;
   const patch = (p: Partial<Scenario>) => {
     setDraft({ ...draft, ...p });
@@ -147,49 +152,68 @@ export default function ScenarioEditor() {
   }
 
   const field = "input";
+  const persisted = all.some((s) => s.id === draft.id);
+  const list = all.filter((s) => !s.builtIn || s.id === draft.id);
   return (
-    <div className="page enter grid gap-6 lg:grid-cols-[280px_1fr]">
-      <aside className="card h-fit lg:sticky lg:top-20">
-        <button className="btn-primary mb-3 w-full" onClick={() => { const b = newBlankScenario(); setDraft(b); setSaved(false); clearErrors(); }}>
-          <Plus size={16} /> New scenario
+    <div className="page enter grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)] lg:items-start">
+      <aside className="card h-fit !p-4 lg:sticky lg:top-[calc(var(--header-h,3.5rem)+1rem)]" aria-label="Scenarios">
+        <button className="btn-primary mb-4 w-full" onClick={() => { const b = newBlankScenario(); setDraft(b); setSaved(false); clearErrors(); }}>
+          <Plus size={16} strokeWidth={1.75} aria-hidden /> New scenario
         </button>
-        <p className="label mt-1">Your personas</p>
+        <p className="label">Your personas</p>
         <ul className="space-y-1">
-          {all.filter((s) => !s.builtIn || s.id === draft.id).map((s) => (
-            <li key={s.id}>
-              <button onClick={() => { setDraft(structuredClone(s)); clearErrors(); setSaved(false); }}
-                className={`w-full rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${draft.id === s.id ? "bg-primary-soft font-semibold text-ink" : "hover:bg-sunken"}`}>
-                {s.title}
-                <span className="block text-xs font-normal text-ink-muted">{s.builtIn ? "Library · read-only" : "Mine"}</span>
-              </button>
-            </li>
-          ))}
-          {!all.some((s) => !s.builtIn) && <li className="px-1 text-xs text-ink-muted">Duplicate a library persona or start a new one.</li>}
+          {list.map((s) => {
+            const current = draft.id === s.id;
+            return (
+              <li key={s.id}>
+                <button onClick={() => { setDraft(structuredClone(s)); clearErrors(); setSaved(false); }} aria-current={current ? "true" : undefined}
+                  className={`flex min-h-[44px] w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${current ? "bg-primary-soft/60 font-semibold text-ink ring-1 ring-primary/30" : "hover:bg-sunken"}`}>
+                  <PersonaAvatar scenario={s} size={28} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{s.title || "Untitled scenario"}</span>
+                    <span className="block font-mono text-[11px] font-normal text-ink-muted">{s.builtIn ? "Library · read-only" : "Mine"}</span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+          {!all.some((s) => !s.builtIn) && <li className="px-1 py-1 text-xs text-ink-muted">Duplicate a library persona or start a new one.</li>}
         </ul>
-        <Link href="/library" className="btn-ghost btn-sm mt-3 w-full">Browse the library</Link>
+        <Link href="/library" className="btn-ghost btn-sm mt-4 w-full">Browse the library</Link>
       </aside>
 
-      <div ref={editorRef} className="card scroll-mt-20 space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-xl font-bold sm:text-2xl">{readOnly ? "Built-in scenario" : "Edit scenario"}: {savedTitle}</h1>
+      <div ref={editorRef} className="card min-w-0 scroll-mt-[calc(var(--header-h,3.5rem)+1rem)] space-y-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <PersonaAvatar scenario={draft} size={44} />
+            <div className="min-w-0">
+              <h1 className="truncate text-xl font-bold sm:text-2xl">{savedTitle}</h1>
+              <p className="mt-0.5 font-mono text-[12px] text-ink-muted">{readOnly ? "Library · read-only" : persisted ? "Mine · saved in this browser" : "Mine · not saved yet"}</p>
+            </div>
+          </div>
           <div className="flex flex-wrap gap-2">
-            <Link href={`/trainer?scenario=${encodeURIComponent(draft.id)}`} className="btn-ghost"><Play size={16} /> Practice</Link>
-            {all.some((s) => s.id === draft.id) && (
-              <button className="btn-ghost" onClick={duplicate}><Copy size={16} /> Duplicate</button>
+            <Link href={`/trainer?scenario=${encodeURIComponent(draft.id)}`} className="btn-ghost"><Play size={16} strokeWidth={1.75} aria-hidden /> Practice</Link>
+            {persisted && !readOnly && (
+              <button className="btn-ghost" onClick={duplicate}><Copy size={16} strokeWidth={1.75} aria-hidden /> Duplicate</button>
             )}
-            {!readOnly && all.some((s) => s.id === draft.id) && (
-              <button className="btn-ghost text-alert" onClick={() => setConfirmDelete(true)}><Trash2 size={16} /> Delete</button>
+            {!readOnly && persisted && (
+              <button className="btn-ghost !text-alert" onClick={() => setConfirmDelete(true)}><Trash2 size={16} strokeWidth={1.75} aria-hidden /> Delete</button>
             )}
-            {!readOnly && <button className="btn-primary" onClick={save}><Save size={16} /> Save</button>}
+            {!readOnly && <button className="btn-primary" onClick={save}><Save size={16} strokeWidth={1.75} aria-hidden /> Save</button>}
           </div>
         </div>
-        {readOnly && <p className="banner-warn">Library personas can’t be edited. Duplicate one to customize it.</p>}
-        {formError && <p role="alert" className="rounded-lg border border-alert/40 bg-alert-soft p-3 text-sm font-medium">{formError}</p>}
-        {saved && <p role="status" className="rounded-lg bg-ok-soft p-3 text-sm">Saved to this browser.</p>}
+        {readOnly && (
+          <div className="banner-info flex flex-wrap items-center justify-between gap-3">
+            <p className="flex items-center gap-2"><Lock size={15} strokeWidth={1.75} className="shrink-0 text-ink-muted" aria-hidden />Library personas are read-only. Duplicate this one to make it yours.</p>
+            {persisted && <button className="btn-primary btn-sm" onClick={duplicate}><Copy size={14} strokeWidth={1.75} aria-hidden /> Duplicate to edit</button>}
+          </div>
+        )}
+        {formError && <p role="alert" className="banner-alert font-medium">{formError}</p>}
+        {saved && <p role="status" className="banner-ok flex items-center gap-2"><Check size={16} strokeWidth={1.75} className="shrink-0 text-ok" aria-hidden />Saved to this browser.</p>}
 
-        <fieldset disabled={readOnly} className="space-y-5">
+        <fieldset disabled={readOnly} className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-3">
-            <div className="sm:col-span-2"><label className="label" htmlFor="t">Title</label><input id="t" className={field} {...bad("title")} value={draft.title} onChange={(e) => patch({ title: e.target.value })} />{msg("title")}</div>
+            <div className="sm:col-span-2"><label className="label" htmlFor="t">Scenario title</label><input id="t" className={field} {...bad("title")} value={draft.title} onChange={(e) => patch({ title: e.target.value })} />{msg("title")}</div>
             <div><label className="label" htmlFor="d">Difficulty</label>
               <select id="d" className={field} value={draft.difficulty} onChange={(e) => patch({ difficulty: e.target.value as Scenario["difficulty"] })}>
                 <option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option>
@@ -207,65 +231,82 @@ export default function ScenarioEditor() {
               </select></div>
           </div>
 
-          <div className="rounded-panel border border-line bg-sunken/50 p-4 sm:p-5">
-            <h2 className="mb-3 text-sm font-semibold">AI persona</h2>
+          <section className="rounded-panel border border-line bg-sunken/50 p-4 sm:p-5" aria-labelledby="sec-persona">
+            <h2 id="sec-persona" className="label !mb-3">AI persona</h2>
             <div className="grid gap-4 sm:grid-cols-2">
               <div><label className="label" htmlFor="pn">Name</label><input id="pn" className={field} {...bad("aiPersona.name")} value={draft.aiPersona.name} onChange={(e) => patchPersona({ name: e.target.value })} />{msg("aiPersona.name")}</div>
-              <div><label className="label" htmlFor="pr">Role</label><input id="pr" className={field} {...bad("aiPersona.role")} value={draft.aiPersona.role} onChange={(e) => patchPersona({ role: e.target.value })} />{msg("aiPersona.role")}</div>
+              <div><label className="label" htmlFor="pr">Who they are</label><input id="pr" className={field} {...bad("aiPersona.role")} value={draft.aiPersona.role} onChange={(e) => patchPersona({ role: e.target.value })} />{msg("aiPersona.role")}</div>
             </div>
-            <div className="mt-4"><label className="label" htmlFor="pb">Behavior</label><textarea id="pb" rows={4} className={field} {...bad("aiPersona.behavior")} value={draft.aiPersona.behavior} onChange={(e) => patchPersona({ behavior: e.target.value })} />{msg("aiPersona.behavior")}</div>
+            <div className="mt-4"><label className="label" htmlFor="pb">Behavior (instructions to the AI caller)</label><textarea id="pb" rows={4} className={field} {...bad("aiPersona.behavior")} value={draft.aiPersona.behavior} onChange={(e) => patchPersona({ behavior: e.target.value })} />{msg("aiPersona.behavior")}</div>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <div><label className="label" htmlFor="po">Opening line</label><input id="po" className={field} {...bad("aiPersona.openingLine")} value={draft.aiPersona.openingLine} onChange={(e) => patchPersona({ openingLine: e.target.value })} />{msg("aiPersona.openingLine")}</div>
               <div><label className="label" htmlFor="pv">ElevenLabs voice ID (optional)</label><input id="pv" className={field} {...bad("aiPersona.voiceId")} value={draft.aiPersona.voiceId ?? ""} onChange={(e) => patchPersona({ voiceId: e.target.value || undefined })} />{msg("aiPersona.voiceId")}</div>
             </div>
-          </div>
+          </section>
 
-          <div><label className="label" htmlFor="g">Trainee goal</label><textarea id="g" rows={2} className={field} {...bad("traineeGoal")} value={draft.traineeGoal} onChange={(e) => patch({ traineeGoal: e.target.value })} />{msg("traineeGoal")}</div>
-          <div><label className="label" htmlFor="s">Call script / talk track</label><textarea id="s" rows={6} className={field} {...bad("callScript")} value={draft.callScript} onChange={(e) => patch({ callScript: e.target.value })} />{msg("callScript")}</div>
+          <div><label className="label" htmlFor="g">Rep goal</label><textarea id="g" rows={2} className={field} {...bad("traineeGoal")} value={draft.traineeGoal} onChange={(e) => patch({ traineeGoal: e.target.value })} />{msg("traineeGoal")}</div>
+          <div><label className="label" htmlFor="s">Talk track (one step per line)</label><textarea id="s" rows={6} className={field} {...bad("callScript")} value={draft.callScript} onChange={(e) => patch({ callScript: e.target.value })} />{msg("callScript")}</div>
 
-          <div>
-            <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Rubric <span className={`ml-2 text-xs font-normal ${total === 100 ? "text-ink-muted" : "font-semibold text-caution"}`}>Weights total {total}%.{total === 100 ? "" : " Weights should add up to 100%. Scores are rescaled when graded."}</span></h2>
-              {!readOnly && <button type="button" className="btn-ghost !min-h-[36px]" onClick={() => patch({ rubric: [...draft.rubric, { id: `c${Date.now().toString(36)}`, name: "", description: "", weight: 10 }] })}><Plus size={14} /> Criterion</button>}
+          <section aria-labelledby="sec-rubric">
+            <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 id="sec-rubric" className="label !mb-1">Rubric</h2>
+                <p className={`text-xs ${total === 100 ? "text-ink-muted" : "font-semibold text-caution"}`}>{total === 100 ? "Weights total 100%." : `Weights total ${total}%. Weights should add up to 100%. Scores are rescaled when graded.`}</p>
+              </div>
+              <div className="flex items-end gap-3">
+                <p className={`mono text-2xl font-semibold leading-none ${total === 100 ? "text-ok" : "text-caution"}`} aria-hidden>{total}<span className="text-sm">%</span></p>
+                {!readOnly && <button type="button" className="btn-ghost btn-sm !min-h-[36px]" onClick={() => patch({ rubric: [...draft.rubric, { id: `c${Date.now().toString(36)}`, name: "", description: "", weight: 10 }] })}><Plus size={14} strokeWidth={1.75} aria-hidden /> Criterion</button>}
+              </div>
+            </div>
+            {/* The rubric as one spectrum: each criterion's share in its Debrief color, against the 100% scale. */}
+            <div className="relative mb-3 h-1.5 overflow-hidden rounded-full bg-sunken" aria-hidden>
+              <div className="absolute inset-y-0 left-0 flex gap-px" style={{ width: `${Math.min(100, total)}%` }}>
+                {draft.rubric.map((c, i) => <span key={c.id + i} className="h-full" style={{ flex: `${Math.max(Number(c.weight) || 0, 0.001)} 1 0%`, background: critHue(i) }} />)}
+              </div>
             </div>
             <div className="space-y-3">
               {draft.rubric.map((c, i) => (
-                <div key={c.id + i} className={`grid items-end gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_100px_auto] ${Object.keys(errors).some((k) => k.startsWith(`rubric.${i}.`)) ? "border-alert bg-alert-soft/40" : "border-line"}`}>
+                <div key={c.id + i} className={`grid items-end gap-2 rounded-panel border p-3 sm:grid-cols-[1fr_100px_auto] ${Object.keys(errors).some((k) => k.startsWith(`rubric.${i}.`)) ? "border-alert bg-alert-soft/40" : "border-line"}`}>
                   <div>
-                  <input id={`rn-${i}`} aria-label={`Criterion ${i + 1} name`} placeholder="Name" className={field} {...bad(`rubric.${i}.name`)} value={c.name} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)) })} />
-                  {msg(`rubric.${i}.name`)}
+                    <label htmlFor={`rn-${i}`} className="label !mb-1 flex items-center gap-1.5"><span className="h-2 w-2 shrink-0 rounded-full" style={{ background: critHue(i) }} aria-hidden />Criterion {i + 1}</label>
+                    <input id={`rn-${i}`} aria-label={`Criterion ${i + 1} name`} placeholder="Name" className={field} {...bad(`rubric.${i}.name`)} value={c.name} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)) })} />
+                    {msg(`rubric.${i}.name`)}
                   </div>
                   <div>
-                  <label htmlFor={`rw-${i}`} className="label !mb-1 whitespace-nowrap">Weight (%)</label>
-                  <input id={`rw-${i}`} aria-label={`Criterion ${i + 1} weight`} type="number" min={0} max={100} className={field} {...bad(`rubric.${i}.weight`)} value={c.weight} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, weight: Number(e.target.value) } : r)) })} />
-                  {msg(`rubric.${i}.weight`)}
+                    <label htmlFor={`rw-${i}`} className="label !mb-1 whitespace-nowrap">Weight (%)</label>
+                    <input id={`rw-${i}`} aria-label={`Criterion ${i + 1} weight`} type="number" min={0} max={100} className={field} {...bad(`rubric.${i}.weight`)} value={c.weight} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, weight: Number(e.target.value) } : r)) })} />
+                    {msg(`rubric.${i}.weight`)}
                   </div>
-                  {!readOnly && <button type="button" aria-label={`Remove criterion ${i + 1}`} className="btn-ghost self-end text-alert" disabled={draft.rubric.length <= 1} onClick={() => patch({ rubric: draft.rubric.filter((_, j) => j !== i) })}><Trash2 size={16} aria-hidden /> Remove</button>}
+                  {!readOnly && <button type="button" aria-label={`Remove criterion ${i + 1}`} className="btn-ghost self-end !text-alert" disabled={draft.rubric.length <= 1} onClick={() => patch({ rubric: draft.rubric.filter((_, j) => j !== i) })}><Trash2 size={16} strokeWidth={1.75} aria-hidden /> Remove</button>}
+                  <div className="tape sm:col-span-3" aria-hidden><span style={{ width: `${Math.min(100, Math.max(0, Number(c.weight) || 0))}%`, background: critHue(i) }} /></div>
                   <div className="sm:col-span-3"><textarea id={`rd-${i}`} aria-label={`Criterion ${i + 1} description`} placeholder="What good looks like" rows={2} className={field} {...bad(`rubric.${i}.description`)} value={c.description} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, description: e.target.value } : r)) })} />{msg(`rubric.${i}.description`)}</div>
                 </div>
               ))}
             </div>
-          </div>
+          </section>
 
-          <div>
-            <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Objections <span className="ml-1 text-xs font-normal text-ink-muted">The live coach uses these to cue you with the prep answer</span></h2>
-              {!readOnly && <button type="button" className="btn-ghost !min-h-[36px]" disabled={draft.objections.length >= 8} onClick={() => patch({ objections: [...draft.objections, { type: "price", line: "", prepAnswer: "" }] })}><Plus size={14} /> Objection</button>}
+          <section aria-labelledby="sec-obj">
+            <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <h2 id="sec-obj" className="label !mb-1">Objections</h2>
+                <p className="text-xs text-ink-muted">The live coach uses these to cue you with the prep answer.</p>
+              </div>
+              {!readOnly && <button type="button" className="btn-ghost btn-sm !min-h-[36px]" disabled={draft.objections.length >= 8} onClick={() => patch({ objections: [...draft.objections, { type: "price", line: "", prepAnswer: "" }] })}><Plus size={14} strokeWidth={1.75} aria-hidden /> Objection</button>}
             </div>
             <div className="space-y-3">
               {draft.objections.map((o, i) => (
-                <div key={i} className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-[160px_1fr_auto]">
+                <div key={i} className="grid gap-2 rounded-panel border border-l-2 border-line border-l-alert/60 p-3 sm:grid-cols-[160px_1fr_auto]">
                   <select aria-label={`Objection ${i + 1} type`} className={field} value={o.type} onChange={(e) => patch({ objections: draft.objections.map((x, j) => (j === i ? { ...x, type: e.target.value as Scenario["objections"][number]["type"] } : x)) })}>
                     {OBJECTION_TYPES.map((t) => <option key={t} value={t}>{OBJECTION_LABELS[t]}</option>)}
                   </select>
                   <input aria-label={`Objection ${i + 1} line`} placeholder="What the caller says" className={field} value={o.line} onChange={(e) => patch({ objections: draft.objections.map((x, j) => (j === i ? { ...x, line: e.target.value } : x)) })} />
-                  {!readOnly && <button type="button" aria-label={`Remove objection ${i + 1}`} className="btn-ghost text-alert" onClick={() => patch({ objections: draft.objections.filter((_, j) => j !== i) })}><Trash2 size={16} aria-hidden /></button>}
+                  {!readOnly && <button type="button" aria-label={`Remove objection ${i + 1}`} className="btn-ghost !text-alert" onClick={() => patch({ objections: draft.objections.filter((_, j) => j !== i) })}><Trash2 size={16} strokeWidth={1.75} aria-hidden /></button>}
                   <input aria-label={`Objection ${i + 1} prep answer`} placeholder="Prep answer the coach can suggest" className={`${field} sm:col-span-3`} value={o.prepAnswer} onChange={(e) => patch({ objections: draft.objections.map((x, j) => (j === i ? { ...x, prepAnswer: e.target.value } : x)) })} />
                 </div>
               ))}
               {draft.objections.length === 0 && <p className="text-xs text-ink-muted">No objections yet. Add the pushback this caller should raise.</p>}
             </div>
-          </div>
+          </section>
 
           <div><label className="label" htmlFor="sr">Scripted caller replies for offline text simulation (one per line)</label>
             <textarea id="sr" rows={4} className={field} {...bad("sampleReplies")} value={draft.sampleReplies.join("\n")} onChange={(e) => patch({ sampleReplies: e.target.value.split("\n") })} />{msg("sampleReplies")}</div>
@@ -276,9 +317,10 @@ export default function ScenarioEditor() {
           onConfirm={() => { setConfirmDelete(false); deleteCustomScenario(draft.id); clearErrors(); refresh(listScenarios()[0].id); }}
           onCancel={() => setConfirmDelete(false)} />
       )}
+      {/* Below md the toast clears the bottom tab bar (56 px plus the safe-area inset). */}
       {toast && createPortal(
-        <div className="pointer-events-none fixed inset-x-3 z-[100] flex justify-center" style={{ bottom: "max(1rem, env(safe-area-inset-bottom))" }}>
-          <div role="status" className="max-w-md rounded-lg bg-ink px-4 py-3 text-sm text-background shadow-pop">{toast}</div>
+        <div className="pointer-events-none fixed inset-x-3 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-[100] flex justify-center md:bottom-4">
+          <div role="status" className="flex max-w-md items-center gap-2 rounded-lg bg-ink px-4 py-3 text-sm text-background shadow-pop motion-safe:animate-sheet-up"><Check size={15} strokeWidth={1.75} aria-hidden />{toast}</div>
         </div>,
         document.body,
       )}

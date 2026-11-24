@@ -222,7 +222,8 @@ describe("home page (Practice Desk layout, #90 copy)", () => {
       }
       return [...out, cur.trim()];
     };
-    const LIGHT = { "--bg": "255 255 255", "--ink": "24 43 52", "--ink-soft": "70 92 100", "--primary": "18 104 93", "--sunken": "237 244 243", "--line": "203 216 217", "--alert": "165 38 48" };
+    /** Flight Deck color tokens from globals.css. The home page uses them as-is, so none may be redefined here. */
+    const COLOR_TOKENS = ["--bg", "--surface", "--sunken", "--ink", "--ink-soft", "--ink-muted", "--line", "--primary", "--primary-hover", "--primary-soft", "--on-primary", "--signal", "--ok", "--caution", "--alert", "--alert-soft", "--on-alert", "--shadow"];
 
     it("puts every rule of landing-desk.css under the .landing-desk wrapper", () => {
       const all = rules(cssSrc);
@@ -231,20 +232,18 @@ describe("home page (Practice Desk layout, #90 copy)", () => {
       expect(cssSrc).not.toMatch(/@import|@tailwind|@layer|@font-face/);
     });
 
-    it("overrides the color tokens only in light mode, under the wrapper", () => {
-      const tokenRules = rules(cssSrc).filter(([, body]) => /--bg:/.test(body));
-      expect(tokenRules.map(([sel]) => sel).sort()).toEqual([':root:not([data-theme="dark"]) .landing-desk', ':root[data-theme="light"] .landing-desk']);
-      expect(cssSrc).toMatch(/@media \(prefers-color-scheme: light\) \{\s*:root:not\(\[data-theme="dark"\]\) \.landing-desk \{/);
-      // Both light blocks carry the same Practice Desk values.
-      for (const [, body] of tokenRules) for (const [k, v] of Object.entries(LIGHT)) expect(body).toContain(`${k}: ${v};`);
-      expect(tokenRules[0][1].replace(/\s+/g, " ")).toBe(tokenRules[1][1].replace(/\s+/g, " "));
-      // No rule anywhere targets the dark theme, so dark mode keeps the app's dark tokens.
-      expect(cssSrc).not.toMatch(/data-theme="dark"\]\s*\.landing-desk|prefers-color-scheme: dark/);
+    it("uses the Flight Deck colors and fonts: no token, theme or font override (the retired green-teal Practice Desk palette)", () => {
+      for (const [sel, body] of rules(cssSrc)) {
+        for (const t of COLOR_TOKENS) expect(body, `${sel} sets ${t}`).not.toMatch(new RegExp(`(^|[;\\s])${t}:`));
+        expect(body, sel).not.toMatch(/--font-(?:sora|inter|mono):|font-family:/);
+      }
+      expect(cssSrc).not.toMatch(/Trebuchet|Segoe UI|data-theme|prefers-color-scheme/);
     });
 
-    it("defines radii, gutters, content width and the focus ring on the wrapper", () => {
+    it("defines radii, gutters, content width and the focus ring on the wrapper, on the header's column", () => {
       const wrapper = rules(cssSrc).filter(([sel]) => sel === ".landing-desk").map(([, b]) => b).join("\n");
-      for (const t of ["--radius-control: 7px;", "--radius-group: 10px;", "--radius-badge: 4px;", "--focus-ring-width: 3px;", "--focus-ring-offset: 4px;", "--content-max: 1240px;", "--gutter: 22px;", "--gutter: 40px;"]) {
+      // 1280 px with 16 / 24 px gutters is SiteHeader's max-w-7xl px-4 sm:px-6, so the logo and the hero share one edge.
+      for (const t of ["--radius-control: 8px;", "--radius-group: 10px;", "--radius-badge: 6px;", "--focus-ring-width: 3px;", "--focus-ring-offset: 4px;", "--content-max: 1280px;", "--gutter: 16px;", "--gutter: 24px;"]) {
         expect(wrapper, t).toContain(t);
       }
       expect(cssSrc).toMatch(/\.landing-desk \.desk-btn \{[^}]*min-height: 48px;/);

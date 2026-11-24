@@ -8,7 +8,7 @@ export const VOICE_UNAVAILABLE_ID = "voice-unavailable";
  */
 export default function VoiceUnavailable({ onUseText }: { onUseText: () => void }) {
   return (
-    <div id={VOICE_UNAVAILABLE_ID} role="status" className="rounded-panel border border-alert/40 bg-alert-soft p-3 text-sm">
+    <div id={VOICE_UNAVAILABLE_ID} role="status" className="banner-alert">
       <p>{VOICE_UNAVAILABLE_MESSAGE}</p>
       <button type="button" className="btn-ghost btn-sm mt-2" onClick={onUseText}>Switch to text practice</button>
     </div>

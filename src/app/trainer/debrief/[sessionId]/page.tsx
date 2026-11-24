@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, CalendarDays, CheckCircle2, Clock, Loader2, Printer, Quote, RefreshCw, RotateCcw, TrendingUp } from "lucide-react";
+import { ArrowRight, CalendarDays, CheckCircle2, ChevronDown, Clock, FileQuestion, Loader2, Printer, Quote, RefreshCw, RotateCcw, TrendingUp, WifiOff } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getLocalSession, readLocalSessionsStrict, updateLocalEvaluation, type CoachLog } from "@/lib/sessionStore";
 import { listScenarios } from "@/lib/scenarioStore";
@@ -16,7 +16,8 @@ import { canManageTeam } from "@/lib/team";
 import { CUE_LABELS } from "@/lib/coach-types";
 import { formatDuration } from "@/lib/format";
 import { voiceLabel } from "@/lib/billingUi";
-import { PageSkeleton } from "@/components/ui/Skeleton";
+import EmptyState from "@/components/ui/EmptyState";
+import { DebriefSkeleton } from "@/components/ui/Skeleton";
 import { PersonaAvatar } from "@/components/ui/Persona";
 import { CUE_ICON } from "@/components/call/CopilotRail";
 
@@ -50,6 +51,9 @@ const friendlySummary = (ev: Evaluation) =>
 const tone = (n: number) => (n >= 80 ? "ok" : n >= 60 ? "signal" : "caution");
 const TEXT = { ok: "text-ok", signal: "text-signal", caution: "text-caution" } as const;
 const BG = { ok: "bg-ok", signal: "bg-signal", caution: "bg-caution" } as const;
+/** Load failures that a retry cannot fix: the session is gone or lives in another browser. */
+const NOT_FOUND = "Session not found.";
+const NOT_LOCAL = "This session isn’t stored in this browser.";
 /** Categorical tokens --cat-1 to --cat-8 from globals.css. */
 const CRIT_COLORS = Array.from({ length: 8 }, (_, i) => `rgb(var(--cat-${i + 1}))`);
 
@@ -81,6 +85,8 @@ export default function DebriefPage() {
   const router = useRouter();
   const [view, setView] = useState<View | null>(null);
   const [error, setError] = useState("");
+  /** Bumped by Try again after a failed load, which reruns the load effect. */
+  const [attempt, setAttempt] = useState(0);
   const [focus, setFocus] = useState<number | null>(null);
   const [regrading, setRegrading] = useState(false);
   const [regradeMsg, setRegradeMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -93,7 +99,7 @@ export default function DebriefPage() {
     if (!capabilities || isLoading) return;
     if (sessionId.startsWith("local-")) {
       const s = getLocalSession(sessionId);
-      if (!s) { setError("This session isn’t stored in this browser."); return; }
+      if (!s) { setError(NOT_LOCAL); return; }
       setView({ title: s.scenario.title, scenario: s.scenario, scenarioId: s.scenario.id, role: s.scenario.role, createdAt: s.createdAt, durationSeconds: s.durationSeconds, transcript: s.transcript, evaluation: s.evaluation, callerName: s.scenario.aiPersona.name, coach: s.coach, local: true });
       return;
     }
@@ -106,13 +112,13 @@ export default function DebriefPage() {
       .catch(() => null);
     fetch(`/api/transcripts/${sessionId}`)
       .then(async (r) => {
-        if (!r.ok) throw new Error(r.status === 404 ? "Session not found." : "Could not load this session.");
+        if (!r.ok) throw new Error(r.status === 404 ? NOT_FOUND : "Could not load this session.");
         const { session } = await r.json();
         const sc = listScenarios().find((x) => x.id === session.scenarioId);
         setView({ title: session.scenarioTitle ?? session.scenarioId, scenario: sc, scenarioId: session.scenarioId, role: sc?.role, createdAt: session.createdAt, durationSeconds: session.durationSeconds, transcript: session.transcript, evaluation: session.evaluation, supervisorNotes: session.supervisorNotes, callerName: sc?.aiPersona.name ?? "Caller", local: false, ownerId: session.userId, voiceUsed: await voice });
       })
-      .catch((e) => setError(e.message));
-  }, [sessionId, capabilities, isLoading, isAuthenticated, router]);
+      .catch((e) => setError(e instanceof TypeError ? "Couldn't reach the server. Check your connection and try again." : e.message));
+  }, [sessionId, capabilities, isLoading, isAuthenticated, router, attempt]);
 
   const ev = view?.evaluation ?? null;
 
@@ -191,8 +197,26 @@ export default function DebriefPage() {
     }
   }
 
-  if (error && !view) return <div className="deck min-h-screen"><div className="page"><p className="banner-warn">{error} <Link className="font-semibold underline" href="/dashboard">Back to progress</Link></p></div></div>;
-  if (!view) return <div className="deck min-h-screen"><PageSkeleton rows={2} /></div>;
+  if (error && !view) {
+    const missing = error === NOT_FOUND || error === NOT_LOCAL;
+    return (
+      <div className="deck min-h-screen">
+        <div className="page pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-10">
+          <div className="panel mx-auto max-w-xl">
+            <EmptyState as="h1" tone="alert" icon={missing ? FileQuestion : WifiOff} title={missing ? "This debrief isn't here" : "Couldn't load this debrief"}
+              action={<>
+                {!missing && <button type="button" className="btn-primary" onClick={() => { setError(""); setAttempt((n) => n + 1); }}><RefreshCw size={16} strokeWidth={1.75} aria-hidden /> Try again</button>}
+                <Link href="/dashboard" className="btn-ghost">Back to progress</Link>
+                {missing && <Link href="/trainer" className="btn-primary"><RotateCcw size={16} strokeWidth={1.75} aria-hidden /> Start a call</Link>}
+              </>}>
+              <span role="alert">{error}</span>
+            </EmptyState>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (!view) return <div className="deck min-h-screen"><DebriefSkeleton /></div>;
 
   const spoke = view.transcript.some((t) => t.role === "user" && t.text.trim());
   const gs = ev ? goalStatusOf(ev) : null;
@@ -207,7 +231,7 @@ export default function DebriefPage() {
   const aiGradeLocked = !view.local && !mayRegrade && isAiGrade(ev);
   // Shown with the grade, or with the "wasn't graded" banner when a server call was saved without one.
   const regradeButton = mayRegrade && view.scenario && capabilities?.llm && (
-    <button type="button" className="btn-ghost btn-sm w-full print:hidden" onClick={regrade} aria-disabled={regrading} aria-busy={regrading}>{regrading ? <Loader2 size={13} className="animate-spin" aria-hidden /> : <RefreshCw size={13} aria-hidden />} {regrading ? "Re-grading" : "Re-grade with AI"}</button>
+    <button type="button" className="btn-ghost btn-sm w-full print:hidden" onClick={regrade} aria-disabled={regrading} aria-busy={regrading}>{regrading ? <Loader2 size={13} strokeWidth={1.75} className="animate-spin" aria-hidden /> : <RefreshCw size={13} strokeWidth={1.75} aria-hidden />} {regrading ? "Re-grading" : "Re-grade with AI"}</button>
   );
   const regradeStatus = regradeMsg && <p ref={regradeMsgRef} tabIndex={-1} role={regradeMsg.ok ? "status" : "alert"} className={`text-xs outline-none ${regradeMsg.ok ? "text-ok" : "text-alert"}`}>{regradeMsg.text}</p>;
   // AI grading failed for this call: a retry panel replaces the score and letter grade. Not gated on capabilities.llm,
@@ -236,21 +260,21 @@ export default function DebriefPage() {
             <h1 className="mt-1 text-2xl font-bold sm:text-3xl">{view.title}</h1>
             <p className="mt-1 font-mono text-xs text-ink-muted">{new Date(view.createdAt).toLocaleString()} · {formatDuration(view.durationSeconds)} · {view.transcript.length} turns{view.coach ? ` · coach ${view.coach.mode}` : ""}{view.voiceUsed ? ` · ${voiceLabel(view.voiceUsed)}` : ""}</p>
           </div>
-          <div className="flex flex-wrap gap-2 print:hidden">
-            <button className="btn-ghost" onClick={() => window.print()}><Printer size={16} aria-hidden /> Print</button>
-            <Link href={view.scenarioId ? `/trainer?scenario=${encodeURIComponent(view.scenarioId)}` : "/trainer"} className="btn-ghost"><RotateCcw size={16} aria-hidden /> Practice again</Link>
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto print:hidden">
+            <button className="btn-ghost max-sm:!min-h-[44px] max-sm:!px-3" onClick={() => window.print()} aria-label="Print debrief" title="Print debrief"><Printer size={16} strokeWidth={1.75} aria-hidden /><span className="hidden sm:inline">Print</span></button>
+            <Link href={view.scenarioId ? `/trainer?scenario=${encodeURIComponent(view.scenarioId)}` : "/trainer"} className="btn-ghost max-sm:min-h-[44px] max-sm:flex-1"><RotateCcw size={16} strokeWidth={1.75} aria-hidden /> Practice again</Link>
             {/* /demo redirects to the booking site, so a plain link. */}
             {ev && spoke && firstGraded && <a href="/demo" className="btn-ghost"><CalendarDays size={16} strokeWidth={1.75} aria-hidden /> Book a demo for your team</a>}
-            {retry && <Link href={retryHref} className="btn-primary"><RotateCcw size={16} aria-hidden /> Retry from turn {retry.turn}</Link>}
+            {retry && <Link href={retryHref} className="btn-primary max-sm:order-first max-sm:min-h-[44px] max-sm:w-full"><RotateCcw size={16} strokeWidth={1.75} aria-hidden /> Retry from turn {retry.turn}</Link>}
           </div>
         </div>
         {error && <p className="banner-warn">{error}</p>}
 
         {!spoke ? (
-          <div className="card text-center">
+          <div className="panel p-6 text-center sm:p-8">
             <h2 className="text-lg font-bold">Nothing to grade yet</h2>
             <p className="mx-auto mt-2 max-w-md text-ink-soft">You didn’t say anything on this call, so there’s no score. Start a new call and try your opening line.</p>
-            <Link href="/trainer" className="btn-primary mt-4"><RotateCcw size={16} aria-hidden /> Practice again</Link>
+            <Link href="/trainer" className="btn-primary mt-4"><RotateCcw size={16} strokeWidth={1.75} aria-hidden /> Practice again</Link>
           </div>
         ) : (
           <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)_380px]">
@@ -304,15 +328,15 @@ export default function DebriefPage() {
 
               {retry && (
                 <div className="panel p-4">
-                  <p className="eyebrow">Retry point</p>
-                  <p className="mt-1 text-sm"><strong>{retry.criterion}</strong> was your weakest area ({retry.score}). Pick the call back up at turn {retry.turn} and try it again.</p>
-                  <Link href={retryHref} className="btn-primary btn-sm mt-3 w-full print:hidden"><RotateCcw size={13} aria-hidden /> Retry from turn {retry.turn}</Link>
+                  <h2 className="label">Retry point</h2>
+                  <p className="text-sm"><strong>{retry.criterion}</strong> was your weakest area ({retry.score}). Pick the call back up at turn {retry.turn} and try it again.</p>
+                  <Link href={retryHref} className="btn-primary btn-sm mt-3 w-full print:hidden"><RotateCcw size={13} strokeWidth={1.75} aria-hidden /> Retry from turn {retry.turn}</Link>
                 </div>
               )}
 
               {view.coach && (
                 <div className="panel p-4">
-                  <p className="label">Live coach</p>
+                  <h2 className="label">Live coach</h2>
                   <p className="text-sm"><span className="mono">{cues.length}</span> cues · <span className="mono">{cues.filter((c) => c.used).length}</span> used · {view.coach.mode} mode</p>
                   <p className="mt-1 font-mono text-[11px] text-ink-muted">{view.coach.source === "llm" ? "AI" : "rules-based"}{view.coach.p50Ms != null ? ` · p50 ${(view.coach.p50Ms / 1000).toFixed(1)}s` : ""}</p>
                 </div>
@@ -320,15 +344,15 @@ export default function DebriefPage() {
 
               {drill && (
                 <div className="panel p-4 print:hidden">
-                  <p className="eyebrow">Next drill</p>
-                  <div className="mt-2 flex items-center gap-3">
+                  <h2 className="label">Next drill</h2>
+                  <div className="flex items-center gap-3">
                     <PersonaAvatar scenario={drill} size={40} />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold">{drill.aiPersona.name}</p>
                       <p className="line-clamp-2 text-xs text-ink-muted">{drill.title}</p>
                     </div>
                   </div>
-                  <Link href={`/trainer?scenario=${encodeURIComponent(drill.id)}`} className="btn-ghost btn-sm mt-3 w-full">Pre-flight <ArrowRight size={13} aria-hidden /></Link>
+                  <Link href={`/trainer?scenario=${encodeURIComponent(drill.id)}`} className="btn-ghost btn-sm mt-3 w-full">Pre-flight <ArrowRight size={13} strokeWidth={1.75} aria-hidden /></Link>
                 </div>
               )}
             </aside>
@@ -338,7 +362,7 @@ export default function DebriefPage() {
               <section className="panel p-4 sm:p-5" aria-labelledby="strip-h">
                 <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
                   <h2 id="strip-h" className="label !mb-0">Moment strip · click a turn</h2>
-                  <p className="font-mono text-[10px] text-ink-muted">▼ coach cue · colored = scored evidence</p>
+                  <p className="flex items-center gap-1 font-mono text-[10px] text-ink-muted"><ChevronDown size={12} strokeWidth={1.75} className="text-caution" aria-hidden />coach cue · colored = scored evidence</p>
                 </div>
                 {/* Long calls scroll inside the strip instead of widening the page. Each turn's target is the full strip height and
                     covers the gap beside its bar: at least 24 px wide on phones, 12 px from sm up. */}
@@ -350,14 +374,16 @@ export default function DebriefPage() {
                       const me = t.role === "user";
                       const cue = cueTurns.get(line);
                       return (
-                        <button key={i} type="button" role="listitem" onClick={() => jump(line)} title={`T${line} · ${me ? "You" : view.callerName}${crits.length ? ` · ${crits.map((id) => ev?.criteria.find((c) => c.id === id)?.name).join(", ")}` : ""}${cue ? ` · ${CUE_LABELS[cue.type]} cue` : ""}`}
+                        <div key={i} role="listitem" className="flex min-w-[24px] flex-1 sm:min-w-[12px]">
+                        <button type="button" onClick={() => jump(line)} title={`T${line} · ${me ? "You" : view.callerName}${crits.length ? ` · ${crits.map((id) => ev?.criteria.find((c) => c.id === id)?.name).join(", ")}` : ""}${cue ? ` · ${CUE_LABELS[cue.type]} cue` : ""}`}
                           aria-label={`Turn ${line}, ${me ? "you" : view.callerName}${cue ? `, ${CUE_LABELS[cue.type]} cue` : ""}`}
-                          className="group flex min-w-[24px] flex-1 flex-col justify-end px-[1.5px] sm:min-w-[12px]">
+                          className="group flex w-full flex-col justify-end px-[1.5px]">
                           <span className={`relative w-full rounded-sm transition group-hover:brightness-125 ${focus === line ? "ring-2 ring-primary ring-offset-2 ring-offset-surface" : ""}`}
                             style={{ height: me ? 40 : 18, background: crits.length ? critColor[crits[0]] : me ? "rgb(var(--ink-muted) / .45)" : "rgb(var(--line))" }}>
-                            {cue && <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[9px] leading-none text-caution" aria-hidden>▼</span>}
+                            {cue && <ChevronDown size={12} strokeWidth={1.75} className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-caution" aria-hidden />}
                           </span>
                         </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -371,32 +397,35 @@ export default function DebriefPage() {
 
               {ev && (
                 <>
-                  <section className="panel space-y-3 p-4 sm:p-5">
+                  <section className="panel p-4 sm:p-5" aria-labelledby="verdict-h">
+                    <h2 id="verdict-h" className="label">Verdict</h2>
                     <p className="text-[15px] leading-relaxed text-ink-soft">{friendlySummary(ev)}</p>
-                    <p className="text-sm text-ink-muted">{ev.goalAchievement.explanation}</p>
+                    <p className="mt-3 text-sm text-ink-muted">{ev.goalAchievement.explanation}</p>
                   </section>
 
                   <div className="grid gap-4 md:grid-cols-2">
                     <section className="panel p-4">
-                      <h2 className="flex items-center gap-2 text-sm font-bold"><CheckCircle2 size={16} className="text-ok" aria-hidden /> Strengths <span className="mono text-xs font-normal text-ink-muted">{ev.strengths.length}</span></h2>
-                      <ul className="mt-2 space-y-1.5 text-sm text-ink-soft">{ev.strengths.length ? ev.strengths.map((x, i) => <li key={i}>{x}</li>) : <li>Nothing stood out this time. Keep practicing and your strengths will show up here.</li>}</ul>
+                      <h2 className="label flex items-center gap-2"><CheckCircle2 size={14} strokeWidth={1.75} className="text-ok" aria-hidden /> Strengths <span className="normal-case tracking-normal">{ev.strengths.length}</span></h2>
+                      <ul className="space-y-1.5 text-sm text-ink-soft">{ev.strengths.length ? ev.strengths.map((x, i) => <li key={i}>{x}</li>) : <li>Nothing stood out this time. Keep practicing and your strengths will show up here.</li>}</ul>
                     </section>
                     <section className="panel p-4">
-                      <h2 className="flex items-center gap-2 text-sm font-bold"><TrendingUp size={16} className="text-caution" aria-hidden /> Improve <span className="mono text-xs font-normal text-ink-muted">{ev.improvements.length}</span></h2>
-                      <ul className="mt-2 space-y-1.5 text-sm text-ink-soft">{ev.improvements.length ? ev.improvements.map((x, i) => <li key={i}>{x}</li>) : <li>Nothing major to fix. Nice work.</li>}</ul>
+                      <h2 className="label flex items-center gap-2"><TrendingUp size={14} strokeWidth={1.75} className="text-caution" aria-hidden /> Improve <span className="normal-case tracking-normal">{ev.improvements.length}</span></h2>
+                      <ul className="space-y-1.5 text-sm text-ink-soft">{ev.improvements.length ? ev.improvements.map((x, i) => <li key={i}>{x}</li>) : <li>Nothing major to fix. Nice work.</li>}</ul>
                     </section>
                   </div>
 
                   <section aria-labelledby="crit-h" className="space-y-3">
-                    <h2 id="crit-h" className="text-lg font-bold">Score by criterion</h2>
+                    <h2 id="crit-h" className="label !mb-0">Score by criterion</h2>
                     {ev.criteria.map((c) => {
                       const t = tone(c.score);
                       return (
                         <article key={c.id} className="panel p-4">
-                          <div className="flex items-baseline justify-between gap-3">
-                            <h3 className="flex min-w-0 items-center gap-2 text-[15px] font-semibold"><span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: critColor[c.id] }} aria-hidden />{c.name}</h3>
-                            <span className="mono shrink-0 text-xs text-ink-muted">weight {Math.round(c.weight)}%</span>
-                            <span className={`mono text-xl font-semibold ${TEXT[t]}`}>{c.score}</span>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <h3 className="flex items-center gap-2 text-[15px] font-semibold"><span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: critColor[c.id] }} aria-hidden />{c.name}</h3>
+                              <p className="mono mt-0.5 pl-[18px] text-[11px] text-ink-muted">weight {Math.round(c.weight)}%</p>
+                            </div>
+                            <span className={`mono shrink-0 text-2xl font-semibold leading-none ${TEXT[t]}`}>{c.score}</span>
                           </div>
                           <div className="tape mt-2" role="meter" aria-label={`${c.name} score`} aria-valuenow={c.score} aria-valuemin={0} aria-valuemax={100}>
                             <span className={BG[t]} style={{ width: `${c.score}%` }} />
@@ -406,7 +435,7 @@ export default function DebriefPage() {
                             <div className="mt-3 flex flex-wrap gap-2">
                               {c.evidence.map((e, i) => (
                                 <button key={i} onClick={() => e.line && jump(e.line)} className="quote flex max-w-full items-start gap-2 text-left hover:border-signal">
-                                  <Quote size={13} className="mt-0.5 shrink-0 text-primary" aria-hidden />
+                                  <Quote size={13} strokeWidth={1.75} className="mt-0.5 shrink-0 text-primary" aria-hidden />
                                   <span className="min-w-0"><span className="italic">&ldquo;{e.quote}&rdquo;</span> <span className="mono whitespace-nowrap text-[11px] text-ink-muted">{e.speaker === "trainee" ? "You" : view.callerName}{e.line ? ` · T${e.line}` : ""}</span></span>
                                 </button>
                               ))}
@@ -419,12 +448,12 @@ export default function DebriefPage() {
                 </>
               )}
 
-              {view.supervisorNotes && <section className="panel p-4"><h3 className="font-semibold">Supervisor notes</h3><p className="mt-2 whitespace-pre-wrap text-sm text-ink-soft">{view.supervisorNotes}</p></section>}
+              {view.supervisorNotes && <section className="panel p-4" aria-labelledby="notes-h"><h2 id="notes-h" className="label">Supervisor notes</h2><p className="whitespace-pre-wrap text-sm text-ink-soft">{view.supervisorNotes}</p></section>}
             </div>
 
             {/* Transcript column */}
             <section className="panel min-w-0 lg:col-span-2 xl:col-span-1 xl:sticky xl:top-[calc(var(--header-h,3.5rem)+1rem)] xl:max-h-[calc(100vh-var(--header-h,3.5rem)-2rem)] xl:self-start xl:overflow-hidden" aria-labelledby="tx-h">
-              <h2 id="tx-h" className="border-b border-line px-4 py-3 text-sm font-bold">Transcript</h2>
+              <h2 id="tx-h" className="label !mb-0 border-b border-line px-4 py-3">Transcript</h2>
               <ol className="scroll-thin space-y-1 p-2 xl:max-h-[calc(100vh-var(--header-h,3.5rem)-6rem)] xl:overflow-y-auto">
                 {view.transcript.map((t, i) => {
                   const line = i + 1;
@@ -437,7 +466,7 @@ export default function DebriefPage() {
                         {(lineCriteria[line] ?? []).map((id) => <span key={id} className="ml-1.5 inline-block h-2 w-2 rounded-sm align-middle" style={{ background: critColor[id] }} title={ev?.criteria.find((c) => c.id === id)?.name} />)}
                       </p>
                       <p className={`mt-0.5 text-sm leading-relaxed ${me ? "text-ink" : "text-ink-soft"}`}>{t.text}</p>
-                      {cue && Icon && <p className="mt-1 flex items-center gap-1.5 text-[11px] text-caution"><Icon size={12} aria-hidden /> {CUE_LABELS[cue.type]} cue: {cue.title}{cue.used ? " · used" : ""}</p>}
+                      {cue && Icon && <p className="mt-1 flex items-center gap-1.5 text-[11px] text-caution"><Icon size={12} strokeWidth={1.75} aria-hidden /> {CUE_LABELS[cue.type]} cue: {cue.title}{cue.used ? " · used" : ""}</p>}
                     </li>
                   );
                 })}

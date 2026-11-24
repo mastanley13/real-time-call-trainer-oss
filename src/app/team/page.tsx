@@ -193,7 +193,8 @@ export default function TeamPage() {
               </button>
             ))}
           </div>
-          {refreshing && <Loader2 size={16} strokeWidth={1.75} className="animate-spin text-ink-muted" aria-label="Updating" />}
+          {refreshing && <Loader2 size={16} strokeWidth={1.75} className="animate-spin text-ink-muted" aria-hidden />}
+          <span role="status" className="sr-only">{refreshing ? "Updating team results" : ""}</span>
           <button type="button" className="btn-ghost" onClick={exportCsv}><Download size={16} strokeWidth={1.75} aria-hidden /> Export CSV</button>
           <button type="button" className="btn-primary" onClick={() => setSheet({ assigneeId: null })}><ClipboardPlus size={16} strokeWidth={1.75} aria-hidden /> Assign persona</button>
         </div>
@@ -207,7 +208,7 @@ export default function TeamPage() {
       )}
       {error && <p className="banner-warn" role="alert">{error} Showing the last data that loaded.</p>}
       <div role="status" aria-live="polite">
-        {notice && <p className="rounded-lg border border-ok/40 bg-ok-soft px-3 py-2 text-sm text-ink">{notice}</p>}
+        {notice && <p className="banner-ok">{notice}</p>}
       </div>
 
       {/* Renders nothing unless the viewer can change it: the owner of a comped team, or a platform admin. */}

@@ -36,6 +36,7 @@ const config: Config = {
       keyframes: {
         "fade-up": { from: { opacity: "0", transform: "translateY(8px)" }, to: { opacity: "1", transform: "none" } },
         "cue-in": { from: { opacity: "0", transform: "translateX(12px)" }, to: { opacity: "1", transform: "none" } },
+        "sheet-up": { from: { opacity: "0", transform: "translateY(16px)" }, to: { opacity: "1", transform: "none" } },
         "lamp-pulse": { "0%,100%": { opacity: "1" }, "50%": { opacity: "0.45" } },
         "orb-breathe": { "0%,100%": { transform: "scale(1)" }, "50%": { transform: "scale(1.04)" } },
         "orb-talk": { "0%,100%": { transform: "scale(1)" }, "50%": { transform: "scale(1.08)" } },
@@ -44,6 +45,7 @@ const config: Config = {
       animation: {
         "fade-up": "fade-up .3s ease-out both",
         "cue-in": "cue-in .2s ease-out both",
+        "sheet-up": "sheet-up .22s ease-out both",
         "lamp-pulse": "lamp-pulse 1.6s ease-in-out infinite",
         "orb-breathe": "orb-breathe 3.2s ease-in-out infinite",
         "orb-talk": "orb-talk .9s ease-in-out infinite",

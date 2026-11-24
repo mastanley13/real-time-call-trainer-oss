@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Info } from "lucide-react";
 import { NOTICE_TEXT, takeNotice, type NoticeKind } from "@/lib/checkoutStart";
 
 /**
@@ -13,10 +14,11 @@ export default function PlanNotice() {
   useEffect(() => { setKind(takeNotice()); }, []);
   if (!kind) return null;
   return (
-    <div className="page pt-4">
-      <div role="status" className="flex items-center justify-between gap-3 rounded-lg border border-line bg-sunken p-3 text-sm text-ink">
-        <p>{NOTICE_TEXT[kind]}</p>
-        <button type="button" className="btn-quiet btn-sm" onClick={() => setKind(null)}>Dismiss</button>
+    // Its own compact gutter, not a second .page: the trainer below already brings the page padding.
+    <div className="mx-auto w-full max-w-7xl px-4 pt-4 sm:px-6">
+      <div role="status" className="banner-info flex items-center justify-between gap-3">
+        <p className="flex items-center gap-2"><Info size={16} strokeWidth={1.75} className="shrink-0 text-primary" aria-hidden />{NOTICE_TEXT[kind]}</p>
+        <button type="button" className="btn-quiet btn-sm shrink-0" onClick={() => setKind(null)}>Dismiss</button>
       </div>
     </div>
   );

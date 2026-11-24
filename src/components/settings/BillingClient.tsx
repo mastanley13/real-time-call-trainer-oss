@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CreditCard, Loader2 } from "lucide-react";
+import { Check, CreditCard, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import { ALREADY_SUBSCRIBED_NOTICE, noticeStatus } from "@/lib/checkoutStart";
@@ -34,6 +34,10 @@ interface Usage {
 
 const PLAN_NAME = { free: "Free", pro: "Pro", team: "Team" } as const;
 const KIND_LABEL: Record<string, string> = { voice_call: "Voice call", credit_drop: "Credit for a dropped call", credit_manual: "Credit from support" };
+
+function CurrentPlanBadge() {
+  return <span className="chip-model !border-primary/40 !text-primary"><Check size={12} strokeWidth={1.75} aria-hidden />Current plan</span>;
+}
 
 export default function BillingClient() {
   const { isAuthenticated, isLoading, capabilities } = useAuth();
@@ -184,19 +188,21 @@ export default function BillingClient() {
             <h2 id="usage-h" className="text-lg font-bold">{PLAN_NAME[u.plan ?? "free"]} plan{u.pooled ? " (team pool)" : ""}</h2>
             <p className="mono text-xs text-ink-muted">Resets {u.periodEnd ? new Date(u.periodEnd).toLocaleDateString() : ""}</p>
           </div>
-          <p className="mt-3 text-2xl font-bold">{formatMinutes(u.remaining ?? 0)} <span className="text-base font-normal text-ink-soft">of {u.minutesCap} voice minutes left</span></p>
+          <p className="mt-3 flex flex-wrap items-baseline gap-x-2"><span className="mono text-[34px] font-semibold leading-none">{formatMinutes(u.remaining ?? 0)}</span> <span className="text-base font-normal text-ink-soft">of <span className="mono">{u.minutesCap}</span> voice minutes left</span></p>
           {overCap && <p className="banner-warn mt-3" role="status">{overCap}</p>}
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-sunken" role="img" aria-label={`${pct}% of voice minutes used`}>
-            <div className={`h-full ${pct >= 90 ? "bg-alert" : "bg-primary"}`} style={{ width: `${pct}%` }} />
+          <div className="tape mt-3 !h-2" role="meter" aria-label="Voice minutes used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-valuetext={`${pct}% of voice minutes used`}>
+            <span className={pct >= 90 ? "bg-alert" : pct >= 75 ? "bg-caution" : "bg-primary"} style={{ width: `${pct}%` }} />
           </div>
+          <p className="mt-1.5 font-mono text-[11px] text-ink-muted">{pct}% used</p>
           {u.premiumVoice?.enabled && <p className="mt-3 text-sm text-ink-soft">Premium voice is on: {u.premiumVoice.minutesCap} of your {u.minutesCap} minutes can run on Premium this month. They come out of your plan minutes, not on top.</p>}
           {(u.entries?.length ?? 0) > 0 && (
             <ul className="mt-4 divide-y divide-line text-sm">
               {u.entries!.map((e) => (
-                <li key={e.id} className="flex items-center justify-between gap-3 py-2">
-                  <span>{KIND_LABEL[e.kind] ?? e.kind}</span>
-                  <span className="mono text-xs text-ink-muted">{new Date(e.createdAt).toLocaleString()}</span>
-                  <span className="mono">{e.minutes > 0 ? `${formatMinutes(e.minutes)} min` : `${formatMinutes(e.minutes)} min credit`}</span>
+                <li key={e.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-0.5 py-2.5 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:gap-x-6">
+                  <span className="min-w-0 truncate">{KIND_LABEL[e.kind] ?? e.kind}</span>
+                  {/* Phones: the time stacks under the entry name; from sm up it sits in its own column. */}
+                  <span className="mono col-start-1 row-start-2 text-xs text-ink-muted sm:col-start-2 sm:row-start-1">{new Date(e.createdAt).toLocaleString()}</span>
+                  <span className={`mono col-start-2 row-start-1 text-right sm:col-start-3 ${e.minutes > 0 ? "" : "text-ok"}`}>{e.minutes > 0 ? `${formatMinutes(e.minutes)} min` : `${formatMinutes(e.minutes)} min credit`}</span>
                 </li>
               ))}
             </ul>
@@ -212,10 +218,10 @@ export default function BillingClient() {
         <section className="panel p-4 sm:p-5" aria-labelledby="plans-h">
           <h2 id="plans-h" tabIndex={-1} className="text-lg font-bold focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary">Plans</h2>
           <div className="mt-3 flex flex-wrap items-center gap-4">
-            <fieldset className="flex gap-2" aria-label="Billing period">
+            <fieldset className="segmented" aria-label="Billing period">
               {(["month", "year"] as const).map((v) => (
                 // The radio is visually hidden, so its own outline would be clipped away: the chip shows the focus ring instead.
-                <label key={v} className={`chip cursor-pointer has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary ${interval === v ? "bg-primary-soft text-primary" : ""}`}>
+                <label key={v} className={`chip cursor-pointer has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary min-h-[32px] !rounded-md !border-transparent !px-3 font-semibold transition-colors ${interval === v ? "bg-surface !text-ink shadow-card ring-1 ring-line" : "!text-ink-muted hover:!text-ink"}`}>
                   <input type="radio" name="interval" className="sr-only" checked={interval === v} onChange={() => setInterval(v)} />
                   {v === "month" ? "Monthly" : "Annual, 2 months free"}
                 </label>
@@ -225,8 +231,8 @@ export default function BillingClient() {
 
           {newBuyerPremium && (
             <div className="mt-4 rounded-lg border border-line p-4 text-sm">
-              <label className="flex items-start gap-2">
-                <input type="checkbox" className="mt-1" checked={addPremium} onChange={(e) => setAddPremium(e.target.checked)} disabled={!!busy} aria-describedby="premium-buy-help" />
+              <label className="flex min-h-[24px] cursor-pointer items-start gap-2">
+                <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 accent-[rgb(var(--primary))]" checked={addPremium} onChange={(e) => setAddPremium(e.target.checked)} disabled={!!busy} aria-describedby="premium-buy-help" />
                 <span className="font-medium">Add Premium voice</span>
               </label>
               <div id="premium-buy-help" className="mt-1 space-y-1 pl-6 text-ink-muted">
@@ -239,8 +245,11 @@ export default function BillingClient() {
           )}
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <div className="rounded-lg border border-line p-4">
-              <h3 className="font-heading font-semibold">Pro</h3>
+            <div className={`rounded-lg border p-4 ${u.plan === "pro" ? "border-primary/50 bg-primary-soft/20" : "border-line"}`}>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-heading font-semibold">Pro</h3>
+                {u.plan === "pro" && <CurrentPlanBadge />}
+              </div>
               <p className="text-sm text-ink-soft">{planPriceLine("pro", interval)}</p>
               {/* Truly disabled while any checkout is starting, so a double click cannot open two. */}
               <button type="button" className="btn-primary mt-3" onClick={() => go("pro")} disabled={!!busy || u.plan === "pro" || u.plan === "team"}>
@@ -248,18 +257,25 @@ export default function BillingClient() {
                 {proButtonLabel(u.plan)}
               </button>
             </div>
-            <div className="rounded-lg border border-line p-4">
-              <h3 className="font-heading font-semibold">Team</h3>
+            <div className={`rounded-lg border p-4 ${u.plan === "team" ? "border-primary/50 bg-primary-soft/20" : "border-line"}`}>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-heading font-semibold">Team</h3>
+                {u.plan === "team" && <CurrentPlanBadge />}
+              </div>
               <p className="text-sm text-ink-soft">{planPriceLine("team", interval)}</p>
               {u.billing.canBuyTeam ? (
                 <div className="mt-3 flex flex-wrap items-start gap-3">
                   <SeatsField value={seatsText} note={seatsNote} disabled={!!busy}
                     onChange={(text) => { setSeatsText(text); setSeatsNote(null); }}
                     onBlur={() => { const left = seatsOnBlur(seatsText); setSeatsText(left.value); setSeatsNote(left.note); }} />
-                  <button type="button" className="btn-primary mt-6" onClick={() => go("team")} disabled={!!busy || u.plan === "team"}>
+                  {/* A label-height spacer lines the button up with the seats box itself, not with the help line under it. */}
+                  <div>
+                    <span className="label invisible" aria-hidden>Seats</span>
+                  <button type="button" className="btn-primary" onClick={() => go("team")} disabled={!!busy || u.plan === "team"}>
                     {busy === "team" && <Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden />}
                     {teamButtonLabel(u.plan)}
                   </button>
+                  </div>
                 </div>
               ) : (
                 <p className="mt-3 text-sm text-ink-muted">Ask an owner or manager of your organization to buy Team.</p>

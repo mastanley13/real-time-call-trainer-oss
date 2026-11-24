@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import AuthShell from "@/components/AuthShell";
+import AuthShell, { PasswordInput } from "@/components/AuthShell";
 import GoogleButton, { GOOGLE_ERRORS } from "@/components/GoogleButton";
 import LegalLinks from "@/components/LegalLinks";
 import { loginDestination, validNextPath } from "@/lib/safeNext";
@@ -57,6 +58,8 @@ function LoginForm() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    // The button stays focusable while busy (aria-disabled), so a second Enter lands here and stops.
+    if (busy) return;
     setError("");
     setBusy(true);
     try {
@@ -74,8 +77,16 @@ function LoginForm() {
     }
   }
 
+  // On the code step, rejected-code errors sit under the field; network/rate-limit/server errors stay in the form banner.
+  const isFormLevel = /^could not reach|^too many|^something went wrong|^network/i.test(error);
+  const codeError = challenge && !isFormLevel ? error : "";
+  const formError = challenge && !isFormLevel ? "" : error;
+
   return (
-    <AuthShell title="Welcome back" subtitle="Sign in to continue practicing.">
+    <AuthShell
+      title={challenge ? "Enter your authenticator code" : "Welcome back"}
+      subtitle={challenge ? "Two-factor sign-in is on for this account." : "Sign in to continue practicing."}
+    >
       {capabilities && !capabilities.database && !capabilities.demoMode && (
         <div className="banner-warn mb-4">
           No database is configured, so accounts are unavailable. Set <code>DATABASE_URL</code>, or run with <code>DEMO_MODE=true</code> to skip login (see TESTING.md).
@@ -92,7 +103,22 @@ function LoginForm() {
         {challenge ? (
           <div>
             <label htmlFor="code" className="label">Authenticator code</label>
-            <input id="code" className="input" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} required />
+            <input
+              id="code"
+              className="input font-mono text-center text-lg tracking-[0.35em]"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]*"
+              maxLength={6}
+              autoFocus
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+              aria-invalid={codeError ? true : undefined}
+              aria-describedby={codeError ? "code-help code-error" : "code-help"}
+              required
+            />
+            <p id="code-help" className="mt-1.5 text-xs text-ink-muted">Open your authenticator app and type the 6-digit code it shows.</p>
+            {codeError && <p id="code-error" role="alert" className="field-msg">{codeError}</p>}
           </div>
         ) : (
           <>
@@ -105,16 +131,21 @@ function LoginForm() {
                 <label htmlFor="password" className="label mb-0">Password</label>
                 <Link href="/forgot-password" className="text-xs font-semibold text-primary">Forgot password?</Link>
               </div>
-              <input id="password" type="password" className="input" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <PasswordInput id="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
             </div>
           </>
         )}
-        {error && <p role="alert" className="text-sm text-alert">{error}</p>}
-        <button className="btn-primary w-full" disabled={busy}>{busy ? "Signing in…" : challenge ? "Verify" : "Sign in"}</button>
+        {formError && <p role="alert" className="banner-alert">{formError}</p>}
+        <button className="btn-primary w-full" aria-disabled={busy || undefined}>
+          {busy && <Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden />}
+          {busy ? (challenge ? "Verifying…" : "Signing in…") : challenge ? "Verify" : "Sign in"}
+        </button>
       </form>
-      <p className="mt-5 text-center text-sm text-ink-muted">
-        New here? <Link href="/register" className="font-semibold text-primary">Create an account</Link>
-      </p>
+      {!challenge && (
+        <p className="mt-5 text-center text-sm text-ink-muted">
+          New here? <Link href="/register" className="font-semibold text-primary">Create an account</Link>
+        </p>
+      )}
       <LegalLinks />
     </AuthShell>
   );

@@ -20,7 +20,8 @@ interface Props {
  * use the caution style, and past_due says so in words.
  */
 const BillingNotice = forwardRef<HTMLParagraphElement, Props>(function BillingNotice({ notice, failure, busy, disabled, onAction }, headlineRef) {
-  const tone = notice.role === "status" ? "rounded-lg border border-line bg-sunken p-3 text-sm text-ink" : "banner-warn";
+  // banner-info carries border-line; it is repeated so the neutral border stays explicit in the markup.
+  const tone = notice.role === "status" ? "banner-info border-line" : "banner-warn";
   return (
     <div className={`${tone} flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between`} role={notice.role}>
       <div className="max-w-[70ch]">

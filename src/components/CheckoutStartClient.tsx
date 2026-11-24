@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { PageSkeleton } from "@/components/ui/Skeleton";
+import { Skeleton } from "@/components/ui/Skeleton";
 import SeatsField from "@/components/settings/SeatsField";
 import { SUPPORT_URL, seatsOnBlur } from "@/lib/billingUi";
 import { billingNoticeHref, intentFromQuery, rememberNotice, startCheckout } from "@/lib/checkoutStart";
@@ -38,6 +38,67 @@ export function ConfigFailed() {
         {retrying ? "Trying again..." : "Try again"}
       </button>
       <p className="text-sm text-ink-muted"><Link href="/pricing" className="underline underline-offset-2 hover:text-ink">Back to pricing</Link></p>
+    </div>
+  );
+}
+
+/** Checkout-shaped placeholder: step strip, heading, one panel. */
+export function CheckoutSkeleton() {
+  return (
+    <div className="page max-w-xl space-y-5 py-10" role="status">
+      <Skeleton className="h-3 w-20" />
+      <div className="grid grid-cols-3 gap-2">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-9" />)}</div>
+      <Skeleton className="h-9 w-64 max-w-full" />
+      <Skeleton className="h-4 w-full max-w-md" />
+      <Skeleton className="h-36" />
+      <span className="sr-only">Loading...</span>
+    </div>
+  );
+}
+
+type StepState = "done" | "current" | "next";
+const STEP_LAMP = { done: "lamp-ok", current: "lamp-signal", next: "lamp-off" } as const;
+const STEP_BAR = { done: "bg-ok", current: "bg-primary", next: "bg-line" } as const;
+const STEP_SR = { done: ", done", current: ", current step", next: ", next" } as const;
+
+/** Plan, Seats, Payment on Stripe. Done steps show an ok lamp, the current one a signal lamp, later ones an off lamp. */
+function FlightPlan({ current, name, period }: { current: 1 | 2; name: string; period: string }) {
+  const steps = [
+    { label: "Plan", detail: `${name}, ${period}` },
+    { label: "Seats", detail: name === "Team" ? `${TEAM_MIN_SEATS} or more` : "Just you" },
+    { label: "Payment on Stripe", detail: "Card and receipt" },
+  ];
+  return (
+    <ol aria-label="Checkout steps" className="grid grid-cols-3 gap-2 sm:gap-3">
+      {steps.map((s, i) => {
+        const st: StepState = i < current ? "done" : i === current ? "current" : "next";
+        return (
+          <li key={s.label} aria-current={st === "current" ? "step" : undefined} className="min-w-0">
+            <span className={`block h-0.5 rounded-full ${STEP_BAR[st]}`} aria-hidden />
+            <span className="mt-2 flex items-center gap-2">
+              <span className={`lamp ${STEP_LAMP[st]}`} aria-hidden />
+              <span className={`truncate text-xs font-semibold ${st === "next" ? "text-ink-muted" : "text-ink"}`}>{s.label}</span>
+            </span>
+            <span className="mt-0.5 block truncate pl-4 font-mono text-[11px] text-ink-muted">
+              {s.detail}
+              <span className="sr-only">{STEP_SR[st]}</span>
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** The form footer. The button keeps focus while busy (aria-disabled); `go` ignores a second press. */
+function CheckoutFooter({ busy }: { busy: boolean }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+      <p className="text-xs text-ink-muted">Next: payment on Stripe.</p>
+      <button type="submit" className="btn-primary" aria-disabled={busy || undefined}>
+        {busy && <Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden />}
+        Continue to checkout
+      </button>
     </div>
   );
 }
@@ -133,18 +194,19 @@ export default function CheckoutStartClient() {
     if (plan === "pro" && !premiumOffer) void go();
   }, [capabilities, capabilitiesFailed, isLoading, isAuthenticated, plan, interval, router, go, premiumOffer, waitingForOffer]);
 
-  if (isLoading || !isAuthenticated || !plan || (!capabilities && !capabilitiesFailed)) return <PageSkeleton rows={2} />;
+  if (isLoading || !isAuthenticated || !plan || (!capabilities && !capabilitiesFailed)) return <CheckoutSkeleton />;
 
   if (!capabilities) return <ConfigFailed />;
 
   const name = plan === "pro" ? "Pro" : "Team";
+  const period = interval === "year" ? "Annual" : "Monthly";
   const premiumBox = premiumOffer && (
-    <div className="w-full rounded-panel border border-line p-3 text-sm">
-      <label className="flex items-start gap-2">
-        <input type="checkbox" className="mt-1" checked={addPremium} onChange={(e) => setAddPremium(e.target.checked)} disabled={busy} aria-describedby="premium-checkout-help" />
-        <span className="font-medium">Add Premium voice</span>
+    <div className="w-full rounded-lg border border-line bg-sunken/60 px-3 pb-3 text-sm">
+      <label className="flex min-h-[44px] cursor-pointer items-center gap-3">
+        <input type="checkbox" className="h-4 w-4 shrink-0 cursor-pointer accent-[rgb(var(--primary))]" checked={addPremium} onChange={(e) => setAddPremium(e.target.checked)} disabled={busy} aria-describedby="premium-checkout-help" />
+        <span className="font-semibold text-ink">Add Premium voice</span>
       </label>
-      <div id="premium-checkout-help" className="mt-1 space-y-1 pl-6 text-ink-muted">
+      <div id="premium-checkout-help" className="space-y-1 pl-7 text-xs leading-relaxed text-ink-muted">
         <p>{premiumPriceLine(plan, interval)}</p>
         <p>{premiumDisclosure(plan)}</p>
         <p>{PREMIUM_CALL_LENGTH_NOTE}</p>
@@ -152,8 +214,9 @@ export default function CheckoutStartClient() {
     </div>
   );
   return (
-    <div className="page enter max-w-xl space-y-4 py-10">
+    <div className="page enter max-w-xl space-y-5 py-10">
       <p className="eyebrow">Checkout</p>
+      <FlightPlan current={plan === "team" ? 1 : 2} name={name} period={period} />
       <h1 className="text-3xl font-bold">{plan === "team" ? "Choose your seats" : premiumOffer ? `Check out ${name}` : `Opening checkout for ${name}`}</h1>
       <p className="text-ink-soft">
         {plan === "team"
@@ -161,16 +224,17 @@ export default function CheckoutStartClient() {
           : `${name} is billed ${interval === "year" ? "yearly" : "monthly"}. You will pay on Stripe.`}
       </p>
       {error && (
-        <div role="alert" className="banner-warn">
+        <div role="alert" className="banner-alert">
           <p>{error.message}</p>
           {error.help && <a href={SUPPORT_URL} target="_blank" rel="noopener noreferrer" className="font-semibold underline underline-offset-2">Report a problem on GitHub</a>}
         </div>
       )}
       {plan === "team" ? (
         <form
-          className="flex flex-wrap items-start gap-3"
+          className="panel space-y-4 p-4 sm:p-5"
           onSubmit={(e) => {
             e.preventDefault();
+            if (busy) return;
             const left = seatsOnBlur(seatsText);
             setSeatsText(left.value);
             setSeatsNote(left.note);
@@ -180,22 +244,19 @@ export default function CheckoutStartClient() {
           <SeatsField value={seatsText} note={seatsNote} disabled={busy}
             onChange={(text) => { setSeatsText(text); setSeatsNote(null); }}
             onBlur={() => { const left = seatsOnBlur(seatsText); setSeatsText(left.value); setSeatsNote(left.note); }} />
-          <button type="submit" className="btn-primary mt-6" disabled={busy}>
-            {busy && <Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden />}
-            Continue to checkout
-          </button>
           {premiumBox}
+          {/* The button gets its own footer row: the seats help line under the box would pull a side-by-side button off the input. */}
+          <CheckoutFooter busy={busy} />
         </form>
       ) : premiumOffer ? (
-        <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); void go(); }}>
+        <form className="panel space-y-4 p-4 sm:p-5" onSubmit={(e) => { e.preventDefault(); void go(); }}>
           {premiumBox}
-          <button type="submit" className="btn-primary" disabled={busy}>
-            {busy && <Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden />}
-            Continue to checkout
-          </button>
+          <CheckoutFooter busy={busy} />
         </form>
       ) : (
-        busy && <p className="flex items-center gap-2 text-sm text-ink-muted"><Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden />One moment.</p>
+        <div role="status" className={busy ? "panel flex items-center gap-3 px-4 py-3 text-sm text-ink-soft" : "sr-only"}>
+          {busy && <><span className="lamp lamp-signal motion-safe:animate-lamp-pulse" aria-hidden />One moment.</>}
+        </div>
       )}
       {(error || restored) && plan === "pro" && !premiumOffer && !busy && <button type="button" className="btn-primary" onClick={() => void go()}>Try again</button>}
       <p className="text-sm text-ink-muted"><Link href="/pricing" className="underline underline-offset-2 hover:text-ink">Back to pricing</Link></p>

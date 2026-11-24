@@ -26,23 +26,29 @@ export default function PricingSummary({ src, seg, billingEnabled }: { src: stri
     },
   ];
   return (
-    <section className="page py-12" aria-labelledby="plans-h">
+    <section className="page py-12 sm:py-16" aria-labelledby="plans-h">
       <p className="eyebrow">Pricing</p>
-      <h2 id="plans-h" className="mt-1 text-2xl font-bold sm:text-3xl">Start free. Upgrade when you want more voice.</h2>
-      <div className="mt-6 grid gap-4 md:grid-cols-3">
-        {plans.map((p) => (
-          <div key={p.name} className="card flex flex-col">
-            <h3 className="text-lg font-bold">{p.name}</h3>
-            <p className="mt-2 font-heading text-2xl font-bold">{p.price}</p>
-            <p className="min-h-[1.25rem] font-mono text-xs text-ink-muted">{p.note}</p>
-            <p className="mt-3 flex-1 text-sm text-ink-soft">{p.body}</p>
-            <Link href={p.href} className="btn-ghost mt-5">{p.cta}</Link>
-            {p.soon && <p className="mt-2 text-center text-xs text-ink-muted">{OPEN_SOON_LINE}</p>}
-          </div>
-        ))}
+      <h2 id="plans-h" className="mt-2 text-2xl font-bold sm:text-[28px]">Start free. Upgrade when you want more voice.</h2>
+      <div className="mt-8 grid gap-4 md:grid-cols-3 lg:gap-6">
+        {plans.map((p) => {
+          const featured = p.name === "Team";
+          return (
+            <div key={p.name} className={`card flex flex-col ${featured ? "shadow-pop ring-1 ring-primary/40" : ""}`}>
+              <div className="flex min-h-[28px] flex-wrap items-center justify-between gap-2">
+                <h3 className="text-lg font-bold">{p.name}</h3>
+                {featured && <span className="chip border-primary/40 bg-primary-soft text-ink"><span className="lamp lamp-signal !h-1.5 !w-1.5" aria-hidden />For managers</span>}
+              </div>
+              <p className="mt-3 font-mono text-2xl font-semibold tracking-tight tabular-nums text-ink">{p.price}</p>
+              <p className="min-h-[1.25rem] font-mono text-xs text-ink-muted">{p.note}</p>
+              <p className="mt-3 flex-1 border-t border-line pt-3 text-sm leading-relaxed text-ink-soft">{p.body}</p>
+              <Link href={p.href} className={`mt-5 ${featured ? "btn-primary" : "btn-ghost"}`}>{p.cta}</Link>
+              {p.soon && <p className="mt-2 text-center text-xs text-ink-muted">{OPEN_SOON_LINE}</p>}
+            </div>
+          );
+        })}
       </div>
-      <p className="mt-4 text-sm text-ink-muted">
-        No overage charges, ever. Self-hosting stays free under MIT. <Link href="/pricing" className="underline underline-offset-2 hover:text-ink">See full pricing</Link>.
+      <p className="mt-5 text-sm text-ink-muted">
+        No overage charges, ever. Self-hosting stays free under MIT. <Link href="/pricing" className="rounded font-medium text-primary underline decoration-primary/40 underline-offset-4 hover:decoration-primary">See full pricing</Link>.
       </p>
     </section>
   );

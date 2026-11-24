@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useState } from "react";
-import { MailCheck } from "lucide-react";
+import { Loader2, MailCheck } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import AuthShell from "@/components/AuthShell";
 import LegalLinks from "@/components/LegalLinks";
@@ -17,6 +17,8 @@ export default function ForgotPasswordForm() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    // The button stays focusable while busy (aria-disabled), so a second Enter lands here and stops.
+    if (busy) return;
     setError("");
     setBusy(true);
     try {
@@ -57,10 +59,13 @@ export default function ForgotPasswordForm() {
         <form onSubmit={onSubmit} className="space-y-4">
           <div>
             <label htmlFor="email" className="label">Email</label>
-            <input id="email" type="email" className="input" autoComplete="email" maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <input id="email" type="email" className="input" autoComplete="email" maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
           </div>
-          {error && <p role="alert" className="text-sm text-alert">{error}</p>}
-          <button className="btn-primary w-full" disabled={busy}>{busy ? "Sending…" : "Send reset link"}</button>
+          {error && <p role="alert" className="banner-alert">{error}</p>}
+          <button className="btn-primary w-full" aria-disabled={busy || undefined}>
+            {busy && <Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden />}
+            {busy ? "Sending…" : "Send reset link"}
+          </button>
         </form>
       )}
       {!sent && (

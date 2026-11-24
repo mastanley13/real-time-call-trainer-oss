@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Copy, FileJson, Play, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { Check, Copy, FileJson, Play, Search, SearchX, ShieldAlert, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import {
   CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps,
   type CallType, type ObjectionType, type Scenario,
@@ -12,7 +12,8 @@ import { duplicateScenario, listScenarios } from "@/lib/scenarioStore";
 import { useAuth } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
 import Sheet from "@/components/ui/Sheet";
-import { PageSkeleton } from "@/components/ui/Skeleton";
+import EmptyState from "@/components/ui/EmptyState";
+import { LibrarySkeleton } from "@/components/ui/Skeleton";
 
 type Source = "built-in" | "draft" | "mine";
 interface Filters { role: Set<string>; industry: Set<string>; difficulty: Set<string>; objection: Set<string>; callType: Set<string>; source: Set<string> }
@@ -100,12 +101,18 @@ export default function LibraryClient() {
     router.push(`/trainer/scenarios?id=${encodeURIComponent(copy.id)}`);
   }
 
-  if (!all || !capabilities) return <PageSkeleton rows={3} />;
+  function clearAll() {
+    setFilters(EMPTY);
+    setQ("");
+  }
+
+  if (!all || !capabilities) return <LibrarySkeleton />;
 
   const families = [...JOB_FAMILIES.map((f) => f.id), ...new Set(all.map((s) => s.role).filter((r) => !JOB_FAMILIES.some((f) => f.id === r)))];
   const mine = all.filter((s) => !s.builtIn);
   const featured = all.filter((s) => s.builtIn && s.status === "reviewed");
   const familyCount = new Set(all.map((s) => s.role)).size;
+  const activeChips = Object.entries(filters).flatMap(([k, set]) => [...(set as Set<string>)].map((v) => ({ key: k as keyof Filters, value: v, label: facetLabel(k as keyof Filters, v) })));
 
   const facetRail = (
     <div className="space-y-6">
@@ -119,11 +126,10 @@ export default function LibraryClient() {
   );
 
   /** Shelves swipe sideways on phones so 18 job families don't become one endless column; grids from sm up. */
-  const grid = (items: Scenario[], withCreate = false, shelf = false) => (
+  const grid = (items: Scenario[], shelf = false) => (
     <div className={shelf
       ? "-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 scroll-thin sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 sm:pb-0 xl:grid-cols-3 [&>*]:w-[84%] [&>*]:shrink-0 [&>*]:snap-start sm:[&>*]:w-auto"
       : "grid gap-3 sm:grid-cols-2 xl:grid-cols-3"}>
-      {withCreate && <CreateTile />}
       {items.map((s) => <PersonaCard key={s.id} s={s} onOpen={() => setOpen(s)} onDuplicate={() => duplicateAndEdit(s)} />)}
     </div>
   );
@@ -132,31 +138,31 @@ export default function LibraryClient() {
     <div className="page enter">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="eyebrow">Persona library</p>
-          <h1 className="mt-1 text-3xl font-bold sm:text-4xl">Library</h1>
-          <p className="mt-1 text-sm text-ink-muted"><span className="mono">{all.length}</span> personas across <span className="mono">{familyCount}</span> sales jobs · open source, add your own as a pack file</p>
+          <h1 className="text-3xl font-bold sm:text-4xl">Persona library</h1>
+          <p className="mt-2 font-mono text-[12px] text-ink-muted"><span className="text-ink">{all.length}</span> personas across <span className="text-ink">{familyCount}</span> sales jobs · open source, add your own as a pack file</p>
         </div>
-        <Link href="/library/new" className="btn-primary"><Sparkles size={16} aria-hidden /> New persona with AI</Link>
+        <Link href="/library/new" className="btn-primary"><Sparkles size={16} strokeWidth={1.75} aria-hidden /> New persona with AI</Link>
       </div>
 
       <div className="mt-6 flex gap-2">
         <label className="relative flex-1">
           <span className="sr-only">Search personas</span>
-          <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" aria-hidden />
+          <Search size={16} strokeWidth={1.75} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" aria-hidden />
           <input ref={searchRef} className="input !pl-9 !pr-12" placeholder="Search personas, objections, industries" value={q} onChange={(e) => setQ(e.target.value)} />
           <span className="kbd absolute right-3 top-1/2 -translate-y-1/2" aria-hidden>/</span>
         </label>
-        <button className="btn-ghost lg:hidden" onClick={() => setShowFacets(true)} aria-label="Filters"><SlidersHorizontal size={16} aria-hidden /><span className="hidden sm:inline">Filters</span></button>
+        <button className="btn-ghost lg:hidden" onClick={() => setShowFacets(true)} aria-label="Filters"><SlidersHorizontal size={16} strokeWidth={1.75} aria-hidden /><span className="hidden sm:inline">Filters</span></button>
       </div>
       {/* Always mounted so the first keystroke is announced; only the count is live, never the grid. */}
       <p role="status" aria-live="polite" className="sr-only">{filtering ? `${results.length} ${results.length === 1 ? "persona matches" : "personas match"}` : ""}</p>
 
-      <div className="mt-6 grid gap-8 lg:grid-cols-[230px_minmax(0,1fr)]">
+      <div className="mt-6 grid gap-8 lg:grid-cols-[240px_minmax(0,1fr)]">
         <aside className="hidden lg:block" aria-label="Filters">
-          <div className="sticky top-[calc(var(--header-h,3.5rem)+1rem)] max-h-[calc(100vh-var(--header-h,3.5rem)-2rem)] overflow-y-auto pr-2 scroll-thin">
+          {/* pr-4 keeps labels and counts clear of the rail's own scrollbar. */}
+          <div className="sticky top-[calc(var(--header-h,3.5rem)+1rem)] max-h-[calc(100vh-var(--header-h,3.5rem)-2rem)] overflow-y-auto pb-4 pr-4 scroll-thin">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-semibold">Filters</h2>
-              {filtering && <button className="text-xs font-semibold text-primary hover:underline" onClick={() => { setFilters(EMPTY); setQ(""); }}>Clear all</button>}
+              {filtering && <button className="text-xs font-semibold text-primary hover:underline" onClick={clearAll}>Clear all</button>}
             </div>
             {facetRail}
           </div>
@@ -167,18 +173,25 @@ export default function LibraryClient() {
             <section aria-label="Search results">
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <p className="text-sm text-ink-soft"><span className="mono font-semibold text-ink">{results.length}</span> {results.length === 1 ? "persona" : "personas"}</p>
-                {Object.entries(filters).flatMap(([k, set]) => [...(set as Set<string>)].map((v) => (
-                  <button key={`${k}:${v}`} className="chip hover:border-ink-muted" onClick={() => toggle(k as keyof Filters, v)}>
-                    {k === "role" ? jobFamilyLabel(v) : k === "objection" ? OBJECTION_LABELS[v as ObjectionType] : k === "callType" ? CALL_TYPE_LABELS[v as CallType] : k === "source" ? SOURCE_LABEL[v as Source] : v}
-                    <X size={12} aria-label="Remove filter" />
+                {activeChips.map((c) => (
+                  <button key={`${c.key}:${c.value}`} type="button" className="chip min-h-[28px] hover:border-ink-muted" onClick={() => toggle(c.key, c.value)} aria-label={`Remove filter: ${c.label}`}>
+                    {c.label}
+                    <X size={12} strokeWidth={1.75} aria-hidden />
                   </button>
-                )))}
+                ))}
+                {(activeChips.length > 0 || q.trim() !== "") && (
+                  <button type="button" className="chip min-h-[28px] border-dashed text-primary hover:border-primary/60" onClick={clearAll}>Clear all</button>
+                )}
               </div>
               {results.length ? grid(results) : (
-                <div className="card text-center">
-                  <h2 className="text-base font-semibold">No persona matches yet</h2>
-                  <p className="mx-auto mt-1 max-w-sm text-sm text-ink-muted">Clear a filter, or have the wizard build this persona from a job description, product page or CRM notes.</p>
-                  <Link href="/library/new" className="btn-primary mt-4"><Sparkles size={16} aria-hidden /> Build it with AI</Link>
+                <div className="rounded-panel border border-dashed border-line">
+                  <EmptyState icon={SearchX} title="No persona matches yet"
+                    action={<>
+                      <button type="button" className="btn-ghost" onClick={clearAll}>Clear filters</button>
+                      <Link href="/library/new" className="btn-primary"><Sparkles size={16} strokeWidth={1.75} aria-hidden /> Build it with AI</Link>
+                    </>}>
+                    Clear a filter, or have the wizard build this persona from a job description, product page or CRM notes.
+                  </EmptyState>
                 </div>
               )}
             </section>
@@ -190,9 +203,10 @@ export default function LibraryClient() {
                   {grid(mine)}
                 </section>
               )}
+              <CreateStrip />
               <section aria-labelledby="sec-start">
                 <SectionHead id="sec-start" title="Start here" count={featured.length} note="Reviewed scenarios with tuned rubrics" />
-                {grid(featured, true, true)}
+                {grid(featured, true)}
               </section>
               {families.map((fam) => {
                 const items = all.filter((s) => s.builtIn && s.role === fam && !(s.status === "reviewed" && featured.includes(s)));
@@ -201,8 +215,8 @@ export default function LibraryClient() {
                 return (
                   <section key={fam} aria-labelledby={`sec-${fam}`}>
                     <SectionHead id={`sec-${fam}`} title={jobFamilyLabel(fam)} count={items.length}
-                      action={items.length > 3 ? <button className="text-sm font-semibold text-primary hover:underline" onClick={() => setExpanded((e) => { const n = new Set(e); if (n.has(fam)) n.delete(fam); else n.add(fam); return n; })}>{isOpen ? "Show fewer" : `View all ${items.length}`}</button> : undefined} />
-                    {grid(isOpen ? items : items.slice(0, 3), false, true)}
+                      action={items.length > 3 ? <button className="text-sm font-semibold text-primary hover:underline" aria-expanded={isOpen} onClick={() => setExpanded((e) => { const n = new Set(e); if (n.has(fam)) n.delete(fam); else n.add(fam); return n; })}>{isOpen ? "Show fewer" : `View all ${items.length}`}</button> : undefined} />
+                    {grid(isOpen ? items : items.slice(0, 3), true)}
                   </section>
                 );
               })}
@@ -221,6 +235,13 @@ export default function LibraryClient() {
     </div>
   );
 }
+
+function facetLabel(k: keyof Filters, v: string) {
+  return k === "role" ? jobFamilyLabel(v) : k === "objection" ? OBJECTION_LABELS[v as ObjectionType] : k === "callType" ? CALL_TYPE_LABELS[v as CallType] : k === "source" ? SOURCE_LABEL[v as Source] : v;
+}
+
+/** Categorical criterion hue (--cat-1 to --cat-8), in the same order the Debrief colors its criteria. */
+const critHue = (i: number) => `rgb(var(--cat-${(i % 8) + 1}))`;
 
 function SectionHead({ id, title, count, note, action }: { id: string; title: string; count: number; note?: string; action?: React.ReactNode }) {
   return (
@@ -247,7 +268,7 @@ function FacetGroup({ title, values, counts, selected, onToggle, chips = false, 
             const n = counts.get(v) ?? 0;
             return (
               <button key={v} type="button" aria-pressed={on} disabled={!n && !on} onClick={() => onToggle(v)}
-                className={`chip transition-colors disabled:opacity-40 ${on ? "!border-primary bg-primary-soft !text-ink" : "hover:border-ink-muted/60"}`}>
+                className={`chip min-h-[28px] transition-colors disabled:opacity-40 ${on ? "!border-primary bg-primary-soft !text-ink" : "hover:border-ink-muted/60"}`}>
                 {label} <span className="mono text-[10px] text-ink-muted">{n}</span>
               </button>
             );
@@ -259,10 +280,10 @@ function FacetGroup({ title, values, counts, selected, onToggle, chips = false, 
             const n = counts.get(v) ?? 0;
             return (
               <li key={v}>
-                <label className={`flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-sunken ${!n && !selected.has(v) ? "opacity-40" : ""}`}>
-                  <input type="checkbox" className="h-3.5 w-3.5 accent-[rgb(var(--primary))]" checked={selected.has(v)} onChange={() => onToggle(v)} />
-                  <span className="min-w-0 flex-1 truncate">{label}</span>
-                  <span className="mono text-[11px] text-ink-muted">{n}</span>
+                <label className={`flex min-h-[32px] cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-sunken ${!n && !selected.has(v) ? "opacity-40" : ""}`}>
+                  <input type="checkbox" className="h-3.5 w-3.5 shrink-0 accent-[rgb(var(--primary))]" checked={selected.has(v)} onChange={() => onToggle(v)} />
+                  <span className="min-w-0 flex-1 truncate" title={label}>{label}</span>
+                  <span className="mono shrink-0 text-[11px] text-ink-muted">{n}</span>
                 </label>
               </li>
             );
@@ -270,48 +291,62 @@ function FacetGroup({ title, values, counts, selected, onToggle, chips = false, 
         </ul>
       )}
       {limit && values.length > limit && (
-        <button type="button" className="mt-1 px-1.5 text-xs font-semibold text-primary hover:underline" onClick={() => setMore(!more)}>{more ? "Show fewer" : `Show ${values.length - limit} more`}</button>
+        <button type="button" className="mt-1 px-1.5 text-xs font-semibold text-primary hover:underline" aria-expanded={more} onClick={() => setMore(!more)}>{more ? "Show fewer" : `Show ${values.length - limit} more`}</button>
       )}
     </fieldset>
   );
 }
 
-function CreateTile() {
+/** Full-width action strip on the deck surface: build a new persona instead of picking one. */
+function CreateStrip() {
   return (
-    <Link href="/library/new" className="group flex min-h-[188px] flex-col justify-between rounded-panel border border-dashed border-primary/50 bg-primary-soft/40 p-4 transition hover:border-primary hover:bg-primary-soft/70">
-      <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-on"><Sparkles size={18} aria-hidden /></span>
-      <span>
-        <span className="block font-heading text-base font-bold">Create with AI</span>
-        <span className="mt-1 block text-sm text-ink-soft">Paste a job description, product page, CRM notes or a call. The wizard drafts the persona, objections and rubric.</span>
+    <div className="deck flex flex-col gap-4 rounded-panel border border-line p-4 sm:flex-row sm:items-center sm:gap-5 sm:p-5">
+      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-sunken">
+        <Sparkles size={18} strokeWidth={1.75} className="text-primary" aria-hidden />
       </span>
-    </Link>
+      <div className="min-w-0 flex-1">
+        <p className="flex items-center gap-2 font-heading text-base font-bold"><span className="lamp lamp-signal !h-1.5 !w-1.5" aria-hidden />Create with AI</p>
+        <p className="mt-0.5 text-sm text-ink-soft">Paste a job description, product page, CRM notes or a call. The wizard drafts the persona, objections and rubric.</p>
+      </div>
+      <Link href="/library/new" className="btn-primary shrink-0">Open the wizard</Link>
+    </div>
   );
 }
 
+/** A flight strip: who, how hard, what you will be graded on (the rubric spectrum) and the plan for the call. */
 function PersonaCard({ s, onOpen, onDuplicate }: { s: Scenario; onOpen: () => void; onDuplicate: () => void }) {
   const src = sourceOf(s);
+  const steps = talkTrackSteps(s.callScript).length;
+  const objectionTypes = [...new Set(s.objections.map((o) => OBJECTION_LABELS[o.type]))];
   return (
-    <article className="group relative flex min-h-[188px] flex-col rounded-panel border border-line bg-surface p-4 shadow-card transition hover:border-ink-muted/40 hover:shadow-pop">
+    <article className="group relative flex min-h-[196px] flex-col rounded-panel border border-line bg-surface p-4 shadow-card transition-colors duration-150 hover:border-primary/40 focus-within:border-primary/40">
       <button className="absolute inset-0 z-0 rounded-panel" onClick={onOpen} aria-label={`Open ${s.aiPersona.name}: ${s.title}, ${s.difficulty} difficulty`} />
       <div className="pointer-events-none relative flex items-start gap-3">
-        <PersonaAvatar scenario={s} />
+        <PersonaAvatar scenario={s} size={40} />
         <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center justify-between gap-2">
             <h3 className="truncate font-heading text-[15px] font-bold">{s.aiPersona.name}</h3>
             <DifficultyBars level={s.difficulty} showLabel={false} />
           </div>
           <p className="line-clamp-2 text-[13px] leading-snug text-ink-soft">{s.title}</p>
         </div>
       </div>
-      <div className="pointer-events-none relative mt-3 flex flex-wrap gap-1.5">
-        {s.objections.slice(0, 3).map((o, i) => <span key={i} className="chip !px-2 !text-[11px]">{OBJECTION_LABELS[o.type]}</span>)}
-        {src !== "built-in" && <span className={`chip !px-2 !text-[11px] ${src === "mine" ? "!border-primary/50 !text-primary" : "!border-caution/40 !text-caution"}`}>{src === "mine" ? "Mine" : "Draft"}</span>}
+      {/* Rubric spectrum: one segment per criterion, sized by weight, in the Debrief's criterion colors. */}
+      <div className="pointer-events-none relative mt-4 flex h-1 gap-px overflow-hidden rounded-full bg-sunken" aria-hidden>
+        {s.rubric.map((c, i) => <span key={c.id} className="h-full" style={{ flex: `${Math.max(c.weight, 1)} 1 0%`, background: critHue(i) }} />)}
       </div>
-      <div className="relative mt-auto flex items-center justify-between gap-2 pt-4">
-        <span className="pointer-events-none truncate font-mono text-[11px] text-ink-muted">{s.industry || "General"} · {s.durationMin} min</span>
+      <p className="pointer-events-none relative mt-2 font-mono text-[11px] text-ink-muted">
+        {steps} {steps === 1 ? "step" : "steps"} · {s.objections.length} {s.objections.length === 1 ? "objection" : "objections"} · {s.durationMin} min
+      </p>
+      <p className="pointer-events-none relative mt-1.5 line-clamp-1 text-[12px] text-ink-soft">
+        {src !== "built-in" && <span className={`mr-1.5 font-semibold ${src === "mine" ? "text-primary" : "text-caution"}`}>{src === "mine" ? "Mine" : "Draft"}</span>}
+        {objectionTypes.length ? objectionTypes.slice(0, 3).join(", ") : "No objections set"}
+      </p>
+      <div className="relative mt-auto flex items-center justify-between gap-2 border-t border-line pt-3">
+        <span className="pointer-events-none min-w-0 truncate text-[12px] text-ink-muted">{s.industry || "General"}</span>
         <span className="flex shrink-0 items-center gap-1">
-          <button className="btn-quiet btn-sm !px-2" onClick={onDuplicate} title="Duplicate and edit" aria-label={`Duplicate and edit ${s.title}`}><Copy size={14} aria-hidden /></button>
-          <Link href={`/trainer?scenario=${encodeURIComponent(s.id)}`} className="btn-primary btn-sm" aria-label={`Practice ${s.title}`}><Play size={13} aria-hidden /> Practice</Link>
+          <button className="btn-quiet btn-sm !min-h-[36px] !px-2" onClick={onDuplicate} title="Duplicate and edit" aria-label={`Duplicate and edit ${s.title}`}><Copy size={14} strokeWidth={1.75} aria-hidden /></button>
+          <Link href={`/trainer?scenario=${encodeURIComponent(s.id)}`} className="btn-primary btn-sm !min-h-[36px]" aria-label={`Practice ${s.title}`}><Play size={13} strokeWidth={1.75} aria-hidden /> Practice</Link>
         </span>
       </div>
     </article>
@@ -322,6 +357,7 @@ function PersonaSheet({ s, onClose, onDuplicate }: { s: Scenario; onClose: () =>
   const [json, setJson] = useState(false);
   const [copied, setCopied] = useState(false);
   const steps = talkTrackSteps(s.callScript);
+  const total = s.rubric.reduce((a, c) => a + c.weight, 0) || 1;
   async function copy() {
     try { await navigator.clipboard.writeText(packJson(s)); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { setJson(true); }
   }
@@ -329,9 +365,9 @@ function PersonaSheet({ s, onClose, onDuplicate }: { s: Scenario; onClose: () =>
     <Sheet title={s.aiPersona.name} subtitle={s.aiPersona.role} onClose={onClose} wide
       footer={
         <div className="flex flex-wrap gap-2">
-          <Link href={`/trainer?scenario=${encodeURIComponent(s.id)}`} className="btn-primary flex-1" data-autofocus><Play size={16} aria-hidden /> Pre-flight</Link>
-          <button className="btn-ghost" onClick={onDuplicate}><Copy size={16} aria-hidden /> Duplicate & edit</button>
-          <button className="btn-ghost" onClick={() => setJson((v) => !v)} aria-pressed={json}><FileJson size={16} aria-hidden /> Pack file</button>
+          <Link href={`/trainer?scenario=${encodeURIComponent(s.id)}`} className="btn-primary flex-1" data-autofocus><Play size={16} strokeWidth={1.75} aria-hidden /> Pre-flight</Link>
+          <button className="btn-ghost" onClick={onDuplicate}><Copy size={16} strokeWidth={1.75} aria-hidden /> Duplicate & edit</button>
+          <button className="btn-ghost" onClick={() => setJson((v) => !v)} aria-pressed={json}><FileJson size={16} strokeWidth={1.75} aria-hidden /> Pack file</button>
         </div>
       }>
       <div className="space-y-6">
@@ -352,22 +388,36 @@ function PersonaSheet({ s, onClose, onDuplicate }: { s: Scenario; onClose: () =>
           <div>
             <div className="mb-2 flex items-center justify-between">
               <p className="label !mb-0">Pack file · <span className="normal-case">{s.id}.json</span></p>
-              <button className="btn-quiet btn-sm" onClick={copy}>{copied ? "Copied" : "Copy JSON"}</button>
+              <button className="btn-quiet btn-sm" onClick={copy}>{copied ? <><Check size={14} strokeWidth={1.75} className="text-ok" aria-hidden /> Copied</> : "Copy JSON"}</button>
             </div>
+            <p role="status" className="sr-only">{copied ? "Pack file copied to the clipboard." : ""}</p>
             <pre className="scroll-thin max-h-[50vh] overflow-auto rounded-lg border border-line bg-sunken p-3 font-mono text-[11.5px] leading-relaxed">{packJson(s)}</pre>
           </div>
         ) : (
           <>
-            <section><h3 className="label">Your goal</h3><p className="text-sm">{s.traineeGoal}</p></section>
+            <section className="rounded-panel border border-l-4 border-primary/30 border-l-primary bg-primary-soft/40 p-4">
+              <h3 className="label !text-primary">Your goal</h3>
+              <p className="font-heading text-[15px] font-semibold leading-snug">{s.traineeGoal}</p>
+            </section>
             {s.objections.length > 0 && (
               <section>
                 <h3 className="label">Expect these objections</h3>
                 <ul className="space-y-2">
                   {s.objections.map((o, i) => (
-                    <li key={i} className="rounded-lg border border-line p-3">
-                      <span className="chip mb-1.5 !text-[11px]">{OBJECTION_LABELS[o.type]}</span>
-                      <p className="text-sm font-medium">&ldquo;{o.line}&rdquo;</p>
-                      {o.prepAnswer && <p className="mt-1 text-sm text-ink-soft"><span className="font-mono text-[11px] uppercase text-primary">Prep </span>{o.prepAnswer}</p>}
+                    <li key={i} className="rounded-panel border-l-2 border-alert/60 bg-sunken p-3">
+                      <div className="flex items-start gap-2">
+                        <ShieldAlert size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-alert" aria-hidden />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-mono text-[10px] font-medium uppercase tracking-[0.1em] text-ink-muted">{OBJECTION_LABELS[o.type]}</p>
+                          <p className="mt-0.5 text-sm font-semibold">&ldquo;{o.line}&rdquo;</p>
+                        </div>
+                      </div>
+                      {o.prepAnswer && (
+                        <div className="ml-6 mt-2 rounded-md border border-dashed border-line bg-surface p-2.5">
+                          <p className="font-mono text-[10px] uppercase tracking-wide text-ink-muted">Prep answer</p>
+                          <p className="mt-0.5 text-[13px] text-ink-soft">{o.prepAnswer}</p>
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -381,8 +431,19 @@ function PersonaSheet({ s, onClose, onDuplicate }: { s: Scenario; onClose: () =>
             </section>
             <section>
               <h3 className="label">Rubric</h3>
-              <ul className="space-y-1.5">
-                {s.rubric.map((c) => <li key={c.id} className="flex justify-between gap-3 text-sm"><span>{c.name}</span><span className="mono text-ink-muted">{Math.round(c.weight)}%</span></li>)}
+              <ul className="space-y-3">
+                {s.rubric.map((c, i) => {
+                  const pct = Math.round((c.weight / total) * 100);
+                  return (
+                    <li key={c.id}>
+                      <div className="flex justify-between gap-3 text-sm">
+                        <span className="flex min-w-0 items-center gap-2"><span className="h-2 w-2 shrink-0 rounded-full" style={{ background: critHue(i) }} aria-hidden />{c.name}</span>
+                        <span className="mono shrink-0 text-ink-muted">{pct}%</span>
+                      </div>
+                      <div className="tape ml-4 mt-1.5" aria-hidden><span style={{ width: `${pct}%`, background: critHue(i) }} /></div>
+                    </li>
+                  );
+                })}
               </ul>
             </section>
           </>

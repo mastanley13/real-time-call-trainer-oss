@@ -12,6 +12,16 @@ import type { LlmCheckResult } from "@/app/api/llm/hints";
 const JOB_ICON: Record<JobId, LucideIcon> = { coach: Radar, grading: ClipboardCheck, wizard: WandSparkles, caller: MessageSquareText };
 const COLS = "sm:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)_minmax(0,1.25fr)]";
 
+/** A quiet instrument ring for a job or engine icon, with its status lamp on the rim (the same mark as EmptyState). */
+function JobIcon({ icon: Icon, lamp }: { icon: LucideIcon; lamp: "lamp-ok" | "lamp-caution" | "lamp-off" }) {
+  return (
+    <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-line bg-sunken text-ink-soft">
+      <Icon size={17} strokeWidth={1.75} aria-hidden />
+      <span className={`lamp ${lamp} absolute -bottom-0.5 -right-0.5 !h-2 !w-2 ring-2 ring-surface`} aria-hidden />
+    </span>
+  );
+}
+
 type Check = { state: "idle" } | { state: "running" } | { state: "done"; result: LlmCheckResult } | { state: "error"; message: string };
 
 function CheckResult({ check, keySet }: { check: Check; keySet: boolean }) {
@@ -115,7 +125,7 @@ export default function ModelsClient() {
               return (
                 <li key={j.id} className={`grid gap-3 px-4 py-4 sm:gap-4 ${COLS}`}>
                   <div className="flex min-w-0 gap-3">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary"><Icon size={18} strokeWidth={1.75} aria-hidden /></span>
+                    <JobIcon icon={Icon} lamp={j.ai ? "lamp-ok" : "lamp-caution"} />
                     <div className="min-w-0">
                       <h3 className="text-[15px] font-semibold">{j.name}</h3>
                       <p className="text-sm text-ink-soft">{j.detail}</p>
@@ -142,7 +152,7 @@ export default function ModelsClient() {
         <ul className="grid gap-3 sm:grid-cols-2">
           {voices.map((v) => (
             <li key={v.id} className="panel flex gap-3 p-4">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary"><AudioLines size={18} strokeWidth={1.75} aria-hidden /></span>
+              <JobIcon icon={AudioLines} lamp={v.available ? "lamp-ok" : "lamp-off"} />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-[15px] font-semibold">{v.label}</h3>

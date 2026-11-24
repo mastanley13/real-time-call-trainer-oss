@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import AuthShell from "@/components/AuthShell";
+import AuthShell, { PasswordInput } from "@/components/AuthShell";
 import LegalLinks from "@/components/LegalLinks";
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_MIN_MESSAGE } from "@/lib/passwordRules";
 import { RESET_INVALID_MESSAGE } from "@/lib/passwordReset-types";
@@ -22,6 +23,8 @@ function ResetPasswordInstance({ token }: { token: string }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
+  // A local check that failed, tied to the field it is about: the new password (too short) or the confirmation (no match).
+  const [fieldError, setFieldError] = useState<{ field: "pw" | "pw2"; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<CheckOutcome | null>(null);
   const view = resetView(token, outcome);
@@ -44,13 +47,16 @@ function ResetPasswordInstance({ token }: { token: string }) {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    // The button stays focusable while busy (aria-disabled), so a second Enter lands here and stops.
+    if (busy) return;
     setError("");
+    setFieldError(null);
     if (password.length < PASSWORD_MIN_LENGTH) {
-      setError(`${PASSWORD_MIN_MESSAGE}.`);
+      setFieldError({ field: "pw", message: `${PASSWORD_MIN_MESSAGE}.` });
       return;
     }
     if (password !== confirm) {
-      setError("The passwords do not match. Type the same password in both fields.");
+      setFieldError({ field: "pw2", message: "The passwords do not match. Type the same password in both fields." });
       return;
     }
     setBusy(true);
@@ -90,12 +96,18 @@ function ResetPasswordInstance({ token }: { token: string }) {
 
   if (view === "checking") {
     return (
-      <AuthShell title="Checking your link…" subtitle="This takes a moment.">
-        <p role="status" className="text-sm text-ink-muted">Checking your reset link…</p>
+      <AuthShell title="Checking your link" subtitle="This takes a moment.">
+        <div role="status" className="flex items-center gap-3 rounded-lg border border-line bg-sunken px-4 py-3 text-sm text-ink-soft">
+          <span className="lamp lamp-signal motion-safe:animate-lamp-pulse" aria-hidden />
+          Checking your reset link…
+        </div>
         <LegalLinks />
       </AuthShell>
     );
   }
+
+  const pwError = fieldError?.field === "pw" ? fieldError.message : "";
+  const pw2Error = fieldError?.field === "pw2" ? fieldError.message : "";
 
   return (
     <AuthShell title="Choose a new password" subtitle="After you save it, sign in with your new password.">
@@ -106,15 +118,43 @@ function ResetPasswordInstance({ token }: { token: string }) {
       )}
       <form onSubmit={onSubmit} className="space-y-4">
         <div>
-          <label htmlFor="pw" className="label">New password ({PASSWORD_MIN_LENGTH}+ characters)</label>
-          <input id="pw" type="password" minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} className="input" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <label htmlFor="pw" className="label">New password</label>
+          <PasswordInput
+            id="pw"
+            minLength={PASSWORD_MIN_LENGTH}
+            maxLength={PASSWORD_MAX_LENGTH}
+            autoComplete="new-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            aria-invalid={pwError ? true : undefined}
+            aria-describedby={pwError ? "pw-hint pw-error" : "pw-hint"}
+            required
+            autoFocus
+          />
+          <p id="pw-hint" className="mt-1 text-xs text-ink-muted">Use {PASSWORD_MIN_LENGTH} or more characters.</p>
+          {pwError && <p id="pw-error" role="alert" className="field-msg">{pwError}</p>}
         </div>
         <div>
           <label htmlFor="pw2" className="label">Confirm new password</label>
-          <input id="pw2" type="password" minLength={PASSWORD_MIN_LENGTH} maxLength={PASSWORD_MAX_LENGTH} className="input" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
+          <PasswordInput
+            id="pw2"
+            toggleLabel="Show confirmation"
+            minLength={PASSWORD_MIN_LENGTH}
+            maxLength={PASSWORD_MAX_LENGTH}
+            autoComplete="new-password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            aria-invalid={pw2Error ? true : undefined}
+            aria-describedby={pw2Error ? "pw2-error" : undefined}
+            required
+          />
+          {pw2Error && <p id="pw2-error" role="alert" className="field-msg">{pw2Error}</p>}
         </div>
-        {error && <p role="alert" className="text-sm text-alert">{error}</p>}
-        <button className="btn-primary w-full" disabled={busy}>{busy ? "Saving…" : "Save new password"}</button>
+        {error && <p role="alert" className="banner-alert">{error}</p>}
+        <button className="btn-primary w-full" aria-disabled={busy || undefined}>
+          {busy && <Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden />}
+          {busy ? "Saving…" : "Save new password"}
+        </button>
       </form>
       <p className="mt-5 text-center text-sm text-ink-muted">
         <Link href="/login" className="font-semibold text-primary">Back to sign in</Link>
