@@ -202,7 +202,7 @@ describe("landing hero line", () => {
     expect(text).not.toContain("no setup required");
     expect(text).toContain("Your reps practice against 54 AI buyers who push back. You read a graded debrief that quotes their own words, so you can see who is ready and what to coach next. Free to start, no card.");
     expect(hrefs(hero)).toEqual(expect.arrayContaining(["/register?src=home_hero", "/pricing"]));
-    expect(hero).toContain(">Start free, no card <");
+    expect(hero).toContain(">Start free, no card</a>");
     expect(hero).toContain(">See pricing<");
   });
 

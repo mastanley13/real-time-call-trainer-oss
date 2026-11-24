@@ -1,0 +1,166 @@
+/*
+ * Practice Desk: the home page's visual language, scoped to the .landing-desk wrapper in src/app/page.tsx.
+ * Every selector in this file contains .landing-desk, so nothing here reaches the header, the footer or any other page,
+ * even after a client-side navigation keeps this stylesheet loaded (tests/landing.test.ts checks this).
+ *
+ * Colors: the Practice Desk daylight values replace the Flight Deck daylight values inside the wrapper, in light mode
+ * only. In dark mode (data-theme="dark", or the system preference with no saved choice) the wrapper keeps the app's
+ * dark tokens from globals.css untouched, so the page stays legible and matches the rest of the dark app.
+ * Values are RGB triplets, like globals.css, so Tailwind opacity modifiers keep working.
+ */
+
+/* Light mode, chosen in the theme toggle. Keep in sync with the block below. */
+:root[data-theme="light"] .landing-desk {
+  --bg: 255 255 255;
+  --surface: 255 255 255;
+  --sunken: 237 244 243;
+  --ink: 24 43 52;
+  --ink-soft: 70 92 100;
+  --ink-muted: 84 102 109;
+  --line: 203 216 217;
+  --primary: 18 104 93;
+  --primary-hover: 13 85 75;
+  --primary-soft: 220 237 233;
+  --on-primary: 255 255 255;
+  --signal: 15 118 110;
+  --alert: 165 38 48;
+  --alert-soft: 251 232 233;
+  --on-alert: 255 255 255;
+  --shadow: 24 43 52;
+}
+
+/* Light mode from the system preference, unless the theme toggle chose dark. Same values as above. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .landing-desk {
+    --bg: 255 255 255;
+    --surface: 255 255 255;
+    --sunken: 237 244 243;
+    --ink: 24 43 52;
+    --ink-soft: 70 92 100;
+    --ink-muted: 84 102 109;
+    --line: 203 216 217;
+    --primary: 18 104 93;
+    --primary-hover: 13 85 75;
+    --primary-soft: 220 237 233;
+    --on-primary: 255 255 255;
+    --signal: 15 118 110;
+    --alert: 165 38 48;
+    --alert-soft: 251 232 233;
+    --on-alert: 255 255 255;
+    --shadow: 24 43 52;
+  }
+}
+
+/* Shape, focus, layout and type roles. Same in every theme. */
+.landing-desk {
+  --radius-control: 7px;
+  --radius-group: 10px;
+  --radius-badge: 4px;
+  --focus-ring-width: 3px;
+  --focus-ring-offset: 4px;
+  --content-max: 1240px;
+  --gutter: 22px;
+  /* System stacks only, no font files. Redefining the next/font variables also covers font-heading, font-sans,
+     font-mono and .mono utilities used inside the wrapper. */
+  --font-sora: "Trebuchet MS", "Segoe UI";
+  --font-inter: "Segoe UI", Arial;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas;
+  font-family: "Segoe UI", Arial, ui-sans-serif, system-ui, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5rem;
+  background-color: rgb(var(--bg));
+  color: rgb(var(--ink));
+}
+
+@media (min-width: 768px) {
+  .landing-desk {
+    --gutter: 40px;
+  }
+}
+
+/* Headings pick up the heading stack through the global h1-h4 rule; this keeps it explicit. */
+.landing-desk h1,
+.landing-desk h2,
+.landing-desk h3 {
+  font-family: "Trebuchet MS", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Strong focus ring: 3 px primary outline, 4 px offset. */
+.landing-desk :focus-visible {
+  outline: var(--focus-ring-width) solid rgb(var(--primary));
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* Content column: 1240 px max, 22 px phone and 40 px tablet and desktop gutters, never inside the safe-area insets. */
+.landing-desk .desk-wrap {
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
+  max-width: var(--content-max);
+  padding-left: max(var(--gutter), env(safe-area-inset-left));
+  padding-right: max(var(--gutter), env(safe-area-inset-right));
+}
+
+/* The standard 48 px control, on top of .btn-primary or .btn-ghost. */
+.landing-desk .desk-btn {
+  min-height: 48px;
+  border-radius: var(--radius-control);
+  padding-left: 20px;
+  padding-right: 20px;
+  font-size: 1rem;
+  line-height: 1.5rem;
+}
+
+/* A text link that is still a 48 px target, for the secondary action beside a .desk-btn. */
+.landing-desk .desk-link {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--radius-control);
+  padding-left: 4px;
+  padding-right: 4px;
+  font-weight: 500;
+  color: rgb(var(--ink));
+  text-decoration-line: underline;
+  text-underline-offset: 4px;
+}
+.landing-desk .desk-link:hover {
+  color: rgb(var(--primary));
+}
+
+.landing-desk .desk-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-badge);
+  background-color: rgb(var(--sunken));
+  padding: 4px 10px;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 600;
+  color: rgb(var(--primary));
+}
+
+.landing-desk .desk-panel {
+  border: 1px solid rgb(var(--line));
+  border-radius: var(--radius-group);
+  background-color: rgb(var(--surface));
+}
+
+.landing-desk .desk-icon {
+  display: flex;
+  height: 40px;
+  width: 40px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-control);
+  background-color: rgb(var(--sunken));
+  color: rgb(var(--primary));
+}
+
+/* The coach cue: a left rule on a subtle surface, square on the rule side. */
+.landing-desk .desk-cue {
+  border-left: 4px solid rgb(var(--primary));
+  border-radius: 0 var(--radius-control) var(--radius-control) 0;
+  background-color: rgb(var(--sunken));
+}
