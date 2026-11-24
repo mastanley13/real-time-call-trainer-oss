@@ -159,6 +159,26 @@ describe("POST /api/auth/register sign-up intent", () => {
     expect(res.status).toBe(200);
     expect(stored()).toMatchObject({ role: "trainee", signupPlanIntent: "pro", signupSrc: "pricing" });
   });
+
+  it("lets a second person reuse the same team code, each as a trainee", async () => {
+    const first = await register({ joinOrgCode: "654321", plan: "pro" }, { ...joinBase, email: "ravi@example.test" });
+    const second = await register({ joinOrgCode: "654321", plan: "pro" }, { ...joinBase, email: "ana@example.test" });
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(created).toHaveBeenCalledTimes(2);
+    expect(stored()).toMatchObject({ email: "ravi@example.test", role: "trainee", organizationId: "org-9" });
+    const secondStored = (created.mock.calls[1][0] as { data: Record<string, unknown> }).data;
+    expect(secondStored).toMatchObject({ email: "ana@example.test", role: "trainee", organizationId: "org-9" });
+  });
+
+  it("a join is always a trainee: a body that also sends owner or admin flags cannot mint an admin", async () => {
+    const res = await register({ joinOrgCode: "654321", role: "owner", isPlatformAdmin: true }, joinBase);
+    expect(res.status).toBe(200);
+    expect(stored()).toMatchObject({ role: "trainee", organizationId: "org-9" });
+    expect(stored()).not.toHaveProperty("isPlatformAdmin");
+    const json = await res.json() as { user: { role: string; isPlatformAdmin: boolean } };
+    expect(json.user).toMatchObject({ role: "trainee", isPlatformAdmin: false });
+  });
 });
 
 describe("POST /api/auth/register team name is optional", () => {
