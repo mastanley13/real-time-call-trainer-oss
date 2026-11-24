@@ -35,7 +35,7 @@ describe("resolveRealtimeKey", () => {
 });
 
 describe("model and voice", () => {
-  it("defaults the Standard model and honours REALTIME_MODEL for it", () => {
+  it("defaults the Standard model and honors REALTIME_MODEL for it", () => {
     expect(resolveTierModel("standard", {})).toBe(STANDARD_REALTIME_MODEL);
     expect(resolveTierModel("standard", { REALTIME_MODEL: "gpt-realtime-legacy" })).toBe("gpt-realtime-legacy");
     expect(resolveTierModel("premium", { REALTIME_MODEL: "gpt-realtime-legacy" })).toBe(PREMIUM_REALTIME_MODEL);
@@ -177,7 +177,7 @@ describe("small helpers", () => {
     expect(s).toContain("Dana Whitfield");
     expect(s).toContain('"Hi, can someone come out today?"');
   });
-  it("averages analyser bins into 0..1", () => {
+  it("averages analyzer bins into 0..1", () => {
     expect(averageLevel([])).toBe(0);
     expect(averageLevel([255, 255])).toBe(1);
     expect(averageLevel([0, 255])).toBeCloseTo(0.5);

@@ -87,7 +87,7 @@ const personas: Scenario[] = [
       name: "Julian Pham",
       role: "Ironvale Fitness member of 14 months calling to cancel his $54.99 monthly membership",
       behavior:
-        "You are Julian Pham, a member for 14 months at $54.99 a month, calling to cancel your gym membership. You are polite but firm and have mostly decided to cancel. If the rep asks open questions, you explain that you started a new job with a 6 a.m. start, you have only been in twice in the last two months, the early-morning classes are always full and you are too tired for evening ones, and money is tight after a recent move. You do not mention that you like the Saturday yoga class and would miss the friends you made there unless the rep builds some rapport. You will consider a three-month freeze or a cheaper off-peak plan if the rep gets the reason right and states exact prices and terms; if the rep learns about Saturday yoga and points out that the off-peak plan covers weekends, you switch to it. If the rep makes cancelling hard, repeats the same offer, or leads with a discount before listening, you grow curt and insist on cancelling. If you do cancel, you want the end date, the final charge and a confirmation email.",
+        "You are Julian Pham, a member for 14 months at $54.99 a month, calling to cancel your gym membership. You are polite but firm and have mostly decided to cancel. If the rep asks open questions, you explain that you started a new job with a 6 a.m. start, you have only been in twice in the last two months, the early-morning classes are always full and you are too tired for evening ones, and money is tight after a recent move. You do not mention that you like the Saturday yoga class and would miss the friends you made there unless the rep builds some rapport. You will consider a three-month freeze or a cheaper off-peak plan if the rep gets the reason right and states exact prices and terms; if the rep learns about Saturday yoga and points out that the off-peak plan covers weekends, you switch to it. If the rep makes canceling hard, repeats the same offer, or leads with a discount before listening, you grow curt and insist on canceling. If you do cancel, you want the end date, the final charge and a confirmation email.",
       openingLine: "Hi, I need to cancel my membership. Can you take care of that for me?",
     },
     traineeGoal: "Find the real reason behind the cancellation, offer a fitting alternative with clear terms, and either save the membership or cancel it cleanly if he declines.",
@@ -122,7 +122,7 @@ const personas: Scenario[] = [
       "Fifty-five dollars a month is a lot to pay for something I barely use, and money's tight since I moved.",
       "I do like the Saturday yoga class. That's the one thing I'd miss.",
       "What would the freeze cost, and when would full billing start again?",
-      "I'm still leaning toward cancelling unless something actually fits.",
+      "I'm still leaning toward canceling unless something actually fits.",
       "If off-peak covers Saturday yoga, that could work. Starting today is fine.",
       "The address on file is 77 Linden Road.",
       "The number on the account is 555-0186.",

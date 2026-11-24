@@ -67,7 +67,7 @@ Roles and personas: `dealership` (`auto-inbound-used-crossover-lead`), `real-est
 5. **Search**: press `/` to focus it. Search matches names, objections and industries. A miss shows "No persona matches yet" with **Build it with AI**.
 6. **Sheet**: open a card. It shows the persona, chips, goal, objections with prep answers, talk track and rubric weights. Draft personas show the "Draft persona" notice. Escape closes it and focus returns to the card.
 7. **Pack JSON**: in the sheet press **Pack file**. The JSON has no `builtIn` field; **Copy JSON** changes to "Copied".
-8. **Practise** on a card and **Pre-flight** in the sheet open `/trainer?scenario=<id>`. **Duplicate & edit** opens a copy in the editor.
+8. **Practice** on a card and **Pre-flight** in the sheet open `/trainer?scenario=<id>`. **Duplicate & edit** opens a copy in the editor.
 
 ### 5. Persona wizard (`/library/new`)
 **Template path (no key)**
@@ -85,7 +85,7 @@ Roles and personas: `dealership` (`auto-inbound-used-crossover-lead`), `real-est
 ### 6. Pre-flight briefing (`/trainer?scenario=home-services-inbound-lead`)
 1. Persona header, goal, objections (prep answers hidden until you choose to reveal them), talk track and rubric.
 2. **Systems check lamps**: "Persona loaded" is green; "Goal read" is off until you tick "Got it"; "Coach" is amber with "Rules-based coach" without a key and green with one; the voice lamp is amber when voice is not configured.
-3. **Call mode**: with no voice keys, Voice shows a notice ending "Switch to Text to practise now." and **Start call** is disabled. Text works.
+3. **Call mode**: with no voice keys, Voice shows a notice ending "Switch to Text to practice now." and **Start call** is disabled. Text works.
 4. **Coach modes**: the dial switches Blind, Guided and Coached, and the help line changes with it.
 5. **Test mic** (Voice mode): the browser asks for the mic, the button shows "Listening…" and then "Test again". Deny the permission and check the message says what happened and how to allow it.
 6. **First-time mode**: in a fresh browser profile (no `rtct.callMode` or `rtct.lastScenario` in localStorage) the briefing opens on Text. Pick Voice, reload: it stays on Voice. A browser that has already started a call keeps Voice as before.
@@ -112,7 +112,7 @@ Roles and personas: `dealership` (`auto-inbound-used-crossover-lead`), `real-est
 
 ### 9. Progress (`/dashboard`)
 1. With no calls: "No practice calls yet" and **Pick a persona**.
-2. After a few graded calls: KPI tiles with **sparklines**, the **score trend** (it appears after two graded calls), the practice-day **heatmap**, skill averages by criterion, and **Practise this next** naming your weakest area.
+2. After a few graded calls: KPI tiles with **sparklines**, the **score trend** (it appears after two graded calls), the practice-day **heatmap**, skill averages by criterion, and **Practice this next** naming your weakest area.
 3. **Assigned to you** lists assignments made in the team view, and marks one done after you complete that persona.
 4. Clicking a session opens its debrief; deleting one asks for confirmation.
 
@@ -144,10 +144,10 @@ Roles and personas: `dealership` (`auto-inbound-used-crossover-lead`), `real-est
 
 ### 14. Accounts (full mode only)
 1. Register a new team and land in the app. Sign out and back in. A wrong password shows an error.
-2. `/settings/security`: enrol TOTP MFA, sign out, and sign in with the code. A wrong code is rejected.
+2. `/settings/security`: enroll TOTP MFA, sign out, and sign in with the code. A wrong code is rejected.
 3. Signed out, `/dashboard` redirects to `/login`. Sessions persist across devices.
 4. Password reset: on `/login` press **Forgot password?**, enter your email and press **Send reset link**. An unknown email shows the same confirmation. Without `GHL_API_TOKEN`, `GHL_LOCATION_ID` and `GHL_RESET_FROM_EMAIL` the dev server prints the email with the link to its console. Open the link, set a new password (10+ characters, both fields matching) and land on `/login` with a success notice. Sign in with the new password (an MFA account still asks for its code). Submitting a new password from the same link again shows "This reset link is invalid or has expired". A locked account is unlocked by a reset.
-5. Google sign-in (needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL`, `DATABASE_URL`): `/login` and `/register` show Continue with Google. With any of the four unset there is no button and `curl -i localhost:3000/api/auth/google/start` returns 404. A new Google account lands in the app on the Free plan; an account with the same email signs in as that user; an account with MFA asks for the authenticator code. With `TRAINER_ACCESS_CODE` set and no access cookie, a new Google user is sent to `/access`. An unverified Google email shows the unverified error; an email whose account is linked to a different Google account fails; Cancel on Google's screen returns to `/login` with a cancelled message. From `/register?plan=pro&interval=year&src=pricing`, a new Google account lands on `/trainer` with the same query.
+5. Google sign-in (needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL`, `DATABASE_URL`): `/login` and `/register` show Continue with Google. With any of the four unset there is no button and `curl -i localhost:3000/api/auth/google/start` returns 404. A new Google account lands in the app on the Free plan; an account with the same email signs in as that user; an account with MFA asks for the authenticator code. With `TRAINER_ACCESS_CODE` set and no access cookie, a new Google user is sent to `/access`. An unverified Google email shows the unverified error; an email whose account is linked to a different Google account fails; Cancel on Google's screen returns to `/login` with a canceled message. From `/register?plan=pro&interval=year&src=pricing`, a new Google account lands on `/trainer` with the same query.
 6. `/pricing` signed out: the top button and the Free card read "Start free, no card". Signed in, no button on the page says "Start free" or "no card" or links to `/register`. The top button reads "Upgrade to Pro" (to `/checkout/start`) on Free with checkout set up, otherwise "Open the trainer". The card for your plan shows a disabled "Current plan", lower plans say "Included in …", and higher plans show "Upgrade to …".
 
 ### 15. API sanity

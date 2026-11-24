@@ -151,7 +151,7 @@ describe("VoiceAttempt: the one cancel", () => {
     }
   });
 
-  it("the observer is removed when the attempt is cancelled or finished", () => {
+  it("the observer is removed when the attempt is canceled or finished", () => {
     const before = pageListeners();
     new VoiceAttempt(owner()).cancel("hang_up");
     new VoiceAttempt(owner()).finish();

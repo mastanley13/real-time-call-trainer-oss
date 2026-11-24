@@ -7,10 +7,10 @@ export default function TeamKpis({ kpis, days }: { kpis: Kpis; days: number }) {
   const band = scoreBand(kpis.avgScore);
   const activePct = kpis.totalReps ? Math.round((kpis.activeReps / kpis.totalReps) * 100) : 0;
   const tiles = [
-    { label: "Active reps", value: String(kpis.activeReps), of: `of ${kpis.totalReps}`, caption: `practised in the last ${days} days`, fill: activePct, tone: "bg-primary" },
+    { label: "Active reps", value: String(kpis.activeReps), of: `of ${kpis.totalReps}`, caption: `practiced in the last ${days} days`, fill: activePct, tone: "bg-primary" },
     { label: "Sessions", value: String(kpis.sessions), of: "", caption: `practice calls in the last ${days} days`, fill: null, tone: "" },
     { label: "Average score", value: kpis.avgScore === null ? "None" : String(kpis.avgScore), of: kpis.avgScore === null ? "" : "/ 100", caption: kpis.avgScore === null ? "no graded calls yet" : BAND_LABEL[band], fill: kpis.avgScore, tone: TAPE[band] },
-    { label: "Persona coverage", value: String(kpis.coverage.practised), of: `of ${kpis.coverage.library}`, caption: `library personas practised (${kpis.coverage.pct}%)`, fill: kpis.coverage.pct, tone: "bg-primary" },
+    { label: "Persona coverage", value: String(kpis.coverage.practised), of: `of ${kpis.coverage.library}`, caption: `library personas practiced (${kpis.coverage.pct}%)`, fill: kpis.coverage.pct, tone: "bg-primary" },
   ];
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

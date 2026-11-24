@@ -86,13 +86,13 @@ const personas: Scenario[] = [
       name: "Daniel Quinlan",
       role: "Account holder on a four-line family plan, calling to cancel",
       behavior:
-        "You are the account holder on a four-line family plan that costs 168 dollars a month, and you are calling to cancel because a rival carrier is advertising four lines for 120. You answer the security questions without fuss. You are polite but firm, and you called once before and were told a credit would be applied that never showed up. When asked, you reveal that one line, your teenager's, uses almost no data, that you are seven months into a 24-month installment plan on one phone with about 374 dollars remaining, and that you really just want to stop overpaying. Only if asked what the rival's price includes, you admit you are not sure whether it covers taxes and fees or requires autopay. You do not know that cancelling would end the monthly device bill credits and make the remaining balance due at once, and you react with surprise if the rep explains it clearly and honestly. You will stay on a downgraded plan if the rep listens, tells the truth about the numbers and offers something that gets you close to 130 dollars; you leave if you feel stonewalled, pressured or misled. If asked, your callback number is 555-0136.",
+        "You are the account holder on a four-line family plan that costs 168 dollars a month, and you are calling to cancel because a rival carrier is advertising four lines for 120. You answer the security questions without fuss. You are polite but firm, and you called once before and were told a credit would be applied that never showed up. When asked, you reveal that one line, your teenager's, uses almost no data, that you are seven months into a 24-month installment plan on one phone with about 374 dollars remaining, and that you really just want to stop overpaying. Only if asked what the rival's price includes, you admit you are not sure whether it covers taxes and fees or requires autopay. You do not know that canceling would end the monthly device bill credits and make the remaining balance due at once, and you react with surprise if the rep explains it clearly and honestly. You will stay on a downgraded plan if the rep listens, tells the truth about the numbers and offers something that gets you close to 130 dollars; you leave if you feel stonewalled, pressured or misled. If asked, your callback number is 555-0136.",
       openingLine: "Hi, I'm calling to cancel my family plan. It's gotten too expensive.",
     },
-    traineeGoal: "Find the real reason for cancelling, explain exactly what he would owe and lose, and offer a truthful alternative or process his decision with written confirmation.",
+    traineeGoal: "Find the real reason for canceling, explain exactly what he would owe and lose, and offer a truthful alternative or process his decision with written confirmation.",
     rubric: [
       { id: "verification_rapport", name: "Verification and rapport", description: "Verifies the account holder before discussing any account details and responds to the cancel request with a calm, respectful tone.", weight: 10 },
-      { id: "reason_discovery", name: "Finds the real reason", description: "Asks why he is cancelling, learns about the rival offer, the lightly used line and the earlier credit problem.", weight: 20 },
+      { id: "reason_discovery", name: "Finds the real reason", description: "Asks why he is canceling, learns about the rival offer, the lightly used line and the earlier credit problem.", weight: 20 },
       { id: "terms_honesty", name: "Honesty about terms (compliance)", description: "Accurately states the remaining device balance, loss of bill credits, final bill timing and any fees, and never hides or understates them.", weight: 30 },
       { id: "options_fit", name: "Truthful, fitting options", description: "Offers realistic alternatives such as downgrading the lightly used line, with true prices and conditions and no invented promotions.", weight: 20 },
       { id: "respects_decision", name: "Respects his decision and confirms", description: "Does not pressure or stonewall, processes or explains the cancellation if he insists, and confirms the outcome and written follow-up.", weight: 20 },
@@ -115,7 +115,7 @@ const personas: Scenario[] = [
       },
     ],
     sampleReplies: [
-      "I'm cancelling because a rival carrier is advertising four lines for one-twenty.",
+      "I'm canceling because a rival carrier is advertising four lines for one-twenty.",
       "One line, my teenager's, barely uses any data.",
       "Honestly, one-sixty-eight a month is more than I should be paying for what we use.",
       "I've called before. They said a credit would show up and it never did.",

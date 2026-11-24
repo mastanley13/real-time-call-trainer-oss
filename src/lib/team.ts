@@ -264,7 +264,7 @@ export interface Assignment {
 }
 
 export interface AssignmentProgress {
-  /** People who have practised it since it was assigned. */
+  /** People who have practiced it since it was assigned. */
   done: number;
   /** 1 for a single rep (or the viewer); the team size for whole-team assignments. */
   total: number;
@@ -342,7 +342,7 @@ export function withRetention(progress: AssignmentProgress, assignedAt: string, 
   return Date.parse(assignedAt) < now.getTime() - retentionDays * DAY ? { ...progress, historyPurged: true } : progress;
 }
 
-/** Whole team = the org's reps (trainees). Managers can practise, but assignments are for the team. */
+/** Whole team = the org's reps (trainees). Managers can practice, but assignments are for the team. */
 export const teamIdsOf = (members: TeamMember[]) => members.filter((m) => m.role === "trainee").map((m) => m.id);
 
 export function toAssignmentView(a: Assignment, names: Map<string, string>, progress: AssignmentProgress): AssignmentView {
@@ -431,7 +431,7 @@ export function buildOverview(input: OverviewInput): TeamOverview {
   const byUser = new Map<string, TeamSession[]>();
   for (const s of sessions) byUser.set(s.userId, [...(byUser.get(s.userId) ?? []), s]);
 
-  // Reps always appear; managers and owners only once they have practised.
+  // Reps always appear; managers and owners only once they have practiced.
   const roster: RosterRow[] = members
     .filter((m) => m.role === "trainee" || byUser.has(m.id))
     .map((m) => {

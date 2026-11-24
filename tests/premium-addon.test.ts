@@ -747,7 +747,7 @@ describe("external edits are left untouched (same phase count and dates)", () =>
     await expectUntouched(w, label);
   });
 
-  it("an unedited applied schedule is still recognised as done (the control case)", async () => {
+  it("an unedited applied schedule is still recognized as done (the control case)", async () => {
     const w = await parkedApplied();
     const { removeAt } = await scheduleRemovePremium(TEAM, w.d);
     expect(removeAt?.getTime()).toBe(END_S * 1000);

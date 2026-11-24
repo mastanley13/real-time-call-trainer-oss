@@ -1,7 +1,7 @@
 import { Grid3x3 } from "lucide-react";
 import { BAND_LABEL, scoreBand, type ScoreBand, type TeamMatrix } from "@/lib/team";
 
-/** Fills come from tokens; the number is always printed, so colour is never the only signal. */
+/** Fills come from tokens; the number is always printed, so color is never the only signal. */
 export const CELL: Record<ScoreBand, string> = {
   ok: "bg-ok-soft text-ok",
   signal: "bg-signal/15 text-ink",
@@ -62,7 +62,7 @@ export default function CriterionHeatmap({ matrix, days }: { matrix: TeamMatrix;
           </tbody>
         </table>
       </div>
-      <ul className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[10.5px] text-ink-muted" aria-label="Colour key">
+      <ul className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[10.5px] text-ink-muted" aria-label="Color key">
         {LEGEND.map((l) => (
           <li key={l.band} className="flex items-center gap-1.5">
             <span className={`h-3 w-3 rounded-[3px] ${CELL[l.band]}`} aria-hidden />

@@ -130,7 +130,7 @@ export class RealtimeCall {
       const session = storedSessionKey();
       const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario, ...(this.voiceTier ? { voiceTier: this.voiceTier } : {}) }) });
       secret = await res.json().catch(() => ({}));
-      // The meter exists as soon as the server answers, so every exit from here on reports the end. An attempt cancelled
+      // The meter exists as soon as the server answers, so every exit from here on reports the end. An attempt canceled
       // while the mint was pending reports this callId now and goes no further (row 7). Without a callId (unmetered) the
       // meter sends nothing, but it still says when the call connected.
       const stillLive = this.attempt.minted(typeof secret.callId === "string" ? secret.callId : undefined, {
@@ -284,7 +284,7 @@ export class RealtimeCall {
       case "output_audio_buffer.stopped":
       case "output_audio_buffer.cleared": this.set({ speaking: false }); break;
       case "error":
-        // Most realtime errors are per-event and non-fatal (e.g. cancelling an idle response). Expiry ends the call.
+        // Most realtime errors are per-event and non-fatal (e.g. canceling an idle response). Expiry ends the call.
         if (ev.error?.code === "session_expired") {
           if (this.attempt.cancel("error", EXPIRED)) return; // row 12: before connect
           return this.fail("The voice session reached OpenAI's time limit. Your transcript so far is kept.", "provider_error");

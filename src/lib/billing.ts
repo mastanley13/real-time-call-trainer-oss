@@ -1039,7 +1039,7 @@ async function fetchLive(id: string | null, deps: StripeDeps): Promise<Live> {
  * Handles one verified Stripe event once. The event id and the plan changes commit in one transaction, so
  * a failure rolls both back and Stripe's retry is processed, while a redelivery of a handled event is a no-op.
  * Updates and completed checkouts are applied from the subscription's current state, not the event body.
- * Cancelling a duplicate subscription happens after commit; if that call fails the event id is dropped so
+ * Canceling a duplicate subscription happens after commit; if that call fails the event id is dropped so
  * Stripe's 500 retry can cancel again.
  */
 export async function handleStripeEvent(event: StripeEventLike, now = new Date(), deps: StripeDeps = liveDeps): Promise<EventResult> {

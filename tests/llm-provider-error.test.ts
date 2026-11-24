@@ -193,7 +193,7 @@ describe("chatFull logs one redacted line on a failed response", () => {
 });
 
 describe("a stalled error body does not delay the failure", () => {
-  /** A body that sends nothing and never ends; records whether it was cancelled. */
+  /** A body that sends nothing and never ends; records whether it was canceled. */
   const stalled = (status: number) => {
     const state = { cancelled: false };
     const body = new ReadableStream<Uint8Array>({ cancel: () => void (state.cancelled = true) });

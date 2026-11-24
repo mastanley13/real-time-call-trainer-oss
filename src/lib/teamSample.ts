@@ -33,7 +33,7 @@ interface Profile {
   /** Days between calls, and days since the last one. */
   every: number;
   quietFor: number;
-  /** For new hires: only practised in the last N days. */
+  /** For new hires: only practiced in the last N days. */
   joinedDaysAgo?: number;
   /** Per-criterion offsets that make each rep's weak spot consistent. */
   weak: Record<string, number>;

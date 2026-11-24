@@ -94,7 +94,7 @@ export default function RosterTable({ rows, days, viewerId, onAssign }: { rows: 
                       <span className="block">{relativeDay(r.lastSessionAt, now)}</span>
                       <span className="font-mono text-[11px] text-ink-muted">{r.lastScorePending ? "Grading pending" : r.lastScore === null ? "ungraded" : `scored ${r.lastScore}`}</span>
                     </>
-                  ) : <span className="text-xs text-ink-muted">Never practised</span>}
+                  ) : <span className="text-xs text-ink-muted">Never practiced</span>}
                 </td>
                 <td className="px-3 py-3"><ScoreSparkline values={r.spark} /></td>
                 <td className="max-w-[220px] px-3 py-3">

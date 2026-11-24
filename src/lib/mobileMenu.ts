@@ -1,4 +1,4 @@
-/** Pure behaviour for the narrow-screen header menu, kept out of the component so it can be tested without a DOM. */
+/** Pure behavior for the narrow-screen header menu, kept out of the component so it can be tested without a DOM. */
 
 export const MOBILE_MENU_ID = "mobile-menu";
 

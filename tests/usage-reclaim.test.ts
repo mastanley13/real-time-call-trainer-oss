@@ -135,7 +135,7 @@ describe("a new start reclaims a call that never connected", () => {
 
 describe("lock order: user row first on every settlement path (fake lock model, not a database)", () => {
   // The fake models the user row lock as a real waiting lock and fails any transaction that asks for it after updating
-  // allowance or call rows (tests/fakePrisma.ts). Allowance row locks themselves are not modelled, so these tests show
+  // allowance or call rows (tests/fakePrisma.ts). Allowance row locks themselves are not modeled, so these tests show
   // the order that rules the deadlock out and that both transactions complete with the right billing; they do not run
   // Postgres.
   const B = new Date("2026-11-10T12:00:00Z"); // a period boundary for the MAR10 anchor

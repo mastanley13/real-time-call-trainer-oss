@@ -226,7 +226,7 @@ export async function resolveAllowance(db: Tx, userId: string, now: Date): Promi
   const pooled = !!org && org.planTier === "team" && storedPlanEntitled(org, now) && billingActive();
   const allowance = await ensureAllowance(db, pooled ? { organizationId: org.id } : { userId }, now);
   const plan: PlanTier = pooled ? "team" : effectivePlan(storedPlanEntitled(user, now) ? user.planTier : "free", billingActive());
-  // A member whose Team ended (cancelled or unpaid) now has the Free allowance. Minutes they already used from the
+  // A member whose Team ended (canceled or unpaid) now has the Free allowance. Minutes they already used from the
   // pool this month still count against its cap, so leaving the pool is not a fresh 10 minutes.
   const usedElsewhere = !pooled && plan === "free" ? await usedInOtherAllowances(db, userId, allowance) : 0;
   const used = allowance.minutesUsed + usedElsewhere;

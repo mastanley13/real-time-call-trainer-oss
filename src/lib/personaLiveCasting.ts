@@ -102,7 +102,7 @@ export const LIVE_CASTING: Record<string, LiveCastLine> = {
   "medical-clinic-vitals-station": M("practical", "Clinic office manager handling purchasing: friendly, practical and budget-conscious, defers to the lead physician."),
   // ---- retail ----
   "retail-tv-soundbar-upsell": G("rushed", "Friendly, slightly rushed shopper reserving a TV for tonight: upbeat, in a hurry, open to a quick suggestion."),
-  "retail-gym-cancellation-save": M("firm", "Polite but firm member set on cancelling: calm and steady, a little tired of the topic."),
+  "retail-gym-cancellation-save": M("firm", "Polite but firm member set on canceling: calm and steady, a little tired of the topic."),
   "retail-furniture-financing": MA("cautious", "Careful shopper evaluating financing, skeptical from past experience: deliberate, questions the fine print, polite but cautious."),
   // ---- collections ----
   "collections-first-past-due": M("embarrassed", "Borrower embarrassed by a failed autopay: apologetic, a bit defensive, quick to explain, cooperative."),

@@ -114,7 +114,7 @@ export function scriptedReply(scenario: Scenario, history: Turn[]): string {
     push(answer);
   }
 
-  // Nothing recognised: use an unused scripted line, or react to the question.
+  // Nothing recognized: use an unused scripted line, or react to the question.
   const pool = lastUser.includes("?") ? QUESTION_POOL : STATEMENT_POOL;
   if (parts.length === 0) push(samples[0] ?? pool.find((t) => !said.has(t)));
   // Everything has been said once: repeating a neutral line beats going silent.

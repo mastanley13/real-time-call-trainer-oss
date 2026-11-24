@@ -111,7 +111,7 @@ describe("stripe mode", () => {
     expect(stripeSecretKey({ STRIPE_SECRET_KEY: " sk_live_abc ", STRIPE_LIVE_MODE: "true" })).toBe("sk_live_abc");
   });
 
-  it("mismatch and disabled take the gate's 503 / demo behaviour without leaking the key", async () => {
+  it("mismatch and disabled take the gate's 503 / demo behavior without leaking the key", async () => {
     vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_placeholder");
     vi.stubEnv("STRIPE_LIVE_MODE", "true");
     const gate = billingGate();
@@ -830,7 +830,7 @@ describe("customer.subscription.updated", () => {
       expect(res.status).toBe(409);
       expect((await res.json()).error).toBe("already_subscribed");
       expect(create).not.toHaveBeenCalled();
-      // A second, duplicate subscription is still detected and cancelled.
+      // A second, duplicate subscription is still detected and canceled.
       await deliver(event("customer.subscription.updated", { ...sub({ id: "sub_test_dup", customer: "cus_test_team", metadata: { organizationId: "org-1" }, team: 3 }) }));
       expect(cancelSpy).toHaveBeenCalledWith("sub_test_dup");
       // Fixing the quantity on the same subscription restores Team.
@@ -1759,7 +1759,7 @@ describe("a new purchase that fails item validation", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("a second subscription for the same account is cancelled as a duplicate", async () => {
+  it("a second subscription for the same account is canceled as a duplicate", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await purchase("sub_test_bad", 2);
     await purchase("sub_test_bad2", 2);
