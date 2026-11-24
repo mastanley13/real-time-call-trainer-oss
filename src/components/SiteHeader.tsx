@@ -54,16 +54,17 @@ export default function SiteHeader() {
   return (
     <header ref={headerRef} data-site-chrome className={`glass sticky top-0 z-40 border-x-0 border-t-0 pt-[env(safe-area-inset-top)] print:hidden ${pathname.startsWith("/trainer/debrief") ? "deck !bg-surface/90" : ""}`}>
       {demo && (
-        <div className="border-b border-line bg-primary-soft/60 px-4 py-1 text-center font-mono text-[11px] text-ink-soft">
-          Demo mode · login skipped · sessions stay in this browser
+        <div className="flex items-center justify-center gap-2 border-b border-line bg-sunken/90 px-4 py-1.5 text-center font-mono text-[11px] text-ink-soft">
+          <span className="lamp lamp-signal !h-1.5 !w-1.5" aria-hidden />
+          <span>Demo mode: login skipped, sessions stay in this browser</span>
         </div>
       )}
-      <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-4 sm:px-6">
-        <Link href="/" className="flex shrink-0 items-center gap-2.5 rounded-lg font-heading text-[15px] font-bold text-ink">
+      <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 px-4 sm:gap-5 sm:px-6">
+        <Link href="/" className="flex shrink-0 items-center gap-2.5 rounded-lg font-heading text-[15px] font-bold tracking-tight text-ink">
           <LogoMark size={30} />
-          {/* Visually hidden on narrow phones, not display:none, so the home link keeps an accessible name. */}
-          <span className="sr-only min-[400px]:not-sr-only">Call Trainer</span>
-          <span className="hidden rounded border border-line px-1.5 py-px font-mono text-[10px] font-medium text-ink-muted sm:inline">OSS</span>
+          {/* Guests have fewer header buttons so the wordmark fits at 375px; signed-in phones hide it below 440px to prevent horizontal overflow. */}
+          <span className={isAuthenticated ? "sr-only min-[440px]:not-sr-only" : "sr-only min-[340px]:not-sr-only"}>Call Trainer</span>
+          <span className="hidden rounded border border-line bg-sunken px-1.5 py-px font-mono text-[10px] font-medium text-ink-muted sm:inline">OSS</span>
         </Link>
 
         <nav className="hidden items-center gap-1 md:flex" aria-label="Main">
@@ -71,14 +72,14 @@ export default function SiteHeader() {
               const on = l.match(pathname);
               return (
                 <Link key={l.href} href={l.href} aria-current={on ? "page" : undefined}
-                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${on ? "bg-sunken text-ink" : "text-ink-muted hover:bg-sunken hover:text-ink"}`}>
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${on ? "bg-sunken text-ink shadow-[inset_0_-2px_0_rgb(var(--primary))]" : "text-ink-muted hover:bg-sunken hover:text-ink"}`}>
                   {l.label}
                 </Link>
               );
             })}
         </nav>
 
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex items-center gap-1 sm:gap-1.5">
           {capabilities && showModelChip(capabilities, user) && (
             <Link href="/settings/models" className="chip-model hidden transition-colors hover:border-ink-muted/50 hover:text-ink lg:inline-flex"
               title="An AI model runs the coach, grading and persona wizard. Open model settings.">
@@ -89,7 +90,7 @@ export default function SiteHeader() {
           {isAuthenticated && (
             <button type="button" onClick={openPalette} aria-keyshortcuts={mac ? "Meta+K" : "Control+K"} aria-label="Open command palette"
               title={`Search and jump to anything (${mac ? "⌘K" : "Ctrl K"})`}
-              className="btn-quiet !min-h-[36px] !gap-2 !px-2.5 sm:border sm:border-line">
+              className="btn-quiet !min-h-[40px] !min-w-[40px] !gap-2 !px-2 sm:!min-h-[36px] sm:!min-w-0 sm:border sm:border-line sm:!px-2.5">
               <Search size={16} strokeWidth={1.75} aria-hidden />
               <span className="kbd hidden sm:inline-flex">{mac ? "⌘K" : "Ctrl K"}</span>
             </button>
@@ -97,7 +98,7 @@ export default function SiteHeader() {
           {isAuthenticated && (
             <Link href="/settings/models" aria-label="Settings" title="Settings: models and security"
               aria-current={pathname.startsWith("/settings") ? "page" : undefined}
-              className={`btn-quiet !min-h-[36px] !px-2.5 ${pathname.startsWith("/settings") ? "bg-sunken text-ink" : ""}`}>
+              className={`btn-quiet !min-h-[40px] !min-w-[40px] !px-2 sm:!min-h-[36px] sm:!min-w-[36px] ${pathname.startsWith("/settings") ? "bg-sunken text-ink" : ""}`}>
               <Settings size={17} strokeWidth={1.75} aria-hidden />
             </Link>
           )}
@@ -106,7 +107,7 @@ export default function SiteHeader() {
             <>
               <span className="hidden max-w-[160px] truncate px-1 text-sm text-ink-muted md:inline">{user?.firstName || user?.email}</span>
               {!demo && (
-                <button className="btn-quiet !min-h-[36px] !px-2.5" onClick={() => { logout(); router.push("/"); }} aria-label="Sign out" title="Sign out">
+                <button className="btn-quiet !min-h-[40px] !min-w-[40px] !px-2 sm:!min-h-[36px] sm:!min-w-[36px]" onClick={() => { logout(); router.push("/"); }} aria-label="Sign out" title="Sign out">
                   <LogOut size={17} strokeWidth={1.75} aria-hidden />
                 </button>
               )}

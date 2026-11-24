@@ -50,14 +50,17 @@ export default function Sheet({ title, subtitle, onClose, children, footer, wide
         aria-label={title}
         tabIndex={-1}
         onKeyDown={onKeyDown}
-        className={`flex max-h-[88dvh] w-full flex-col rounded-t-sheet border border-line bg-surface text-ink shadow-pop outline-none animate-cue-in sm:max-h-none sm:rounded-none sm:rounded-l-sheet ${wide ? "sm:max-w-2xl" : "sm:max-w-md"}`}
+        className={`flex max-h-[88dvh] w-full flex-col rounded-t-sheet border border-line bg-surface text-ink shadow-pop outline-none animate-sheet-up sm:max-h-none sm:rounded-none sm:rounded-l-sheet sm:animate-cue-in ${wide ? "sm:max-w-2xl" : "sm:max-w-md"}`}
       >
+        <div className="flex justify-center pt-2.5 sm:hidden" aria-hidden>
+          <span className="h-1 w-9 rounded-full bg-line" />
+        </div>
         <div className="flex items-start justify-between gap-3 border-b border-line px-5 py-4">
           <div className="min-w-0">
             <h2 className="truncate text-lg font-bold">{title}</h2>
             {subtitle && <p className="mt-0.5 text-sm text-ink-muted">{subtitle}</p>}
           </div>
-          <button className="btn-quiet !min-h-[36px] !px-2" onClick={onClose} aria-label="Close"><X size={18} aria-hidden /></button>
+          <button className="btn-quiet !min-h-[40px] !min-w-[40px] !px-2" onClick={onClose} aria-label="Close"><X size={18} strokeWidth={1.75} aria-hidden /></button>
         </div>
         <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-5 py-5">{children}</div>
         {footer && <div className="border-t border-line px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">{footer}</div>}

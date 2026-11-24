@@ -78,19 +78,19 @@ export default function MobileMenu({ items, guest, pathname }: { items: MobileMe
         <Icon size={20} strokeWidth={1.75} aria-hidden />
       </button>
       <div id={MOBILE_MENU_ID} ref={panelRef} hidden={!open}
-        className="absolute inset-x-0 top-full border-b border-line bg-surface px-4 py-3 shadow-pop">
+        className="absolute inset-x-0 top-full z-50 border-b border-line bg-surface px-4 py-3 shadow-pop">
         <nav aria-label="Menu" className="flex flex-col gap-1">
           {items.map((l) => (
             <Link key={l.href} href={l.href} onClick={close} aria-current={l.active ? "page" : undefined}
-              className={`flex min-h-[44px] items-center rounded-md px-3 text-sm font-medium ${l.active ? "bg-sunken text-ink" : "text-ink-soft hover:bg-sunken hover:text-ink"}`}>
+              className={`flex min-h-[44px] items-center rounded-md px-3 text-sm font-medium transition-colors ${l.active ? "bg-sunken text-ink shadow-[inset_2px_0_0_rgb(var(--primary))]" : "text-ink-soft hover:bg-sunken hover:text-ink"}`}>
               {l.label}
             </Link>
           ))}
           {guest && (
-            <>
-              <Link href="/login" data-menu-guest="/login" onClick={close} className="btn-quiet !justify-start !px-3 !min-h-[44px] sm:hidden">Sign in</Link>
+            <div className="mt-2 flex flex-col gap-2 border-t border-line pt-3 sm:hidden">
+              <Link href="/login" data-menu-guest="/login" onClick={close} className="btn-ghost !min-h-[44px] sm:hidden">Sign in</Link>
               <Link href="/register" data-menu-guest="/register" onClick={close} className="btn-primary !min-h-[44px] sm:hidden">Get started</Link>
-            </>
+            </div>
           )}
         </nav>
       </div>

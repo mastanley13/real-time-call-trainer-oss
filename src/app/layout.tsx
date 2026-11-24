@@ -54,7 +54,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <AuthProvider>
           <a href="#main" className="skip-link">Skip to content</a>
           <SiteHeader />
-          <main id="main" tabIndex={-1} className="pb-[calc(4.5rem+env(safe-area-inset-bottom))] outline-none md:pb-0">{children}</main>
+          <main id="main" tabIndex={-1} className="outline-none">{children}</main>
           <MobileTabBar />
           <CommandPalette />
         </AuthProvider>

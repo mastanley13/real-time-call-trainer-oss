@@ -24,11 +24,27 @@ export function CompareHint({ cue }: { cue: ScrollCue }) {
   return <p className="mt-4 text-xs text-ink-muted">Scroll for more plans</p>;
 }
 
+/**
+ * The lamp drawn before a plain answer, as a pseudo-element so the cell's text stays exactly the answer.
+ * Yes-type answers light green, No is an off lamp, anything else (a price, a note, a label) gets none.
+ */
+const LAMP_BASE = "before:mr-2 before:inline-block before:h-1.5 before:w-1.5 before:-translate-y-px before:rounded-full before:align-middle before:content-['']";
+const YES = new Set(["Yes", "Unlimited", "Managed", "Automatic", "Full", "Enforced for team"]);
+export function cellLamp(text: string): string {
+  if (YES.has(text)) return `${LAMP_BASE} before:bg-ok`;
+  if (text === "No") return `${LAMP_BASE} before:bg-ink-muted/50`;
+  return "";
+}
+
+/** Width of the sticky feature column; the start fade sits just past it (left-36, sm:left-48). */
+const FEATURE_COL = "w-36 min-w-[9rem] sm:w-48 sm:min-w-[12rem]";
+const HEAD = "px-4 py-3 font-mono text-[11px] font-medium uppercase tracking-[0.08em]";
+
 /** Edge fades on the sides that still have hidden columns. */
 export function CompareFades({ cue }: { cue: ScrollCue }) {
   return (
     <>
-      {cue.fadeStart && <div aria-hidden data-fade="start" className="pointer-events-none absolute inset-y-0 left-0 w-10 rounded-l-panel bg-gradient-to-r from-surface to-transparent" />}
+      {cue.fadeStart && <div aria-hidden data-fade="start" className="pointer-events-none absolute inset-y-0 left-36 w-10 bg-gradient-to-r from-surface to-transparent sm:left-48" />}
       {cue.fadeEnd && <div aria-hidden data-fade="end" className="pointer-events-none absolute inset-y-0 right-0 w-10 rounded-r-panel bg-gradient-to-l from-surface to-transparent" />}
     </>
   );
@@ -66,27 +82,29 @@ export default function ComparePlans({ rows }: { rows: CompareRow[] }) {
       <CompareHint cue={cue} />
       <div className={`relative ${cue.overflows ? "mt-2" : "mt-6"}`}>
         <div ref={ref} role="region" aria-label="Compare plans" tabIndex={0}
-          className="overflow-x-auto rounded-panel border border-line focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
-          <table className="w-full min-w-[640px] text-left text-sm">
-            <thead className="bg-sunken text-ink-muted">
+          className="scroll-thin overflow-x-auto rounded-panel border border-line bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+          <table className="w-full min-w-[680px] border-separate border-spacing-0 text-left text-sm">
+            <thead className="text-ink-muted">
               <tr>
-                <th scope="col" className="px-4 py-3 font-medium">Feature</th>
-                <th scope="col" className="px-4 py-3 font-medium">Self-host (MIT)</th>
-                <th scope="col" className="px-4 py-3 font-medium">Free</th>
-                <th scope="col" className="px-4 py-3 font-medium">Pro</th>
-                <th scope="col" className="px-4 py-3 font-medium">Team</th>
+                <th scope="col" className={`${HEAD} sticky left-0 z-10 border-r border-line bg-sunken ${FEATURE_COL}`}>Feature</th>
+                <th scope="col" className={`${HEAD} bg-sunken`}>Self-host (MIT)</th>
+                <th scope="col" className={`${HEAD} bg-sunken`}>Free</th>
+                <th scope="col" className={`${HEAD} bg-sunken`}>Pro</th>
+                <th scope="col" className={`${HEAD} bg-primary-soft/60 text-ink shadow-[inset_0_2px_0_rgb(var(--primary))]`}>Team</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.feature} className="border-t border-line align-top">
-                  <th scope="row" className="px-4 py-3 font-medium text-ink">{r.feature}</th>
-                  <td className="px-4 py-3 text-ink-soft">{r.self}</td>
-                  <td className="px-4 py-3 text-ink-soft">{r.free}</td>
-                  <td className="px-4 py-3 text-ink-soft">{cellText(r.pro, billing)}</td>
-                  <td className="px-4 py-3 text-ink-soft">{cellText(r.team, billing)}</td>
-                </tr>
-              ))}
+              {rows.map((r) => {
+                const cells = [r.self, r.free, cellText(r.pro, billing), cellText(r.team, billing)];
+                return (
+                  <tr key={r.feature} className="align-top">
+                    <th scope="row" className={`sticky left-0 z-10 border-r border-t border-line bg-surface px-4 py-3 font-medium text-ink ${FEATURE_COL}`}>{r.feature}</th>
+                    {cells.map((c, i) => (
+                      <td key={i} className={`border-t border-line px-4 py-3 ${i === 3 ? "bg-primary-soft/25 text-ink" : "text-ink-soft"} ${cellLamp(c)}`}>{c}</td>
+                    ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

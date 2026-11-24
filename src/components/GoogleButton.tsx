@@ -7,9 +7,12 @@ import { parseSignupIntent, signupIntentQuery } from "@/lib/signupIntent";
  * "Continue with Google". A plain link to the server route, which redirects to Google; nothing about the flow
  * runs in the browser. Renders nothing unless the server reports Google sign-in as configured. It asks
  * /api/auth/google/status, which stays public behind the access gate (unlike /api/config).
+ *
+ * While that answer is pending, a placeholder of the same height holds the space, so the form below does not jump
+ * when the button appears. If Google is off, the placeholder collapses.
  */
 export default function GoogleButton({ next, label = "Continue with Google", carryIntent = false }: { next?: string; label?: string; carryIntent?: boolean }) {
-  const [enabled, setEnabled] = useState(false);
+  const [enabled, setEnabled] = useState<boolean | null>(null);
   const [intentQs, setIntentQs] = useState("");
   useEffect(() => {
     if (!carryIntent) return;
@@ -21,9 +24,18 @@ export default function GoogleButton({ next, label = "Continue with Google", car
     fetch("/api/auth/google/status")
       .then((r) => (r.ok ? r.json() : null))
       .then((d: { enabled?: boolean } | null) => { if (live) setEnabled(d?.enabled === true); })
-      .catch(() => {});
+      .catch(() => { if (live) setEnabled(false); });
     return () => { live = false; };
   }, []);
+  if (enabled === null) {
+    // Same box as the button (40px) plus the divider row (16px with 16px above and below).
+    return (
+      <div aria-hidden>
+        <div className="skeleton h-10 w-full" />
+        <div className="my-4 h-4" />
+      </div>
+    );
+  }
   if (!enabled) return null;
   const qs = [next ? new URLSearchParams({ next }).toString() : "", intentQs].filter(Boolean).join("&");
   return (

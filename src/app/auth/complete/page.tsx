@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
 import AuthShell from "@/components/AuthShell";
 import { useAuth } from "@/contexts/AuthContext";
 import { safeNextPath } from "@/lib/safeNext";
@@ -25,14 +24,17 @@ export default function AuthCompletePage() {
   }, [adoptSession, router]);
 
   return (
-    <AuthShell title={error ? "Sign-in didn't finish" : "Signing you in"} subtitle={error ? "Your account is fine. Try signing in again." : "One moment."}>
+    <AuthShell compact title={error ? "Sign-in didn't finish" : "Signing you in"} subtitle={error ? "Your account is fine. Try signing in again." : "One moment."}>
       {error ? (
         <>
-          <p role="alert" className="text-sm text-alert">{error}</p>
+          <p role="alert" className="banner-alert">{error}</p>
           <Link href="/login" className="btn-primary mt-4 w-full">Back to sign in</Link>
         </>
       ) : (
-        <Loader2 size={20} strokeWidth={1.75} className="animate-spin text-ink-muted" aria-label="Loading" />
+        <div role="status" className="flex items-center gap-3 rounded-lg border border-line bg-sunken px-4 py-3 text-sm text-ink-soft">
+          <span className="lamp lamp-signal motion-safe:animate-lamp-pulse" aria-hidden />
+          Opening your workspace…
+        </div>
       )}
     </AuthShell>
   );

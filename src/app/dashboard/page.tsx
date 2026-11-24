@@ -190,10 +190,10 @@ export default function DashboardPage() {
     const days = Array.from({ length: 14 }, (_, i) => dayKey(addDays(today, i - 13)));
     const byDay = (pick: (rs: Row[]) => number | null) => days.map((k) => pick(counted.filter((r) => dayKey(new Date(r.createdAt)) === k)));
     return [
-      { label: "Sessions", value: String(rows?.length ?? 0), spark: byDay((rs) => rs.length) },
-      { label: "Average score", value: avg !== null ? String(avg) : "None", spark: byDay(averageScore), max: 100 },
-      { label: "Best score", value: best !== null ? String(best) : "None", spark: byDay((rs) => bestScore(rs) ?? 0), max: 100 },
-      { label: "Time practiced", value: formatDuration(counted.reduce((a, r) => a + r.durationSeconds, 0)), spark: byDay((rs) => rs.reduce((a, r) => a + r.durationSeconds, 0)) },
+      { label: "Sessions", value: String(rows?.length ?? 0), spark: byDay((rs) => rs.length), empty: false },
+      { label: "Average score", value: avg !== null ? String(avg) : "--", spark: byDay(averageScore), max: 100, empty: avg === null },
+      { label: "Best score", value: best !== null ? String(best) : "--", spark: byDay((rs) => bestScore(rs) ?? 0), max: 100, empty: best === null },
+      { label: "Time practiced", value: formatDuration(counted.reduce((a, r) => a + r.durationSeconds, 0)), spark: byDay((rs) => rs.reduce((a, r) => a + r.durationSeconds, 0)), empty: false },
     ];
   }, [counted, rows]);
 
@@ -221,9 +221,9 @@ export default function DashboardPage() {
           <p className="eyebrow">Logbook</p>
           <h1 className="mt-1 text-3xl font-bold">Progress{user?.firstName ? `, ${user.firstName}` : ""}</h1>
         </div>
-        <Link href="/trainer" className="btn-primary"><Mic size={16} aria-hidden /> New practice call</Link>
+        <Link href="/trainer" className="btn-primary"><Mic size={16} strokeWidth={1.75} aria-hidden /> New practice call</Link>
       </div>
-      {error && <p className="banner-warn">{error}</p>}
+      {error && <p className="banner-warn" role="alert">{error}</p>}
       {/* Personas a manager assigned; renders nothing when there are none. */}
       <AssignedToYou />
 
@@ -231,7 +231,9 @@ export default function DashboardPage() {
         {stats.map((s) => (
           <div key={s.label} className="panel p-4">
             <p className="label !mb-1">{s.label}</p>
-            <p className="mono text-3xl font-semibold">{s.value}</p>
+            <p className="mono text-3xl font-semibold">
+              {s.empty ? <><span aria-hidden>--</span><span className="sr-only">No score yet</span></> : s.value}
+            </p>
             <div className="mt-2"><Sparkline values={s.spark} max={s.max} /></div>
             <p className="font-mono text-[10px] text-ink-muted">last 14 days</p>
           </div>
@@ -239,7 +241,7 @@ export default function DashboardPage() {
       </div>
 
       {rows.length === 0 ? (
-        <div className="panel"><EmptyState icon={PhoneCall} title="No practice calls yet"><p>Run your first scenario and your scores, trends and practice streak show up here.</p><Link href="/library" className="btn-primary btn-pill mt-4"><Mic size={16} aria-hidden /> Pick a persona</Link></EmptyState></div>
+        <div className="panel"><EmptyState icon={PhoneCall} title="No practice calls yet"><p>Run your first scenario and your scores, trends and practice streak show up here.</p><Link href="/library" className="btn-primary btn-pill mt-4"><Mic size={16} strokeWidth={1.75} aria-hidden /> Pick a persona</Link></EmptyState></div>
       ) : (
         <>
           {/* grid-cols-[minmax(0,1fr)] on phones: an implicit auto column would grow to fit wide charts and widen the page. */}
@@ -249,7 +251,7 @@ export default function DashboardPage() {
               <TrendChart rows={counted} />
             </section>
             <section className="panel flex flex-col p-4 sm:p-5" aria-labelledby="next-h">
-              <h2 id="next-h" className="eyebrow">Practice this next</h2>
+              <h2 id="next-h" className="label">Practice this next</h2>
               {weakest ? (
                 <>
                   <p className="mt-2 text-sm">Your weakest area is <strong>{weakest.name}</strong>, averaging <span className="mono">{weakest.avg}</span> over {weakest.n} call{weakest.n === 1 ? "" : "s"}.</p>
@@ -259,7 +261,7 @@ export default function DashboardPage() {
                       <div className="min-w-0"><p className="truncate text-sm font-semibold">{drill.aiPersona.name}</p><p className="line-clamp-2 text-xs text-ink-muted">{drill.title}</p></div>
                     </div>
                   )}
-                  {drill && <div className="mt-auto pt-4"><Link href={`/trainer?scenario=${encodeURIComponent(drill.id)}`} className="btn-primary w-full">Start this drill <ArrowRight size={15} aria-hidden /></Link></div>}
+                  {drill && <div className="mt-auto pt-4"><Link href={`/trainer?scenario=${encodeURIComponent(drill.id)}`} className="btn-primary w-full">Start this drill <ArrowRight size={15} strokeWidth={1.75} aria-hidden /></Link></div>}
                 </>
               ) : <p className="mt-2 text-sm text-ink-muted">Finish a graded call and we&rsquo;ll point you at the skill to drill next.</p>}
             </section>
@@ -289,7 +291,7 @@ export default function DashboardPage() {
 
       {legacyCount > 0 && (
         <label className="flex items-start gap-2 text-sm text-ink-soft">
-          <input type="checkbox" className="mt-0.5 h-4 w-4" checked={showLegacy} onChange={(e) => setShowLegacy(e.target.checked)} />
+          <input type="checkbox" className="mt-0.5 h-4 w-4 accent-[rgb(var(--primary))]" checked={showLegacy} onChange={(e) => setShowLegacy(e.target.checked)} />
           <span>Include {legacyCount} legacy-grader session{legacyCount === 1 ? "" : "s"} in averages. They were scored with the old keyword grader on a different scale, so they’re excluded by default.</span>
         </label>
       )}
@@ -316,11 +318,11 @@ export default function DashboardPage() {
                 </div>
                 {/* No chip for an ungraded or pending call: the score column already says which. */}
                 {cell.kind !== "pending" && (r.legacy || r.method) && <span className={`chip !text-[10.5px] ${r.legacy ? "" : r.method === "llm" ? "!border-ok/40 !text-ok" : "!border-caution/40 !text-caution"}`}>{r.legacy ? "Legacy" : r.method === "llm" ? "AI-graded" : "Estimate"}</span>}
-                <ChevronRight size={16} className="hidden text-ink-muted sm:block" aria-hidden />
+                <ChevronRight size={16} strokeWidth={1.75} className="hidden text-ink-muted sm:block" aria-hidden />
                 {r.id.startsWith("local-") && (
                   <button aria-label={`Delete session: ${r.title}, ${new Date(r.createdAt).toLocaleString()}`} title="Delete session"
                     className="ml-auto inline-flex min-h-[40px] items-center gap-1.5 rounded-md px-2 text-xs font-semibold text-ink-muted hover:bg-surface hover:text-alert sm:ml-0"
-                    onClick={() => removeRow(r)}><Trash2 size={16} aria-hidden /><span className="sm:sr-only">Delete</span></button>
+                    onClick={() => removeRow(r)}><Trash2 size={16} strokeWidth={1.75} aria-hidden /><span className="sm:sr-only">Delete</span></button>
                 )}
               </li>
               );
@@ -332,7 +334,7 @@ export default function DashboardPage() {
       {capabilities?.demoMode && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-panel border border-dashed border-line p-4 text-sm">
           <p className="text-ink-soft">Demo mode: sessions and custom personas live in this browser only.</p>
-          <button className="btn-ghost" onClick={() => setConfirmReset(true)}><RotateCcw size={16} aria-hidden /> Reset demo data</button>
+          <button className="btn-ghost" onClick={() => setConfirmReset(true)}><RotateCcw size={16} strokeWidth={1.75} aria-hidden /> Reset demo data</button>
         </div>
       )}
 

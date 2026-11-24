@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 interface Props {
   title: string;
   message: string;
   confirmLabel: string;
+  tone?: "danger" | "primary";
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -14,7 +15,10 @@ interface Props {
 const FOCUSABLE = "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
 
 /** Modal confirm: focus moves in, Tab is trapped, Esc cancels, focus returns to the opener. Follows the deck theme when opened from a live call. */
-export default function ConfirmDialog({ title, message, confirmLabel, onConfirm, onCancel }: Props) {
+export default function ConfirmDialog({ title, message, confirmLabel, tone = "danger", onConfirm, onCancel }: Props) {
+  const uid = useId();
+  const titleId = `${uid}-title`;
+  const descId = `${uid}-desc`;
   const ref = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [mounted, setMounted] = useState(false);
@@ -45,12 +49,12 @@ export default function ConfirmDialog({ title, message, confirmLabel, onConfirm,
   if (!mounted) return null;
   return createPortal(
     <div className={`fixed inset-0 z-[200] flex items-center justify-center bg-[rgb(var(--shadow)/0.5)] p-4 ${deck ? "deck !bg-[rgb(var(--shadow)/0.6)]" : ""}`} onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
-      <div ref={ref} role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-desc" onKeyDown={onKeyDown} className="w-full max-w-sm rounded-sheet border border-line bg-surface p-5 text-ink shadow-pop">
-        <h2 id="confirm-title" className="text-lg font-bold">{title}</h2>
-        <p id="confirm-desc" className="mt-2 text-sm text-ink-soft">{message}</p>
+      <div ref={ref} role="alertdialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descId} onKeyDown={onKeyDown} className="w-full max-w-sm rounded-sheet border border-line bg-surface p-5 text-ink shadow-pop">
+        <h2 id={titleId} className="text-lg font-bold">{title}</h2>
+        <p id={descId} className="mt-2 text-sm text-ink-soft">{message}</p>
         <div className="mt-5 flex justify-end gap-2">
           <button ref={cancelRef} className="btn-ghost" onClick={onCancel}>Cancel</button>
-          <button className="btn-danger" onClick={onConfirm}>{confirmLabel}</button>
+          <button className={tone === "primary" ? "btn-primary" : "btn-danger"} onClick={onConfirm}>{confirmLabel}</button>
         </div>
       </div>
     </div>,

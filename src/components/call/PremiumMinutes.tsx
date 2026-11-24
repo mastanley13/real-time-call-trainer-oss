@@ -20,6 +20,12 @@ import { trackPremiumUpsell } from "@/lib/premiumEventTypes";
  *   without it, when Premium can be added. Never an admin line.
  * - Free, or off sale and not on the plan: nothing.
  */
+/** Premium minutes left this period as a tape, beside the mono readout. Decorative: the readout carries the numbers. */
+function PremiumTape({ remaining, cap }: { remaining: number; cap: number }) {
+  const pct = cap > 0 ? Math.min(100, Math.max(0, (remaining / cap) * 100)) : 0;
+  return <div className="tape mt-1.5" aria-hidden><span className="bg-primary" style={{ width: `${pct}%` }} /></div>;
+}
+
 export default function PremiumMinutes({ premium }: { premium: PremiumSnapshot | null }) {
   const state = premiumSetupState(premium).kind;
   const locked = state === "locked_buy" || state === "locked_ask";
@@ -30,7 +36,8 @@ export default function PremiumMinutes({ premium }: { premium: PremiumSnapshot |
     return (
       <div className="text-sm" role="status">
         <p className="mono text-ink-soft">{premiumLeftLabel(premium)}</p>
-        <p className="mt-1 text-xs text-ink-muted">{premiumDisclosure(plan)}</p>
+        <PremiumTape remaining={premium.remaining} cap={premium.cap} />
+        <p className="mt-1.5 text-xs text-ink-muted">{premiumDisclosure(plan)}</p>
         {/* Below the generic copy: a Premium call is set to end when the Premium minutes run out. */}
         <p className="mt-1 text-xs text-ink-muted">{PREMIUM_CALL_LENGTH_NOTE}</p>
       </div>
@@ -64,7 +71,8 @@ export default function PremiumMinutes({ premium }: { premium: PremiumSnapshot |
     return (
       <div className="text-sm" role="status">
         <p className="mono text-ink-soft">{premiumLeftLabel({ remaining: 0, cap: premium.cap })}</p>
-        <p className="mt-1 text-xs text-ink-muted">{premiumNudge(plan)}</p>
+        <PremiumTape remaining={0} cap={premium.cap} />
+        <p className="mt-1.5 text-xs text-ink-muted">{premiumNudge(plan)}</p>
       </div>
     );
   }

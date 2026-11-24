@@ -1,9 +1,11 @@
+import { GitPullRequest } from "lucide-react";
 import { BillingProvider } from "@/components/landing/BillingContext";
 import ComparePlans, { type CompareRow } from "@/components/landing/ComparePlans";
 import PricingCards from "@/components/landing/PricingCards";
 import PricingHeroCta from "@/components/landing/PricingHeroCta";
 import { PricingViewerProvider } from "@/components/landing/PricingViewer";
 import PublicFooter from "@/components/landing/PublicFooter";
+import FaqList from "@/components/ui/FaqList";
 import {
   FREE_SUMMARY, FREE_VOICE_MIN, MINUTES_ROUNDED_NOTE, PREMIUM_COMING_SOON, PREMIUM_FAQ, PRICE, PRICES_TAX_NOTE, PRO_VOICE_MIN, TEAM_MIN_SEATS, TEAM_VOICE_MIN_PER_SEAT,
 } from "@/lib/pricing";
@@ -18,6 +20,22 @@ export const metadata = pageMetadata({
   description: "Sales roleplay with an AI buyer and a coach in your ear. Free, no card. Pro $29/mo. Team $59/seat for managers. No overages.",
   path: "/pricing",
 });
+
+/** The hero's readout: what every hosted plan includes, Free too. */
+const INCLUDED = [
+  "A live coach on every call",
+  "Graded debriefs that quote the transcript",
+  "Unlimited text practice",
+  "No overage charges, ever",
+];
+
+/** Who runs what when you self-host. */
+const SELF_HOST: [string, string][] = [
+  ["OpenAI or ElevenLabs keys", "Yours"],
+  ["Postgres database", "Yours"],
+  ["Updates and backups", "You"],
+  ["License", "MIT"],
+];
 
 /** Premium AI voice row: Free No, Pro Add-on, Team Add-on. Off sale, the paid cells carry the coming-soon label. */
 const premiumCompareRow = (onSale: boolean): CompareRow => ({
@@ -83,55 +101,76 @@ export default function PricingPage() {
   return (
     <PricingViewerProvider>
       <div>
-      <section className="border-b border-line">
-        <div className="page py-14 sm:py-20">
-          <p className="eyebrow">Pricing</p>
-          <h1 className="mt-4 max-w-3xl text-4xl font-bold leading-[1.05] sm:text-5xl">Practice the call before it costs you the deal</h1>
-          <p className="mt-5 max-w-2xl text-lg leading-relaxed text-ink-soft">
-            Talk to AI buyers who push back, get coached live, and get a graded debrief that quotes your own transcript. Hosted for you: no API keys, no database, no setup.
-          </p>
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-            <PricingHeroCta billingEnabled={billing} />
-            <a href="#plans" className="btn-ghost btn-xl">Compare plans</a>
+      <section className="deck border-b border-line">
+        <div className="page grid gap-10 py-14 sm:py-20 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] lg:items-center lg:gap-16">
+          <div className="min-w-0">
+            <p className="eyebrow">Pricing</p>
+            <h1 className="mt-4 max-w-3xl text-4xl font-bold leading-[1.05] sm:text-5xl">Practice the call before it costs you the deal</h1>
+            <p className="mt-5 max-w-2xl text-lg leading-relaxed text-ink-soft">
+              Talk to AI buyers who push back, get coached live, and get a graded debrief that quotes your own transcript. Hosted for you: no API keys, no database, no setup.
+            </p>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <PricingHeroCta billingEnabled={billing} />
+              <a href="#plans" className="btn-ghost btn-xl">Compare plans</a>
+            </div>
+            <p className="mt-5 text-sm text-ink-muted">Self-hosting stays free forever under the MIT license.</p>
           </div>
-          <p className="mt-5 text-sm text-ink-muted">Self-hosting stays free forever under the MIT license.</p>
+          <div className="panel min-w-0 overflow-hidden">
+            <p className="flex items-center justify-between gap-3 border-b border-line px-5 py-3">
+              <span className="font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-ink-muted">On every hosted plan</span>
+              <span className="chip-model"><span className="lamp lamp-ok !h-1.5 !w-1.5" aria-hidden />Hosted</span>
+            </p>
+            <ul className="divide-y divide-line">
+              {INCLUDED.map((item) => (
+                <li key={item} className="flex items-center gap-3 px-5 py-3.5 text-sm text-ink">
+                  <span className="lamp lamp-ok" aria-hidden />{item}
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       </section>
 
       <BillingProvider>
-        <section id="plans" className="page py-12 sm:py-14" aria-label="Plans">
+        <section id="plans" className="page scroll-mt-20 py-12 sm:py-16" aria-label="Plans">
           <PricingCards billingEnabled={billing} premiumOnSale={onSale} />
-          <p className="mt-4 text-sm text-ink-muted">{PRICES_TAX_NOTE}</p>
+          <p className="mt-5 text-sm text-ink-muted">{PRICES_TAX_NOTE}</p>
           <p className="mt-1 text-sm text-ink-muted">No overage charges on any plan. Free has no card and resets monthly from your signup date, with no rollover.</p>
         </section>
 
         <section className="border-y border-line bg-surface" aria-labelledby="compare-h">
-          <div className="page py-12">
-            <h2 id="compare-h" className="text-2xl font-bold">Compare plans</h2>
+          <div className="page py-12 sm:py-16">
+            <h2 id="compare-h" className="text-2xl font-bold sm:text-[28px]">Compare plans</h2>
             <ComparePlans rows={COMPARE} />
           </div>
         </section>
       </BillingProvider>
 
-      <section className="page py-12 sm:py-14" aria-labelledby="faq-h">
-        <h2 id="faq-h" className="text-2xl font-bold">Questions</h2>
-        <div className="mt-6 max-w-3xl divide-y divide-line rounded-panel border border-line bg-surface">
-          {FAQ.map((f) => (
-            <details key={f.q} className="group px-5 py-4">
-              <summary className="cursor-pointer list-none font-medium text-ink marker:content-none">{f.q}</summary>
-              <p className="mt-2 text-sm leading-relaxed text-ink-soft">{f.a}</p>
-            </details>
-          ))}
+      <section className="page grid gap-8 py-12 sm:py-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:gap-16" aria-labelledby="faq-h">
+        <div className="min-w-0">
+          <h2 id="faq-h" className="text-2xl font-bold sm:text-[28px]">Questions</h2>
+          <p className="mt-3 max-w-[40ch] text-sm leading-relaxed text-ink-soft">Billing, minutes, and what happens when you hit a cap. Anything else, email us from the footer.</p>
         </div>
+        <FaqList items={FAQ} className="min-w-0" />
       </section>
 
-      <section className="deck" aria-labelledby="self-h">
-        <div className="page py-12">
-          <h2 id="self-h" className="text-2xl font-bold">Prefer to run it yourself?</h2>
-          <p className="mt-3 max-w-2xl text-ink-soft">
-            Real-Time Call Trainer is open source under the MIT license. Self-hosting is free forever, with every core feature: voice roleplay, live coaching, graded debriefs and the persona wizard. You bring your own OpenAI or ElevenLabs keys and your own Postgres. Hosted plans exist for people who would rather practice than run servers.
-          </p>
-          <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="btn-ghost mt-5">View on GitHub</a>
+      <section className="deck border-t border-line" aria-labelledby="self-h">
+        <div className="page grid gap-8 py-14 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] lg:items-center lg:gap-16">
+          <div className="min-w-0">
+            <h2 id="self-h" className="text-2xl font-bold sm:text-[28px]">Prefer to run it yourself?</h2>
+            <p className="mt-3 max-w-2xl text-ink-soft">
+              Real-Time Call Trainer is open source under the MIT license. Self-hosting is free forever, with every core feature: voice roleplay, live coaching, graded debriefs and the persona wizard. You bring your own OpenAI or ElevenLabs keys and your own Postgres. Hosted plans exist for people who would rather practice than run servers.
+            </p>
+            <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="btn-ghost mt-6"><GitPullRequest size={16} strokeWidth={1.75} aria-hidden />View on GitHub</a>
+          </div>
+          <ul className="panel min-w-0 divide-y divide-line">
+            {SELF_HOST.map(([need, who]) => (
+              <li key={need} className="flex items-center justify-between gap-4 px-5 py-3.5 text-sm">
+                <span className="text-ink">{need}</span>
+                <span className="chip-model shrink-0">{who}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       </section>
 

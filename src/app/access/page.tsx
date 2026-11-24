@@ -1,12 +1,15 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import AuthShell from "@/components/AuthShell";
+import { Loader2 } from "lucide-react";
+import AuthShell, { PasswordInput } from "@/components/AuthShell";
 import LegalLinks from "@/components/LegalLinks";
 
 export default function AccessPage() {
   const [code, setCode] = useState("");
-  const [error, setError] = useState("");
+  // A rejected code is about the field; a failed request is about the form.
+  const [codeError, setCodeError] = useState("");
+  const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
   const [invited, setInvited] = useState(false);
 
@@ -16,7 +19,10 @@ export default function AccessPage() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    setError("");
+    // The button stays focusable while busy (aria-disabled), so a second Enter lands here and stops.
+    if (busy) return;
+    setCodeError("");
+    setFormError("");
     setBusy(true);
     try {
       const res = await fetch("/api/access", {
@@ -39,9 +45,11 @@ export default function AccessPage() {
         return;
       }
       const data = await res.json().catch(() => ({}));
-      setError(data.message || data.error || "Something went wrong. Try again.");
+      const msg = data.message || data.error || "Something went wrong. Try again.";
+      if (res.status === 400 || res.status === 401 || res.status === 403) setCodeError(msg);
+      else setFormError(msg);
     } catch {
-      setError("Could not reach the server. Try again.");
+      setFormError("Could not reach the server. Try again.");
     }
     setBusy(false);
   }
@@ -54,10 +62,24 @@ export default function AccessPage() {
       <form onSubmit={onSubmit} className="space-y-4">
         <div>
           <label htmlFor="access-code" className="label">Access code</label>
-          <input id="access-code" type="password" className="input" autoComplete="off" value={code} onChange={(e) => setCode(e.target.value)} required autoFocus />
+          <PasswordInput
+            id="access-code"
+            toggleLabel="Show access code"
+            autoComplete="off"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            aria-invalid={codeError ? true : undefined}
+            aria-describedby={codeError ? "access-code-error" : undefined}
+            required
+            autoFocus
+          />
+          {codeError && <p id="access-code-error" role="alert" className="field-msg">{codeError}</p>}
         </div>
-        {error && <p role="alert" className="text-sm text-alert">{error}</p>}
-        <button type="submit" className="btn-primary w-full" disabled={busy}>{busy ? "Checking…" : "Continue"}</button>
+        {formError && <p role="alert" className="banner-alert">{formError}</p>}
+        <button type="submit" className="btn-primary w-full" aria-disabled={busy || undefined}>
+          {busy && <Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden />}
+          {busy ? "Checking…" : "Continue"}
+        </button>
       </form>
       <LegalLinks />
     </AuthShell>

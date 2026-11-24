@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Copy, Globe, Loader2, Play, Plus, Save, Sparkles, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Copy, Globe, Library, Loader2, Play, Plus, Save, Sparkles, Trash2 } from "lucide-react";
 import { CALL_TYPES, CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, OBJECTION_TYPES, ScenarioSchema, type CallType, type ObjectionType, type Scenario } from "@/lib/scenarios";
 import { CONTEXT_KINDS, CONTEXT_LABELS, type ContextKind, type FetchedPage, type FieldSource, type WizardInput, type WizardOutput } from "@/lib/wizard-types";
 import { saveCustomScenario } from "@/lib/scenarioStore";
 import { useAuth } from "@/contexts/AuthContext";
 import { radioKeys } from "@/components/call/CopilotRail";
+import { FormSkeleton } from "@/components/ui/Skeleton";
 import { packJson } from "./LibraryClient";
 
 const STEPS = ["What you sell", "Give context", "Review persona", "Rubric", "Save"] as const;
@@ -21,6 +22,9 @@ const PLACEHOLDERS: Record<ContextKind, string> = {
 };
 
 const DIFFICULTIES = ["easy", "medium", "hard"] as const;
+
+/** Categorical criterion hue (--cat-1 to --cat-8), in the same order the Library strip and the Debrief use. */
+const critHue = (i: number) => `rgb(var(--cat-${(i % 8) + 1}))`;
 
 /** Plain names for the fields a schema issue can point at. */
 const FIELD_LABELS: Record<string, string> = {
@@ -52,7 +56,7 @@ function SourceChip({ src }: { src?: FieldSource }) {
   const [pinned, setPinned] = useState(false);
   const pressing = useRef(false);
   if (!src) return null;
-  const label = src.kind === "chips" ? "Your picks" : src.kind === "model" ? "Model" : CONTEXT_LABELS[src.kind];
+  const label = src.kind === "chips" ? "Your picks" : src.kind === "model" ? "AI draft" : CONTEXT_LABELS[src.kind];
   return (
     <span className="relative inline-flex" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <button type="button" className="inline-flex cursor-help items-center rounded border border-primary/40 bg-primary-soft/50 px-1.5 font-mono text-[10px] font-medium text-primary"
@@ -103,13 +107,13 @@ export default function PersonaWizard() {
     if (!isLoading && capabilities && !isAuthenticated) router.replace("/login");
   }, [isLoading, capabilities, isAuthenticated, router]);
 
-  // On phones the step list scrolls sideways: keep the current step in view as the wizard moves on.
-  const stepList = useRef<HTMLOListElement>(null);
+  // Each step change moves focus to the new step's heading, so keyboard and screen reader users land on what changed.
+  // Not on first render: the page's own h1 leads then.
+  const stepHeading = useRef<HTMLHeadingElement>(null);
+  const firstStep = useRef(true);
   useEffect(() => {
-    const ol = stepList.current;
-    const cur = ol?.querySelector<HTMLElement>('[aria-current="step"]');
-    if (!ol || !cur || ol.scrollWidth <= ol.clientWidth) return;
-    ol.scrollLeft += cur.getBoundingClientRect().left - ol.getBoundingClientRect().left - 8;
+    if (firstStep.current) { firstStep.current = false; return; }
+    stepHeading.current?.focus();
   }, [step]);
 
   const filled = CONTEXT_KINDS.filter((k) => contexts[k].trim().length > 0);
@@ -123,6 +127,10 @@ export default function PersonaWizard() {
     !!draft && total === 100 && draft.rubric.length >= 3,
     true,
   ][step];
+  /** Why Next is off on the rubric step, in plain words. */
+  const rubricReason = step === 3 && draft && !canNext
+    ? draft.rubric.length < 3 ? "Add at least 3 criteria to continue." : `Weights add up to ${total}%. Make them total 100% to continue.`
+    : "";
 
   async function importUrl() {
     if (fetching) return;
@@ -183,32 +191,39 @@ export default function PersonaWizard() {
     try { await navigator.clipboard.writeText(packJson({ ...draft, status: "draft" })); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* the JSON is visible to copy by hand */ }
   }
 
-  if (!capabilities) return null;
+  if (!capabilities) return <FormSkeleton />;
 
   return (
     <div className="page enter">
-      <Link href="/library" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink"><ArrowLeft size={15} aria-hidden /> Library</Link>
-      <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
+      <Link href="/library" className="inline-flex min-h-[40px] items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink"><ArrowLeft size={15} strokeWidth={1.75} aria-hidden /> Library</Link>
+      <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="eyebrow">AI persona wizard</p>
           <h1 className="mt-1 text-3xl font-bold">New persona</h1>
         </div>
-        <span className="chip-model"><Sparkles size={12} aria-hidden /> {out ? (out.method === "llm" ? "Generated with AI" : "Template draft (AI unavailable)") : capabilities.llm ? "Drafts with AI" : "Template drafts (no AI key on this server)"}</span>
+        <span className="chip-model"><Sparkles size={12} strokeWidth={1.75} aria-hidden /> {out ? (out.method === "llm" ? "Generated with AI" : "Template draft (AI unavailable)") : capabilities.llm ? "Drafts with AI" : "Template drafts (no AI key on this server)"}</span>
       </div>
 
-      {/* minmax(0,1fr) and min-w-0: the step list scrolls sideways on phones instead of widening the page. */}
-      <div className="mt-6 grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <nav aria-label="Wizard steps" className="min-w-0">
-          <ol ref={stepList} className="flex gap-2 overflow-x-auto lg:flex-col lg:gap-1">
+      <div className="mt-6 grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-8">
+        {/* Phones: a 5-segment tape for progress; the step heading below names the step. */}
+        <div className="flex gap-1 lg:hidden" aria-hidden>
+          {STEPS.map((s, i) => <div key={s} className="tape flex-1"><span className={i < step ? "w-full bg-ok" : i === step ? "w-full bg-primary" : "w-0"} /></div>)}
+        </div>
+        {/* lg and up: the flight plan, a vertical rail with a lamp on the active leg and a check on finished ones. */}
+        <nav aria-label="Wizard steps" className="hidden min-w-0 lg:block">
+          <ol className="relative space-y-1 before:absolute before:bottom-5 before:left-[22px] before:top-5 before:w-px before:bg-line">
             {STEPS.map((s, i) => {
               const done = i < step;
+              const current = i === step;
               const reachable = i <= step || (i <= 4 && !!draft && i >= 2);
               return (
-                <li key={s} className="shrink-0">
-                  <button disabled={!reachable} onClick={() => setStep(i)} aria-current={i === step ? "step" : undefined}
-                    className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition disabled:opacity-50 ${i === step ? "bg-surface font-semibold shadow-card ring-1 ring-line" : "hover:bg-sunken"}`}>
-                    <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border font-mono text-[11px] ${done ? "border-ok bg-ok text-background" : i === step ? "border-primary text-primary" : "border-line text-ink-muted"}`}>{done ? <Check size={13} strokeWidth={3} aria-hidden /> : i + 1}</span>
-                    {s}
+                <li key={s} className="relative">
+                  <button disabled={!reachable} onClick={() => setStep(i)} aria-current={current ? "step" : undefined}
+                    className={`flex min-h-[44px] w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-sm transition disabled:opacity-50 ${current ? "bg-surface font-semibold text-ink shadow-card ring-1 ring-line" : "text-ink-soft hover:bg-sunken"}`}>
+                    <span className={`relative z-[1] flex h-6 w-6 shrink-0 items-center justify-center rounded-full border font-mono text-[11px] ${done ? "border-ok bg-ok-soft text-ok" : current ? "border-primary/60 bg-surface" : "border-line bg-background text-ink-muted"}`}>
+                      {done ? <Check size={13} strokeWidth={1.75} aria-hidden /> : current ? <span className="lamp lamp-signal !h-2 !w-2" aria-hidden /> : i + 1}
+                    </span>
+                    <span className="min-w-0 flex-1">{s}{done && <span className="sr-only"> (done)</span>}</span>
                   </button>
                 </li>
               );
@@ -217,7 +232,12 @@ export default function PersonaWizard() {
         </nav>
 
         <div className="min-w-0 space-y-5">
-          {error && <p role="alert" className="rounded-lg border border-alert/40 bg-alert-soft p-3 text-sm">{error}</p>}
+          <div>
+            <h2 ref={stepHeading} tabIndex={-1} className="text-xl font-bold outline-none focus-visible:outline-2 sm:text-2xl">
+              <span className="mono mr-2 text-base font-medium text-ink-muted">Step {step + 1} of {STEPS.length}:</span>{STEPS[step]}
+            </h2>
+          </div>
+          {error && <p role="alert" className="banner-alert">{error}</p>}
 
           {step === 0 && (
             <section className="card space-y-6">
@@ -262,7 +282,7 @@ export default function PersonaWizard() {
                 {CONTEXT_KINDS.map((k) => (
                   <button key={k} id={`ctx-tab-${k}`} type="button" role="tab" aria-selected={tab === k} aria-controls="ctx-panel" tabIndex={tab === k ? 0 : -1} onClick={() => setTab(k)}
                     className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium ${tab === k ? "border-primary text-ink" : "border-transparent text-ink-muted hover:text-ink"}`}>
-                    {contexts[k].trim() && <Check size={13} className="text-ok" aria-label="added" />}{CONTEXT_LABELS[k]}
+                    {contexts[k].trim() && <Check size={13} strokeWidth={1.75} className="text-ok" aria-hidden />}{CONTEXT_LABELS[k]}{contexts[k].trim() && <span className="sr-only"> (added)</span>}
                   </button>
                 ))}
               </div>
@@ -271,11 +291,11 @@ export default function PersonaWizard() {
                   <div className="flex gap-2">
                     <label className="relative flex-1">
                       <span className="sr-only">Product page URL</span>
-                      <Globe size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" aria-hidden />
+                      <Globe size={15} strokeWidth={1.75} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" aria-hidden />
                       <input className="input !pl-9" type="url" placeholder="https://example.com/pricing" value={url} onChange={(e) => setUrl(e.target.value)} />
                     </label>
                     {/* aria-disabled while busy, so the focused button keeps focus instead of dropping it to the page. */}
-                    <button type="button" className="btn-ghost" onClick={importUrl} disabled={!fetching && !/^https?:\/\//.test(url)} aria-disabled={fetching}>{fetching ? <Loader2 size={15} className="animate-spin" aria-hidden /> : null} Import</button>
+                    <button type="button" className="btn-ghost" onClick={importUrl} disabled={!fetching && !/^https?:\/\//.test(url)} aria-disabled={fetching}>{fetching ? <Loader2 size={15} strokeWidth={1.75} className="animate-spin" aria-hidden /> : null} Import</button>
                   </div>
                 )}
                 {tab === "url" && fetched && <p className="font-mono text-[11px] text-ok">Imported {fetched.title || fetched.url} · {(fetched.bytes / 1024).toFixed(0)} KB · public pages only, private addresses are blocked</p>}
@@ -283,10 +303,11 @@ export default function PersonaWizard() {
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="font-mono text-[11px] text-ink-muted">{contexts[tab].length.toLocaleString()} / 8,000 chars · {filled.length} source{filled.length === 1 ? "" : "s"} added</p>
-                <button type="button" className="btn-primary" onClick={generate} disabled={!generating && !canNext} aria-disabled={generating}>{generating ? <><Loader2 size={16} className="animate-spin" aria-hidden /> Drafting persona…</> : <><Sparkles size={16} aria-hidden /> Draft persona</>}</button>
+                <button type="button" className="btn-primary" onClick={generate} disabled={!generating && !canNext} aria-disabled={generating}>{generating ? <><Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden /> Drafting persona…</> : <><Sparkles size={16} strokeWidth={1.75} aria-hidden /> Draft persona</>}</button>
               </div>
             </section>
           )}
+          {step === 1 && generating && <DraftingPreview sources={filled.length} role={input.role} />}
 
           {step === 2 && draft && (
             <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)]">
@@ -304,7 +325,7 @@ export default function PersonaWizard() {
                 <div>
                   <div className="mb-2 flex items-center justify-between">
                     <p className="label !mb-0">Objections</p>
-                    <button className="btn-quiet btn-sm" disabled={draft.objections.length >= 8} onClick={() => patch({ objections: [...draft.objections, { type: "price", line: "", prepAnswer: "" }] })}><Plus size={13} aria-hidden /> Objection</button>
+                    <button className="btn-quiet btn-sm" disabled={draft.objections.length >= 8} onClick={() => patch({ objections: [...draft.objections, { type: "price", line: "", prepAnswer: "" }] })}><Plus size={13} strokeWidth={1.75} aria-hidden /> Objection</button>
                   </div>
                   <div className="space-y-2">
                     {draft.objections.map((o, i) => (
@@ -314,7 +335,7 @@ export default function PersonaWizard() {
                             {OBJECTION_TYPES.map((t) => <option key={t} value={t}>{OBJECTION_LABELS[t]}</option>)}
                           </select>
                           <SourceChip src={src(`objections.${i}`)} />
-                          <button className="btn-quiet btn-sm ml-auto !px-2" aria-label={`Remove objection ${i + 1}`} onClick={() => patch({ objections: draft.objections.filter((_, j) => j !== i) })}><Trash2 size={14} aria-hidden /></button>
+                          <button className="btn-quiet btn-sm ml-auto !px-2" aria-label={`Remove objection ${i + 1}`} onClick={() => patch({ objections: draft.objections.filter((_, j) => j !== i) })}><Trash2 size={14} strokeWidth={1.75} aria-hidden /></button>
                         </div>
                         <input aria-label={`Objection ${i + 1} line`} className="input mt-2" placeholder="What they say" value={o.line} onChange={(e) => patch({ objections: draft.objections.map((x, j) => (j === i ? { ...x, line: e.target.value } : x)) })} />
                         <input aria-label={`Objection ${i + 1} prep answer`} className="input mt-2" placeholder="A strong answer for the coach to suggest" value={o.prepAnswer} onChange={(e) => patch({ objections: draft.objections.map((x, j) => (j === i ? { ...x, prepAnswer: e.target.value } : x)) })} />
@@ -328,26 +349,42 @@ export default function PersonaWizard() {
           )}
 
           {step === 3 && draft && (
-            <section className="card space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm text-ink-soft">Weights decide how much each criterion counts in the grade and in the live estimate.</p>
-                <span className={`mono rounded-md px-2 py-1 text-sm font-semibold ${total === 100 ? "bg-ok-soft text-ok" : "bg-caution-soft text-caution"}`}>Total {total}%</span>
+            <section className="card space-y-5">
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <p className="max-w-md text-sm text-ink-soft">Weights decide how much each criterion counts in the grade and in the live estimate.</p>
+                <div className="text-right" role="status">
+                  <p className="label !mb-0">Total</p>
+                  <p className={`mono text-[34px] font-semibold leading-none ${total === 100 ? "text-ok" : "text-caution"}`}>{total}<span className="text-lg">%</span></p>
+                </div>
               </div>
-              {total !== 100 && <button className="btn-ghost btn-sm" onClick={balance}>Balance to 100%</button>}
+              {/* The whole rubric as one spectrum: each criterion's share in its Debrief color, against the 100% scale. */}
+              <div className="relative h-1.5 overflow-hidden rounded-full bg-sunken" aria-hidden>
+                <div className="absolute inset-y-0 left-0 flex gap-px" style={{ width: `${Math.min(100, total)}%` }}>
+                  {draft.rubric.map((c, i) => <span key={c.id + i} className="h-full transition-[flex-grow] duration-300" style={{ flex: `${Math.max(Number(c.weight) || 0, 0.001)} 1 0%`, background: critHue(i) }} />)}
+                </div>
+              </div>
+              {total !== 100 && (
+                <div className="banner-warn flex flex-wrap items-center justify-between gap-2">
+                  <p>Weights add up to {total}%. Adjust the sliders or auto-balance to 100%.</p>
+                  <button className="btn-ghost btn-sm" onClick={balance}>Balance to 100%</button>
+                </div>
+              )}
               <ul className="space-y-3">
                 {draft.rubric.map((c, i) => (
                   <li key={c.id + i} className="rounded-lg border border-line p-3">
                     <div className="flex items-center gap-3">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: critHue(i) }} aria-hidden />
                       <input aria-label={`Criterion ${i + 1} name`} className="input flex-1 !py-1.5 font-semibold" value={c.name} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)) })} />
-                      <span className="mono w-12 text-right text-sm">{c.weight}%</span>
-                      <button className="btn-quiet btn-sm !px-2" aria-label={`Remove criterion ${i + 1}`} disabled={draft.rubric.length <= 3} onClick={() => patch({ rubric: draft.rubric.filter((_, j) => j !== i) })}><Trash2 size={14} aria-hidden /></button>
+                      <span className="mono w-12 text-right text-sm font-semibold">{c.weight}%</span>
+                      <button className="btn-quiet btn-sm !px-2" aria-label={`Remove criterion ${i + 1}`} disabled={draft.rubric.length <= 3} onClick={() => patch({ rubric: draft.rubric.filter((_, j) => j !== i) })}><Trash2 size={14} strokeWidth={1.75} aria-hidden /></button>
                     </div>
-                    <input type="range" min={0} max={60} step={1} aria-label={`Criterion ${i + 1} weight`} className="mt-2 w-full accent-[rgb(var(--primary))]" value={c.weight} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, weight: Number(e.target.value) } : r)) })} />
-                    <input aria-label={`Criterion ${i + 1} description`} className="input mt-1 !text-[13px]" placeholder="What good looks like, in observable terms" value={c.description} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, description: e.target.value } : r)) })} />
+                    <input type="range" min={0} max={60} step={1} aria-label={`Criterion ${i + 1} weight`} className="mt-3 w-full accent-[rgb(var(--primary))]" value={c.weight} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, weight: Number(e.target.value) } : r)) })} />
+                    <div className="tape mt-1" aria-hidden><span style={{ width: `${Math.min(100, Number(c.weight) || 0)}%`, background: critHue(i) }} /></div>
+                    <input aria-label={`Criterion ${i + 1} description`} className="input mt-3 !text-[13px]" placeholder="What good looks like, in observable terms" value={c.description} onChange={(e) => patch({ rubric: draft.rubric.map((r, j) => (j === i ? { ...r, description: e.target.value } : r)) })} />
                   </li>
                 ))}
               </ul>
-              <button className="btn-ghost btn-sm" disabled={draft.rubric.length >= 7} onClick={() => patch({ rubric: [...draft.rubric, { id: `c${draft.rubric.length + 1}-${Date.now().toString(36)}`, name: "New criterion", description: "", weight: 0 }] })}><Plus size={13} aria-hidden /> Criterion</button>
+              <button className="btn-ghost btn-sm" disabled={draft.rubric.length >= 7} onClick={() => patch({ rubric: [...draft.rubric, { id: `c${draft.rubric.length + 1}-${Date.now().toString(36)}`, name: "New criterion", description: "", weight: 0 }] })}><Plus size={13} strokeWidth={1.75} aria-hidden /> Criterion</button>
             </section>
           )}
 
@@ -358,14 +395,25 @@ export default function PersonaWizard() {
                   <h2 className="text-lg font-bold">Keep it private</h2>
                   <p className="mt-1 text-sm text-ink-soft">Saves to this browser&rsquo;s library under &ldquo;Your personas&rdquo;. Run a test call to check the persona behaves before you share it.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <button className="btn-primary" onClick={() => savePrivate(true)} disabled={!validation?.success}><Play size={15} aria-hidden /> Save and test call</button>
-                    <button className="btn-ghost" onClick={() => savePrivate(false)} disabled={!validation?.success}><Save size={15} aria-hidden /> {saved ? "Saved" : "Save only"}</button>
+                    <button className="btn-primary" onClick={() => savePrivate(true)} disabled={!validation?.success}><Play size={15} strokeWidth={1.75} aria-hidden /> Save and test call</button>
+                    <button className="btn-ghost" onClick={() => savePrivate(false)} disabled={!validation?.success}><Save size={15} strokeWidth={1.75} aria-hidden /> {saved ? "Saved" : "Save only"}</button>
+                  </div>
+                  <div role="status" className="empty:hidden">
+                    {saved && (
+                      <div className="banner-ok mt-4 flex flex-wrap items-center justify-between gap-3">
+                        <p className="flex items-center gap-2"><Check size={16} strokeWidth={1.75} className="shrink-0 text-ok" aria-hidden />Saved to Your personas in this browser.</p>
+                        <span className="flex flex-wrap gap-2">
+                          <Link href="/library" className="btn-ghost btn-sm"><Library size={14} strokeWidth={1.75} aria-hidden /> Open the Library</Link>
+                          <Link href={`/trainer?scenario=${encodeURIComponent(draft.id)}`} className="btn-primary btn-sm"><Play size={13} strokeWidth={1.75} aria-hidden /> Practice it</Link>
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="border-t border-line pt-5">
                   <h2 className="text-lg font-bold">Contribute it as a pack</h2>
                   <p className="mt-1 text-sm text-ink-soft">Copy the pack file, add it to <span className="mono text-[13px]">src/lib/personas/{draft.role}.ts</span>, and open a pull request. It starts as a draft until a maintainer reviews it; CI checks it against the same schema.</p>
-                  <button className="btn-ghost mt-3" onClick={copyPack}><Copy size={15} aria-hidden /> {copied ? "Copied" : "Copy pack JSON"}</button>
+                  <button className="btn-ghost mt-3" onClick={copyPack}><Copy size={15} strokeWidth={1.75} aria-hidden /> {copied ? "Copied" : "Copy pack JSON"}</button>
                 </div>
               </section>
               <PackPreview draft={{ ...draft, status: "draft" }} valid={!!validation?.success} issues={[]} ai={out?.method === "llm"} />
@@ -374,7 +422,7 @@ export default function PersonaWizard() {
 
           {step < 4 && (
             <div className="flex flex-wrap items-start justify-between gap-2">
-              <button type="button" className="btn-ghost" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0}><ArrowLeft size={15} aria-hidden /> Back</button>
+              <button type="button" className="btn-ghost" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0}><ArrowLeft size={15} strokeWidth={1.75} aria-hidden /> Back</button>
               {step === 1 ? null : (
                 <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
                   {/* Why Next is off on the review step, in plain words next to the button. */}
@@ -384,7 +432,8 @@ export default function PersonaWizard() {
                       <ul className="text-ink-soft">{issues.map((i) => <li key={i}>{i}</li>)}</ul>
                     </div>
                   )}
-                  <button type="button" className="btn-primary" onClick={() => setStep((s) => s + 1)} disabled={!canNext}>Next <ArrowRight size={15} aria-hidden /></button>
+                  {rubricReason && <p id="next-reason" className="text-right text-sm font-medium text-caution">{rubricReason}</p>}
+                  <button type="button" className="btn-primary" onClick={() => setStep((s) => s + 1)} disabled={!canNext} aria-describedby={rubricReason ? "next-reason" : undefined}>Next <ArrowRight size={15} strokeWidth={1.75} aria-hidden /></button>
                 </div>
               )}
             </div>
@@ -392,6 +441,34 @@ export default function PersonaWizard() {
         </div>
       </div>
     </div>
+  );
+}
+
+const DRAFT_STAGES = ["Reading your sources", "Persona and behavior", "Objections and prep answers", "Talk track", "Rubric and weights"] as const;
+
+/** The pack preview while the persona is drafted: the same deck panel, with a pulsing signal lamp and placeholder lines. */
+function DraftingPreview({ sources, role }: { sources: number; role: string }) {
+  return (
+    <section className="deck overflow-hidden rounded-panel border border-line" aria-label="Drafting persona">
+      <div className="flex items-center justify-between gap-2 border-b border-line bg-surface px-3 py-2">
+        <p className="truncate font-mono text-[11px] text-ink-soft">{role}-draft.json</p>
+        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-signal"><span className="lamp lamp-signal !h-1.5 !w-1.5 motion-safe:animate-lamp-pulse" aria-hidden />drafting</span>
+      </div>
+      <div className="grid gap-5 p-4 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)]">
+        <ol className="space-y-2.5">
+          {DRAFT_STAGES.map((stage, i) => (
+            <li key={stage} className="flex items-center gap-2.5 text-[13px] text-ink-soft">
+              <span className={`lamp ${i === 0 ? "lamp-signal motion-safe:animate-lamp-pulse" : "lamp-off"} !h-1.5 !w-1.5`} aria-hidden />
+              {i === 0 ? `${stage} (${sources})` : stage}
+            </li>
+          ))}
+        </ol>
+        <div className="space-y-2" aria-hidden>
+          {[92, 64, 78, 40, 86, 58, 70].map((w, i) => <div key={i} className="skeleton h-2.5" style={{ width: `${w}%` }} />)}
+        </div>
+      </div>
+      <p role="status" className="border-t border-line px-3 py-2 font-mono text-[10px] text-ink-muted">Drafting persona, objections and rubric. This takes a few seconds.</p>
+    </section>
   );
 }
 

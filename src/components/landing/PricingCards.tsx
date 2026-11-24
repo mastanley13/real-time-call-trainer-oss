@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import { Check } from "lucide-react";
+import { radioKeys } from "@/lib/radioKeys";
 import { useBilling } from "@/components/landing/BillingContext";
 import { usePricingViewer } from "@/components/landing/PricingViewer";
 import {
@@ -25,6 +26,8 @@ const TIERS = [
     features: [`${TEAM_VOICE_MIN_PER_SEAT} voice minutes per seat, pooled across the team`, "Standard voice included", "Everything in Pro", "Managed Team view: every rep's calls, scores and trends", "Assignments: give reps a persona and a due date", "Enforced MFA for the whole team", "Priority email support"],
   },
 ] as const;
+
+const PERIODS: readonly Billing[] = ["month", "year"];
 
 function price(id: string, b: Billing) {
   if (id === "free") return { main: "$0", unit: "" };
@@ -67,42 +70,50 @@ export function SignedInAction({ id, viewer, billingEnabled, interval }: { id: "
  * Billing toggle, tier cards and the Premium AI voice add-on row under them (one row, never a fourth card).
  * `billingEnabled` and `premiumOnSale` come from the server. The add-on row has no button: Premium is chosen at checkout
  * or added in billing settings, and off sale it carries the coming-soon label.
+ * The period toggle is a radio group (one Tab stop, arrow keys move), like the coach mode dial on the call.
  */
 export default function PricingCards({ billingEnabled, premiumOnSale = false }: { billingEnabled: boolean; premiumOnSale?: boolean }) {
   const { billing, setBilling } = useBilling();
   const viewer = usePricingViewer();
   useEffect(() => { if (premiumOnSale) trackPremiumUpsell("pricing"); }, [premiumOnSale]);
+  const per = billing === "month" ? "month" : "year";
   return (
     <div>
-      <div role="group" aria-label="Billing period" className="inline-flex rounded-lg border border-line bg-sunken p-1">
-        {(["month", "year"] as const).map((b) => (
-          <button key={b} type="button" aria-pressed={billing === b} onClick={() => setBilling(b)}
-            className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${billing === b ? "bg-surface text-ink shadow-card" : "text-ink-muted hover:text-ink"}`}>
-            {b === "month" ? "Monthly" : "Annual (2 months free)"}
+      <div role="radiogroup" aria-label="Billing period" onKeyDown={radioKeys(PERIODS, billing, setBilling)}
+        className="inline-grid max-w-full grid-cols-[auto_auto] gap-1 rounded-lg border border-line bg-sunken p-1">
+        {PERIODS.map((b) => (
+          <button key={b} type="button" role="radio" aria-checked={billing === b} tabIndex={billing === b ? 0 : -1} onClick={() => setBilling(b)}
+            className={`inline-flex min-h-[40px] items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm font-semibold transition sm:px-4 ${billing === b ? "bg-surface text-ink shadow-card ring-1 ring-line" : "text-ink-muted hover:text-ink"}`}>
+            {b === "month" ? "Monthly" : <>Annual <span className={`font-mono text-[11px] font-medium ${billing === b ? "text-ok" : ""}`}>(2 months free)</span></>}
           </button>
         ))}
       </div>
 
-      <div className="mt-6 grid gap-4 md:grid-cols-3 md:gap-y-0">
+      <div className="mt-8 grid gap-4 md:grid-cols-3 md:gap-y-0 lg:gap-x-6">
         {TIERS.map((t) => {
           const p = price(t.id, billing);
           const a = tierAction(t.id, t.cta, billingEnabled, billing);
+          const featured = t.id === "team";
           return (
-            <section key={t.id} className="card flex flex-col md:row-span-6 md:grid md:grid-rows-[subgrid]" aria-labelledby={`tier-${t.id}`}>
-              <h3 id={`tier-${t.id}`} className="text-lg font-bold">{t.name}</h3>
-              <p className="mt-3 flex items-baseline gap-1">
-                <span className="font-heading text-4xl font-bold">{p.main}</span>
+            <section key={t.id} aria-labelledby={`tier-${t.id}`}
+              className={`card flex flex-col md:row-span-6 md:grid md:grid-rows-[subgrid] ${featured ? "shadow-pop ring-1 ring-primary/40" : ""}`}>
+              <div className="flex min-h-[28px] flex-wrap items-center justify-between gap-2">
+                <h3 id={`tier-${t.id}`} className="text-lg font-bold">{t.name}</h3>
+                {featured && <span className="chip border-primary/40 bg-primary-soft text-ink"><span className="lamp lamp-signal !h-1.5 !w-1.5" aria-hidden />For managers</span>}
+              </div>
+              <p className="mt-4 flex items-baseline gap-1.5">
+                <span className="font-mono text-4xl font-semibold tracking-tight tabular-nums text-ink">{p.main}</span>
                 <span className="text-sm text-ink-muted">{p.unit}</span>
               </p>
-              <p className="mt-1 min-h-[1.25rem] font-mono text-xs text-ink-muted">
+              <p className="mt-1 min-h-[1.25rem] font-mono text-xs text-ok">
                 {t.id !== "free" && billing === "year" ? "2 months free" : ""}
               </p>
               <p className="mt-2 text-sm text-ink-soft">{t.blurb}</p>
-              <ul className="mt-4 flex-1 space-y-2 text-sm text-ink-soft">
+              <ul className="mt-5 flex-1 space-y-2.5 border-t border-line pt-5 text-sm text-ink-soft">
                 {t.features.map((f) => f.endsWith("(coming soon)") ? (
-                  <li key={f} className="flex gap-2 text-ink-muted"><span className="w-4 shrink-0" aria-hidden />{f}</li>
+                  <li key={f} className="flex gap-2.5 text-ink-muted"><span className="flex w-4 shrink-0 justify-center pt-[0.45em]" aria-hidden><span className="lamp lamp-off" /></span>{f}</li>
                 ) : (
-                  <li key={f} className="flex gap-2"><Check size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-ok" aria-hidden />{f}</li>
+                  <li key={f} className="flex gap-2.5"><Check size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-ok" aria-hidden />{f}</li>
                 ))}
               </ul>
               <div className="mt-6 flex flex-col gap-2">
@@ -118,22 +129,26 @@ export default function PricingCards({ billingEnabled, premiumOnSale = false }: 
         })}
       </div>
 
-      <div className="panel mt-4 p-5">
-        <div className="flex flex-wrap items-center gap-3">
+      <div className="panel mt-4 grid gap-x-8 gap-y-4 p-5 sm:p-6 lg:mt-6 lg:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
+        <div className="min-w-0">
           <h3 className="text-base font-bold">Add-on: Premium AI voice</h3>
-          <span className="chip">{premiumOnSale ? "Pro and Team" : PREMIUM_COMING_SOON}</span>
+          <p className="mt-2 flex flex-wrap items-baseline gap-1">
+            <span className="font-mono text-2xl font-semibold tabular-nums text-ink">+${PRICE.premium[billing]}</span>
+            <span className="text-sm text-ink-muted">/{per} on Pro, /seat /{per} on Team</span>
+          </p>
+          <span className="chip mt-3">
+            <span className={`lamp ${premiumOnSale ? "lamp-ok" : "lamp-off"} !h-1.5 !w-1.5`} aria-hidden />{premiumOnSale ? "Pro and Team" : PREMIUM_COMING_SOON}
+          </span>
         </div>
-        <p className="mt-2 flex flex-wrap items-baseline gap-1">
-          <span className="font-heading text-2xl font-bold">+${PRICE.premium[billing]}</span>
-          <span className="text-sm text-ink-muted">/{billing === "month" ? "month" : "year"} on Pro, /seat /{billing === "month" ? "month" : "year"} on Team</span>
-        </p>
-        <ul className="mt-2 max-w-2xl space-y-1 text-sm text-ink-soft">
-          <li>{premiumPriceLine("pro", billing)}</li>
-          <li>{premiumPriceLine("team", billing)}</li>
-        </ul>
-        <p className="mt-2 max-w-2xl text-sm text-ink-muted">
-          A more lifelike, expressive voice for your buyers. Premium minutes come out of your plan minutes, not on top. {PREMIUM_DISCLOSURE_PRO} On Team: {PREMIUM_DISCLOSURE_TEAM.charAt(0).toLowerCase() + PREMIUM_DISCLOSURE_TEAM.slice(1)}
-        </p>
+        <div className="min-w-0 border-t border-line pt-4 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
+          <ul className="max-w-2xl space-y-1.5 text-sm text-ink">
+            <li className="flex gap-2.5"><Check size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-primary" aria-hidden />{premiumPriceLine("pro", billing)}</li>
+            <li className="flex gap-2.5"><Check size={16} strokeWidth={1.75} className="mt-0.5 shrink-0 text-primary" aria-hidden />{premiumPriceLine("team", billing)}</li>
+          </ul>
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink-muted">
+            A more lifelike, expressive voice for your buyers. Premium minutes come out of your plan minutes, not on top. {PREMIUM_DISCLOSURE_PRO} On Team: {PREMIUM_DISCLOSURE_TEAM.charAt(0).toLowerCase() + PREMIUM_DISCLOSURE_TEAM.slice(1)}
+          </p>
+        </div>
       </div>
     </div>
   );

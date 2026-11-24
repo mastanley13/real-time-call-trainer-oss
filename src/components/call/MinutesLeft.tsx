@@ -13,10 +13,19 @@ import {
 export default function MinutesLeft({ usage, mode, canUpgrade = true }: { usage: UsageSnapshot | null; mode: "voice" | "text"; canUpgrade?: boolean }) {
   if (!usage) return null;
   if (mode === "text") return <p className="text-sm text-ink-muted" role="status">{TEXT_UNLIMITED_MESSAGE}</p>;
-  if (usage.remaining > 0) return <p className="mono text-sm text-ink-soft" role="status">{voiceMinutesLeftLabel(usage)}</p>;
+  if (usage.remaining > 0) {
+    const pct = usage.cap > 0 ? Math.min(100, Math.max(0, (usage.remaining / usage.cap) * 100)) : 0;
+    return (
+      <div role="status" className="space-y-1.5">
+        <p className="mono text-sm text-ink-soft">{voiceMinutesLeftLabel(usage)}</p>
+        {/* Fuel gauge: the share of this period's minutes still in the tank. Caution once a fifth or less is left. */}
+        <div className="tape" aria-hidden><span className={pct <= 20 ? "bg-caution" : "bg-ok"} style={{ width: `${pct}%` }} /></div>
+      </div>
+    );
+  }
   const resets = formatResetDate(usage.resetsAt);
   return (
-    <div id="minutes-out" role="status" className="rounded-panel border border-alert/40 bg-alert-soft p-3 text-sm">
+    <div id="minutes-out" role="status" className="banner-alert">
       <p className="mono">{voiceMinutesLeftLabel({ ...usage, remaining: 0 })}</p>
       <p className="mt-1">{OUT_OF_MINUTES_MESSAGE}{resets && ` Resets ${resets}.`}</p>
       {canUpgrade
