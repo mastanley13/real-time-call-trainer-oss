@@ -510,7 +510,7 @@ describe("POST /api/realtime/session", () => {
     expect(JSON.parse(body)).not.toHaveProperty("clientSecret");
     expect(calls).toHaveLength(1);
     expect(mocks.endCall).toHaveBeenCalledTimes(1);
-    expect(mocks.endCall.mock.calls[0]).toEqual([mocks.user.id, CALL_ID, "failed_connect", expect.any(Date), { serverMintFailure: true }]);
+    expect(mocks.endCall.mock.calls[0]).toEqual([mocks.user.id, CALL_ID, "failed_connect", expect.any(Date)]);
     expect(mocks.prisma.trainerSession.updateMany).not.toHaveBeenCalled();
   });
 

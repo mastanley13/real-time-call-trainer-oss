@@ -73,7 +73,8 @@ afterEach(() => {
 
 describe("POST /api/evaluate-call library copy swap", () => {
   it("grades a library id on the server pack, not a client copy with a looser rubric", async () => {
-    const res = await evaluate(req("/api/evaluate-call", { scenario: looseOf(scenario), transcript }));
+    const sessionId = "swap-session-1";
+    const res = await evaluate(req("/api/evaluate-call", { scenario: looseOf(scenario), transcript, sessionId }));
     expect(res.status).toBe(200);
     const body = (await res.json()) as Evaluation & { seal?: string };
     expect(body.method).toBe("heuristic");
@@ -81,7 +82,7 @@ describe("POST /api/evaluate-call library copy swap", () => {
     expect(body.criteria.map((c) => c.id)).not.toContain("anything");
     expect(body.seal).toMatch(/^[0-9a-f]{64}$/);
     const { seal, ...evaluation } = body;
-    expect(verifySeal({ userId: mocks.user.id, scenarioId: library.id, transcript, evaluation }, seal)).toBe(true);
+    expect(verifySeal({ userId: mocks.user.id, sessionId, scenarioId: library.id, transcript, evaluation }, seal)).toBe(true);
   });
 
   it("still uses the client rubric for a custom persona the library does not have", async () => {
