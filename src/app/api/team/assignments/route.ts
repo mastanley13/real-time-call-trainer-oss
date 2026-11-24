@@ -8,7 +8,7 @@ import { AssignmentInputSchema, assignmentInputMessage, assignmentProgress, canM
 import { forbidden, limitFor, loadActor, loadAssignmentViews, noOrganization, orgMembers, serverError, teamIsLocal, toAssignment } from "../_lib/server";
 
 /**
- * Training assignments: a manager asks one rep, or the whole team, to practise
+ * Training assignments: a manager asks one rep, or the whole team, to practice
  * a persona. Everything is scoped to the actor's organization as stored in the
  * database. Completion is derived from sessions, so there is nothing to mark done.
  *

@@ -306,7 +306,7 @@ export type FailoverResult<T> =
 /**
  * Runs `attempt` on the lowest slot that is not cooling down; on a quota answer marks that slot and moves to the
  * next, once per slot. Any other failure is returned as is, and a thrown error (network, abort, timeout) propagates
- * with no further attempt, so non-quota behaviour, retries included, is exactly what the caller did before.
+ * with no further attempt, so non-quota behavior, retries included, is exactly what the caller did before.
  */
 export async function withOpenAiKeyFailover<T>(
   surface: KeySurface,

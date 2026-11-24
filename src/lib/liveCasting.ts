@@ -79,7 +79,7 @@ const noun = (g: "female" | "male", age: number | undefined) => (g === "female" 
 
 /**
  * The "VOICE CASTING" block for the GPT-Live session instructions, or [] when the persona has nothing to say. Gender, age
- * and emotion are repeated exactly as stated; nothing is guessed from a name, and what is not stated is labelled
+ * and emotion are repeated exactly as stated; nothing is guessed from a name, and what is not stated is labeled
  * unspecified instead of invented.
  */
 export function liveCastingSection(p: LiveCastPersona): string[] {

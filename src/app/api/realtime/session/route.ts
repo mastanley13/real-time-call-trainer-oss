@@ -173,7 +173,7 @@ export async function POST(req: NextRequest) {
       if (r.kind === "exhausted") {
         if (callId) await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
         return NextResponse.json(
-          { error: "realtime_unavailable", message: "Voice is unavailable right now. Switch to Text to keep practising." },
+          { error: "realtime_unavailable", message: "Voice is unavailable right now. Switch to Text to keep practicing." },
           { status: 503, headers: { "Retry-After": "300" } },
         );
       }

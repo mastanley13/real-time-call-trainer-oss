@@ -102,7 +102,7 @@ const complianceCriterion = (family: string): RubricCriterion => ({
 });
 const hasCompliance = (rubric: RubricCriterion[]) => rubric.some((c) => /complian|disclos|regulat|consent/i.test(`${c.id} ${c.name} ${c.description}`));
 
-/** Normalises weights to integers that sum to exactly 100 (largest remainder). */
+/** Normalizes weights to integers that sum to exactly 100 (largest remainder). */
 function integerWeights(rubric: RubricCriterion[]): RubricCriterion[] {
   const n = normalizeWeights(rubric.map((c) => ({ ...c, weight: Math.max(0, Number.isFinite(c.weight) ? c.weight : 0) })));
   const floors = n.map((c) => Math.floor(c.weight));
@@ -254,7 +254,7 @@ const DIFFICULTY_GUIDE: Record<WizardInput["difficulty"], string> = {
 
 function llmPrompt(input: WizardInput, family: string | null) {
   const system = [
-    "You design realistic sales-call practice scenarios. A sales rep (the TRAINEE) will practise a live phone call against an AI persona you define, then be graded on your rubric.",
+    "You design realistic sales-call practice scenarios. A sales rep (the TRAINEE) will practice a live phone call against an AI persona you define, then be graded on your rubric.",
     "Ground every field in the CONTEXT provided. Only where the context is silent, invent plausible fictional details.",
     "Use fictional names for the persona and their company. Never use a real company's or real person's name, even if one appears in the context.",
     "Make the persona a specific individual with a job, constraints and motives. No stereotypes about any group (gender, age, ethnicity, nationality, religion, disability or accent).",
@@ -275,7 +275,7 @@ function llmPrompt(input: WizardInput, family: string | null) {
     '    "openingLine": string (the first thing you say when the call connects)',
     "  },",
     '  "traineeGoal": string (one sentence: the concrete outcome the trainee is after),',
-    '  "rubric": [{"id": short_snake_case, "name": string, "description": concrete, observable trainee behaviour, "weight": number}] with 5-6 criteria whose weights sum to 100,',
+    '  "rubric": [{"id": short_snake_case, "name": string, "description": concrete, observable trainee behavior, "weight": number}] with 5-6 criteria whose weights sum to 100,',
     `  "objections": [{"type": one of ${OBJECTION_TYPES.map((t) => `"${t}"`).join("|")}, "line": what the persona says, "prepAnswer": a strong 1-2 sentence answer the trainee could give}] with 2-4 items,`,
     '  "sampleReplies": [string] with 6-8 short caller lines for an offline scripted caller. Include: one that gives a phone number like 555-0137; one asking about price or cost; one about timing or schedule; one pushback that uses "but", "too" or "budget"; and an agreeable close containing "sounds good" or "thanks",',
     '  "sources": {"<field path>": {"kind": "job"|"url"|"crm"|"icp"|"call"|"chips"|"model", "snippet": string}}',
@@ -442,7 +442,7 @@ const KITS: Record<CallType, Kit> = {
       "Ask about their current process and what prompted them to take the call.",
       "Dig into the impact: what the problem costs them in time, money or risk.",
       "Find out who else is involved in the decision and how they buy.",
-      `Summarise what you heard and connect it to ${c.repProduct}.`,
+      `Summarize what you heard and connect it to ${c.repProduct}.`,
       "Propose a clear next step with a date, such as a demo or a proposal review.",
     ],
     rubric: [
@@ -450,7 +450,7 @@ const KITS: Record<CallType, Kit> = {
       ["current_state", "Current state", "Asks open questions about the current process and what prompted the call.", 25],
       ["impact", "Impact & pain", "Gets the prospect to put a cost on the problem in time, money or risk.", 20],
       ["decision", "Decision process", "Identifies other decision makers, the timeline and how they buy.", 15],
-      ["nextstep", "Dated next step", "Summarises what they heard and agrees a specific next step with a date.", 25],
+      ["nextstep", "Dated next step", "Summarizes what they heard and agrees a specific next step with a date.", 25],
     ],
     objections: ["status_quo", "authority", "price"],
     situation: (c) =>
@@ -539,7 +539,7 @@ const KITS: Record<CallType, Kit> = {
     ],
     rubric: [
       ["identity", "Right party & identification", "Identifies themselves and the company and confirms they are speaking to the right person before discussing the account.", 15],
-      ["respect", "Respectful tone", "Stays calm, respectful and non-judgemental, with no threats or pressure.", 20],
+      ["respect", "Respectful tone", "Stays calm, respectful and non-judgmental, with no threats or pressure.", 20],
       ["situation", "Understands the situation", "Asks about the customer's circumstances and ability to pay.", 20],
       ["options", "Payment options", "Offers realistic options and explains them clearly.", 20],
       ["plan", "Agreed plan", "Agrees a specific plan with amounts and dates and confirms it.", 25],

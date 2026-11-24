@@ -232,7 +232,7 @@ describe("display helpers", () => {
 });
 
 describe("sample team", () => {
-  it("is deterministic, labelled and built from real library personas", () => {
+  it("is deterministic, labeled and built from real library personas", () => {
     const viewer = { id: "demo-user", name: "Demo User" };
     const a = buildSampleOverview(30, NOW, viewer);
     const b = buildSampleOverview(30, new Date(NOW.getTime() + 20 * 60_000), viewer);

@@ -192,7 +192,7 @@ describe("readLocalSessionsStrict", () => {
     }
   });
 
-  it("leaves listLocalSessions' forgiving behaviour alone for its other callers", () => {
+  it("leaves listLocalSessions' forgiving behavior alone for its other callers", () => {
     const src = readFileSync("src/lib/sessionStore.ts", "utf8");
     expect(src).toContain("return Array.isArray(raw) ? raw : [];");
     expect(src).toContain("return readLocal().sort((a, b) => b.createdAt.localeCompare(a.createdAt));");

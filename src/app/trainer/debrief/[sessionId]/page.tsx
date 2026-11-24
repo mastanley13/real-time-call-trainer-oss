@@ -379,7 +379,7 @@ export default function DebriefPage() {
                   <div className="grid gap-4 md:grid-cols-2">
                     <section className="panel p-4">
                       <h2 className="flex items-center gap-2 text-sm font-bold"><CheckCircle2 size={16} className="text-ok" aria-hidden /> Strengths <span className="mono text-xs font-normal text-ink-muted">{ev.strengths.length}</span></h2>
-                      <ul className="mt-2 space-y-1.5 text-sm text-ink-soft">{ev.strengths.length ? ev.strengths.map((x, i) => <li key={i}>{x}</li>) : <li>Nothing stood out this time. Keep practising and your strengths will show up here.</li>}</ul>
+                      <ul className="mt-2 space-y-1.5 text-sm text-ink-soft">{ev.strengths.length ? ev.strengths.map((x, i) => <li key={i}>{x}</li>) : <li>Nothing stood out this time. Keep practicing and your strengths will show up here.</li>}</ul>
                     </section>
                     <section className="panel p-4">
                       <h2 className="flex items-center gap-2 text-sm font-bold"><TrendingUp size={16} className="text-caution" aria-hidden /> Improve <span className="mono text-xs font-normal text-ink-muted">{ev.improvements.length}</span></h2>

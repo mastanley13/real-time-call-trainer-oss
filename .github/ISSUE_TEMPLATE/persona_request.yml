@@ -107,7 +107,7 @@ body:
     id: why
     attributes:
       label: Why this persona?
-      description: Who would practise it, and what skill it trains that the library doesn't cover today.
+      description: Who would practice it, and what skill it trains that the library doesn't cover today.
     validations:
       required: true
 

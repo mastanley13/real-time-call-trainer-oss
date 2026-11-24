@@ -49,7 +49,7 @@ function matches(row: Row, where: Where): boolean {
       if (o.gt !== undefined) return typeof have === "number" && have > o.gt;
       if (o.lt) return isDate(have) && have.getTime() < o.lt.getTime();
       if (o.gte) return isDate(have) && have.getTime() >= o.gte.getTime();
-      return true; // NOT / JSON filters are not modelled
+      return true; // NOT / JSON filters are not modeled
     }
     return have === (v ?? null);
   });
@@ -202,7 +202,7 @@ export function createFakePrisma() {
      * does not undo what the transaction it waited for committed. That is right while the lock is the transaction's
      * first statement, as in every caller (ghlWebhook.ts, callRow.ts).
      *
-     * `SELECT ... FROM "User" WHERE "id" = ? FOR UPDATE` is modelled the same way: a real row lock that waits for another
+     * `SELECT ... FROM "User" WHERE "id" = ? FOR UPDATE` is modeled the same way: a real row lock that waits for another
      * transaction holding the same user row, re-entrant within one transaction (as in Postgres), released at the end.
      * Lock-order audit: asking for a user row lock for the first time after this transaction has updated an existing
      * allowance or call row throws LockOrderError. That is the order that can deadlock in Postgres (allowance or call
@@ -210,7 +210,7 @@ export function createFakePrisma() {
      * so every metering transaction must take the user row first (src/lib/usage.ts lockUserFirst).
      */
     $transaction: async <T>(fn: ((tx: unknown) => Promise<T>) | Promise<unknown>[]): Promise<T> => {
-      // The array form: its operations already ran, in order, on the same store (no rollback is modelled for it).
+      // The array form: its operations already ran, in order, on the same store (no rollback is modeled for it).
       if (Array.isArray(fn)) return (await Promise.all(fn)) as T;
       const entry = { snapshot: structuredClone(data) };
       const releases: (() => void)[] = [];

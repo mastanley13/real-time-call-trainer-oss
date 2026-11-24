@@ -157,7 +157,7 @@ describe("scriptedReply", () => {
     expect(ask(own, "What's the best number?", "Sorry, what was that number again?")).toBe("Same as before, it's 312-555-0199.");
   });
 
-  it("moves on to the next unused scripted line when nothing is recognised", () => {
+  it("moves on to the next unused scripted line when nothing is recognized", () => {
     expect(ask(home, "Okay.")).toBe(home.sampleReplies[0]);
     expect(ask(home, "Okay.", "Got it.")).toBe(home.sampleReplies[1]);
   });

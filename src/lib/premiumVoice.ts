@@ -11,7 +11,7 @@ import { premiumUnits, premiumVoiceCap, type PlanTier } from "./usagePlan";
  * mints Standard. A running call is never switched. The base plan's own trialing access is unchanged
  * (subscriptionStatus.ts), and the separate one-call Free organization trial (premiumTrial.ts) is not affected.
  *
- * A subscription set to cancel at period end stays `active` at Stripe until then, so Premium is honoured until its
+ * A subscription set to cancel at period end stays `active` at Stripe until then, so Premium is honored until its
  * current_period_end. A scheduled removal of the add-on works the same way: the item is still on the subscription
  * until the renewal phase drops it.
  *

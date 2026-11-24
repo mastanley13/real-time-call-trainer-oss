@@ -42,10 +42,10 @@ src/app/                          App Router pages and API routes
   trainer/page.tsx                Briefing, then the live call deck (components/TrainerClient.tsx)
   trainer/scenarios/page.tsx      Persona editor, saves to localStorage (components/ScenarioEditor.tsx)
   trainer/debrief/[sessionId]/    Black-box debrief: moment strip, evidence, retry from turn N, re-grade
-  dashboard/page.tsx              Progress logbook: sparklines, trend, heatmap, practise next
+  dashboard/page.tsx              Progress logbook: sparklines, trend, heatmap, practice next
   team/                           Team view: KPIs, heatmap, coaching queue, assignments (sample data in demo mode)
   settings/page.tsx               Settings index
-  settings/security/              TOTP MFA enrolment
+  settings/security/              TOTP MFA enrollment
   settings/models/                Models page: which model runs each AI job, plus a connection check
   access/, login/, register/      Access-code gate, sign-in, sign-up
   api/
@@ -115,7 +115,7 @@ docs/                             PERSONA_PACKS.md, redesign/ (design council re
 - Layout must work at 375 px with no horizontal page scroll, by keyboard, and in dark mode.
 
 ### UI copy
-Plain, active voice, sentence case, no em dashes. Errors say what happened and how to fix it ("Voice calls need an OpenAI key or ElevenLabs keys on the server. Switch to Text to practise now.").
+Plain, active voice, sentence case, no em dashes. Errors say what happened and how to fix it ("Voice calls need an OpenAI key or ElevenLabs keys on the server. Switch to Text to practice now.").
 
 ### Server routes
 Every route in `src/app/api` follows the same order. Copy `src/app/api/coach/turn/route.ts` as the template.
@@ -155,7 +155,7 @@ Prisma schema changes need a migration (`npx prisma migrate dev --name <change>`
 | Pure logic in `src/lib` | A Vitest test, then `npm test` and `npm run typecheck` |
 | API route | Tests for its pure helpers; `DEMO_MODE=true npm run dev` and `curl` the route for 200, 400 (bad body), 401 (with the access gate on) and 429 (low `RATE_LIMIT_*_MAX`) |
 | UI | `DEMO_MODE=true npm run dev`, walk the matching section of [TESTING.md](TESTING.md) at 375 px and desktop, in light and dark, by keyboard |
-| Persona pack | `npm run validate:personas` with 0 errors and 0 warnings, then practise it once in text mode without a key |
+| Persona pack | `npm run validate:personas` with 0 errors and 0 warnings, then practice it once in text mode without a key |
 | Anything | `npm run lint && npm run typecheck && npm test && npm run validate:personas` |
 
 Report what you ran and what you could not run.

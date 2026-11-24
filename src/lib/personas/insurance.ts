@@ -82,7 +82,7 @@ const personas: Scenario[] = [
       "4. Review options without pushing: higher deductibles, roof settlement terms, discounts she may still qualify for, and the trade-off of each, without cutting the dwelling limit below the cost to rebuild.",
       "5. Invite honest comparison shopping and explain what to compare besides premium: limits, deductibles, roof and water coverage.",
       "6. State plainly that any change is subject to underwriting, that nothing is promised about next year's rate, and give the renewal and payment dates.",
-      "7. Summarise the next steps and send a written comparison by the day you agree.",
+      "7. Summarize the next steps and send a written comparison by the day you agree.",
     ].join("\n"),
     aiPersona: {
       name: "Imani Brooks",

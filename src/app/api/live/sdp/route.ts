@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
         return { outcome: await classifyOpenAiResponse(LIVE_SESSIONS_URL, attempt), status: attempt.status, value: attempt };
       });
       if (r.kind === "exhausted") {
-        return NextResponse.json({ error: "realtime_unavailable", message: "Voice is unavailable right now. Switch to Text to keep practising." }, { status: 503, headers: { "Retry-After": "300" } });
+        return NextResponse.json({ error: "realtime_unavailable", message: "Voice is unavailable right now. Switch to Text to keep practicing." }, { status: 503, headers: { "Retry-After": "300" } });
       }
       res = r.value;
     } else {

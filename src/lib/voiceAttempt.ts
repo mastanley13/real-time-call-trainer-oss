@@ -5,7 +5,7 @@
  * "Connected" has one definition everywhere: the attempt's meter is connected (CallMeter.isConnected: the data channel or
  * SDK is open AND the first remote audio arrived, which is when the first heartbeat goes out). Until then, every way the
  * attempt can end goes through ONE cancel() per attempt, which:
- *   1. marks the attempt cancelled (idempotent: a second cancel, or any cancel after connect, does nothing);
+ *   1. marks the attempt canceled (idempotent: a second cancel, or any cancel after connect, does nothing);
  *   2. reports failed_connect once if the server minted a callId (POST /api/usage/end, keepalive; nothing without one);
  *   3. tears down the provider session and media (the owner's teardown: Realtime aborts a pending SDP request and closes
  *      the peer connection and mic; ElevenLabs ends the SDK session, also one still connecting);
@@ -32,7 +32,7 @@
  * |    | 3 apply, and a stream granted later is stopped              |         |               | arrives later is stopped       |
  * | 6  | Mint error (HTTP error, network failure, no secret or       | R L E   | error         | the server's or a fixed message|
  * |    | token). The route already closed any call it minted         |         |               |                                |
- * | 7  | Mint answer arrives after the attempt was cancelled         | R L E   | (already)     | unchanged; the callId is       |
+ * | 7  | Mint answer arrives after the attempt was canceled          | R L E   | (already)     | unchanged; the callId is       |
  * |    |                                                             |         |               | reported at once, never started|
  * | 8  | Mint answer never reaches the page (tab closed first)       | R L E   | none possible | server reclaims after 45 s     |
  * | 9  | Session expired at the mint or the SDP exchange (401)       | R L     | sign_in       | redirect, or a message when    |
@@ -49,7 +49,7 @@
  * |    | mint in the same mount; R L: a new RealtimeCall per mount,  |         | (R L: unmount)|                                |
  * |    | the old one is unmounted, row 3)                            |         |               |                                |
  * | 16 | Connect timeout                                             | -       | -             | none exists on this branch     |
- * | 17 | Late events of a cancelled attempt (connect, audio, message,| R L E   | (already)     | ignored; R: peer closed, SDP   |
+ * | 17 | Late events of a canceled attempt (connect, audio, message, | R L E   | (already)     | ignored; R: peer closed, SDP   |
  * |    | error, disconnect, SDP answer, mic stream)                  |         |               | aborted; E: late connect ended |
  *
  * After the meter connects, nothing here applies: hang-up, errors, drops, page hide and unmount follow the connected-call
@@ -107,13 +107,13 @@ export class VoiceAttempt {
   get meter() { return this.m; }
   /** The one definition of connected (see the top of this file). */
   get connected() { return this.m.isConnected; }
-  /** Callbacks of this attempt may act: neither cancelled nor finished. */
+  /** Callbacks of this attempt may act: neither canceled nor finished. */
   get live() { return !this.cancelled && !this.finished; }
   get isCancelled() { return this.cancelled; }
 
   /**
    * The mint answered (callId undefined when unmetered or when the mint failed). Creates the attempt's meter. False when
-   * the attempt was already cancelled: the callId is then reported as failed_connect at once and nothing may start.
+   * the attempt was already canceled: the callId is then reported as failed_connect at once and nothing may start.
    */
   minted(callId: string | undefined, handlers: MeterHandlers): boolean {
     this.m = new CallMeter(callId, { ...handlers, onConnected: () => { this.unlisten(); handlers.onConnected?.(); } });
@@ -126,7 +126,7 @@ export class VoiceAttempt {
 
   /**
    * The one cancellation for every exit before connect (see the table). False, doing nothing, when the attempt is
-   * already cancelled or finished, or has connected (the caller then takes the connected-call path). `message` is the
+   * already canceled or finished, or has connected (the caller then takes the connected-call path). `message` is the
    * screen text for error and sign_in exits; a function is evaluated after the teardown (sign_in navigates there).
    */
   cancel(exit: PreConnectExit, message?: string | (() => string | null)): boolean {

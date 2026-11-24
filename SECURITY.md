@@ -30,7 +30,7 @@ Out of scope:
 - Rate limits being per server instance. They are in-memory and best-effort on serverless; this is documented.
 - Problems in third-party services (ElevenLabs, OpenAI or another LLM provider, your host), and findings that need a compromised device or browser.
 - Volume-based denial of service, missing headers or best practices without a demonstrated impact, and social engineering.
-- The behaviour of AI personas or the coach (for example getting a persona to break character). Report those as bugs.
+- The behavior of AI personas or the coach (for example getting a persona to break character). Report those as bugs.
 
 ## Protections in place
 
@@ -51,7 +51,7 @@ Out of scope:
 - follows at most three redirects by hand and re-checks every hop
 - times out after 8 seconds, stops reading after 1 MB, accepts only `text/html` or `text/plain`, and returns at most 8,000 characters of text
 
-Defence in depth: if your host can reach sensitive internal services (cloud metadata with IMDSv1, admin panels), also run the app behind an egress firewall that blocks private ranges.
+Defense in depth: if your host can reach sensitive internal services (cloud metadata with IMDSv1, admin panels), also run the app behind an egress firewall that blocks private ranges.
 
 **Rate limits and size caps.** Cost-bearing routes have per-IP fixed-window limits, configurable with `RATE_LIMIT_*` variables. Defaults: text caller 30 per 5 minutes, grading and re-grades 10 per hour combined, ElevenLabs token 10 per hour, OpenAI Realtime session 10 per hour, live coach 120 per 10 minutes, persona wizard and URL import 20 per hour combined, access-code attempts 10 per 15 minutes. Sign-in, registration, MFA challenges and the model connection check have their own per-IP limits. Most routes also have a fixed per-account limit, so switching networks doesn't get around the IP limit: for example the wizard 20 per hour, re-grades 5 per 10 minutes, the model connection check 20 per hour, OpenAI Realtime sessions 6 per minute. [TESTING.md](TESTING.md#rate-limits) lists every limit. The client IP is read from `X-Forwarded-For`, counting `TRUSTED_PROXY_HOPS` entries from the right (default 1). When the app runs behind at least one proxy that sets or appends `X-Forwarded-For`, and that number matches those proxies, a client can't choose its own address by sending the header. Without such a proxy, any client can, whatever the setting ([DEPLOY.md](DEPLOY.md#client-ip-behind-proxies)). Request bodies are capped at 200 KB. The text caller accepts up to 200 turns and 20,000 characters; the live coach reads only the most recent turns within that size; grading and re-grades read the first 1,000 turns and 120,000 characters of a call. Limits return 429. They are in-memory per instance; use a shared store for strict enforcement.
 

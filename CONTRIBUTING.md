@@ -56,7 +56,7 @@ Personas live in `src/lib/personas/<family>.ts`, one pack file per sales job fam
 1. Draft it with the wizard at `/library/new` (works without a key), or copy an entry from the same pack.
 2. Press **Copy pack JSON** on the wizard's last step, paste the object at the end of the pack's array, change the id to `<family>-<short-slug>`, and keep `status: "draft"`.
 3. Run `npm run validate:personas` until it shows 0 errors and 0 warnings.
-4. Practise it once in text mode with no key and check that each objection comes up and the coach cues it.
+4. Practice it once in text mode with no key and check that each objection comes up and the coach cues it.
 5. Go through the review checklist (stereotypes, regulated-industry claims, fictional details) and open a pull request.
 
 The full field reference, how objections and prep answers drive the live coach, scripted-reply coverage and the checklist are in [docs/PERSONA_PACKS.md](docs/PERSONA_PACKS.md). Can't write it yourself? Open a **Persona request** issue.

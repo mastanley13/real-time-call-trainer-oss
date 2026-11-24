@@ -11,7 +11,7 @@ import { forbidden, limitFor, loadActor, loadAssignmentViews, noOrganization, or
 /**
  * Team overview for managers and owners (and platform admins), scoped to the
  * actor's own organization as stored in the database. Demo mode and installs
- * without a database get a clearly labelled sample team instead.
+ * without a database get a clearly labeled sample team instead.
  */
 
 const DAY = 86_400_000;

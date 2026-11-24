@@ -70,7 +70,7 @@ export default function AssignmentsPanel({ items, summary, error, onAssign, onAr
           <ClipboardList size={20} strokeWidth={1.75} className="text-ink-muted" aria-hidden />
           <div>
             <p className="text-sm font-semibold">No assignments yet</p>
-            <p className="mt-0.5 text-sm text-ink-soft">Assign a persona to one rep or the whole team. It shows up on their Progress page, and it counts as done once they practise it.</p>
+            <p className="mt-0.5 text-sm text-ink-soft">Assign a persona to one rep or the whole team. It shows up on their Progress page, and it counts as done once they practice it.</p>
           </div>
         </div>
       ) : (
