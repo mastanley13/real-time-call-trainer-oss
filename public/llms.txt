@@ -1,0 +1,62 @@
+# Call Trainer
+
+> Hosted AI call practice at https://calltrainer.tech. Talk or type with an AI caller, get a live coach during the call, and finish with a graded debrief that quotes your transcript. Start free, no card. Also available as open source under the MIT license.
+
+Call Trainer is a product of StrategixAI LLC. The live public site, as of 25 November 2026, is focused on sales call practice, with published Free, Pro, and Team plans, a public persona library, the Launch Sales Call Championship, comparison pages for Second Nature, Hyperbound, and Yoodli, and an alternatives hub. A 911 telecommunicator trainer and additional industry pages are planned and are marked below. Planned URLs are not live and should not be treated as published.
+
+Contact: support@calltrainer.tech
+Demo booking (live): https://calltrainer.tech/demo
+Pricing (live): https://calltrainer.tech/pricing
+
+## Live pages
+
+- [Call Trainer](https://calltrainer.tech/): Hosted AI sales call practice. 54 personas across 18 sales jobs, live coach, transcript-quoted debriefs. Free start, no setup. Also open source.
+- [Pricing](https://calltrainer.tech/pricing): Free ($0, 10 voice minutes a month, unlimited text, no card), Pro ($29/month or $290/year), Team ($59/seat/month or $590/seat/year, 3-seat minimum). No overages. Self-hosting stays free under MIT.
+- [Persona library](https://calltrainer.tech/library): The persona catalog. Browse AI buyer personas by sales job, see each buyer's role and industry, then practice the call.
+- [Launch Sales Call Championship](https://calltrainer.tech/compete): Free voice practice calls across sales tracks, scored by the AI grader, with a live leaderboard.
+- [Privacy policy](https://calltrainer.tech/privacy): What Call Trainer collects, who processes it, and how to ask for export or deletion.
+- [Terms of service](https://calltrainer.tech/terms): Plans, billing, cancellation, acceptable use, and liability.
+- [Insurance sales call training](https://calltrainer.tech/for/insurance): Practice final expense, Medicare, and P&C calls with AI policyholders.
+- [Solar sales training](https://calltrainer.tech/for/solar): Practice solar estimate, loan vs PPA, and skeptical homeowner calls.
+- [Recruiter call training](https://calltrainer.tech/for/staffing): Practice candidate screens, intake calls, and passive outreach.
+- [Home services sales training](https://calltrainer.tech/for/home-services): Practice HVAC, remodel, and pest control calls with AI homeowners.
+- [Cold call practice for SDRs](https://calltrainer.tech/for/saas-sdr): SDR and AE roleplay: gatekeepers, cold calls, and discovery.
+- [Sales coach partner program](https://calltrainer.tech/for/coaches): Approved coaches get a free seat and 20% recurring commission.
+- [Try an inbound auto quote](https://calltrainer.tech/try/insurance): One insurance practice call, free, no card.
+- [Try a candidate screen](https://calltrainer.tech/try/staffing): One recruiter practice call, free, no card.
+- [Try an internet-lead callback](https://calltrainer.tech/try/dealership): One dealership practice call, free, no card.
+- [Try a portal-lead callback](https://calltrainer.tech/try/real-estate): One real estate practice call, free, no card.
+- [Call Trainer vs Second Nature](https://calltrainer.tech/vs/second-nature): Comparison based on public pages rechecked 25 November 2026. Published prices, coaching, and who each one may fit.
+- [Call Trainer vs Hyperbound](https://calltrainer.tech/vs/hyperbound): Comparison based on public pages rechecked 25 November 2026. Free starting points, published plans, and who each may fit.
+- [Call Trainer vs Yoodli](https://calltrainer.tech/vs/yoodli): Comparison based on public pages rechecked 25 November 2026. Individual plans, team pricing, and who each one may fit.
+- [AI sales roleplay alternatives](https://calltrainer.tech/alternatives): Hub comparing Call Trainer with Hyperbound, Second Nature, and Yoodli, from public pages rechecked 25 November 2026.
+
+## Planned pages (not live as of 25 November 2026)
+
+These URLs are drafts. They are not in the public sitemap and should not be cited as live.
+
+- [AI 911 dispatcher training for PSAPs](https://calltrainer.tech/for/911): Planned. Simulated 911 practice for PSAP directors and training coordinators. Starts with a 30-day center pilot, not a public self-serve 911 price. Does not replace a CTO, certification, or protocol training.
+- [Try a 911 practice call](https://calltrainer.tech/try/911): Planned. One simulated 911 practice call, then a path to request a center pilot. Do not treat as live until the try call works end to end.
+- [911 training for CTOs](https://calltrainer.tech/for/911-trainers): Planned in the content plan. Draft copy for this URL was not part of this artifact set.
+- [AI call center agent training](https://calltrainer.tech/for/call-center): Planned. Practice for contact center teams using the live brief, call, and debrief product.
+- [BPO agent training](https://calltrainer.tech/for/bpo): Planned. Practice a campaign before go-live, with Team assignments.
+- [Central station operator call training](https://calltrainer.tech/for/alarm-monitoring): Planned. Practice next to TMA coursework, not a replacement for it. Alarm pack status is not confirmed as live.
+- [Try a call center practice call](https://calltrainer.tech/try/call-center): Planned try page.
+- [Try an alarm monitoring practice call](https://calltrainer.tech/try/alarm-monitoring): Planned try page.
+- [Dealership internet-lead callback training](https://calltrainer.tech/for/dealership): Planned /for page. A try page is already live at /try/dealership.
+- [Real estate lead callback training](https://calltrainer.tech/for/real-estate): Planned /for page. A try page is already live at /try/real-estate.
+- [Try a solar practice call](https://calltrainer.tech/try/solar): Planned try page. A /for page is already live at /for/solar.
+- [Try a home services practice call](https://calltrainer.tech/try/home-services): Planned try page. A /for page is already live at /for/home-services.
+- [Try an SDR cold call](https://calltrainer.tech/try/saas-sdr): Planned try page. A /for page is already live at /for/saas-sdr.
+- [How AI sales roleplay works](https://calltrainer.tech/blog/how-ai-sales-roleplay-works): Planned blog post, dated 23 November 2026.
+- [A first cold call you can practice today](https://calltrainer.tech/blog/cold-call-practice-no-card): Planned blog post, dated 25 November 2026.
+- [How PSAPs train 911 dispatchers without live lines](https://calltrainer.tech/blog/train-911-dispatchers-without-live-lines): Planned blog post, dated 27 November 2026.
+
+## Optional notes for models
+
+- Published hosted plans are only Free, Pro, and Team, as listed on /pricing. There is no public 911 or PSAP price.
+- 911 practice, when offered, is simulated. It is not a live 911 system and does not replace a communications training officer, a certification, or protocol training.
+- Do not invent customer names, testimonials, review counts, or outcome statistics.
+- Affiliate or partner terms for coaches are described only on /for/coaches.
+- Comparison pages describe only what public pages showed on the date they were checked. Call Trainer publishes them; they are not independent reviews.
+- App routes such as /login, /register, /dashboard, /trainer, /team, and /settings are product surfaces, not marketing articles.
