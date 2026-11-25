@@ -87,8 +87,9 @@ export function competeCta(input: {
 }): CompeteCta {
   const { track, season, viewer, authenticated, loading } = input;
   if (loading) return { kind: "loading" };
-  const registerHref = `/register?src=compete&seg=${encodeURIComponent(track.slug)}`;
-  const loginHref = `/login?next=${encodeURIComponent("/compete")}`;
+  const nextToTrack = `/trainer?compete=${encodeURIComponent(track.slug)}`;
+  const registerHref = `/register?src=compete&seg=${encodeURIComponent(track.slug)}&next=${encodeURIComponent(nextToTrack)}`;
+  const loginHref = `/login?next=${encodeURIComponent(nextToTrack)}`;
   if (season && season.phase !== "active") {
     if (season.phase === "upcoming") {
       const message = `The championship opens ${opensOn(season.startAt)}. Practice freely in the trainer until then.`;
@@ -399,7 +400,7 @@ function CompetitorBar({ loading, authenticated, viewer, maxAttempts, onSaved }:
           <p className="mt-1 text-sm text-ink-soft">You pick a public handle. Your email never shows on the leaderboard or share cards.</p>
         </div>
         <div className="flex flex-wrap gap-2 md:shrink-0">
-          <Link href="/register?src=compete" className="btn-primary">Create free account</Link>
+          <Link href={`/register?src=compete&next=${encodeURIComponent("/compete")}`} className="btn-primary">Create free account</Link>
           <Link href={`/login?next=${encodeURIComponent("/compete")}`} className="btn-ghost">Sign in</Link>
         </div>
       </section>

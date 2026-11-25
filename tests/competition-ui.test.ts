@@ -71,14 +71,17 @@ describe("quick brief call to action", () => {
     expect(cta(season(), viewer({ attemptsUsed: 2, attemptsRemaining: 1 }))).toMatchObject({ label: "Start official call (Attempt 3 of 3)" });
   });
 
-  it("sends guests to register with the track, and offers sign in back to /compete", () => {
+  it("sends guests to register or sign in and returns them directly to the chosen competition track", () => {
+    const nextTrack = encodeURIComponent("/trainer?compete=dealerships");
     expect(cta(season(), viewer({ authenticated: false }), false)).toEqual({
       kind: "guest",
-      registerHref: "/register?src=compete&seg=dealerships",
-      loginHref: "/login?next=%2Fcompete",
+      registerHref: `/register?src=compete&seg=dealerships&next=${nextTrack}`,
+      loginHref: `/login?next=${nextTrack}`,
     });
     // The status call failed: a guest still gets the sign-up path.
     expect(cta(null, null, false)).toMatchObject({ kind: "guest" });
+    // Top-level CompetitorBar registration returns guests to /compete rather than plain text-default /trainer.
+    expect(read("src/components/compete/CompeteClient.tsx")).toContain('`/register?src=compete&next=${encodeURIComponent("/compete")}`');
   });
 
   it("locks the start once all attempts are used", () => {
