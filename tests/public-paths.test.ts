@@ -12,7 +12,13 @@ describe("isPublicPath", () => {
     "/for/insurance/opengraph-image", "/for/solar/twitter-image", "/for/coaches/opengraph-image-1a2b3c",
     "/for/saas-sdr/twitter-image?abc123", "/for/home-services/opengraph-image-1a2b3c?v=2#x", "/sitemap.xml?x=1", "/robots.txt#a",
     "/library", "/library/", "/library?x=1",
+    "/alternatives", "/alternatives/", "/alternatives?utm_source=x",
+    "/vs/second-nature", "/vs/hyperbound", "/vs/yoodli", "/vs/yoodli/", "/vs/hyperbound?src=x#faq",
   ])("allows %s",(p) => expect(isPublicPath(p)).toBe(true));
+
+  it.each([
+    "/vs", "/vs/", "/vs/unknown", "/vs/second-nature/x", "/vsx/yoodli", "/alternatives/x", "/alternativesx", "/dashboard?next=/vs/yoodli",
+  ])("keeps the unlisted comparison path %s gated", (p) => expect(isPublicPath(p)).toBe(false));
 
   it.each([
     "/dashboard", "/trainer", "/team", "/settings/security", "/library/new", "/libraryx", "/library/x", "/api/config", "/api/transcripts", "/api/scenarios",
@@ -96,6 +102,15 @@ describe("proxy with TRAINER_ACCESS_CODE set", () => {
     expect(wizard.status).toBe(307);
     expect(new URL(wizard.headers.get("location")!).pathname).toBe("/access");
     expect((await run("/api/scenarios")).status).toBe(401);
+  });
+
+  it("serves /alternatives and the three /vs pages without a cookie, and gates unknown /vs paths", async () => {
+    for (const p of ["/alternatives", "/vs/second-nature", "/vs/hyperbound", "/vs/yoodli"]) {
+      const res = await run(p);
+      expect(res.headers.get("location"), p).toBeNull();
+      expect(res.status, p).toBe(200);
+    }
+    expect((await run("/vs/unknown")).status).toBe(307);
   });
 
   it("every sitemap URL is reachable through the gate", async () => {

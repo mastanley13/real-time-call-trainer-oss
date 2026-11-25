@@ -1,8 +1,10 @@
+import type { ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 
 export interface FaqItem {
   q: string;
-  a: string;
+  /** Plain text, or inline content such as links. */
+  a: ReactNode;
 }
 
 /** Accessible FAQ disclosure list with rotating chevron and 48px touch targets. Server-safe. */
