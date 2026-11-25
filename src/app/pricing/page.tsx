@@ -105,7 +105,7 @@ export default function PricingPage() {
         <div className="page grid gap-10 py-14 sm:py-20 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] lg:items-center lg:gap-16">
           <div className="min-w-0">
             <p className="eyebrow">Pricing</p>
-            <h1 className="mt-4 max-w-3xl text-4xl font-bold leading-[1.05] sm:text-5xl">Practice the call before it costs you the deal</h1>
+            <h1 className="mt-4 max-w-3xl text-4xl font-bold leading-[1.05] sm:text-5xl">Call Trainer pricing: Free, Pro, and Team.</h1>
             <p className="mt-5 max-w-2xl text-lg leading-relaxed text-ink-soft">
               Talk to AI buyers who push back, get coached live, and get a graded debrief that quotes your own transcript. Hosted for you: no API keys, no database, no setup.
             </p>

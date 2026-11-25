@@ -11,10 +11,11 @@ describe("isPublicPath", () => {
     "/twitter-image-9f8e7d", "/opengraph-image?abc123", "/opengraph-image-1a2b3c?v=2#top", "/twitter-image?x=1",
     "/for/insurance/opengraph-image", "/for/solar/twitter-image", "/for/coaches/opengraph-image-1a2b3c",
     "/for/saas-sdr/twitter-image?abc123", "/for/home-services/opengraph-image-1a2b3c?v=2#x", "/sitemap.xml?x=1", "/robots.txt#a",
-  ])("allows %s", (p) => expect(isPublicPath(p)).toBe(true));
+    "/library", "/library/", "/library?x=1",
+  ])("allows %s",(p) => expect(isPublicPath(p)).toBe(true));
 
   it.each([
-    "/dashboard", "/trainer", "/team", "/settings/security", "/library", "/api/config", "/api/transcripts",
+    "/dashboard", "/trainer", "/team", "/settings/security", "/library/new", "/libraryx", "/library/x", "/api/config", "/api/transcripts", "/api/scenarios",
     "/api/auth", "/for", "/for/unknown", "/pricing-x", "/privacy/evil", "/register/x", "/auth", "/auth/complete/x", "/auth/other",
     "/opengraph-imagex/evil", "/opengraph-image-evil/x", "/for/unknown/opengraph-image", "/for/solar/opengraph-image/x",
     "/dashboard?next=/opengraph-image", "/api/config#/robots.txt", "/dashboard/opengraph-image",
@@ -85,6 +86,25 @@ describe("proxy with TRAINER_ACCESS_CODE set", () => {
     }
     // The gated capability endpoint is not what the button depends on.
     expect((await run("/api/config")).status).toBe(401);
+  });
+
+  it("serves the /library catalog without a cookie but keeps the wizard and private data gated", async () => {
+    const res = await run("/library");
+    expect(res.headers.get("location")).toBeNull();
+    expect(res.status).toBe(200);
+    const wizard = await run("/library/new");
+    expect(wizard.status).toBe(307);
+    expect(new URL(wizard.headers.get("location")!).pathname).toBe("/access");
+    expect((await run("/api/scenarios")).status).toBe(401);
+  });
+
+  it("every sitemap URL is reachable through the gate", async () => {
+    const { default: sitemap } = await import("@/app/sitemap");
+    for (const { url } of sitemap()) {
+      const path = new URL(url).pathname;
+      const res = await run(path);
+      expect(res.headers.get("location"), path).toBeNull();
+    }
   });
 
   it("still redirects /dashboard to /access", async () => {

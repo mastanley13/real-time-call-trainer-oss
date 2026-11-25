@@ -84,7 +84,7 @@ describe("home page (Practice Desk layout, #90 copy)", () => {
   it("keeps every #90 string verbatim", () => {
     for (const s of [
       "Free tier · no card · text or voice",
-      "Know which reps are ready before they're on a live call.",
+      "Hosted AI sales call practice, no setup.",
       `Your reps practice against ${LIBRARY.length} AI buyers who push back. You read a graded debrief that quotes their own words, so you can see who is ready and what to coach next. Free to start, no card.`,
       "Start free, no card",
       "See pricing",

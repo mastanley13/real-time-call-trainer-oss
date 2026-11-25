@@ -88,7 +88,7 @@ export default function Home() {
             <div className="flex min-w-0 flex-col gap-6">
               <p className="chip w-fit gap-2 bg-surface py-1"><span className="lamp lamp-ok" aria-hidden />Free tier · no card · text or voice</p>
               <h1 id="hero-h" className="max-w-[20ch] text-[36px] font-bold leading-[1.08] sm:text-[44px] lg:text-[54px] lg:leading-[1.05]">
-                Know which reps are ready before they&apos;re on a live call.
+                Hosted AI sales call practice, no setup.
               </h1>
               <p className="max-w-[58ch] text-lg leading-7 text-ink-soft">
                 {`Your reps practice against ${LIBRARY.length} AI buyers who push back. You read a graded debrief that quotes their own words, so you can see who is ready and what to coach next. Free to start, no card.`}
