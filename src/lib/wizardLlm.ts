@@ -31,7 +31,9 @@ const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 const OPENAI_CHAT_URL = `${OPENAI_DEFAULT_BASE_URL}/chat/completions`;
 const TIMEOUT_MS = 60_000;
-const MAX_TOKENS = 4096;
+const ANTHROPIC_MAX_TOKENS = 4096;
+/** Reasoning tokens share max_completion_tokens on OpenAI reasoning models (medium effort), so give generous headroom. */
+const OPENAI_MAX_TOKENS = 6144;
 const TEMPERATURE = 0.6;
 
 /** A failed provider call. The message is a code (WIZARD_HTTP_500, WIZARD_TRUNCATED...), safe to log. */
@@ -99,7 +101,7 @@ async function viaAnthropic(args: WizardJsonRequest, key: string): Promise<unkno
     { "x-api-key": key, "anthropic-version": ANTHROPIC_VERSION, "content-type": "application/json" },
     {
       model: wizardModel(),
-      max_tokens: MAX_TOKENS,
+      max_tokens: ANTHROPIC_MAX_TOKENS,
       temperature: TEMPERATURE,
       system: args.system,
       tools: [{ name: args.toolName, description: args.toolDescription, input_schema: args.jsonSchema }],
@@ -132,7 +134,7 @@ async function viaOpenAiDirect(args: WizardJsonRequest, key: string): Promise<un
       model: wizardModel(),
       messages: messagesOf(args),
       temperature: TEMPERATURE,
-      max_completion_tokens: MAX_TOKENS,
+      max_completion_tokens: OPENAI_MAX_TOKENS,
       reasoning_effort: "medium",
       response_format: { type: "json_schema", json_schema: { name: args.toolName, strict: true, schema: args.jsonSchema } },
     },
@@ -161,7 +163,7 @@ async function viaChat(args: WizardJsonRequest, model: string): Promise<unknown>
   const { text, truncated } = await chatFull(messagesOf(args), {
     json: true,
     jsonSchema: { name: args.toolName, schema: args.jsonSchema },
-    maxTokens: MAX_TOKENS,
+    maxTokens: OPENAI_MAX_TOKENS,
     temperature: TEMPERATURE,
     model,
     reasoningEffort: "medium",

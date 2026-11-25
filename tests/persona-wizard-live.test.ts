@@ -141,16 +141,21 @@ describe("wizard provider config (server-only)", () => {
   it("defaults the model per provider and honors WIZARD_MODEL", () => {
     expect(wizardModel({ ANTHROPIC_API_KEY: "sk-ant-a" })).toBe("claude-opus-5-5");
     expect(wizardModel({ ANTHROPIC_API_KEY: "sk-ant-a", WIZARD_MODEL: " custom-builder " })).toBe("custom-builder");
-    expect(wizardModel({ LLM_API_KEY: "k", LLM_MODEL: "chat-x", LLM_MODEL_GRADING: "grader-x" })).toBe("grader-x");
-    expect(wizardModel({ LLM_API_KEY: "k", LLM_MODEL: "chat-x" })).toBe("chat-x");
-    expect(wizardModel({})).toBe("gpt-6-luna");
-    expect(wizardFallbackModel({ LLM_MODEL_GRADING: "grader-x", WIZARD_MODEL: "custom-builder" })).toBe("grader-x");
+    // OpenAI host always defaults to gpt-6-astra (never gpt-6-luna), even when LLM_MODEL or LLM_MODEL_GRADING is set.
+    expect(wizardModel({ LLM_API_KEY: "k", LLM_MODEL: "gpt-6-luna", LLM_MODEL_GRADING: "grader-x" })).toBe("gpt-6-astra");
+    expect(wizardModel({ LLM_API_KEY: "k", LLM_MODEL: "chat-x" })).toBe("gpt-6-astra");
+    expect(wizardModel({ LLM_API_KEY: "k", WIZARD_MODEL: "custom-openai" })).toBe("custom-openai");
+    expect(wizardModel({})).toBe("gpt-6-astra");
+    // Custom non-OpenAI hosts keep their configured grading/chat model.
+    expect(wizardModel({ LLM_API_KEY: "k", LLM_BASE_URL: "https://llm.internal.example/v1", LLM_MODEL_GRADING: "grader-x" })).toBe("grader-x");
+    expect(wizardFallbackModel({ LLM_MODEL_GRADING: "grader-x", WIZARD_MODEL: "custom-builder" })).toBe("gpt-6-astra");
+    expect(wizardFallbackModel({ LLM_BASE_URL: "https://llm.internal.example/v1", LLM_MODEL_GRADING: "grader-x" })).toBe("grader-x");
   });
 
-  it("reads process.env by default, with the grading model on the chat path", () => {
-    stubEnv({ LLM_API_KEY: CHAT_KEY, LLM_MODEL_GRADING: "grader-env" });
+  it("reads process.env by default, defaulting to gpt-6-astra on OpenAI", () => {
+    stubEnv({ LLM_API_KEY: CHAT_KEY, LLM_MODEL: "gpt-6-luna" });
     expect(wizardProvider()).toBe("openai");
-    expect(wizardModel()).toBe("grader-env");
+    expect(wizardModel()).toBe("gpt-6-astra");
   });
 
   it("adds nothing to the public capabilities", () => {
@@ -293,12 +298,13 @@ describe("Anthropic builder (forced tool use)", () => {
     const chat = calls[1];
     expect(chat.headers.Authorization).toBe(`Bearer ${CHAT_KEY}`);
     expect(JSON.stringify(chat.init)).not.toContain("sk-ant");
-    // The chat provider gets the chat-side model, never the Anthropic default.
-    expect(chat.body.model).toBe("grader-x");
+    // The chat provider on OpenAI gets the OpenAI wizard default (gpt-6-astra), never the Anthropic default or gpt-6-luna.
+    expect(chat.body.model).toBe("gpt-6-astra");
+    expect(chat.body.reasoning_effort).toBe("medium");
     // Logs: provider and status only, never the key or the provider's body.
     const logged = JSON.stringify(errors.mock.calls);
     expect(logged).toContain("529");
-    expect(logged).not.toMatch(/sk-ant|overloaded_error|grader-x|claude/);
+    expect(logged).not.toMatch(/sk-ant|overloaded_error|gpt-6-astra|claude/);
   });
 
   it("falls back to the chat provider on a network failure", async () => {
@@ -330,8 +336,8 @@ describe("Anthropic builder (forced tool use)", () => {
 });
 
 describe("OpenAI builder (strict json_schema)", () => {
-  it("sends strict structured outputs, medium reasoning and the grading model through chatFull", async () => {
-    stubEnv({ LLM_API_KEY: CHAT_KEY, LLM_MODEL_GRADING: "grader-x" });
+  it("sends strict structured outputs, medium reasoning and gpt-6-astra through chatFull", async () => {
+    stubEnv({ LLM_API_KEY: CHAT_KEY, LLM_MODEL: "gpt-6-luna" });
     const calls = stubFetch(() => openAiReply(modelScenario({ gender: "female", liveVoice: "cedar", realtimeVoice: "ash", age: 15 })));
     const out = await generatePersona(FREIGHT);
     expect(calls).toHaveLength(1);
@@ -339,9 +345,9 @@ describe("OpenAI builder (strict json_schema)", () => {
     expect(c.url).toBe(OPENAI_URL);
     expect(c.headers.Authorization).toBe(`Bearer ${CHAT_KEY}`);
     expect(c.body).toMatchObject({
-      model: "grader-x",
+      model: "gpt-6-astra",
       temperature: 0.6,
-      max_completion_tokens: 4096,
+      max_completion_tokens: 6144,
       reasoning_effort: "medium",
       response_format: { type: "json_schema", json_schema: { name: PERSONA_TOOL_NAME, strict: true, schema: PERSONA_JSON_SCHEMA } },
     });

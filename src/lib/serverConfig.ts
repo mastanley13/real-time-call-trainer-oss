@@ -175,6 +175,8 @@ export type WizardProvider = "anthropic" | "openai" | "none";
 
 /** Default builder model on the Anthropic Messages API. */
 const DEFAULT_WIZARD_ANTHROPIC_MODEL = "claude-opus-5-5";
+/** Default builder model on OpenAI (never falls back to the lighter per-turn chat model on api.openai.com). */
+const DEFAULT_WIZARD_OPENAI_MODEL = "gpt-6-astra";
 
 const wizardProviderSetting = (env: Env) => env.WIZARD_PROVIDER?.trim().toLowerCase() || undefined;
 
@@ -209,20 +211,25 @@ export function wizardProvider(env: Env = process.env): WizardProvider {
   return openAiReady ? "openai" : "none";
 }
 
-/** The wizard model on the chat provider: LLM_MODEL_GRADING, then LLM_MODEL, then the built-in default. */
+/**
+ * The wizard model on the OpenAI/chat provider: on OpenAI's host it defaults to gpt-6-astra (never gpt-6-luna)
+ * so persona generation always runs on a high-intelligence builder. Custom non-OpenAI hosts keep LLM_MODEL_GRADING / LLM_MODEL.
+ */
 export function wizardFallbackModel(env: Env = process.env): string {
-  return env.LLM_MODEL_GRADING || env.LLM_MODEL || DEFAULT_CHAT_MODEL;
+  const base = (env.LLM_BASE_URL || OPENAI_DEFAULT_BASE_URL).replace(/\/$/, "");
+  if (wizardOpenAiKey(env) || isOpenAiBaseUrl(base)) return DEFAULT_WIZARD_OPENAI_MODEL;
+  return env.LLM_MODEL_GRADING || env.LLM_MODEL || DEFAULT_WIZARD_OPENAI_MODEL;
 }
 
 /**
- * The builder model: WIZARD_MODEL, else the Anthropic default on the Anthropic path, else the grading model
- * (llmGradingModel() for process.env). Server-only; never returned to the browser.
+ * The builder model: WIZARD_MODEL, else the Anthropic default (claude-opus-5-5) on the Anthropic path,
+ * else the OpenAI default (gpt-6-astra) on OpenAI's host. Server-only; never returned to the browser.
  */
 export function wizardModel(env: Env = process.env): string {
   const set = env.WIZARD_MODEL?.trim();
   if (set) return set;
   if (wizardProvider(env) === "anthropic") return DEFAULT_WIZARD_ANTHROPIC_MODEL;
-  return env === process.env ? llmGradingModel() : wizardFallbackModel(env);
+  return wizardFallbackModel(env);
 }
 
 export function llmBaseUrl(): string {

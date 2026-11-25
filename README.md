@@ -87,7 +87,7 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `ANTHROPIC_API_KEY` | Optional | Dedicated Anthropic Messages API key for the AI Persona Wizard (`/api/persona/generate`). Default model `claude-opus-5-5` with automatic fallback to the chat provider |
 | `WIZARD_PROVIDER` | Optional | Force the persona wizard provider: `anthropic` or `openai` (auto-detects `anthropic` when `ANTHROPIC_API_KEY` is set) |
 | `WIZARD_API_KEY` | Optional | Dedicated API key for the persona wizard (Anthropic or OpenAI) |
-| `WIZARD_MODEL` | Optional | Model override for the persona wizard (default `claude-opus-5-5` on Anthropic; falls back to `LLM_MODEL_GRADING` / `LLM_MODEL` on OpenAI) |
+| `WIZARD_MODEL` | Optional | Model override for the persona wizard (default `claude-opus-5-5` on Anthropic; `gpt-6-astra` at medium reasoning on OpenAI) |
 | `DATABASE_URL` | For accounts | Postgres connection string |
 | `JWT_SECRET` | For accounts | 32+ random bytes (`node generate-jwt-secret.js`). Also keys the grade seal and the access-code cookie |
 | `CRON_SECRET` | Optional | Bearer secret for `/api/cron/purge-expired` and `/api/cron/openai-keys` (OpenAI key slot health, also open to platform admins). The purge route accepts only `Authorization: Bearer $CRON_SECRET` (Vercel Cron sends it when the variable is set) and returns 401 without it |
