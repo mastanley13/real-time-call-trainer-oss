@@ -2,14 +2,25 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth, isDemoUser } from "@/lib/apiAuth";
 import { ipLimitResponse, userLimitResponse, readJsonLimited } from "@/lib/rateLimit";
-import { isCompetitionTrackSlug } from "@/lib/competition";
+import { isCompetitionPeriod, isCompetitionTrackSlug } from "@/lib/competition";
 import { getCompetitionStatus, updateCompetitionProfile } from "@/lib/competitionServer";
 
 export async function GET(req: NextRequest) {
   const auth = requireAuth(req);
   const userId = auth instanceof NextResponse || isDemoUser(auth) ? null : auth.id;
   const track = req.nextUrl.searchParams.get("track");
-  return NextResponse.json(await getCompetitionStatus({ userId, track: isCompetitionTrackSlug(track) ? track : null }), { headers: { "Cache-Control": "no-store" } });
+  const period = req.nextUrl.searchParams.get("period");
+  const rawLimit = Number(req.nextUrl.searchParams.get("limit"));
+  const limit = Number.isSafeInteger(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : undefined;
+  return NextResponse.json(
+    await getCompetitionStatus({
+      userId,
+      track: isCompetitionTrackSlug(track) ? track : null,
+      period: isCompetitionPeriod(period) ? period : "month",
+      limit,
+    }),
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 const Body = z.object({ displayName: z.string().min(1).max(40), teamLabel: z.string().max(48).nullable().optional() });
 export async function PATCH(req: NextRequest) {

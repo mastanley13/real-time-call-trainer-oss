@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { FileJson, GitPullRequest, LibraryBig, MessageSquareQuote, Radar, SquareTerminal } from "lucide-react";
 import HeroDeck, { EXAMPLE_TURNS } from "@/components/landing/HeroDeck";
+import LeaderboardSpotlight from "@/components/landing/LeaderboardSpotlight";
 import PublicFooter from "@/components/landing/PublicFooter";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
 import "@/components/landing/landing-desk.css";
@@ -104,6 +105,8 @@ export default function Home() {
             <HeroDeck />
           </div>
         </section>
+
+        <LeaderboardSpotlight />
 
         <section aria-labelledby="how-h" className="desk-wrap">
           <div className={SECTION}>

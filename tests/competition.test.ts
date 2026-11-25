@@ -6,8 +6,8 @@ const mocks = vi.hoisted(() => ({ db: {} as Record<string, unknown> }));
 vi.mock("@/lib/db", () => ({ prisma: new Proxy({}, { get: (_t, key) => mocks.db[String(key)] }) }));
 
 import {
-  COMPETITION_TRACKS, competitionPhase, validateCompetitionSubmission, compareLeaderboardRows,
-  defaultDisplayName, sanitizeDisplayName,
+  COMPETITION_TRACKS, calendarSeasonSlug, competitionPeriodBounds, competitionPhase,
+  validateCompetitionSubmission, compareLeaderboardRows, defaultDisplayName, sanitizeDisplayName, isCompetitionPeriod,
 } from "@/lib/competition";
 import { LIBRARY } from "@/lib/personas";
 import {
@@ -40,10 +40,12 @@ function matches(row: CompetitionEntry, where: Record<string, unknown>) {
   return Object.entries(where).every(([key, value]) => {
     const actual = row[key as keyof CompetitionEntry];
     if (value && typeof value === "object") {
-      const filter = value as { in?: unknown[]; not?: unknown; lt?: Date };
-      if (filter.in) return filter.in.includes(actual);
-      if ("not" in filter) return actual !== filter.not;
-      if (filter.lt) return actual instanceof Date && actual < filter.lt;
+      const filter = value as { in?: unknown[]; not?: unknown; lt?: Date; gte?: Date };
+      if (filter.in && !filter.in.includes(actual)) return false;
+      if ("not" in filter && actual === filter.not) return false;
+      if (filter.lt && !(actual instanceof Date && actual < filter.lt)) return false;
+      if (filter.gte && !(actual instanceof Date && actual >= filter.gte)) return false;
+      return true;
     }
     return actual === value;
   });
@@ -118,6 +120,32 @@ describe("shared competition contract", () => {
     expect(defaultDisplayName({ email: "rep@example.test" })).toBe("rep");
     expect(defaultDisplayName({ firstName: "Fictional", lastName: "Person", email: "rep@example.test" })).toBe("Fictional P.");
     expect(sanitizeDisplayName("  Alex\u0000   Example  ")).toBe("Alex Example");
+  });
+  it("computes calendar-month season slugs and day/week/month/year UTC bounds", () => {
+    const wed = new Date("2026-11-25T15:30:00Z"); // Wednesday
+    expect(calendarSeasonSlug(wed)).toBe("2026-11");
+    expect(isCompetitionPeriod("month")).toBe(true);
+    expect(isCompetitionPeriod("alltime")).toBe(false);
+    expect(competitionPeriodBounds("day", wed)).toMatchObject({
+      start: new Date("2026-11-25T00:00:00Z"),
+      end: new Date("2026-11-26T00:00:00Z"),
+      label: "Today",
+    });
+    expect(competitionPeriodBounds("week", wed)).toMatchObject({
+      start: new Date("2026-11-23T00:00:00Z"), // Monday
+      end: new Date("2026-11-30T00:00:00Z"),
+      label: "This week",
+    });
+    expect(competitionPeriodBounds("month", wed)).toMatchObject({
+      start: new Date("2026-11-01T00:00:00Z"),
+      end: new Date("2026-12-01T00:00:00Z"),
+      label: "November 2026",
+    });
+    expect(competitionPeriodBounds("year", wed)).toMatchObject({
+      start: new Date("2026-01-01T00:00:00Z"),
+      end: new Date("2027-01-01T00:00:00Z"),
+      label: "2026",
+    });
   });
 });
 
@@ -208,13 +236,31 @@ describe("public rankings and share cards", () => {
     expect(card).not.toHaveProperty("transcript");
     expect(await getCompetitionShareCard("unknown")).toBeNull();
   });
+  it("filters rankings across day, week, month, and year windows", async () => {
+    vi.stubEnv("COMPETITION_SLUG", "");
+    const ref = new Date("2026-11-25T15:00:00Z"); // Wednesday
+    const base = { status: "completed", grade: "A", goalAchieved: true };
+    seed({ ...base, userId: "u-day", overallScore: 88, completedAt: new Date("2026-11-25T10:00:00Z") });
+    seed({ ...base, userId: "u-week", overallScore: 91, completedAt: new Date("2026-11-23T10:00:00Z") });
+    seed({ ...base, userId: "u-month", overallScore: 94, completedAt: new Date("2026-11-05T10:00:00Z") });
+    seed({ ...base, userId: "u-year", overallScore: 97, seasonSlug: "2026-06", completedAt: new Date("2026-06-15T10:00:00Z") });
+    expect((await getCompetitionStatus({ period: "day", now: ref })).leaderboard.map((r) => r.overallScore)).toEqual([88]);
+    expect((await getCompetitionStatus({ period: "week", now: ref })).leaderboard.map((r) => r.overallScore)).toEqual([91, 88]);
+    expect((await getCompetitionStatus({ period: "month", now: ref })).leaderboard.map((r) => r.overallScore)).toEqual([94, 91, 88]);
+    expect((await getCompetitionStatus({ period: "year", now: ref })).leaderboard.map((r) => r.overallScore)).toEqual([97, 94, 91, 88]);
+  });
   it("provides a deterministic fictional demo and public card without a database", async () => {
     vi.stubEnv("DATABASE_URL", "");
     vi.stubEnv("DEMO_MODE", "true");
     expect(competitionConfig()).toMatchObject({ enabled: true, demoMode: true, phase: "active" });
-    const status = await getCompetitionStatus();
-    expect(status.leaderboard).toHaveLength(7);
-    expect(status.viewer.authenticated).toBe(false);
+    const yearStatus = await getCompetitionStatus({ period: "year" });
+    expect(yearStatus.leaderboard).toHaveLength(7);
+    expect(yearStatus.viewer.authenticated).toBe(false);
+    const monthStatus = await getCompetitionStatus({ period: "month" });
+    expect(monthStatus.leaderboard.length).toBeGreaterThanOrEqual(4);
+    expect(monthStatus.period).toBe("month");
+    const dayStatus = await getCompetitionStatus({ period: "day" });
+    expect(dayStatus.leaderboard.length).toBeGreaterThanOrEqual(1);
     const card = await getCompetitionShareCard("demo-dealerships");
     expect(card).toMatchObject({ trackSlug: "dealerships", demoMode: true });
     const req = new NextRequest("http://localhost/api/competition/card/demo-dealerships");

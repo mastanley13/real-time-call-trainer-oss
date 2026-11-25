@@ -10,8 +10,56 @@ export const COMPETITION_CALL_MAX_SECONDS = 360; // 6 minutes hard cap
 export const COMPETITION_MIN_DURATION_SECONDS = 45;
 export const COMPETITION_MIN_TRAINEE_TURNS = 4;
 export const COMPETITION_DEFAULT_SEASON = "launch-2026";
-export const COMPETITION_DEFAULT_TITLE = "Launch Sales Call Championship";
+export const COMPETITION_DEFAULT_TITLE = "Sales Call Championship";
 export const COMPETITION_DEFAULT_MAX_TOTAL_CALLS = 1500;
+
+export const COMPETITION_PERIODS = ["day", "week", "month", "year"] as const;
+export type CompetitionPeriod = (typeof COMPETITION_PERIODS)[number];
+
+export const COMPETITION_PERIOD_LABELS: Record<CompetitionPeriod, string> = {
+  day: "Today",
+  week: "This week",
+  month: "This month",
+  year: "This year",
+};
+
+export function isCompetitionPeriod(value: unknown): value is CompetitionPeriod {
+  return typeof value === "string" && (COMPETITION_PERIODS as readonly string[]).includes(value);
+}
+
+/** Auto-rolling UTC calendar-month season key, e.g. "2026-11". */
+export function calendarSeasonSlug(now = new Date()): string {
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+/** Half-open UTC calendar bounds [start, end) and human label for day, week (Mon-Sun), month, or year. */
+export function competitionPeriodBounds(period: CompetitionPeriod, now = new Date()): { start: Date; end: Date; label: string } {
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const d = now.getUTCDate();
+  if (period === "day") {
+    const start = new Date(Date.UTC(y, m, d));
+    const end = new Date(Date.UTC(y, m, d + 1));
+    return { start, end, label: "Today" };
+  }
+  if (period === "week") {
+    const weekday = (now.getUTCDay() + 6) % 7; // Monday = 0 .. Sunday = 6
+    const start = new Date(Date.UTC(y, m, d - weekday));
+    const end = new Date(Date.UTC(y, m, d - weekday + 7));
+    return { start, end, label: "This week" };
+  }
+  if (period === "year") {
+    const start = new Date(Date.UTC(y, 0, 1));
+    const end = new Date(Date.UTC(y + 1, 0, 1));
+    return { start, end, label: String(y) };
+  }
+  const start = new Date(Date.UTC(y, m, 1));
+  const end = new Date(Date.UTC(y, m + 1, 1));
+  const label = start.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+  return { start, end, label };
+}
 
 export const COMPETITION_TRACK_SLUGS = [
   "home-services",
@@ -154,11 +202,11 @@ export const COMPETITION_TRACKS: readonly CompetitionTrack[] = [
 export const COMPETITION_PRIZES = {
   soloHeadline: "1 full year of Pro free",
   soloValueUsd: PRICE.pro.year,
-  soloDetail: `Overall #1 finisher wins 1 year of Pro ($${PRICE.pro.year} value, ${PRO_VOICE_MIN} Standard voice minutes every month).`,
+  soloDetail: `Monthly #1 finisher wins 1 year of Pro ($${PRICE.pro.year} value, ${PRO_VOICE_MIN} Standard voice minutes every month).`,
   teamHeadline: "Team winner bonus: 1st seat free + 50% off every extra seat for 1 year",
   teamRegularSeatYearUsd: PRICE.team.year,
   teamDiscountSeatYearUsd: Math.round(PRICE.team.year / 2),
-  teamDetail: `If the winner or someone on their team activates Team (${TEAM_MIN_SEATS} seats min), their first seat is free for a full year and every additional seat is 50% off ($${Math.round(PRICE.team.year / 2)}/seat/yr instead of $${PRICE.team.year}/seat/yr, ${TEAM_VOICE_MIN_PER_SEAT} pooled minutes per seat monthly).`,
+  teamDetail: `If the monthly winner or someone on their team activates Team (${TEAM_MIN_SEATS} seats min), their first seat is free for a full year and every additional seat is 50% off ($${Math.round(PRICE.team.year / 2)}/seat/yr instead of $${PRICE.team.year}/seat/yr, ${TEAM_VOICE_MIN_PER_SEAT} pooled minutes per seat monthly).`,
 } as const;
 
 export type CompetitionPhase = "disabled" | "upcoming" | "active" | "ended";
@@ -226,6 +274,8 @@ export interface CompetitionViewerState {
 
 export interface CompetitionStatusResponse {
   season: CompetitionSeasonInfo;
+  period: CompetitionPeriod;
+  periodLabel: string;
   tracks: readonly CompetitionTrack[];
   leaderboard: CompetitionLeaderboardRow[];
   totalQualifiedEntries: number;

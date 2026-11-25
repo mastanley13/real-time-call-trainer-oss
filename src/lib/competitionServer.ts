@@ -7,10 +7,11 @@ import { CONNECT_WINDOW_SECONDS, HEARTBEAT_TIMEOUT_SECONDS, MAX_CONNECT_LAG_SECO
 import {
   COMPETITION_TRACKS, COMPETITION_MAX_ATTEMPTS, COMPETITION_CALL_MAX_SECONDS,
   COMPETITION_MIN_DURATION_SECONDS, COMPETITION_MIN_TRAINEE_TURNS,
-  COMPETITION_DEFAULT_SEASON, COMPETITION_DEFAULT_TITLE, COMPETITION_DEFAULT_MAX_TOTAL_CALLS,
+  COMPETITION_DEFAULT_TITLE, COMPETITION_DEFAULT_MAX_TOTAL_CALLS,
+  calendarSeasonSlug, competitionPeriodBounds,
   competitionPhase, competitionTrackBySlug, compareLeaderboardRows, defaultDisplayName,
   sanitizeDisplayName, sanitizeTeamLabel, validateCompetitionSubmission,
-  type CompetitionTrackSlug, type CompetitionStatusResponse, type CompetitionShareCardData,
+  type CompetitionPeriod, type CompetitionTrackSlug, type CompetitionStatusResponse, type CompetitionShareCardData,
   type CompetitionFinalizeResult, type CompetitionLeaderboardRow, type CompetitionUserEntry,
 } from "./competition";
 
@@ -27,13 +28,12 @@ const date = (value?: string) => {
 export function competitionConfig(env = process.env, now = new Date()) {
   const demoMode = env.DEMO_MODE === "true" || !env.DATABASE_URL;
   const enabled = demoMode || env.COMPETITION_ENABLED === "true";
-  const day = 86_400_000;
-  const today = Math.floor(now.getTime() / day) * day;
-  const startAt = demoMode ? new Date(today - 5 * day) : date(env.COMPETITION_START_AT);
-  const endAt = demoMode ? new Date(today + 25 * day) : date(env.COMPETITION_END_AT);
+  const monthBounds = competitionPeriodBounds("month", now);
+  const startAt = demoMode ? monthBounds.start : date(env.COMPETITION_START_AT) ?? monthBounds.start;
+  const endAt = demoMode ? monthBounds.end : date(env.COMPETITION_END_AT) ?? monthBounds.end;
   const cap = Number(env.COMPETITION_MAX_TOTAL_CALLS);
   return {
-    slug: env.COMPETITION_SLUG || COMPETITION_DEFAULT_SEASON,
+    slug: env.COMPETITION_SLUG || calendarSeasonSlug(now),
     title: env.COMPETITION_TITLE || COMPETITION_DEFAULT_TITLE,
     enabled, demoMode, startAt, endAt, phase: competitionPhase({ enabled, startAt, endAt }, now),
     maxTotalCalls: Number.isSafeInteger(cap) && cap > 0 ? cap : COMPETITION_DEFAULT_MAX_TOTAL_CALLS,
@@ -56,13 +56,28 @@ function rankOf(rows: Ranked[], userId: string, track?: string): number | null {
 }
 
 const demoNames = ["Avery Quill", "Rowan Finch", "Tess Wren", "Jules Moss", "Kai Linden", "Mara Vale", "Remy Slate"];
-function demoEntries(cfg: ReturnType<typeof competitionConfig>): Ranked[] {
+const demoTeams = ["Apex Auto", "Harbor Solar", "Northstar Freight", "Beacon Roofing", "Summit Realty", "Ridgeway Mutual", "Clearpath Ops"];
+function demoEntries(cfg: ReturnType<typeof competitionConfig>, now = new Date()): Ranked[] {
+  const dayStart = competitionPeriodBounds("day", now).start.getTime();
+  const weekStart = competitionPeriodBounds("week", now).start.getTime();
+  const monthStart = competitionPeriodBounds("month", now).start.getTime();
+  const yearStart = competitionPeriodBounds("year", now).start.getTime();
+  // Spread realistic demo timestamps across today, this week, this month, and earlier this year so all 4 tabs populate cleanly.
+  const times = [
+    new Date(dayStart + 3 * 3_600_000),
+    new Date(dayStart + 2 * 3_600_000),
+    new Date(dayStart + 1 * 3_600_000),
+    new Date(Math.max(weekStart, now.getTime() - 2 * 86_400_000)),
+    new Date(Math.max(monthStart, now.getTime() - 6 * 86_400_000)),
+    new Date(Math.max(monthStart, now.getTime() - 9 * 86_400_000)),
+    new Date(Math.max(yearStart, monthStart - 15 * 86_400_000)),
+  ];
   return COMPETITION_TRACKS.map((track, i) => {
-    const completedAt = new Date((cfg.startAt?.getTime() ?? Date.UTC(2026, 10, 20)) + (i + 1) * 3_600_000);
+    const completedAt = times[i] ?? new Date(dayStart + 3_600_000);
     return {
       id: "demo-" + track.slug, userId: "demo-person-" + i, seasonSlug: cfg.slug, trainerSessionId: null,
       trackSlug: track.slug, scenarioId: track.scenarioId, attemptNumber: 1, status: "completed",
-      displayName: demoNames[i], teamLabel: null, overallScore: 96 - i * 3, grade: i < 3 ? "A" : "B",
+      displayName: demoNames[i], teamLabel: demoTeams[i] ?? null, overallScore: 96 - i * 3, grade: i < 3 ? "A" : "B",
       goalAchieved: i < 6, durationSeconds: 180 + i * 15, shareToken: "demo-" + track.slug,
       createdAt: completedAt, completedAt, updatedAt: completedAt,
     };
@@ -70,6 +85,20 @@ function demoEntries(cfg: ReturnType<typeof competitionConfig>): Ranked[] {
 }
 async function seasonRows(seasonSlug: string): Promise<Ranked[]> {
   return qualified(await prisma.competitionEntry.findMany({ where: { seasonSlug, status: "completed", overallScore: { not: null } } }));
+}
+async function periodRows(period: CompetitionPeriod, cfg: ReturnType<typeof competitionConfig>, now: Date): Promise<{ rows: Ranked[]; label: string }> {
+  const bounds = competitionPeriodBounds(period, now);
+  if (cfg.demoMode) {
+    const all = demoEntries(cfg, now);
+    const filtered = all.filter((r) => r.completedAt >= bounds.start && r.completedAt < bounds.end);
+    return { rows: filtered, label: bounds.label };
+  }
+  // Month uses the active monthly season or calendar month; day/week/year query completedAt within the calendar bounds across seasons.
+  const where = period === "month" && process.env.COMPETITION_SLUG
+    ? { seasonSlug: cfg.slug, status: "completed", overallScore: { not: null } }
+    : { status: "completed", overallScore: { not: null }, completedAt: { gte: bounds.start, lt: bounds.end } };
+  const rows = qualified(await prisma.competitionEntry.findMany({ where }));
+  return { rows, label: bounds.label };
 }
 function publicRow(row: Ranked, index: number, userId?: string | null): CompetitionLeaderboardRow {
   const track = competitionTrackBySlug(row.trackSlug)!;
@@ -90,9 +119,11 @@ function userEntry(row: CompetitionEntry): CompetitionUserEntry {
   };
 }
 
-export async function getCompetitionStatus(opts: { userId?: string | null; track?: CompetitionTrackSlug | null; limit?: number } = {}): Promise<CompetitionStatusResponse> {
-  const cfg = competitionConfig();
-  const rows = cfg.demoMode ? demoEntries(cfg) : await seasonRows(cfg.slug);
+export async function getCompetitionStatus(opts: { userId?: string | null; track?: CompetitionTrackSlug | null; period?: CompetitionPeriod; limit?: number; now?: Date } = {}): Promise<CompetitionStatusResponse> {
+  const now = opts.now ?? new Date();
+  const period: CompetitionPeriod = opts.period ?? "month";
+  const cfg = competitionConfig(process.env, now);
+  const { rows, label: periodLabel } = await periodRows(period, cfg, now);
   const globalCallsUsed = cfg.demoMode ? rows.length : await prisma.competitionEntry.count({ where: { seasonSlug: cfg.slug, status: { in: consumed } } });
   const user = !cfg.demoMode && opts.userId ? await prisma.user.findUnique({ where: { id: opts.userId }, select: { firstName: true, lastName: true, email: true } }) : null;
   const entries = user && opts.userId ? await prisma.competitionEntry.findMany({ where: { seasonSlug: cfg.slug, userId: opts.userId }, orderBy: { createdAt: "desc" } }) : [];
@@ -104,6 +135,8 @@ export async function getCompetitionStatus(opts: { userId?: string | null; track
       maxAttempts: COMPETITION_MAX_ATTEMPTS, maxCallSeconds: COMPETITION_CALL_MAX_SECONDS,
       minDurationSeconds: COMPETITION_MIN_DURATION_SECONDS, minTraineeTurns: COMPETITION_MIN_TRAINEE_TURNS,
       demoMode: cfg.demoMode, globalCallsUsed, globalCallsCap: cfg.maxTotalCalls },
+    period,
+    periodLabel,
     tracks: COMPETITION_TRACKS, leaderboard: rank(rows, opts.track).slice(0, Math.max(0, Math.min(opts.limit ?? 100, 100))).map((r, i) => publicRow(r, i, opts.userId)),
     totalQualifiedEntries: rows.length,
     viewer: { authenticated: !!user, displayName: entries[0]?.displayName ?? (user ? safeDefaultName(user) : null),

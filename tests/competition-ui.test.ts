@@ -12,6 +12,7 @@ type Viewer = CompetitionStatusResponse["viewer"];
 const UI_FILES = [
   "src/app/compete/page.tsx",
   "src/components/compete/CompeteClient.tsx",
+  "src/components/landing/LeaderboardSpotlight.tsx",
   "src/app/compete/card/[token]/page.tsx",
   "src/components/compete/ShareCardActions.tsx",
 ];
