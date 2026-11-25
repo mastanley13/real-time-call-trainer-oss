@@ -59,7 +59,7 @@ const llmReply = (rubric = scenario.rubric) =>
     goalExplanation: "You offered a slot that was not confirmed.",
   });
 
-const ENV_KEYS = ["LLM_API_KEY", "OPENAI_API_KEY", "LLM_MODEL", "LLM_MODEL_GRADING", "LLM_BASE_URL", "DATABASE_URL", "DEMO_MODE", "RATE_LIMIT_GRADING_MAX"] as const;
+const ENV_KEYS = ["LLM_API_KEY", "OPENAI_API_KEY", "LLM_MODEL", "LLM_MODEL_GRADING", "LLM_GRADING_REASONING", "LLM_BASE_URL", "DATABASE_URL", "DEMO_MODE", "RATE_LIMIT_GRADING_MAX"] as const;
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 beforeEach(() => {
   for (const k of ENV_KEYS) delete process.env[k];
@@ -185,15 +185,29 @@ describe("LLM grader", () => {
     expect(mocks.chat.mock.calls[0][1]).toMatchObject({
       json: true,
       model: "gpt-6.2-sol",
-      maxTokens: 4500,
-      reasoningEffort: "low",
+      maxTokens: 16_000,
+      reasoningEffort: "medium",
       jsonSchema: { name: "call_evaluation" },
     });
+    expect(mocks.chat.mock.calls[0][0][1].content).toContain("<transcript>");
     expect(ev).toMatchObject({ method: "llm", graderVersion: GRADER_VERSIONS.llm });
     expect(ev.model).toBeUndefined();
     expect(JSON.stringify(ev)).not.toContain("gpt-test-mini");
     for (const c of ev.criteria) expect(c.evidence).toEqual([{ speaker: "trainee", quote: OFFER, line: OFFER_LINE }]);
     expect(ev.goalAchievement.status).toBe("partial");
+  });
+
+  it("respects LLM_GRADING_REASONING and falls back to LLM_MODEL before using heuristic", async () => {
+    withKey();
+    process.env.LLM_MODEL = "gpt-6-luna";
+    process.env.LLM_MODEL_GRADING = "gpt-6.2-sol";
+    process.env.LLM_GRADING_REASONING = "high";
+    mocks.chat.mockRejectedValueOnce(new Error("LLM_BAD_JSON")).mockResolvedValueOnce(llmReply());
+    const ev = await evaluateCall(scenario, CALL);
+    expect(mocks.chat).toHaveBeenCalledTimes(2);
+    expect(mocks.chat.mock.calls[0][1]).toMatchObject({ model: "gpt-6.2-sol", reasoningEffort: "high", maxTokens: 16_000 });
+    expect(mocks.chat.mock.calls[1][1]).toMatchObject({ model: "gpt-6-luna", reasoningEffort: "low", maxTokens: 16_000 });
+    expect(ev.method).toBe("llm");
   });
 
   it("falls back to the rules-based grader, without a model, when the model call fails", async () => {
