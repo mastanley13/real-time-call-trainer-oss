@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Copy, Globe, Library, Loader2, Play, Plus, Save, Sparkles, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Copy, Globe, Library, Loader2, Lock, Play, Plus, Save, Sparkles, Trash2, Users } from "lucide-react";
 import { CALL_TYPES, CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, OBJECTION_TYPES, ScenarioSchema, type CallType, type ObjectionType, type Scenario } from "@/lib/scenarios";
+import { LIVE_CAST_VOICES } from "@/lib/liveCasting";
 import { CONTEXT_KINDS, CONTEXT_LABELS, type ContextKind, type FetchedPage, type FieldSource, type WizardInput, type WizardOutput } from "@/lib/wizard-types";
-import { saveCustomScenario } from "@/lib/scenarioStore";
+import { persistCustomScenario } from "@/lib/scenarioStore";
 import { useAuth } from "@/contexts/AuthContext";
 import { radioKeys } from "@/components/call/CopilotRail";
 import { FormSkeleton } from "@/components/ui/Skeleton";
@@ -87,25 +88,41 @@ function FieldLabel({ htmlFor, src, children }: { htmlFor: string; src?: FieldSo
 }
 
 export default function PersonaWizard() {
-  const { capabilities, isAuthenticated, isLoading } = useAuth();
+  const { user, capabilities, isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
   const [step, setStep] = useState(0);
-  const [input, setInput] = useState<WizardInput>({ role: "sdr", industry: "", callType: "cold", difficulty: "medium", product: "", contexts: [] });
+  const [input, setInput] = useState<WizardInput>({ role: "sdr", industry: "", callType: "cold", difficulty: "medium", product: "", contexts: [], keepRealNames: true });
   const [contexts, setContexts] = useState<Record<ContextKind, string>>({ job: "", url: "", crm: "", icp: "", call: "" });
-  const [tab, setTab] = useState<ContextKind>("crm");
+  const [tab, setTab] = useState<ContextKind>("url");
   const [url, setUrl] = useState("");
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState<FetchedPage | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [sharedWithOrg, setSharedWithOrg] = useState(false);
+  const [savedStorage, setSavedStorage] = useState<"database" | "local" | null>(null);
   const [out, setOut] = useState<WizardOutput | null>(null);
   const [draft, setDraft] = useState<Scenario | null>(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  const stored = !!capabilities?.database && !capabilities?.demoMode;
+  const canShareWithOrg = stored && (user?.role === "manager" || user?.role === "owner" || !!user?.isPlatformAdmin);
+  const wizardHasAi = !!capabilities?.llm;
+
   useEffect(() => {
     if (!isLoading && capabilities && !isAuthenticated) router.replace("/login");
   }, [isLoading, capabilities, isAuthenticated, router]);
+
+  // Support /library/new?url=https://example.com so landing pages or links can drop a site straight in.
+  const urlQueryLoaded = useRef(false);
+  useEffect(() => {
+    if (urlQueryLoaded.current || typeof window === "undefined") return;
+    urlQueryLoaded.current = true;
+    const raw = new URLSearchParams(window.location.search).get("url")?.trim();
+    if (raw) setUrl(raw);
+  }, []);
 
   // Each step change moves focus to the new step's heading, so keyboard and screen reader users land on what changed.
   // Not on first render: the page's own h1 leads then.
@@ -121,7 +138,7 @@ export default function PersonaWizard() {
   const issues = validation && !validation.success ? [...new Set(validation.error.issues.map(issueText))].slice(0, 4) : [];
   const total = draft ? Math.round(draft.rubric.reduce((a, c) => a + (Number(c.weight) || 0), 0)) : 0;
   const canNext = [
-    input.role && (input.product.trim() || input.industry.trim()),
+    Boolean(input.role && (input.product.trim() || input.industry.trim() || contexts.url.trim())),
     filled.length > 0 || input.product.trim().length > 20,
     !!draft && !!validation?.success,
     !!draft && total === 100 && draft.rubric.length >= 3,
@@ -132,15 +149,29 @@ export default function PersonaWizard() {
     ? draft.rubric.length < 3 ? "Add at least 3 criteria to continue." : `Weights add up to ${total}%. Make them total 100% to continue.`
     : "";
 
+  const normalizedUrl = (raw: string) => {
+    const t = raw.trim();
+    if (!t) return "";
+    return /^[a-z][a-z0-9+.-]*:\/\//i.test(t) ? t : `https://${t}`;
+  };
+
   async function importUrl() {
     if (fetching) return;
+    const target = normalizedUrl(url);
+    if (!target) return;
+    setUrl(target);
     setFetching(true); setError("");
     try {
-      const res = await fetch("/api/persona/fetch-url", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
-      const data = await res.json();
+      const res = await fetch("/api/persona/fetch-url", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: target }) });
+      const data = (await res.json()) as FetchedPage & { message?: string };
       if (!res.ok) throw new Error(data.message || "That page couldn't be imported.");
       setFetched(data);
       setContexts((c) => ({ ...c, url: `${data.title ? `${data.title}\n\n` : ""}${data.text}` }));
+      setInput((prev) => ({
+        ...prev,
+        product: prev.product.trim() ? prev.product : (data.suggestedProduct || data.description || data.title || prev.product).slice(0, 400),
+        industry: prev.industry.trim() ? prev.industry : (data.suggestedIndustry || prev.industry).slice(0, 80),
+      }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "That page couldn't be imported.");
     } finally {
@@ -151,13 +182,18 @@ export default function PersonaWizard() {
   async function generate() {
     if (generating) return;
     setGenerating(true); setError("");
-    const body: WizardInput = { ...input, contexts: filled.map((k) => ({ kind: k, text: contexts[k].slice(0, 8000), ...(k === "url" && fetched ? { label: fetched.url } : {}) })) };
+    const body: WizardInput = {
+      ...input,
+      keepRealNames: input.keepRealNames ?? true,
+      contexts: filled.map((k) => ({ kind: k, text: contexts[k].slice(0, 8000), ...(k === "url" && fetched ? { label: fetched.url } : {}) })),
+    };
     try {
       const res = await fetch("/api/persona/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || data.error || "The wizard couldn't draft this persona.");
       setOut(data);
       setDraft(data.scenario);
+      setSaved(false);
       setStep(2);
     } catch (e) {
       setError(e instanceof Error ? e.message : "The wizard couldn't draft this persona.");
@@ -179,11 +215,27 @@ export default function PersonaWizard() {
     patch({ rubric: scaled });
   }
 
-  function savePrivate(thenPractise: boolean) {
-    if (!draft || !validation?.success) return;
-    saveCustomScenario({ ...validation.data, builtIn: false });
-    setSaved(true);
-    if (thenPractise) router.push(`/trainer?scenario=${encodeURIComponent(draft.id)}`);
+  async function savePrivate(thenPractice: boolean) {
+    if (!draft || !validation?.success || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      const result = await persistCustomScenario({
+        scenario: { ...validation.data, builtIn: false },
+        useDatabase: stored,
+        sharedWithOrg: canShareWithOrg ? sharedWithOrg : false,
+        keepRealNames: input.keepRealNames ?? true,
+        sourceUrl: fetched?.url ?? null,
+      });
+      setDraft(result.scenario);
+      setSavedStorage(result.meta.stored);
+      setSaved(true);
+      if (thenPractice) router.push(`/trainer?scenario=${encodeURIComponent(result.scenario.id)}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save this persona. Try again.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function copyPack() {
@@ -201,7 +253,7 @@ export default function PersonaWizard() {
           <p className="eyebrow">AI persona wizard</p>
           <h1 className="mt-1 text-3xl font-bold">New persona</h1>
         </div>
-        <span className="chip-model"><Sparkles size={12} strokeWidth={1.75} aria-hidden /> {out ? (out.method === "llm" ? "Generated with AI" : "Template draft (AI unavailable)") : capabilities.llm ? "Drafts with AI" : "Template drafts (no AI key on this server)"}</span>
+        <span className="chip-model"><Sparkles size={12} strokeWidth={1.75} aria-hidden /> {out ? (out.method === "llm" ? "Generated with AI" : "Template draft (AI unavailable)") : wizardHasAi ? "Drafts with AI" : "Template drafts (no AI key on this server)"}</span>
       </div>
 
       <div className="mt-6 grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-8">
@@ -241,6 +293,33 @@ export default function PersonaWizard() {
 
           {step === 0 && (
             <section className="card space-y-6">
+              <div className="rounded-panel border border-primary/35 bg-primary-soft/30 p-4">
+                <p className="label !mb-1 flex items-center gap-1.5 text-ink"><Globe size={14} strokeWidth={1.75} className="text-primary" aria-hidden /> Start from your website</p>
+                <p className="text-sm text-ink-soft">Paste your product or pricing page to import your offer automatically, then customize the buyer below.</p>
+                <div className="mt-3 flex flex-wrap gap-2 sm:flex-nowrap">
+                  <label className="relative flex-1">
+                    <span className="sr-only">Website URL</span>
+                    <Globe size={15} strokeWidth={1.75} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" aria-hidden />
+                    <input
+                      className="input !pl-9"
+                      type="url"
+                      placeholder="https://yourcompany.com/pricing"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void importUrl(); } }}
+                    />
+                  </label>
+                  <button type="button" className="btn-primary shrink-0" onClick={importUrl} disabled={!fetching && !url.trim()} aria-disabled={fetching}>
+                    {fetching ? <Loader2 size={15} strokeWidth={1.75} className="animate-spin" aria-hidden /> : <Sparkles size={15} strokeWidth={1.75} aria-hidden />}
+                    {fetching ? "Importing…" : "Import website"}
+                  </button>
+                </div>
+                {fetched && (
+                  <p className="mt-2 font-mono text-[11px] text-ok">
+                    Imported {fetched.title || fetched.url} · {(fetched.bytes / 1024).toFixed(0)} KB · public pages only, private addresses are blocked
+                  </p>
+                )}
+              </div>
               <div>
                 <p className="label">Sales job</p>
                 <div className="flex flex-wrap gap-1.5">
@@ -295,12 +374,31 @@ export default function PersonaWizard() {
                       <input className="input !pl-9" type="url" placeholder="https://example.com/pricing" value={url} onChange={(e) => setUrl(e.target.value)} />
                     </label>
                     {/* aria-disabled while busy, so the focused button keeps focus instead of dropping it to the page. */}
-                    <button type="button" className="btn-ghost" onClick={importUrl} disabled={!fetching && !/^https?:\/\//.test(url)} aria-disabled={fetching}>{fetching ? <Loader2 size={15} strokeWidth={1.75} className="animate-spin" aria-hidden /> : null} Import</button>
+                    <button type="button" className="btn-ghost" onClick={importUrl} disabled={!fetching && !url.trim()} aria-disabled={fetching}>{fetching ? <Loader2 size={15} strokeWidth={1.75} className="animate-spin" aria-hidden /> : null} Import</button>
                   </div>
                 )}
                 {tab === "url" && fetched && <p className="font-mono text-[11px] text-ok">Imported {fetched.title || fetched.url} · {(fetched.bytes / 1024).toFixed(0)} KB · public pages only, private addresses are blocked</p>}
                 <textarea aria-label={CONTEXT_LABELS[tab]} rows={10} className="input font-mono !text-[13px]" placeholder={PLACEHOLDERS[tab]} value={contexts[tab]} onChange={(e) => setContexts({ ...contexts, [tab]: e.target.value })} />
               </div>
+              <fieldset className="rounded-panel border border-line bg-sunken/50 p-3.5">
+                <legend className="label !mb-1 flex items-center gap-1.5"><Lock size={13} strokeWidth={1.75} className="text-ink-muted" aria-hidden /> Company and product names</legend>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 text-sm transition ${input.keepRealNames !== false ? "border-primary bg-primary-soft/40 text-ink" : "border-line bg-surface text-ink-soft hover:border-ink-muted"}`}>
+                    <input type="radio" name="keep-real-names" className="mt-1 accent-[rgb(var(--primary))]" checked={input.keepRealNames !== false} onChange={() => setInput({ ...input, keepRealNames: true })} />
+                    <span>
+                      <span className="block font-semibold text-ink">Keep real names and context</span>
+                      <span className="mt-0.5 block text-xs text-ink-soft">Practice selling your actual product. Saved privately on your account.</span>
+                    </span>
+                  </label>
+                  <label className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 text-sm transition ${input.keepRealNames === false ? "border-primary bg-primary-soft/40 text-ink" : "border-line bg-surface text-ink-soft hover:border-ink-muted"}`}>
+                    <input type="radio" name="keep-real-names" className="mt-1 accent-[rgb(var(--primary))]" checked={input.keepRealNames === false} onChange={() => setInput({ ...input, keepRealNames: false })} />
+                    <span>
+                      <span className="block font-semibold text-ink">Anonymize names</span>
+                      <span className="mt-0.5 block text-xs text-ink-soft">Replace real company and person names with fictional placeholders.</span>
+                    </span>
+                  </label>
+                </div>
+              </fieldset>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="font-mono text-[11px] text-ink-muted">{contexts[tab].length.toLocaleString()} / 8,000 chars · {filled.length} source{filled.length === 1 ? "" : "s"} added</p>
                 <button type="button" className="btn-primary" onClick={generate} disabled={!generating && !canNext} aria-disabled={generating}>{generating ? <><Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden /> Drafting persona…</> : <><Sparkles size={16} strokeWidth={1.75} aria-hidden /> Draft persona</>}</button>
@@ -320,6 +418,25 @@ export default function PersonaWizard() {
                 <div><FieldLabel htmlFor="d-role" src={src("aiPersona.role")}>Who they are</FieldLabel><input id="d-role" className="input" value={draft.aiPersona.role} onChange={(e) => patchPersona({ role: e.target.value })} /></div>
                 <div><FieldLabel htmlFor="d-beh" src={src("aiPersona.behavior")}>Behavior (instructions to the AI caller)</FieldLabel><textarea id="d-beh" rows={6} className="input" value={draft.aiPersona.behavior} onChange={(e) => patchPersona({ behavior: e.target.value })} /></div>
                 <div><FieldLabel htmlFor="d-open" src={src("aiPersona.openingLine")}>Opening line</FieldLabel><input id="d-open" className="input" value={draft.aiPersona.openingLine} onChange={(e) => patchPersona({ openingLine: e.target.value })} /></div>
+                <div className="rounded-panel border border-line bg-sunken/50 p-3.5 space-y-3">
+                  <p className="label !mb-0">Voice casting and delivery</p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="label" htmlFor="d-voice">Voice</label>
+                      <select id="d-voice" className="input" value={draft.aiPersona.liveVoice ?? "marin"} onChange={(e) => patchPersona({ liveVoice: e.target.value })}>
+                        {LIVE_CAST_VOICES.map((v) => <option key={v} value={v}>{v}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="label" htmlFor="d-emo">Starting mood</label>
+                      <input id="d-emo" className="input" maxLength={20} placeholder="e.g. guarded, hurried" value={draft.aiPersona.emotion ?? ""} onChange={(e) => patchPersona({ emotion: e.target.value || undefined })} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="label" htmlFor="d-deliv">Delivery notes</label>
+                    <textarea id="d-deliv" rows={2} className="input !text-[13px]" maxLength={400} placeholder="Pace, tone, and how their voice shifts during the call" value={draft.aiPersona.liveDelivery ?? ""} onChange={(e) => patchPersona({ liveDelivery: e.target.value || undefined })} />
+                  </div>
+                </div>
                 <div><FieldLabel htmlFor="d-goal" src={src("traineeGoal")}>Rep goal</FieldLabel><textarea id="d-goal" rows={2} className="input" value={draft.traineeGoal} onChange={(e) => patch({ traineeGoal: e.target.value })} /></div>
                 <div><FieldLabel htmlFor="d-script" src={src("callScript")}>Talk track (one step per line)</FieldLabel><textarea id="d-script" rows={6} className="input" value={draft.callScript} onChange={(e) => patch({ callScript: e.target.value })} /></div>
                 <div>
@@ -392,16 +509,38 @@ export default function PersonaWizard() {
             <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)]">
               <section className="card space-y-5">
                 <div>
-                  <h2 className="text-lg font-bold">Keep it private</h2>
-                  <p className="mt-1 text-sm text-ink-soft">Saves to this browser&rsquo;s library under &ldquo;Your personas&rdquo;. Run a test call to check the persona behaves before you share it.</p>
+                  <h2 className="text-lg font-bold">{stored ? "Save to your account" : "Keep it private"}</h2>
+                  <p className="mt-1 text-sm text-ink-soft">
+                    {stored
+                      ? "Saved privately on your account so you can practice from any device. Run a test call to check how the buyer behaves."
+                      : "Saves to this browser\u2019s library under \u201cYour personas\u201d. Run a test call to check the persona behaves before you share it."}
+                  </p>
+                  {canShareWithOrg && (
+                    <label className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-lg border border-line bg-sunken/50 p-3 text-sm">
+                      <input type="checkbox" className="mt-0.5 accent-[rgb(var(--primary))]" checked={sharedWithOrg} onChange={(e) => setSharedWithOrg(e.target.checked)} />
+                      <span>
+                        <span className="flex items-center gap-1.5 font-semibold text-ink"><Users size={14} strokeWidth={1.75} className="text-primary" aria-hidden /> Share with my team</span>
+                        <span className="mt-0.5 block text-xs text-ink-soft">Lets everyone in your organization practice this persona and lets managers assign it.</span>
+                      </span>
+                    </label>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <button className="btn-primary" onClick={() => savePrivate(true)} disabled={!validation?.success}><Play size={15} strokeWidth={1.75} aria-hidden /> Save and test call</button>
-                    <button className="btn-ghost" onClick={() => savePrivate(false)} disabled={!validation?.success}><Save size={15} strokeWidth={1.75} aria-hidden /> {saved ? "Saved" : "Save only"}</button>
+                    <button className="btn-primary" onClick={() => void savePrivate(true)} disabled={saving || !validation?.success}>
+                      {saving ? <Loader2 size={15} strokeWidth={1.75} className="animate-spin" aria-hidden /> : <Play size={15} strokeWidth={1.75} aria-hidden />} Save and test call
+                    </button>
+                    <button className="btn-ghost" onClick={() => void savePrivate(false)} disabled={saving || !validation?.success}>
+                      <Save size={15} strokeWidth={1.75} aria-hidden /> {saved ? "Saved" : "Save only"}
+                    </button>
                   </div>
                   <div role="status" className="empty:hidden">
                     {saved && (
                       <div className="banner-ok mt-4 flex flex-wrap items-center justify-between gap-3">
-                        <p className="flex items-center gap-2"><Check size={16} strokeWidth={1.75} className="shrink-0 text-ok" aria-hidden />Saved to Your personas in this browser.</p>
+                        <p className="flex items-center gap-2">
+                          <Check size={16} strokeWidth={1.75} className="shrink-0 text-ok" aria-hidden />
+                          {savedStorage === "database"
+                            ? (canShareWithOrg && sharedWithOrg ? "Saved to your account and shared with your team." : "Saved privately to your account.")
+                            : "Saved to Your personas in this browser."}
+                        </p>
                         <span className="flex flex-wrap gap-2">
                           <Link href="/library" className="btn-ghost btn-sm"><Library size={14} strokeWidth={1.75} aria-hidden /> Open the Library</Link>
                           <Link href={`/trainer?scenario=${encodeURIComponent(draft.id)}`} className="btn-primary btn-sm"><Play size={13} strokeWidth={1.75} aria-hidden /> Practice it</Link>

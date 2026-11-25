@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     organization: { findUnique: vi.fn() },
     trainerSession: { findMany: vi.fn(), groupBy: vi.fn() },
     trainingAssignment: { findMany: vi.fn(), create: vi.fn() },
+    customScenario: { findFirst: vi.fn() },
     auditEvent: { create: vi.fn() },
   },
 }));
@@ -73,12 +74,25 @@ describe("team assignments", () => {
   const post = (scenarioId: string) =>
     assign(new NextRequest("http://localhost/api/team/assignments", { method: "POST", body: JSON.stringify({ scenarioId, scenarioTitle: "Some persona", assigneeId: "r-1" }), headers: { "Content-Type": "application/json" } }));
 
-  it("refuses a persona that isn't in the library", async () => {
+  it("refuses a persona that isn't in the library or shared with the org", async () => {
     mocks.prisma.user.findFirst.mockResolvedValue({ id: "r-1" });
+    mocks.prisma.customScenario.findFirst.mockResolvedValue(null);
     const res = await post(CUSTOM_ID);
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: "invalid_persona" });
     expect(mocks.prisma.trainingAssignment.create).not.toHaveBeenCalled();
+  });
+
+  it("assigns a team-shared custom persona from the same organization", async () => {
+    mocks.prisma.user.findFirst.mockResolvedValue({ id: "r-1" });
+    mocks.prisma.customScenario.findFirst.mockResolvedValue({ id: CUSTOM_ID });
+    mocks.prisma.trainingAssignment.create.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve({ id: "a-2", createdAt: new Date(NOW), dueAt: null, ...data }));
+    const res = await post(CUSTOM_ID);
+    expect(res.status).toBe(201);
+    expect(mocks.prisma.customScenario.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: CUSTOM_ID, organizationId: "o-1", sharedWithOrg: true },
+    }));
   });
 
   it("assigns a library persona", async () => {

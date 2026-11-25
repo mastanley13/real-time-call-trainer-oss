@@ -8,7 +8,7 @@ import {
   CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps,
   type CallType, type ObjectionType, type Scenario,
 } from "@/lib/scenarios";
-import { duplicateScenario, listScenarios } from "@/lib/scenarioStore";
+import { duplicateScenario, fetchScenarios, listScenarios, persistCustomScenario, type ScenarioMeta } from "@/lib/scenarioStore";
 import { useAuth } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
 import Sheet from "@/components/ui/Sheet";
@@ -42,6 +42,7 @@ export default function LibraryClient() {
   const { capabilities, isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
   const [all, setAll] = useState<Scenario[] | null>(null);
+  const [meta, setMeta] = useState<Record<string, ScenarioMeta>>({});
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<Scenario | null>(null);
@@ -49,7 +50,19 @@ export default function LibraryClient() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const searchRef = useRef<HTMLInputElement>(null);
 
+  const stored = !!capabilities?.database && !capabilities?.demoMode;
+
   useEffect(() => setAll(listScenarios()), []);
+  useEffect(() => {
+    if (!capabilities || !isAuthenticated || !stored) return;
+    let alive = true;
+    fetchScenarios(true).then((res) => {
+      if (!alive) return;
+      setAll(res.scenarios);
+      setMeta(res.meta);
+    });
+    return () => { alive = false; };
+  }, [capabilities, isAuthenticated, stored]);
   useEffect(() => {
     if (!isLoading && capabilities && !isAuthenticated) router.replace("/login");
   }, [isLoading, capabilities, isAuthenticated, router]);
@@ -96,8 +109,15 @@ export default function LibraryClient() {
     });
   }
 
-  function duplicateAndEdit(s: Scenario) {
+  async function duplicateAndEdit(s: Scenario) {
     const copy = duplicateScenario(s);
+    if (stored) {
+      try {
+        await persistCustomScenario({ scenario: copy, useDatabase: true });
+      } catch {
+        /* localStorage copy already saved as fallback */
+      }
+    }
     router.push(`/trainer/scenarios?id=${encodeURIComponent(copy.id)}`);
   }
 
@@ -199,7 +219,12 @@ export default function LibraryClient() {
             <>
               {mine.length > 0 && (
                 <section aria-labelledby="sec-mine">
-                  <SectionHead id="sec-mine" title="Your personas" count={mine.length} />
+                  <SectionHead
+                    id="sec-mine"
+                    title="Your personas"
+                    count={mine.length}
+                    note={Object.values(meta).some((m) => m.sharedWithOrg) ? "Includes personas shared with your team" : stored ? "Saved on your account" : undefined}
+                  />
                   {grid(mine)}
                 </section>
               )}

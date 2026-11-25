@@ -80,6 +80,7 @@ model Organization {
   users               User[]
   trainerSessions     TrainerSession[]
   trainingAssignments TrainingAssignment[]
+  customScenarios     CustomScenario[]
   poolAllowance       UsageAllowance? @relation("OrgPool")
 }
 
@@ -156,6 +157,7 @@ model User {
   competitionEntries CompetitionEntry[]
   assignmentsCreated  TrainingAssignment[] @relation("AssignmentAssigner")
   assignmentsReceived TrainingAssignment[] @relation("AssignmentAssignee")
+  customScenarios     CustomScenario[]
 
   @@index([organizationId])
 }
@@ -163,6 +165,28 @@ model User {
 // ─────────────────────────────────────────────────────────────────────────
 //  Training sessions
 // ─────────────────────────────────────────────────────────────────────────
+
+model CustomScenario {
+  id             String        @id
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  sharedWithOrg  Boolean       @default(false)
+  keepRealNames  Boolean       @default(true)
+  sourceUrl      String?
+  title          String
+  role           String
+  industry       String
+  difficulty     String
+  callType       String
+  data           Json
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([userId, updatedAt])
+  @@index([organizationId, sharedWithOrg])
+}
 
 model TrainerSession {
   id                 String   @id @default(cuid())

@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Info, Loader2, Search } from "lucide-react";
 import Sheet from "@/components/ui/Sheet";
 import { PersonaAvatar } from "@/components/ui/Persona";
-import { listScenarios } from "@/lib/scenarioStore";
+import { fetchScenarios, listScenarios, type ScenarioMeta } from "@/lib/scenarioStore";
 import { jobFamilyLabel, type Scenario } from "@/lib/scenarios";
 import { createLocalAssignment } from "@/lib/assignmentStore";
 import { NOTE_MAX, ROLE_LABEL, teamIdsOf, type Assignment, type AssignmentView, type TeamMember } from "@/lib/team";
@@ -32,7 +32,8 @@ export default function AssignSheet({ members, viewer, defaultAssigneeId, local,
   onClose: () => void;
   onCreated: (a: Assignment | AssignmentView) => void;
 }) {
-  const [scenarios] = useState(() => listScenarios());
+  const [scenarios, setScenarios] = useState(() => listScenarios());
+  const [meta, setMeta] = useState<Record<string, ScenarioMeta>>({});
   const [query, setQuery] = useState("");
   const [family, setFamily] = useState("");
   const [picked, setPicked] = useState<Scenario | null>(null);
@@ -42,6 +43,17 @@ export default function AssignSheet({ members, viewer, defaultAssigneeId, local,
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const submitRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (local) return;
+    let alive = true;
+    fetchScenarios(true).then((res) => {
+      if (!alive) return;
+      setScenarios(res.scenarios);
+      setMeta(res.meta);
+    });
+    return () => { alive = false; };
+  }, [local]);
 
   const families = useMemo(() => [...new Set(scenarios.map((s) => s.role))].sort((a, b) => jobFamilyLabel(a).localeCompare(jobFamilyLabel(b))), [scenarios]);
   const results = useMemo(() => scenarios.filter((s) => (!family || s.role === family) && matches(s, query)), [scenarios, family, query]);
@@ -116,17 +128,21 @@ export default function AssignSheet({ members, viewer, defaultAssigneeId, local,
             {results.length === 0 && <p className="px-2 py-6 text-center text-sm text-ink-muted">No personas match. Try a shorter search or another job family.</p>}
             {results.slice(0, SHOW).map((s) => {
               const on = picked?.id === s.id;
-              // Custom personas live in the manager's browser, so reps on other devices could not open them.
-              const blocked = !local && !s.builtIn;
+              const sharedTeam = !s.builtIn && meta[s.id]?.sharedWithOrg === true;
+              // Only built-in library personas and team-shared custom personas are reachable by reps on other devices.
+              const blocked = !local && !s.builtIn && !sharedTeam;
               return (
                 <label key={s.id} className={`flex items-center gap-3 rounded-md border p-2.5 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary ${on ? "border-primary bg-primary-soft/50" : "border-transparent hover:bg-sunken"} ${blocked ? "cursor-not-allowed" : "cursor-pointer"}`}>
                   <input type="radio" name="assign-persona" className="sr-only" checked={on} disabled={blocked} onChange={() => { setPicked(s); setError(""); }} />
                   {/* Only the persona itself is dimmed; the reason stays at full contrast, since it is the only place a manager learns why. */}
                   <span className={blocked ? "opacity-60" : ""}><PersonaAvatar scenario={s} size={36} /></span>
                   <span className="min-w-0 flex-1">
-                    <span className={`block truncate text-sm font-semibold ${blocked ? "opacity-60" : ""}`}>{s.aiPersona.name}</span>
+                    <span className={`block truncate text-sm font-semibold ${blocked ? "opacity-60" : ""}`}>
+                      {s.aiPersona.name}
+                      {sharedTeam && <span className="ml-2 rounded border border-primary/40 bg-primary-soft/50 px-1.5 py-0.5 font-mono text-[10px] font-medium text-primary">Team</span>}
+                    </span>
                     <span className={`block truncate text-xs text-ink-muted ${blocked ? "opacity-60" : ""}`}>{s.title}</span>
-                    {blocked && <span className="mt-0.5 flex items-start gap-1 text-[11px] text-ink-soft"><Info size={12} strokeWidth={1.75} className="mt-px shrink-0 text-caution" aria-hidden />Custom persona in this browser only, so your reps can&rsquo;t open it.</span>}
+                    {blocked && <span className="mt-0.5 flex items-start gap-1 text-[11px] text-ink-soft"><Info size={12} strokeWidth={1.75} className="mt-px shrink-0 text-caution" aria-hidden />Private persona. Share it with your team in the wizard or editor to assign it.</span>}
                   </span>
                   <span className="hidden shrink-0 font-mono text-[10px] text-ink-muted sm:inline">{jobFamilyLabel(s.role)}</span>
                   {on && <Check size={16} strokeWidth={1.75} className="shrink-0 text-primary" aria-hidden />}

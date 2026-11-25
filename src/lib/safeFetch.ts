@@ -252,25 +252,303 @@ function titleOf(html: string): string {
   return close < 0 ? "" : head.slice(open + 1, close);
 }
 
+// ---------------------------------------------------------------------------
+// Page metadata (meta description, Open Graph, JSON-LD)
+// ---------------------------------------------------------------------------
+
+/** Only the first 128 KB is scanned for metadata: it lives in <head>, and the bound keeps hostile pages cheap. */
+const META_SCAN = 131_072;
+/** A tag longer than this is skipped rather than parsed. */
+const MAX_TAG_CHARS = 4_096;
+const MAX_META_TAGS = 300;
+const MAX_LD_BLOCKS = 6;
+const MAX_LD_CHARS = 65_536;
+/** JSON-LD nodes visited across all blocks, and the deepest nesting followed. */
+const MAX_LD_NODES = 500;
+const MAX_LD_DEPTH = 8;
+const MAX_FAQS = 3;
+const MAX_SUMMARY_CHARS = 2_000;
+const MAX_DESCRIPTION_CHARS = 400;
+const MAX_PITCH_CHARS = 300;
+/** Main or article text shorter than this is too thin to replace the whole page. */
+const MIN_MAIN_CHARS = 400;
+
+/** What a page says about itself in its metadata. Every field is cleaned plain text. */
+export interface PageMeta {
+  siteName?: string;
+  ogTitle?: string;
+  description?: string;
+  productName?: string;
+  price?: string;
+  category?: string;
+  faqs: { q: string; a: string }[];
+}
+
+/** Plain one-line text: tags stripped (again after decoding, for escaped markup), whitespace collapsed, at most `max`. */
+const cleanText = (s: string, max: number) =>
+  collapse(decodeEntities(s.replace(/<[^<>]*>/g, " ")).replace(/<[^<>]*>/g, " "))
+    .replace(/\n/g, " ")
+    .slice(0, max)
+    .trim();
+
+/** Attributes of one tag string already bounded by MAX_TAG_CHARS. */
+function attrsOf(tag: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const re = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g;
+  let m: RegExpExecArray | null;
+  for (let n = 0; n < 40 && (m = re.exec(tag)); n++) {
+    const k = m[1].toLowerCase();
+    if (!(k in out)) out[k] = m[2] ?? m[3] ?? m[4] ?? "";
+  }
+  return out;
+}
+
+/**
+ * Each `<name ...>` open tag in `lower`, in order, as [start, end] (end is the ">"). Linear: the next ">" is cached
+ * and only searched for again once the scan has passed it, so a page of unclosed tags is never rescanned.
+ */
+function* openTags(lower: string, name: string, limit: number): Generator<[number, number]> {
+  const needle = `<${name}`;
+  let from = 0;
+  let gt = -1;
+  for (let found = 0; found < limit; ) {
+    const at = lower.indexOf(needle, from);
+    if (at < 0) return;
+    from = at + needle.length;
+    if (/[\w-]/.test(lower[from] ?? "")) continue;
+    if (gt < from) gt = lower.indexOf(">", from);
+    if (gt < 0) return;
+    if (gt - at > MAX_TAG_CHARS) continue;
+    found++;
+    yield [at, gt];
+  }
+}
+
+const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]);
+const ldString = (v: unknown, max: number): string | undefined => {
+  if (typeof v === "string") return cleanText(v, max) || undefined;
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  if (v && typeof v === "object" && !Array.isArray(v)) return ldString((v as Record<string, unknown>).name, max);
+  return undefined;
+};
+
+const PRODUCT_TYPES = new Set(["product", "service", "softwareapplication", "webapplication", "mobileapplication", "offer", "course", "productgroup"]);
+const ORG_TYPES = new Set(["organization", "corporation", "localbusiness", "website", "professionalservice", "store"]);
+
+function priceOf(offers: unknown): string | undefined {
+  for (const o of asArray(offers).slice(0, 5)) {
+    if (!o || typeof o !== "object") continue;
+    const r = o as Record<string, unknown>;
+    const amount = ldString(r.price, 30) ?? ldString(r.lowPrice, 30);
+    if (!amount) continue;
+    const currency = ldString(r.priceCurrency, 10)?.toUpperCase();
+    return currency === "USD" ? `$${amount}` : currency ? `${amount} ${currency}` : amount;
+  }
+  return undefined;
+}
+
+/** Walks one parsed JSON-LD value, filling `meta`. Bounded by node count and depth. */
+function walkLd(node: unknown, meta: PageMeta, budget: { nodes: number }, depth: number): void {
+  if (depth > MAX_LD_DEPTH || budget.nodes <= 0 || !node || typeof node !== "object") return;
+  budget.nodes--;
+  if (Array.isArray(node)) {
+    for (const n of node.slice(0, 50)) walkLd(n, meta, budget, depth + 1);
+    return;
+  }
+  const r = node as Record<string, unknown>;
+  const types = asArray(r["@type"]).filter((t): t is string => typeof t === "string").map((t) => t.toLowerCase());
+  if (types.includes("faqpage")) {
+    for (const q of asArray(r.mainEntity).slice(0, 20)) {
+      if (meta.faqs.length >= MAX_FAQS || !q || typeof q !== "object") break;
+      const qr = q as Record<string, unknown>;
+      const question = ldString(qr.name, 200);
+      const answer = asArray(qr.acceptedAnswer)[0];
+      const text = answer && typeof answer === "object" ? ldString((answer as Record<string, unknown>).text, 300) : undefined;
+      if (question && text) meta.faqs.push({ q: question, a: text });
+    }
+  }
+  if (types.some((t) => PRODUCT_TYPES.has(t))) {
+    meta.productName ??= ldString(r.name, 120);
+    meta.description ??= ldString(r.description, MAX_DESCRIPTION_CHARS);
+    meta.category ??= ldString(r.category, 80) ?? ldString(r.applicationCategory, 80);
+    meta.price ??= priceOf(r.offers) ?? (types.includes("offer") ? priceOf(r) : undefined);
+  } else if (types.some((t) => ORG_TYPES.has(t))) {
+    meta.siteName ??= ldString(r.name, 120);
+  }
+  for (const [k, v] of Object.entries(r).slice(0, 60)) {
+    if (k !== "@type" && v && typeof v === "object") walkLd(v, meta, budget, depth + 1);
+  }
+}
+
+/**
+ * Metadata from the first 128 KB of a page: <meta name="description">, og:description, og:title, og:site_name, and
+ * readable JSON-LD blocks (name, description, offers.price, category and FAQPage questions). Pure and linear-time;
+ * malformed JSON-LD is skipped.
+ */
+export function extractPageMeta(html: string): PageMeta {
+  const head = html.slice(0, META_SCAN);
+  const lower = head.toLowerCase();
+  const meta: PageMeta = { faqs: [] };
+  const named: Record<string, string> = {};
+  for (const [at, end] of openTags(lower, "meta", MAX_META_TAGS)) {
+    const a = attrsOf(head.slice(at, end));
+    const key = (a.property ?? a.name ?? "").toLowerCase();
+    if (key && a.content !== undefined && !(key in named)) named[key] = a.content;
+  }
+  const pick = (...keys: string[]) => {
+    for (const k of keys) {
+      const v = named[k] === undefined ? "" : cleanText(named[k], MAX_DESCRIPTION_CHARS);
+      if (v) return v;
+    }
+    return undefined;
+  };
+  meta.description = pick("description", "og:description", "twitter:description");
+  meta.ogTitle = pick("og:title", "twitter:title")?.slice(0, 200);
+  meta.siteName = pick("og:site_name")?.slice(0, 120);
+
+  const budget = { nodes: MAX_LD_NODES };
+  let blocks = 0;
+  let from = 0;
+  for (const [at, end] of openTags(lower, "script", 200)) {
+    if (at < from) continue;
+    const close = lower.indexOf("</script", end + 1);
+    if (close < 0) break;
+    from = close;
+    if (!/ld\+json/.test(attrsOf(lower.slice(at, end)).type ?? "") || close - end > MAX_LD_CHARS) continue;
+    try {
+      walkLd(JSON.parse(head.slice(end + 1, close)), meta, budget, 0);
+    } catch {
+      /* Not valid JSON: ignore this block. */
+    }
+    if (++blocks >= MAX_LD_BLOCKS) break;
+  }
+  return meta;
+}
+
+/** The first one or two sentences of `s`, within `max` characters, cut on a word boundary. */
+function shortPitch(s: string, max: number): string {
+  // Input is already bounded (a cleaned description plus a name), so this lazy match stays cheap.
+  const two = (s.match(/^[\s\S]*?[.!?](?:\s+[\s\S]*?[.!?])?(?=\s|$)/)?.[0] ?? s).trim();
+  if (two.length <= max) return two;
+  const cut = two.slice(0, max - 1);
+  const sp = cut.lastIndexOf(" ");
+  return `${(sp > max * 0.6 ? cut.slice(0, sp) : cut).replace(/[,;:\s-]+$/, "")}…`;
+}
+
+/** The product name to lead a pitch with: JSON-LD name, else og:title, else the first segment of the title. */
+function productNameOf(meta: PageMeta, title: string): string {
+  return meta.productName || meta.ogTitle || title.split(/\s[|·–—-]\s/)[0].trim();
+}
+
+/** A 1-2 sentence pitch for the wizard's product line, or undefined when the page says too little. */
+function suggestedProductOf(meta: PageMeta, title: string): string | undefined {
+  const name = productNameOf(meta, title);
+  if (meta.description) {
+    const desc = meta.description;
+    const lead = name && !desc.toLowerCase().includes(name.toLowerCase()) ? `${name}: ` : "";
+    return shortPitch(`${lead}${desc}`, MAX_PITCH_CHARS) || undefined;
+  }
+  if (meta.productName) return shortPitch(`${meta.productName}${meta.price ? ` (${meta.price})` : ""}.`, MAX_PITCH_CHARS);
+  return undefined;
+}
+
+/** The "[Page Summary]" header, or "" when the metadata adds nothing beyond the title. */
+function summaryOf(meta: PageMeta, title: string): string {
+  if (!meta.description && !meta.productName && !meta.price && !meta.faqs.length) return "";
+  const page = meta.ogTitle || title;
+  const lines = ["[Page Summary]"];
+  if (meta.siteName && meta.siteName !== page) lines.push(`Site: ${meta.siteName}`);
+  if (page) lines.push(`Page: ${page}`);
+  if (meta.description) lines.push(`About: ${meta.description}`);
+  if (meta.productName || meta.price) {
+    const what = meta.productName ?? "Offer";
+    lines.push(`Product: ${what}${meta.price ? `, priced at ${meta.price}` : ""}${meta.category ? ` (${meta.category})` : ""}`);
+  } else if (meta.category) lines.push(`Category: ${meta.category}`);
+  for (const f of meta.faqs) lines.push(`FAQ: ${f.q} ${f.a}`);
+  const header = lines.join("\n");
+  return header.length <= MAX_SUMMARY_CHARS ? header : header.slice(0, MAX_SUMMARY_CHARS);
+}
+
+// ---------------------------------------------------------------------------
+// HTML to text
+// ---------------------------------------------------------------------------
+
 /*
  * Every tag pattern excludes "<" from its attribute run ([^<>]*). With [^>]* each
  * unclosed "<p" scans to the end of the page and fails, so 1 MB of "<p<p<p..." took
  * minutes of blocking CPU. With [^<>]* each attempt stops at the next "<": linear time.
  */
-export function htmlToText(html: string): { title: string; text: string } {
+const markupToText = (html: string) =>
+  collapse(
+    decodeEntities(
+      html
+        // Source line breaks are just spaces in HTML; real breaks come from the block tags below.
+        .replace(/\s+/g, " ")
+        .replace(/<(br|hr)\b[^<>]*>/gi, "\n")
+        .replace(/<\/?(p|div|section|article|header|footer|main|aside|nav|li|ul|ol|dl|dt|dd|tr|table|h[1-6]|blockquote|pre|figure|figcaption|form|label|button)\b[^<>]*>/gi, "\n")
+        .replace(/<\/?(td|th)\b[^<>]*>/gi, " ")
+        .replace(/<\/?[a-z!][^<>]*>/gi, " ")
+        .replace(/<\/?[a-z!][^<>]*$/i, " "),
+    ),
+  );
+
+/** The span from the first `<tag` open to the last `</tag` close (or the end), found with indexOf. */
+function regionOf(html: string, lower: string, tag: string): string | null {
+  const needle = `<${tag}`;
+  let at = lower.indexOf(needle);
+  while (at >= 0 && /[\w-]/.test(lower[at + needle.length] ?? "")) at = lower.indexOf(needle, at + needle.length);
+  if (at < 0) return null;
+  const close = lower.lastIndexOf(`</${tag}`);
+  return html.slice(at, close > at ? close : html.length);
+}
+
+const dropBoilerplate = (html: string) => dropElement(dropElement(html, "nav"), "footer");
+
+/** Readable text of a page plus what its metadata says. Optional fields are present only when the page has them. */
+export interface PageText {
+  title: string;
+  text: string;
+  description?: string;
+  suggestedIndustry?: string;
+  suggestedProduct?: string;
+}
+
+/**
+ * Readable text of an HTML page. Metadata is read first (before <head> is dropped). The <main> or <article> content
+ * is preferred, without <nav> and <footer>, when it has at least 400 characters; a page without one also loses its
+ * nav and footer when 400 characters remain. Thin pages keep everything. When the metadata says something, a short
+ * "[Page Summary]" header goes first. The whole text stays within MAX_TEXT_CHARS.
+ */
+export function htmlToText(html: string): PageText {
   const rawTitle = titleOf(html);
   const title = rawTitle ? collapse(decodeEntities(rawTitle.replace(/<[^<>]*>/g, " "))).replace(/\n/g, " ").slice(0, 300) : "";
+  const meta = extractPageMeta(html);
   let body = html.replace(/<!--[\s\S]*?(?:-->|$)/g, " ");
   for (const tag of ["head", "script", "style", "noscript", "svg", "template"]) body = dropElement(body, tag);
-  body = body
-    // Source line breaks are just spaces in HTML; real breaks come from the block tags below.
-    .replace(/\s+/g, " ")
-    .replace(/<(br|hr)\b[^<>]*>/gi, "\n")
-    .replace(/<\/?(p|div|section|article|header|footer|main|aside|nav|li|ul|ol|dl|dt|dd|tr|table|h[1-6]|blockquote|pre|figure|figcaption|form|label|button)\b[^<>]*>/gi, "\n")
-    .replace(/<\/?(td|th)\b[^<>]*>/gi, " ")
-    .replace(/<\/?[a-z!][^<>]*>/gi, " ")
-    .replace(/<\/?[a-z!][^<>]*$/i, " ");
-  return { title, text: capText(collapse(decodeEntities(body))) };
+
+  let text = "";
+  const lower = body.toLowerCase();
+  const regions = [regionOf(body, lower, "main"), regionOf(body, lower, "article")].filter((r): r is string => r !== null);
+  for (const r of regions) {
+    const main = markupToText(dropBoilerplate(r));
+    if (main.length >= MIN_MAIN_CHARS) {
+      text = main;
+      break;
+    }
+  }
+  if (!text && !regions.length) {
+    const stripped = markupToText(dropBoilerplate(body));
+    if (stripped.length >= MIN_MAIN_CHARS) text = stripped;
+  }
+  if (!text) text = markupToText(body);
+
+  const summary = summaryOf(meta, title);
+  const out: PageText = { title, text: capText(summary && text ? `${summary}\n[Page Text]\n${text}` : summary || text) };
+  if (meta.description) out.description = meta.description;
+  if (meta.category) out.suggestedIndustry = meta.category;
+  const pitch = suggestedProductOf(meta, title);
+  if (pitch) out.suggestedProduct = pitch;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -386,9 +664,9 @@ export async function fetchPublicPage(rawUrl: string): Promise<FetchedPage> {
 
       const { bytes, size } = await readCapped(res);
       const raw = decodeBody(bytes, contentType);
-      const { title, text } = mime === "text/html" ? htmlToText(raw) : { title: "", text: capText(collapse(raw)) };
+      const { title, text, ...extracted } = mime === "text/html" ? htmlToText(raw) : { title: "", text: capText(collapse(raw)) };
       if (!text) throw new FetchPageError("We couldn't find any readable text on that page. Paste the text instead.");
-      return { url: url.toString(), title: title || hostOf(url), text, bytes: size };
+      return { url: url.toString(), title: title || hostOf(url), ...extracted, text, bytes: size };
     }
   } catch (e) {
     if (e instanceof FetchPageError) throw e;
