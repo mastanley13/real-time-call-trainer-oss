@@ -442,3 +442,66 @@ export function compareLeaderboardRows<
   const bMs = typeof b.completedAt === "string" ? Date.parse(b.completedAt) : b.completedAt.getTime();
   return aMs - bMs;
 }
+
+/**
+ * Opening-board threshold. While fewer than this many official scores exist in a window,
+ * the leaderboard shows an explicit "gathering opening contenders" banner and open podium
+ * slots so a fresh board reads as an active early round rather than a broken empty table.
+ */
+export const COMPETITION_OPENING_BOARD_TARGET = 5;
+
+export interface OpeningBoardState {
+  gathering: boolean;
+  filledCount: number;
+  targetCount: number;
+  openRanks: number[];
+  headline: string;
+  detail: string;
+  progressLabel: string;
+}
+
+export function getOpeningBoardState(
+  rowCount: number,
+  periodLabel: string,
+  trackLabel?: string | null,
+): OpeningBoardState {
+  const targetCount = COMPETITION_OPENING_BOARD_TARGET;
+  const filledCount = Math.max(0, Math.floor(rowCount));
+  if (filledCount >= targetCount) {
+    return {
+      gathering: false,
+      filledCount,
+      targetCount,
+      openRanks: [],
+      headline: "",
+      detail: "",
+      progressLabel: "",
+    };
+  }
+  const openCount = targetCount - filledCount;
+  const openRanks = Array.from({ length: openCount }, (_, i) => filledCount + i + 1);
+  const scope = trackLabel ? `${trackLabel} calls` : "official calls";
+  const windowText = periodLabel.toLowerCase();
+
+  if (filledCount === 0) {
+    return {
+      gathering: true,
+      filledCount,
+      targetCount,
+      openRanks,
+      headline: "Gathering opening contenders",
+      detail: `No ${scope} posted for ${windowText} yet. The first ${targetCount} scores fill the opening board.`,
+      progressLabel: `0 of ${targetCount} spots filled`,
+    };
+  }
+
+  return {
+    gathering: true,
+    filledCount,
+    targetCount,
+    openRanks,
+    headline: `Gathering opening contenders (${openCount} ${openCount === 1 ? "spot" : "spots"} open)`,
+    detail: `Early rounds are underway for ${windowText}. Post a verified call to claim #${filledCount + 1} or pass the leaders.`,
+    progressLabel: `${filledCount} of ${targetCount} spots filled`,
+  };
+}

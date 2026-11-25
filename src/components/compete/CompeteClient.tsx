@@ -15,6 +15,7 @@ import {
   COMPETITION_PRIZES,
   COMPETITION_TRACKS,
   competitionTrackBySlug,
+  getOpeningBoardState,
   type CompetitionLeaderboardRow,
   type CompetitionPeriod,
   type CompetitionStatusResponse,
@@ -668,6 +669,7 @@ function Leaderboard({ period, onPeriod, periodLabel, board, onBoard, rows, fail
   const filters: { key: BoardKey; label: string }[] = [{ key: "overall", label: "Overall" }, ...COMPETITION_TRACKS.map((t) => ({ key: t.slug, label: t.shortLabel }))];
   const showTrack = board === "overall";
   const trackName = board === "overall" ? null : competitionTrackBySlug(board)?.label ?? null;
+  const opening = rows ? getOpeningBoardState(rows.length, periodLabel, trackName) : null;
 
   return (
     <section id="leaderboard" aria-labelledby="board-title" className="scroll-mt-24">
@@ -733,17 +735,58 @@ function Leaderboard({ period, onPeriod, periodLabel, board, onBoard, rows, fail
               <li key={i} className="flex items-center gap-4 px-4 py-3.5"><div className="skeleton h-8 w-8" /><div className="skeleton h-4 flex-1" /><div className="skeleton h-4 w-16" /></li>
             ))}
           </ul>
-        ) : rows.length === 0 ? (
-          <p className="p-6 text-center text-sm text-ink-soft">
-            {board === "overall" ? "No official scores yet. Be the first to set the bar." : "No official scores on this track yet. Be the first to set the bar."}
-          </p>
         ) : (
-          <ol className="divide-y divide-line">
-            {rows.map((r) => <BoardRow key={r.entryId} row={r} showTrack={showTrack} />)}
-          </ol>
+          <>
+            {opening?.gathering && (
+              <div className="flex flex-col gap-1 border-b border-line bg-sunken/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="inline-flex items-center gap-2 text-sm font-semibold text-ink">
+                    <span className="lamp lamp-signal !h-1.5 !w-1.5" aria-hidden />
+                    {opening.headline}
+                  </p>
+                  <p className="mt-0.5 text-xs text-ink-soft">{opening.detail}</p>
+                </div>
+                <span className="chip mono shrink-0 self-start !text-[11px] sm:self-center">{opening.progressLabel}</span>
+              </div>
+            )}
+            <ol className="divide-y divide-line">
+              {rows.map((r) => <BoardRow key={r.entryId} row={r} showTrack={showTrack} />)}
+              {opening?.openRanks.map((rank, i) => (
+                <OpenBoardRow key={`open-${rank}`} rank={rank} showTrack={showTrack} primary={i === 0} />
+              ))}
+            </ol>
+          </>
         )}
       </div>
     </section>
+  );
+}
+
+function OpenBoardRow({ rank, showTrack, primary }: { rank: number; showTrack: boolean; primary: boolean }) {
+  return (
+    <li className={`grid grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 sm:gap-4 ${showTrack ? "sm:grid-cols-[3rem_minmax(0,1fr)_10rem_11.5rem]" : "sm:grid-cols-[3rem_minmax(0,1fr)_11.5rem]"}`}>
+      <span className="mono inline-flex h-8 w-8 items-center justify-center rounded-full border border-dashed border-line bg-sunken/60 text-sm font-semibold text-ink-muted sm:h-9 sm:w-9">
+        <span className="sr-only">Open rank </span>#{rank}
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate font-medium text-ink-soft">
+          {rank === 1 ? "Open #1 spot" : `Open #${rank} spot`}
+        </span>
+        <span className="mt-0.5 block truncate text-xs text-ink-muted">
+          {rank === 1 ? "Set the first official score on the board" : "Take an official call to claim this spot"}
+        </span>
+      </span>
+      {showTrack && <span className="hidden truncate text-xs text-ink-muted sm:block">Any track</span>}
+      <span className="flex items-center justify-end">
+        {primary ? (
+          <a href="#tracks" className="btn-ghost btn-sm shrink-0">
+            Claim #{rank}
+          </a>
+        ) : (
+          <span className="mono text-xs uppercase tracking-[0.06em] text-ink-muted">Open spot</span>
+        )}
+      </span>
+    </li>
   );
 }
 

@@ -9,6 +9,7 @@ import {
   COMPETITION_PERIOD_LABELS,
   COMPETITION_PRIZES,
   COMPETITION_TRACKS,
+  getOpeningBoardState,
   type CompetitionLeaderboardRow,
   type CompetitionPeriod,
   type CompetitionStatusResponse,
@@ -52,6 +53,7 @@ export default function LeaderboardSpotlight() {
   }, [period, slice]);
 
   const topScore = slice?.rows[0]?.overallScore;
+  const opening = slice ? getOpeningBoardState(slice.rows.length, slice.periodLabel) : null;
 
   return (
     <section aria-labelledby="lb-spot-h" className="desk-wrap">
@@ -120,40 +122,68 @@ export default function LeaderboardSpotlight() {
                     </li>
                   ))}
                 </ul>
-              ) : slice.rows.length === 0 ? (
-                <div className="px-4 py-8 text-center text-sm text-ink-soft">
-                  <p>No official scores posted for {COMPETITION_PERIOD_LABELS[period].toLowerCase()} yet.</p>
-                  <Link href="/compete" className="btn-primary btn-sm mt-3">Set the first score</Link>
-                </div>
               ) : (
-                <ol className="divide-y divide-line">
-                  {slice.rows.map((r) => (
-                    <li key={r.entryId} className="grid grid-cols-[2rem_minmax(0,1fr)_auto_2rem] items-center gap-3 px-4 py-2.5">
-                      <span className={`mono inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${rankTone(r.rank)}`}>
-                        #{r.rank}
+                <>
+                  {opening?.gathering && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-sunken/70 px-4 py-2.5 text-xs">
+                      <span className="inline-flex items-center gap-2 font-medium text-ink">
+                        <span className="lamp lamp-signal !h-1.5 !w-1.5" aria-hidden />
+                        {opening.headline}
                       </span>
-                      <span className="min-w-0">
-                        <span className="flex items-center gap-2">
-                          <span className="truncate text-sm font-semibold text-ink">{r.displayName}</span>
-                          {r.teamLabel && <span className="hidden truncate text-xs text-ink-muted sm:inline">{r.teamLabel}</span>}
+                      <span className="mono text-ink-muted">{opening.progressLabel}</span>
+                    </div>
+                  )}
+                  <ol className="divide-y divide-line">
+                    {slice.rows.map((r) => (
+                      <li key={r.entryId} className="grid grid-cols-[2rem_minmax(0,1fr)_auto_2rem] items-center gap-3 px-4 py-2.5">
+                        <span className={`mono inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${rankTone(r.rank)}`}>
+                          #{r.rank}
                         </span>
-                        <span className="block truncate text-xs text-ink-muted">{r.trackLabel}</span>
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <span className="mono text-base font-bold text-ink">{r.overallScore}</span>
-                        <span className="chip mono !px-1.5 !py-0 !text-[11px]">{r.grade}</span>
-                      </span>
-                      <Link
-                        href={`/compete/card/${encodeURIComponent(r.shareToken)}`}
-                        className="btn-quiet !min-h-[32px] !min-w-[32px] !px-0"
-                        aria-label={`View score card for ${r.displayName}`}
-                        title="View score card"
-                      >
-                        <Share2 size={14} strokeWidth={1.75} aria-hidden />
-                      </Link>
-                    </li>
-                  ))}
-                </ol>
+                        <span className="min-w-0">
+                          <span className="flex items-center gap-2">
+                            <span className="truncate text-sm font-semibold text-ink">{r.displayName}</span>
+                            {r.teamLabel && <span className="hidden truncate text-xs text-ink-muted sm:inline">{r.teamLabel}</span>}
+                          </span>
+                          <span className="block truncate text-xs text-ink-muted">{r.trackLabel}</span>
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <span className="mono text-base font-bold text-ink">{r.overallScore}</span>
+                          <span className="chip mono !px-1.5 !py-0 !text-[11px]">{r.grade}</span>
+                        </span>
+                        <Link
+                          href={`/compete/card/${encodeURIComponent(r.shareToken)}`}
+                          className="btn-quiet !min-h-[32px] !min-w-[32px] !px-0"
+                          aria-label={`View score card for ${r.displayName}`}
+                          title="View score card"
+                        >
+                          <Share2 size={14} strokeWidth={1.75} aria-hidden />
+                        </Link>
+                      </li>
+                    ))}
+                    {opening?.openRanks.map((rank, i) => (
+                      <li key={`open-${rank}`} className="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 px-4 py-2.5">
+                        <span className="mono inline-flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-line bg-sunken/60 text-xs font-semibold text-ink-muted">
+                          #{rank}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium text-ink-soft">
+                            {rank === 1 ? "Open #1 spot" : `Open #${rank} spot`}
+                          </span>
+                          <span className="block truncate text-xs text-ink-muted">
+                            {rank === 1 ? "Set the first score on the board" : "Take an official call to claim this spot"}
+                          </span>
+                        </span>
+                        {i === 0 ? (
+                          <Link href="/compete" className="btn-ghost btn-sm shrink-0">
+                            Claim #{rank}
+                          </Link>
+                        ) : (
+                          <span className="mono text-[11px] uppercase tracking-[0.06em] text-ink-muted">Open</span>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                </>
               )}
             </div>
           </div>
