@@ -1,7 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { APOLOGY_STEP_RE, isApology } from "./apology";
-import { chat, extractJson } from "./llm";
+import { chat, extractJson, type JsonSchemaFormat } from "./llm";
 import { llmGradingModel, llmKey } from "./serverConfig";
 import { Scenario, normalizeWeights } from "./scenarios";
 
@@ -49,6 +49,47 @@ const LlmOutput = z.object({
   goalExplanation: z.string().default(""),
 });
 
+const GRADER_JSON_SCHEMA: JsonSchemaFormat = {
+  name: "call_evaluation",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["summary", "criteria", "strengths", "improvements", "goalStatus", "goalExplanation"],
+    properties: {
+      summary: { type: "string" },
+      criteria: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "score", "rationale", "evidence"],
+          properties: {
+            id: { type: "string" },
+            score: { type: "number" },
+            rationale: { type: "string" },
+            evidence: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["speaker", "quote"],
+                properties: {
+                  speaker: { type: "string", enum: ["trainee", "caller"] },
+                  quote: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+      },
+      strengths: { type: "array", items: { type: "string" } },
+      improvements: { type: "array", items: { type: "string" } },
+      goalStatus: { type: "string", enum: ["achieved", "partial", "not_achieved"] },
+      goalExplanation: { type: "string" },
+    },
+  },
+};
+
 const NEGATION_RE = /\b(?:did not|didn't|never|missed|failed to|did no)\b(.*)/i;
 
 /** Drops any sentence claiming a miss for a concept that a trainee quote under the same criterion contains. */
@@ -72,7 +113,7 @@ async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluati
     "VERIFY BEFORE CLAIMING A MISS: before you write that the trainee missed, skipped, never did or did not do something, search the whole TRAINEE transcript for it first. If it appears anywhere, it is NOT a miss: credit it and quote it. If something was only partly covered, say so in a natural, complete sentence (e.g. 'You mentioned the fee but did not explain how it is billed.'); never use stock phrases or fragments.",
     "VOICE: write ALL feedback (summary, rationales, strengths, improvements, goalExplanation) in the second person, addressing the trainee as 'you'. Never use the trainee's name, 'the trainee', or 'the rep'. Every item must be a natural, grammatical, complete sentence.",
     "Evidence quotes belong ONLY under the criterion they directly support; never reuse a quote under an unrelated criterion. The rationale and evidence of a criterion must agree: never say the trainee 'did not' do something that a quote under the same criterion shows they did.",
-    "Calibration: score what the trainee actually did, on a fair 0-100 scale (50 = attempted but weak, 70 = competent, 90+ = excellent). Give PARTIAL credit (roughly 50-70) for a criterion when the trainee made a real attempt, even if the caller did not agree or the step was not completed.",
+    "Calibration: score what the trainee actually did, on a fair 0-100 scale (50 = attempted but weak, 70 = competent, 80-89 = strong, 90+ = excellent). Give PARTIAL credit (roughly 50-70) for a criterion when the trainee made a real attempt, even if the caller did not agree or the step was not completed. Judge sales craft and intent, not exact rubric wording or voice speech-to-text quirks (homophones, missing punctuation, or minor transcription slips).",
     "Booking/closing/next-step criteria: if the trainee proposed a concrete appointment slot (a specific day and/or time window) but the caller never confirmed it, award partial credit (about 55-70). Award 80+ only when the slot was confirmed and the trainee recapped the details. Score below 30 only when no slot or next step was offered at all. Do not penalize the trainee for the caller's refusal or silence.",
     "goalStatus: 'achieved' (goal fully met, e.g. appointment confirmed), 'partial' (clear progress, e.g. a concrete slot was offered but not confirmed), or 'not_achieved' (little or no progress).",
     "Respond with JSON only: {summary, criteria:[{id, score, rationale, evidence:[{speaker:'trainee'|'caller', quote}]}], strengths:[], improvements:[], goalStatus:'achieved'|'partial'|'not_achieved', goalExplanation}.",
@@ -86,7 +127,21 @@ async function gradeWithLlm(scenario: Scenario, turns: Turn[]): Promise<Evaluati
   ].join("\n\n");
 
   // The evaluation goes to the browser, so it records that AI graded it (method "llm") but not the model id.
-  const out =LlmOutput.parse(extractJson(await chat([{ role: "system", content: system }, { role: "user", content: user }], { json: true, model: llmGradingModel() })));
+  // Low reasoning effort + generous completion budget prevent reasoning models from truncating mid-JSON into heuristic fallback.
+  const out = LlmOutput.parse(
+    extractJson(
+      await chat(
+        [{ role: "system", content: system }, { role: "user", content: user }],
+        {
+          json: true,
+          model: llmGradingModel(),
+          maxTokens: 4500,
+          reasoningEffort: "low",
+          jsonSchema: GRADER_JSON_SCHEMA,
+        },
+      ),
+    ),
+  );
   // Line numbers/speakers come from the transcript itself, not from the model.
   const haystack = turns.map((t) => norm(t.text));
 

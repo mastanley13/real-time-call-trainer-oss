@@ -182,7 +182,13 @@ describe("LLM grader", () => {
     process.env.LLM_MODEL_GRADING = "gpt-6.2-sol";
     const ev = await evaluateCall(scenario, CALL);
     expect(mocks.chat).toHaveBeenCalledOnce();
-    expect(mocks.chat.mock.calls[0][1]).toMatchObject({ json: true, model: "gpt-6.2-sol" });
+    expect(mocks.chat.mock.calls[0][1]).toMatchObject({
+      json: true,
+      model: "gpt-6.2-sol",
+      maxTokens: 4500,
+      reasoningEffort: "low",
+      jsonSchema: { name: "call_evaluation" },
+    });
     expect(ev).toMatchObject({ method: "llm", graderVersion: GRADER_VERSIONS.llm });
     expect(ev.model).toBeUndefined();
     expect(JSON.stringify(ev)).not.toContain("gpt-test-mini");
