@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, Copy, FileJson, Play, Search, SearchX, ShieldAlert, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import {
   CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps,
@@ -38,7 +38,8 @@ function matches(s: Scenario, f: Filters, q: string, skip?: keyof Filters) {
   return q.toLowerCase().split(/\s+/).every((w) => hay.includes(w));
 }
 
-export default function LibraryClient() {
+/** `fallback` is the server-rendered built-in catalog, shown to signed-out readers and until a signed-in session is ready. */
+export default function LibraryClient({ fallback }: { fallback?: ReactNode } = {}) {
   const { capabilities, isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
   const [all, setAll] = useState<Scenario[] | null>(null);
@@ -63,9 +64,6 @@ export default function LibraryClient() {
     });
     return () => { alive = false; };
   }, [capabilities, isAuthenticated, stored]);
-  useEffect(() => {
-    if (!isLoading && capabilities && !isAuthenticated) router.replace("/login");
-  }, [isLoading, capabilities, isAuthenticated, router]);
   // "/" focuses search. Ctrl/Cmd+K belongs to the global command palette, so it is not bound here.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -126,7 +124,8 @@ export default function LibraryClient() {
     setQ("");
   }
 
-  if (!all || !capabilities) return <LibrarySkeleton />;
+  // Signed-out readers keep the server catalog (no client redirect), so the page stays readable and crawlable.
+  if (!all || !capabilities || isLoading || !isAuthenticated) return fallback ?? <LibrarySkeleton />;
 
   const families = [...JOB_FAMILIES.map((f) => f.id), ...new Set(all.map((s) => s.role).filter((r) => !JOB_FAMILIES.some((f) => f.id === r)))];
   const mine = all.filter((s) => !s.builtIn);
