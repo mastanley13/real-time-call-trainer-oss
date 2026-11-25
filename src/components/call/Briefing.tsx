@@ -481,7 +481,31 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, o
 
       {/* Phones: Start call stays on screen as a sticky bottom action bar (STICKY_START_BAR). The page drops its own bottom
           padding below sm, so the bar sits flush with the tab bar when scrolled to the end. */}
-      <div className={`sticky z-30 -mx-4 mt-8 border-t border-line bg-surface px-4 pt-3 sm:hidden ${STICKY_START_BAR}`}>
+      <div className={`sticky z-30 -mx-4 mt-8 border-t border-line bg-surface px-4 pt-2.5 sm:hidden ${STICKY_START_BAR}`}>
+        {competition ? (
+          <p className="mb-2 flex items-center justify-center gap-1.5 text-xs text-ink-soft">
+            <Mic size={13} strokeWidth={1.75} className="text-primary" aria-hidden />
+            Voice only · Allow mic when prompted
+          </p>
+        ) : !retryFrom && voiceReady ? (
+          <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+            <span className="text-ink-muted">Call mode</span>
+            <div className="grid grid-cols-2 gap-1 rounded-md bg-sunken p-0.5 ring-1 ring-line" role="group" aria-label="Quick call mode">
+              {CALL_MODES.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  aria-pressed={mode === m}
+                  onClick={() => onModeChange(m)}
+                  className={`inline-flex min-h-[30px] items-center justify-center gap-1.5 rounded px-2.5 text-xs font-semibold transition ${mode === m ? "bg-surface text-ink shadow-card ring-1 ring-line" : "text-ink-muted"}`}
+                >
+                  {m === "voice" ? <Mic size={12} strokeWidth={1.75} aria-hidden /> : <Keyboard size={12} strokeWidth={1.75} aria-hidden />}
+                  {m === "voice" ? "Voice" : "Text"}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
         {startButton}
       </div>
     </div>
