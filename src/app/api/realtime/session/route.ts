@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAuth } from "@/lib/apiAuth";
-import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
+import { requireAuth, isDemoUser } from "@/lib/apiAuth";
+import { rateLimit, ipLimitResponse, userLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
 import { meteringEnabled } from "@/lib/serverConfig";
 import { beginCall, endCall, type PremiumMintInfo } from "@/lib/usage";
@@ -17,13 +17,18 @@ import { sealMintReceipt } from "@/lib/mintReceipt";
 import { recordMintedVoice } from "@/lib/voiceMintLog";
 import { openAiVoiceApi, pickLiveVoice } from "@/lib/live";
 import { sealLiveTicket } from "@/lib/liveTicket";
+import { COMPETITION_TRACK_SLUGS, COMPETITION_CALL_MAX_SECONDS, competitionTrackBySlug, type CompetitionTrackSlug } from "@/lib/competition";
+import { LIBRARY } from "@/lib/personas";
+import { claimCompetitionAttempt, attachSessionToCompetitionEntry, refundCompetitionEntry } from "@/lib/competitionServer";
+
+type CompetitionMint = { entryId: string; attemptNumber: number; trackSlug: CompetitionTrackSlug; maxSeconds: number };
 
 /**
  * `voiceTier` is the rep's REQUEST from the call setup (Prism finding 1), never an entitlement: "standard" always runs
  * Standard (no paid Premium minutes, no comped Premium, no trial claim); "premium" or nothing lets the server decide as
  * before, so an unentitled Premium request is still Standard.
  */
-const Body = z.object({ scenario: ScenarioSchema, voiceTier: z.enum(["standard", "premium"]).optional() });
+const Body = z.object({ scenario: ScenarioSchema, voiceTier: z.enum(["standard", "premium"]).optional(), competitionTrack: z.enum(COMPETITION_TRACK_SLUGS).optional() });
 
 /** The secret only has to outlive the SDP exchange; 600s is the documented default. */
 const SECRET_TTL_SEC = 600;
@@ -49,6 +54,33 @@ export async function POST(req: NextRequest) {
   const ipLimited = ipLimitResponse(req, "realtime");
   if (ipLimited) return ipLimited;
 
+  const limit = rateLimit({ key: `realtime:${auth.id}`, limit: 6, windowMs: 60_000 });
+  if (!limit.allowed) {
+    return NextResponse.json({ error: "rate_limited", message: "You started several calls in a row. Wait a minute, then try again." }, { status: 429 });
+  }
+
+  let scenario: z.infer<typeof Body>["scenario"];
+  let chosenStandard = false;
+  let competitionTrack: CompetitionTrackSlug | undefined;
+  try {
+    const parsed = Body.parse(await readJsonLimited(req));
+    scenario = parsed.scenario;
+    chosenStandard = parsed.voiceTier === "standard";
+    competitionTrack = parsed.competitionTrack;
+  } catch {
+    return NextResponse.json({ error: "invalid_scenario", message: "That persona could not be loaded for a voice call. Reload the page and try again." }, { status: 400 });
+  }
+
+  if (competitionTrack) {
+    if (isDemoUser(auth) || !process.env.DATABASE_URL) return NextResponse.json({ error: "competition_requires_account", message: "Sign in with a free account to take your 3 official competition calls." }, { status: 400 });
+    const limited = ipLimitResponse(req, "competition") ?? userLimitResponse(auth.id, "competition");
+    if (limited) return limited;
+    const canonical = LIBRARY.find((s) => s.id === competitionTrackBySlug(competitionTrack)?.scenarioId);
+    if (!canonical) return NextResponse.json({ error: "invalid_scenario", message: "That competition track is unavailable." }, { status: 400 });
+    scenario = canonical;
+    chosenStandard = true;
+  }
+
   // OPENAI_REALTIME_API_KEY alone, else the OpenAI key ladder, else LLM_API_KEY on an OpenAI base (openaiKeys.ts).
   const keys = voiceKeyPlan(process.env);
   if (keys.kind === "none") {
@@ -58,177 +90,194 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const limit = rateLimit({ key: `realtime:${auth.id}`, limit: 6, windowMs: 60_000 });
-  if (!limit.allowed) {
-    return NextResponse.json({ error: "rate_limited", message: "You started several calls in a row. Wait a minute, then try again." }, { status: 429 });
-  }
-
-  let scenario: z.infer<typeof Body>["scenario"];
-  let chosenStandard = false;
-  try {
-    const parsed = Body.parse(await readJsonLimited(req));
-    scenario = parsed.scenario;
-    chosenStandard = parsed.voiceTier === "standard";
-  } catch {
-    return NextResponse.json({ error: "invalid_scenario", message: "That persona could not be loaded for a voice call. Reload the page and try again." }, { status: 400 });
-  }
-
-  // Voice quality for a comped organization, read from the database on every call; the client never chooses it.
-  // Comped overrides billing: it runs Premium without touching the paid Premium minutes.
-  const orgTier = await orgVoiceTierForUser(auth.id);
-
-  // Cap check before minting (rule 11). The returned callId keys every later metering write for this call.
-  // The engine is chosen here, per session, from the database: paid Premium only while PREMIUM_VOICE_ON_SALE is exactly
-  // "true", the add-on is entitled (active, never trialing, quantity above 0, period not over) and at least one whole Premium
-  // minute is left, else Standard for this session. A running call is never switched to another engine; a paid Premium
-  // call's maxSeconds is min(call allowance, Premium left). The engine drives caps and billing (TrainerSession.engineTier);
-  // a comped call and a Free trial call stay on the standard billing engine and use no paid Premium minutes.
+  let competition: CompetitionMint | undefined;
+  let successfulMint = false;
   let callId: string | undefined;
-  let maxSeconds = SECRET_TTL_SEC;
-  let premium: PremiumMintInfo | undefined;
-  if (meteringEnabled()) {
-    // A failed lookup refuses voice (fail closed); text practice never reaches this route.
-    // offerTrialSample: a Free organization's one Premium trial call may be claimed here, atomically, when
-    // PREMIUM_TRIAL_SAMPLE_ON is exactly "true" (beginCall decides from the database; the client cannot ask for it).
-    // A chosen Standard call asks for no Premium at all: no comped override, no paid minutes, no trial claim.
-    const begun = await beginCall(auth.id, scenario, new Date(), { compedPremium: orgTier === "premium" && !chosenStandard, offerTrialSample: !chosenStandard, preferStandard: chosenStandard }).catch((e) => {
-      console.error("[realtime/session] usage lookup failed", e instanceof Error ? e.name : "unknown");
-      return null;
-    });
-    if (!begun) return voiceUnavailable();
-    if (!begun.ok && begun.error === "cap_reached") {
-      // Ids only, and never awaited: the 402 does not wait on the sink (the GHL sink, when GHL events are on).
-      queuePremiumEvent({ name: "voice_cap_hit", subject: "user", subjectId: auth.id, reason: "cap_reached" });
-      return capReached();
-    }
-    if (!begun.ok && begun.error === "minutes_reserved") return minutesReserved();
-    if (!begun.ok && begun.error === "voice_blocked") return voiceBlocked(begun.retryAfterSeconds);
-    if (!begun.ok && begun.error === "daily_session_limit") return dailySessionLimit();
-    if (!begun.ok) return voiceUnavailable();
-    callId = begun.callId;
-    maxSeconds = begun.maxSeconds;
-    premium = begun.premium;
-  }
-
-  // The model, read from the database on every call; the client never chooses it. Premium only when the org is comped
-  // AND set to premium (effectiveVoiceTier), or when the meter started this call on the paid Premium entitlement
-  // (premium.source === "paid", which needs the exact sale flag and an entitled add-on), or when the meter atomically
-  // claimed the organization's one Free trial call for it (premium.source === "trial", PREMIUM_TRIAL_SAMPLE_ON exactly
-  // "true"). A stored add-on flag alone, the billing engine, or anything the client sends never reaches Premium.
-  // A chosen Standard call is Standard whatever the organization or the entitlement says (comped included).
-  const tier = chosenStandard ? "standard" : mintVoiceTier(orgTier, { paidPremium: premium?.source === "paid", trialSample: premium?.source === "trial" });
-  // GPT-Live (OPENAI_VOICE_API=live, off by default) has one model for both tiers; tier still drives caps and billing.
-  const live = openAiVoiceApi() === "live";
-  const model = live ? liveModel() : voiceModelFor(tier);
-  if (premium?.fallback) {
-    await emitPremiumEvent({ name: "premium_fallback_to_standard", subject: "user", subjectId: auth.id, reason: premium.fallback });
-  }
-  // One id per call, fixed before the secret is minted: the metering call id when metered, else a fresh UUID.
-  // The receipt is bound to it and the client saves the call under it, so a receipt can't move to another call.
-  const sessionId = callId ?? randomUUID();
-  if (live) return mintLive({ userId: auth.id, callId, sessionId, model, tier, maxSeconds, premium, scenario });
-  const voice = realtimeVoice(scenario.aiPersona.realtimeVoice);
-  const session = {
-    type: "realtime",
-    model,
-    // Same persona prompt as ElevenLabs and the text caller: stays in character and never coaches.
-    instructions: buildAgentPrompt(scenario),
-    output_modalities: ["audio"],
-    audio: {
-      input: {
-        // Needed for the transcript, the live coach and grading: the realtime model itself never returns user text.
-        transcription: { model: realtimeTranscribeModel() },
-        // semantic_vad waits for a finished thought, so a trainee who pauses mid-pitch is not talked over.
-        turn_detection: { type: "semantic_vad", eagerness: "auto", create_response: true, interrupt_response: true },
-        noise_reduction: { type: "near_field" },
-      },
-      output: { voice },
-    },
-  };
-
-  // Each attempt keeps its own 15 s timeout. A timeout or network error throws and never fails over, so the worst
-  // case stays one timeout. `pinned` (the key ladder) also refuses redirects, so a slot key only reaches this URL.
-  const mint = (apiKey: string, pinned: boolean) =>
-    fetch(CLIENT_SECRETS_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      // The secret never outlives the call's reserved minutes. OpenAI only checks it while the session is
-      // being set up, so this limits starting a late call, not a running one; billing is settled on the server.
-      body: JSON.stringify({ expires_after: { anchor: "created_at", seconds: Math.max(10, Math.min(SECRET_TTL_SEC, maxSeconds)) }, session }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(15_000),
-      ...(pinned ? { redirect: "error" as const } : {}),
-    });
-
   try {
-    let res: Response;
-    if (keys.kind === "ladder") {
-      // Failover happens inside this one request, after beginCall: callId, sessionId, maxSeconds and the receipt
-      // binding stay the same. Media and billing follow the project of whichever slot minted the secret.
-      const r = await withOpenAiKeyFailover("realtime", async (key) => {
-        const attempt = await mint(key, true);
-        if (attempt.ok) return { outcome: "ok", value: attempt };
-        return { outcome: await classifyOpenAiResponse(CLIENT_SECRETS_URL, attempt), status: attempt.status, value: attempt };
-      });
-      if (r.kind === "exhausted") {
-        if (callId) await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
-        return NextResponse.json(
-          { error: "realtime_unavailable", message: "Voice is unavailable right now. Switch to Text to keep practicing." },
-          { status: 503, headers: { "Retry-After": "300" } },
-        );
+    if (competitionTrack) {
+      const claimed = await claimCompetitionAttempt({ userId: auth.id, trackSlug: competitionTrack });
+      if (!claimed.ok) {
+        const messages = {
+          competition_inactive: "This competition is not active.",
+          competition_full: "The competition has reached its call limit.",
+          attempts_exhausted: "You have used all 3 official competition calls.",
+          call_in_progress: "Finish your current competition call before starting another.",
+        };
+        return NextResponse.json({ error: claimed.error, message: messages[claimed.error] }, { status: claimed.error === "competition_full" ? 503 : claimed.error === "call_in_progress" ? 409 : 403 });
       }
-      res = r.value;
-    } else {
-      res = await mint(keys.key, false);
+      competition = { entryId: claimed.entry.id, attemptNumber: claimed.entry.attemptNumber!, trackSlug: competitionTrack, maxSeconds: COMPETITION_CALL_MAX_SECONDS };
     }
-    if (!res.ok) {
-      // Status only: the upstream body can echo request details and is never forwarded or logged.
-      console.error("[realtime/session] upstream status", res.status);
-      if (callId) await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
-      return NextResponse.json(
-        { error: "realtime_upstream_error", message: realtimeUpstreamMessage(res.status) },
-        { status: res.status === 429 ? 429 : 502 },
-      );
-    }
-    const data = (await res.json().catch(() => null)) as { value?: unknown; expires_at?: unknown } | null;
-    if (!data || typeof data.value !== "string" || !data.value) throw new Error("no client secret in response");
-    const expiresAt = typeof data.expires_at === "number" ? data.expires_at : Math.floor(Date.now() / 1000) + SECRET_TTL_SEC;
-    // The model id stays server-side: the browser needs only the secret, and the SDP relay never names a model.
-    // The receipt is the minted model encrypted (AES-GCM) for this user and this call (sessionId), opaque to the
-    // browser. POST /api/transcripts logs the model only from a receipt that opens for the sessionId it is saved
-    // under, and only once. A metered call's browser also gets the tier label and whether the next call drops to
-    // Standard (the hosted Premium Voice UI); an unmetered call's answer keeps upstream's exact keys.
-    // Durable server-side provenance for a metered call: the model actually minted and the effective tier, on the
-    // call's own row, now, whether or not the browser ever saves the call. Never returned.
-    // The log must land BEFORE the credential is released. If the write throws or updates no row, the secret is dropped
-    // unused (nothing returns it, and it expires on its own within the call's reserved time), the call is settled as a
-    // server mint failure (nothing billed, its reservation and any Premium minutes released) and the browser gets the
-    // same neutral "voice unavailable" answer as a failed usage lookup: no client secret, no receipt.
-    if (callId) {
-      const logged = await recordMintedVoice(auth.id, callId, { model, tier }).catch((e) => {
-        console.error("[realtime/session] mint log failed", e instanceof Error ? e.name : "unknown error");
+    // Voice quality for a comped organization, read from the database on every call; the client never chooses it.
+    // Comped overrides billing: it runs Premium without touching the paid Premium minutes.
+    const orgTier = competition ? "standard" : await orgVoiceTierForUser(auth.id);
+
+    // Cap check before minting (rule 11). The returned callId keys every later metering write for this call.
+    // The engine is chosen here, per session, from the database: paid Premium only while PREMIUM_VOICE_ON_SALE is exactly
+    // "true", the add-on is entitled (active, never trialing, quantity above 0, period not over) and at least one whole Premium
+    // minute is left, else Standard for this session. A running call is never switched to another engine; a paid Premium
+    // call's maxSeconds is min(call allowance, Premium left). The engine drives caps and billing (TrainerSession.engineTier);
+    // a comped call and a Free trial call stay on the standard billing engine and use no paid Premium minutes.
+    let maxSeconds = SECRET_TTL_SEC;
+    let premium: PremiumMintInfo | undefined;
+    if (meteringEnabled() || competition) {
+      // A failed lookup refuses voice (fail closed); text practice never reaches this route.
+      // offerTrialSample: a Free organization's one Premium trial call may be claimed here, atomically, when
+      // PREMIUM_TRIAL_SAMPLE_ON is exactly "true" (beginCall decides from the database; the client cannot ask for it).
+      // A chosen Standard call asks for no Premium at all: no comped override, no paid minutes, no trial claim.
+      const begun = await beginCall(auth.id, scenario, new Date(), { compedPremium: orgTier === "premium" && !chosenStandard, offerTrialSample: !chosenStandard, preferStandard: chosenStandard, ...(competition ? { competition: true } : {}) }).catch((e) => {
+        console.error("[realtime/session] usage lookup failed", e instanceof Error ? e.name : "unknown");
         return null;
       });
-      if (logged !== true) {
-        if (logged === false) console.error("[realtime/session] mint log wrote no row");
-        await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
-        return voiceUnavailable();
+      if (!begun) return voiceUnavailable();
+      if (!begun.ok && begun.error === "cap_reached") {
+        // Ids only, and never awaited: the 402 does not wait on the sink (the GHL sink, when GHL events are on).
+        queuePremiumEvent({ name: "voice_cap_hit", subject: "user", subjectId: auth.id, reason: "cap_reached" });
+        return capReached();
       }
+      if (!begun.ok && begun.error === "minutes_reserved") return minutesReserved();
+      if (!begun.ok && begun.error === "voice_blocked") return voiceBlocked(begun.retryAfterSeconds);
+      if (!begun.ok && begun.error === "daily_session_limit") return dailySessionLimit();
+      if (!begun.ok) return voiceUnavailable();
+      callId = begun.callId;
+      if (competition) await attachSessionToCompetitionEntry(competition.entryId, callId);
+      maxSeconds = begun.maxSeconds;
+      premium = begun.premium;
     }
-    const receipt = sealMintReceipt(auth.id, sessionId, model);
-    return NextResponse.json(
-      {
-        clientSecret: data.value, expiresAt, voice, sessionId,
-        // Neutral labels only: the tier, whether the next call is Standard, and whether this is the trial call.
-        ...(callId ? { callId, maxSeconds, voiceTier: tier, nextCallStandard: premium?.nextCallStandard ?? false, ...(premium?.source === "trial" ? { voiceTrial: true } : {}) } : {}),
-        ...(receipt ? { receipt } : {}),
+
+    // The model, read from the database on every call; the client never chooses it. Premium only when the org is comped
+    // AND set to premium (effectiveVoiceTier), or when the meter started this call on the paid Premium entitlement
+    // (premium.source === "paid", which needs the exact sale flag and an entitled add-on), or when the meter atomically
+    // claimed the organization's one Free trial call for it (premium.source === "trial", PREMIUM_TRIAL_SAMPLE_ON exactly
+    // "true"). A stored add-on flag alone, the billing engine, or anything the client sends never reaches Premium.
+    // A chosen Standard call is Standard whatever the organization or the entitlement says (comped included).
+    const tier = chosenStandard ? "standard" : mintVoiceTier(orgTier, { paidPremium: premium?.source === "paid", trialSample: premium?.source === "trial" });
+    // GPT-Live (OPENAI_VOICE_API=live, off by default) has one model for both tiers; tier still drives caps and billing.
+    const live = openAiVoiceApi() === "live";
+    const model = live ? liveModel() : voiceModelFor(tier);
+    if (premium?.fallback) {
+      await emitPremiumEvent({ name: "premium_fallback_to_standard", subject: "user", subjectId: auth.id, reason: premium.fallback });
+    }
+    // One id per call, fixed before the secret is minted: the metering call id when metered, else a fresh UUID.
+    // The receipt is bound to it and the client saves the call under it, so a receipt can't move to another call.
+    const sessionId = callId ?? randomUUID();
+    if (live) {
+      const response = await mintLive({ userId: auth.id, callId, sessionId, model, tier, maxSeconds, premium, scenario, competition });
+      successfulMint = response.ok;
+      return response;
+    }
+    const voice = realtimeVoice(scenario.aiPersona.realtimeVoice);
+    const session = {
+      type: "realtime",
+      model,
+      // Same persona prompt as ElevenLabs and the text caller: stays in character and never coaches.
+      instructions: buildAgentPrompt(scenario),
+      output_modalities: ["audio"],
+      audio: {
+        input: {
+          // Needed for the transcript, the live coach and grading: the realtime model itself never returns user text.
+          transcription: { model: realtimeTranscribeModel() },
+          // semantic_vad waits for a finished thought, so a trainee who pauses mid-pitch is not talked over.
+          turn_detection: { type: "semantic_vad", eagerness: "auto", create_response: true, interrupt_response: true },
+          noise_reduction: { type: "near_field" },
+        },
+        output: { voice },
       },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    };
+
+    // Each attempt keeps its own 15 s timeout. A timeout or network error throws and never fails over, so the worst
+    // case stays one timeout. `pinned` (the key ladder) also refuses redirects, so a slot key only reaches this URL.
+    const mint = (apiKey: string, pinned: boolean) =>
+      fetch(CLIENT_SECRETS_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        // The secret never outlives the call's reserved minutes. OpenAI only checks it while the session is
+        // being set up, so this limits starting a late call, not a running one; billing is settled on the server.
+        body: JSON.stringify({ expires_after: { anchor: "created_at", seconds: Math.max(10, Math.min(SECRET_TTL_SEC, maxSeconds)) }, session }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(15_000),
+        ...(pinned ? { redirect: "error" as const } : {}),
+      });
+
+    try {
+      let res: Response;
+      if (keys.kind === "ladder") {
+        // Failover happens inside this one request, after beginCall: callId, sessionId, maxSeconds and the receipt
+        // binding stay the same. Media and billing follow the project of whichever slot minted the secret.
+        const r = await withOpenAiKeyFailover("realtime", async (key) => {
+          const attempt = await mint(key, true);
+          if (attempt.ok) return { outcome: "ok", value: attempt };
+          return { outcome: await classifyOpenAiResponse(CLIENT_SECRETS_URL, attempt), status: attempt.status, value: attempt };
+        });
+        if (r.kind === "exhausted") {
+          if (callId && !competition) await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
+          return NextResponse.json(
+            { error: "realtime_unavailable", message: "Voice is unavailable right now. Switch to Text to keep practicing." },
+            { status: 503, headers: { "Retry-After": "300" } },
+          );
+        }
+        res = r.value;
+      } else {
+        res = await mint(keys.key, false);
+      }
+      if (!res.ok) {
+        // Status only: the upstream body can echo request details and is never forwarded or logged.
+        console.error("[realtime/session] upstream status", res.status);
+        if (callId && !competition) await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
+        return NextResponse.json(
+          { error: "realtime_upstream_error", message: realtimeUpstreamMessage(res.status) },
+          { status: res.status === 429 ? 429 : 502 },
+        );
+      }
+      const data = (await res.json().catch(() => null)) as { value?: unknown; expires_at?: unknown } | null;
+      if (!data || typeof data.value !== "string" || !data.value) throw new Error("no client secret in response");
+      const expiresAt = typeof data.expires_at === "number" ? data.expires_at : Math.floor(Date.now() / 1000) + SECRET_TTL_SEC;
+      // The model id stays server-side: the browser needs only the secret, and the SDP relay never names a model.
+      // The receipt is the minted model encrypted (AES-GCM) for this user and this call (sessionId), opaque to the
+      // browser. POST /api/transcripts logs the model only from a receipt that opens for the sessionId it is saved
+      // under, and only once. A metered call's browser also gets the tier label and whether the next call drops to
+      // Standard (the hosted Premium Voice UI); an unmetered call's answer keeps upstream's exact keys.
+      // Durable server-side provenance for a metered call: the model actually minted and the effective tier, on the
+      // call's own row, now, whether or not the browser ever saves the call. Never returned.
+      // The log must land BEFORE the credential is released. If the write throws or updates no row, the secret is dropped
+      // unused (nothing returns it, and it expires on its own within the call's reserved time), the call is settled as a
+      // server mint failure (nothing billed, its reservation and any Premium minutes released) and the browser gets the
+      // same neutral "voice unavailable" answer as a failed usage lookup: no client secret, no receipt.
+      if (callId) {
+        const logged = await recordMintedVoice(auth.id, callId, { model, tier }, { competition: !!competition }).catch((e) => {
+          console.error("[realtime/session] mint log failed", e instanceof Error ? e.name : "unknown error");
+          return null;
+        });
+        if (logged !== true) {
+          if (logged === false) console.error("[realtime/session] mint log wrote no row");
+          if (!competition) await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
+          return voiceUnavailable();
+        }
+      }
+      const receipt = sealMintReceipt(auth.id, sessionId, model);
+      successfulMint = true;
+      return NextResponse.json(
+        {
+          clientSecret: data.value, expiresAt, voice, sessionId,
+          // Neutral labels only: the tier, whether the next call is Standard, and whether this is the trial call.
+          ...(callId ? { callId, maxSeconds, voiceTier: tier, nextCallStandard: premium?.nextCallStandard ?? false, ...(premium?.source === "trial" ? { voiceTrial: true } : {}) } : {}),
+          ...(receipt ? { receipt } : {}),
+          ...(competition ? { competition } : {}),
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+    } catch (e) {
+      console.error("[realtime/session]", e instanceof Error ? e.name : "unknown error");
+      if (callId && !competition) await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
+      return NextResponse.json({ error: "realtime_upstream_error", message: "Could not reach OpenAI to start the voice call. Check the server's network, then try again." }, { status: 502 });
+    }
   } catch (e) {
-    console.error("[realtime/session]", e instanceof Error ? e.message : "unknown error");
-    if (callId) await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
-    return NextResponse.json({ error: "realtime_upstream_error", message: "Could not reach OpenAI to start the voice call. Check the server's network, then try again." }, { status: 502 });
+    console.error("[realtime/session] setup failed", e instanceof Error ? e.name : "unknown error");
+    return voiceUnavailable();
+  } finally {
+    if (competition && !successfulMint) {
+      if (callId) await endCall(auth.id, callId, "failed_connect", new Date()).catch(() => null);
+      await refundCompetitionEntry(competition.entryId).catch(() => null);
+    }
   }
 }
 
@@ -241,24 +290,24 @@ export async function POST(req: NextRequest) {
  */
 async function mintLive(a: {
   userId: string; callId?: string; sessionId: string; model: string; tier: "premium" | "standard"; maxSeconds: number;
-  premium?: PremiumMintInfo; scenario: z.infer<typeof Body>["scenario"];
+  premium?: PremiumMintInfo; scenario: z.infer<typeof Body>["scenario"]; competition?: CompetitionMint;
 }) {
   const voice = pickLiveVoice(a.scenario.aiPersona, process.env.LIVE_VOICE);
   const ticket = sealLiveTicket(a.userId, a.sessionId, { model: a.model, voice });
   if (!ticket) {
     // No JWT_SECRET: there is no safe way to carry the call to the SDP step.
     console.error("[realtime/session] live ticket unavailable (JWT_SECRET unset?)");
-    if (a.callId) await endCall(a.userId, a.callId, "failed_connect", new Date()).catch(() => null);
+    if (a.callId && !a.competition) await endCall(a.userId, a.callId, "failed_connect", new Date()).catch(() => null);
     return voiceUnavailable();
   }
   if (a.callId) {
-    const logged = await recordMintedVoice(a.userId, a.callId, { model: a.model, tier: a.tier }).catch((e) => {
+    const logged = await recordMintedVoice(a.userId, a.callId, { model: a.model, tier: a.tier }, { competition: !!a.competition }).catch((e) => {
       console.error("[realtime/session] mint log failed", e instanceof Error ? e.name : "unknown error");
       return null;
     });
     if (logged !== true) {
       if (logged === false) console.error("[realtime/session] mint log wrote no row");
-      await endCall(a.userId, a.callId, "failed_connect", new Date()).catch(() => null);
+      if (!a.competition) await endCall(a.userId, a.callId, "failed_connect", new Date()).catch(() => null);
       return voiceUnavailable();
     }
   }
@@ -268,6 +317,7 @@ async function mintLive(a: {
       voiceApi: "live", liveTicket: ticket, voice, sessionId: a.sessionId,
       ...(a.callId ? { callId: a.callId, maxSeconds: a.maxSeconds, voiceTier: a.tier, nextCallStandard: a.premium?.nextCallStandard ?? false, ...(a.premium?.source === "trial" ? { voiceTrial: true } : {}) } : {}),
       ...(receipt ? { receipt } : {}),
+      ...(a.competition ? { competition: a.competition } : {}),
     },
     { headers: { "Cache-Control": "no-store" } },
   );

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
+import { prisma } from "@/lib/db";
 import { ipLimitResponse, userLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { meteringEnabled } from "@/lib/serverConfig";
 import { heartbeat } from "@/lib/usage";
@@ -15,14 +16,15 @@ const Body = z.object({
 });
 
 /**
- * Client heartbeat for a metered voice call, every 10 seconds. "connected" (data channel open and first
+ * Client heartbeat for a metered or competition voice call, every 10 seconds. "connected" (data channel open and first
  * remote audio arrived) fixes connectedAt on the server clock. The answer says whether the server has
- * stopped the call because the allowance ran out.
+ * stopped the call because the allowance or competition timer ran out.
  */
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
-  if (!meteringEnabled()) return NextResponse.json({ error: "metering_off" }, { status: 404 });
+  const metered = meteringEnabled();
+  if (!metered && !process.env.DATABASE_URL) return NextResponse.json({ error: "metering_off" }, { status: 404 });
 
   const ipLimited = ipLimitResponse(req, "usage");
   if (ipLimited) return ipLimited;
@@ -34,6 +36,14 @@ export async function POST(req: NextRequest) {
     body = Body.parse(await readJsonLimited(req));
   } catch {
     return NextResponse.json({ error: "invalid_request", message: "Heartbeat needs a call id and a state." }, { status: 400 });
+  }
+
+  if (!metered) {
+    const ownedCompetition = await prisma.trainerSession.findFirst({
+      where: { id: body.callId, userId: auth.id, isCompetition: true },
+      select: { id: true },
+    });
+    if (!ownedCompetition) return NextResponse.json({ error: "metering_off" }, { status: 404 });
   }
 
   const r = await heartbeat(auth.id, body.callId, body.state);

@@ -42,10 +42,17 @@ export function liveVoiceNotice(v: Pick<DeckVoice, "tier" | "trial" | "nextCallS
   return v.maxSeconds ? liveCallLimitNotice(v.maxSeconds) : NEXT_CALL_STANDARD_NOTICE;
 }
 
+export interface DeckCompetition {
+  trackLabel: string;
+  attemptNumber: number;
+  maxAttempts: number;
+  maxSeconds: number;
+}
+
 const FOCUSABLE = "button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
 const clock = (iso: string | undefined, start: number) => (iso ? formatDuration(Math.max(0, Math.round((Date.parse(iso) - start) / 1000))) : "");
 
-export default function Deck({ scenario, turns, startedAt, elapsed, orbState, status, grading, gradingLabel, onEnd, coach, coachMode, onCoachModeChange, coachLabel, text, voice, inserted, onInsert, error, canUpgrade = true }: {
+export default function Deck({ scenario, turns, startedAt, elapsed, orbState, status, grading, gradingLabel, onEnd, coach, coachMode, onCoachModeChange, coachLabel, text, voice, inserted, onInsert, error, canUpgrade = true, competition }: {
   error?: string;
   /** False for a Team pool member who is not an owner or manager: the cap message says to ask their admin, with no Upgrade link. */
   canUpgrade?: boolean;
@@ -66,6 +73,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
   voice?: DeckVoice;
   inserted: boolean;
   onInsert: (cue: LiveCue) => void;
+  competition?: DeckCompetition;
 }) {
   const persona = scenario.aiPersona;
   const logRef = useRef<HTMLOListElement>(null);
@@ -141,6 +149,8 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
   const chipsFor = (i: number): RubricChip[] => coach.chips[i] ?? [];
   const source = voice ? (voice.engine === "openai" ? "Voice · OpenAI Realtime" : "Voice · ElevenLabs") : text?.caller ?? "Text simulation";
   const toneClass = { ok: "lamp-ok", signal: "lamp-signal", caution: "lamp-caution" }[status.tone];
+  const remainingSec = competition ? Math.max(0, competition.maxSeconds - elapsed) : null;
+  const competitionLock = competition ? "Official competition calls run in Blind mode with no live cues. You get your full AI debrief and official rank when the call ends." : undefined;
 
   return (
     <div className="deck fixed inset-0 z-50 flex flex-col pt-[env(safe-area-inset-top)]">
@@ -157,7 +167,19 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
         <span className="sr-only ml-1 items-center gap-2 rounded-full border border-line bg-sunken px-3 py-1 text-xs font-semibold sm:not-sr-only sm:inline-flex" role="status">
           <span className={`lamp ${toneClass} ${status.tone === "signal" ? "motion-safe:animate-lamp-pulse" : ""}`} aria-hidden />{status.label}
         </span>
-        <span className="mono ml-auto text-lg font-semibold tabular-nums sm:text-xl" aria-label={`Elapsed ${formatDuration(elapsed)}`}>{formatDuration(elapsed)}</span>
+        {competition && (
+          <span className="chip hidden shrink-0 !border-primary/40 !text-primary lg:inline-flex">
+            <span className="lamp lamp-signal !h-1.5 !w-1.5" aria-hidden />
+            Official · {competition.attemptNumber}/{competition.maxAttempts} · Blind
+          </span>
+        )}
+        {remainingSec !== null ? (
+          <span className={`mono ml-auto text-lg font-semibold tabular-nums sm:text-xl ${remainingSec <= 60 ? "text-caution" : ""}`} aria-label={`Time remaining ${formatDuration(remainingSec)}`}>
+            {formatDuration(remainingSec)}
+          </span>
+        ) : (
+          <span className="mono ml-auto text-lg font-semibold tabular-nums sm:text-xl" aria-label={`Elapsed ${formatDuration(elapsed)}`}>{formatDuration(elapsed)}</span>
+        )}
         <span className="chip-model hidden md:inline-flex">{source}</span>
         {voice && (
           <button className={`btn-ghost !min-h-[38px] !px-3 ${voice.muted ? "!border-alert/60 !text-alert" : ""}`} onClick={voice.onToggleMute} disabled={grading}
@@ -261,7 +283,11 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
             {voice && (
               <p className="flex items-center justify-center gap-2 py-1 text-sm text-ink-soft">
                 <span className={`lamp ${voice.muted ? "lamp-alert" : "lamp-ok"}`} aria-hidden />
-                {voice.muted ? "Your mic is muted." : "Mic is live. Just talk; the transcript and coach follow along."}
+                {voice.muted
+                  ? "Your mic is muted."
+                  : competition
+                    ? "Mic is live. Official competition call (blind mode, 6:00 limit)."
+                    : "Mic is live. Just talk; the transcript and coach follow along."}
               </p>
             )}
             {/* Static for the whole call: the voice never changes mid-call. The notice is announced once, politely. */}
@@ -276,7 +302,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
 
         <div className="hidden min-h-0 lg:flex lg:flex-col">
           <CopilotRail scenario={scenario} result={coach.result} cues={coach.cues} mode={coachMode} onModeChange={onCoachModeChange} voice={isVoice}
-            onUseLine={insertLine} onDismiss={coach.dismiss} coachLabel={coachLabel} error={coach.error} />
+            onUseLine={insertLine} onDismiss={coach.dismiss} coachLabel={coachLabel} error={coach.error} lockedReason={competitionLock} />
         </div>
       </div>
 
@@ -289,7 +315,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
             </div>
             <div className="flex min-h-0 flex-1 flex-col pb-[env(safe-area-inset-bottom)]">
               <CopilotRail scenario={scenario} result={coach.result} cues={coach.cues} mode={coachMode} onModeChange={onCoachModeChange} voice={isVoice}
-                onUseLine={(c) => { onInsert(c); afterSheet.current = "composer"; setSheet(false); }} onDismiss={coach.dismiss} coachLabel={coachLabel} error={coach.error} />
+                onUseLine={(c) => { onInsert(c); afterSheet.current = "composer"; setSheet(false); }} onDismiss={coach.dismiss} coachLabel={coachLabel} error={coach.error} lockedReason={competitionLock} />
             </div>
           </div>
         </div>

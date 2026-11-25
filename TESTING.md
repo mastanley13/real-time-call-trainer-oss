@@ -184,6 +184,7 @@ Every limit is a fixed window in memory, per server instance, and resets on rest
 | `/api/usage/heartbeat`, `/api/usage/end`, `/api/usage/credit` (voice metering) | `RATE_LIMIT_USAGE_MAX` (1200 per 600 s) | Full mode only. Set 3, then `curl` `/api/usage/end` four times with a signed-in cookie |
 | `/api/billing/checkout` + `/api/billing/portal` + `/api/billing/premium` + `/api/billing/seats` (Stripe, shared) | `RATE_LIMIT_BILLING_MAX` (20 per 3600 s) | Needs `STRIPE_SECRET_KEY=sk_test_...`. Set 2 and press **Choose Pro** three times |
 | `PATCH /api/team/voice` (voice quality) | `RATE_LIMIT_TEAM_SETTINGS_MAX` (30 per 3600 s) | Full mode only, as the owner of a comped org. Set 1 and switch Standard and Premium twice |
+| `/api/realtime/session` (`competitionTrack`) + `PATCH /api/competition` (shared) | `RATE_LIMIT_COMPETITION_MAX` (10 per 86400 s) | Full mode only. Set 1 and save your `/compete` display name twice |
 | `/api/auth/google/start` + `/callback` (Google sign-in, shared) | `RATE_LIMIT_GOOGLE_MAX` (30 per 900 s) | Needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL`. Set 2 and `curl -i` the start route three times |
 | `/api/llm/check` (Models page) | fixed, 6 per 10 min | Press **Check connection** seven times |
 | `/api/access` | fixed, 10 per 15 min | See Access code above |
@@ -208,6 +209,7 @@ Each `_MAX` has a matching `_WINDOW_SEC`.
 | `/api/realtime/sdp` | 10 per minute |
 | `/api/usage/*` (heartbeat, end, credit) | 60 per minute |
 | `/api/billing/checkout` + `/api/billing/portal` + `/api/billing/premium` + `/api/billing/seats` (shared) | 20 per hour |
+| `/api/realtime/session` (`competitionTrack`) + `PATCH /api/competition` (shared) | 10 per hour |
 | `/api/elevenlabs/token` | 20 per minute |
 | `POST /api/transcripts` (save a session) | 30 per minute |
 | `GET /api/transcripts/[id]/voice` (debrief voice label, tier only) | 60 per minute |

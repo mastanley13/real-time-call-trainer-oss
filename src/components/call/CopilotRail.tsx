@@ -153,7 +153,7 @@ export function ModeDial({ mode, onChange, disabled = false }: { mode: CoachMode
 }
 
 /** The full copilot rail beside the transcript. */
-export default function CopilotRail({ scenario, result, cues, mode, onModeChange, voice, onUseLine, onDismiss, coachLabel, error }: {
+export default function CopilotRail({ scenario, result, cues, mode, onModeChange, voice, onUseLine, onDismiss, coachLabel, error, lockedReason }: {
   scenario: Scenario;
   result: CoachResult | null;
   cues: LiveCue[];
@@ -164,6 +164,8 @@ export default function CopilotRail({ scenario, result, cues, mode, onModeChange
   onDismiss: (id: string) => void;
   coachLabel: string;
   error?: string;
+  /** When set (e.g. official competition call), locks the coach dial so mode cannot be changed mid-call. */
+  lockedReason?: string;
 }) {
   const steps = talkTrackSteps(scenario.callScript);
   const active = cues.filter((c) => c.status === "active");
@@ -173,8 +175,8 @@ export default function CopilotRail({ scenario, result, cues, mode, onModeChange
       <div className="scroll-thin min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
         {mode === "blind" ? (
           <div className="rounded-panel border border-dashed border-line p-4 text-sm text-ink-soft">
-            <p className="font-semibold text-ink">Blind mode</p>
-            <p className="mt-1">No live help this call. You get the full debrief when you end it. Switch to Guided or Coached below at any time.</p>
+            <p className="font-semibold text-ink">{lockedReason ? "Blind mode locked" : "Blind mode"}</p>
+            <p className="mt-1">{lockedReason || "No live help this call. You get the full debrief when you end it. Switch to Guided or Coached below at any time."}</p>
           </div>
         ) : (
           <>
@@ -216,7 +218,7 @@ export default function CopilotRail({ scenario, result, cues, mode, onModeChange
           <span className="chip-model"><span className={`lamp ${mode === "blind" ? "lamp-off" : "lamp-ok"} !h-1.5 !w-1.5`} aria-hidden />{coachLabel}</span>
           <span className="font-mono text-[10px] uppercase text-ink-muted">Coach mode</span>
         </div>
-        <ModeDial mode={mode} onChange={onModeChange} />
+        <ModeDial mode={mode} onChange={onModeChange} disabled={!!lockedReason} />
       </div>
     </aside>
   );

@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Eye, Keyboard, Mic, PhoneCall, RotateCcw, ShieldAlert } from "lucide-react";
+import { ArrowLeft, Eye, Keyboard, Mic, PhoneCall, RotateCcw, ShieldAlert, Trophy } from "lucide-react";
 import { COACH_MODE_LABELS, type CoachMode } from "@/lib/coach-types";
 import { CALL_TYPE_LABELS, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps, type Scenario } from "@/lib/scenarios";
+import { COMPETITION_MIN_DURATION_SECONDS, COMPETITION_MIN_TRAINEE_TURNS, type CompetitionTrack } from "@/lib/competition";
 import { VOICE_ENGINE_LABELS, averageLevel, micErrorMessage, type VoiceEngine } from "@/lib/realtime";
 import type { Capabilities } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
@@ -168,12 +169,23 @@ export function VoiceChoiceField({ premium, usage, value, onChange }: { premium:
   );
 }
 
-export default function Briefing({ scenario, capabilities, mode, onModeChange, onUseText, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, usage, canUpgrade = true, usageUnavailable, premium, voiceChoice = "premium", onVoiceChoiceChange }: {
+export interface CompetitionBriefingInfo {
+  track: CompetitionTrack;
+  attemptNumber: number;
+  maxAttempts: number;
+  attemptsRemaining: number;
+  blockedReason?: string;
+  loading?: boolean;
+}
+
+export default function Briefing({ scenario, capabilities, mode, onModeChange, onUseText, engine, onEngineChange, coachMode, onCoachModeChange, onStart, retryFrom, error, notice, usage, canUpgrade = true, usageUnavailable, premium, voiceChoice = "premium", onVoiceChoiceChange, competition }: {
   /** Premium minutes left, or the locked Add Premium voice / Ask your admin state. Null when not metered. */
   premium?: PremiumSnapshot | null;
   /** Standard or Premium for this call, shown only when Premium can run (premiumChoiceAvailable). */
   voiceChoice?: VoiceChoice;
   onVoiceChoiceChange?: (c: VoiceChoice) => void;
+  /** Set when launching an official Launch Championship attempt (/trainer?compete=<slug>). */
+  competition?: CompetitionBriefingInfo | null;
   scenario: Scenario;
   capabilities: Capabilities;
   mode: "voice" | "text";
@@ -208,17 +220,25 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, o
   const engines = capabilities.voiceEngines ?? (capabilities.elevenlabs ? ["elevenlabs" as const] : []);
   const voiceReady = !!engine && engines.includes(engine);
   const blocked = mode === "voice" && !voiceReady;
-  const voiceLookupFailed = mode === "voice" && !!usageUnavailable;
+  const voiceLookupFailed = !competition && mode === "voice" && !!usageUnavailable;
   const switchToText = onUseText ?? (() => onModeChange("text"));
-  const outOfMinutes = mode === "voice" && !!usage && usage.remaining <= 0;
+  const outOfMinutes = !competition && mode === "voice" && !!usage && usage.remaining <= 0;
+  const competitionBlocked = !!competition && (!!competition.blockedReason || !!competition.loading);
   const voiceDetail = !voiceReady ? "Voice isn't configured on this server."
     : engine === "openai" ? "OpenAI Realtime over WebRTC. Your browser asks for the mic when the call starts."
     : "ElevenLabs Agents over WebRTC. Your browser asks for the mic when the call starts.";
-  const startDisabled = blocked || voiceLookupFailed || outOfMinutes;
+  const startDisabled = blocked || voiceLookupFailed || outOfMinutes || competitionBlocked;
   const lamps: { key: string; state: LampState; label: string; detail: string }[] = [
     { key: "persona", state: "ok", label: "Persona loaded", detail: `${p.name} stays in character and never coaches you.` },
     { key: "goal", state: goalRead ? "ok" : "off", label: "Goal read", detail: goalRead ? "You know what a win looks like." : "Tick “Got it” once you've read your goal." },
-    { key: "coach", state: capabilities.llm ? "ok" : "caution", label: "Coach", detail: capabilities.llm ? "AI coach is on for this call." : "Rules-based coach. Add an AI key for smarter cues and grading." },
+    {
+      key: "coach",
+      state: competition ? "ok" : capabilities.llm ? "ok" : "caution",
+      label: competition ? "Blind mode locked" : "Coach",
+      detail: competition
+        ? "Official competition calls turn live cues off. Scored by AI at hang-up."
+        : capabilities.llm ? "AI coach is on for this call." : "Rules-based coach. Add an AI key for smarter cues and grading.",
+    },
     {
       key: "channel",
       state: mode === "text" ? "ok" : voiceLookupFailed ? "off" : voiceReady ? "ok" : "caution",
@@ -239,22 +259,24 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, o
   const startButton = (
     /* A disabled Start always has a visible reason, and aria-describedby points the button at it. */
     <button className={`btn-primary btn-xl w-full ${allClear ? "shadow-glow" : ""}`} onClick={onStart} disabled={startDisabled}
-      aria-describedby={voiceLookupFailed ? VOICE_UNAVAILABLE_ID : outOfMinutes ? "minutes-out" : blocked ? "voice-blocked-reason" : undefined}>
-      <PhoneCall size={18} strokeWidth={1.75} aria-hidden /> Start call
+      aria-describedby={competitionBlocked ? "competition-blocked-reason" : voiceLookupFailed ? VOICE_UNAVAILABLE_ID : outOfMinutes ? "minutes-out" : blocked ? "voice-blocked-reason" : undefined}>
+      <PhoneCall size={18} strokeWidth={1.75} aria-hidden /> {competition ? (competition.loading ? "Checking attempt…" : `Start official call (Attempt ${competition.attemptNumber} of ${competition.maxAttempts})`) : "Start call"}
     </button>
   );
   const industry = scenario.industry && scenario.industry.toLowerCase() !== jobFamilyLabel(scenario.role).toLowerCase() ? scenario.industry : null;
 
   return (
     <div className="page enter pb-0 sm:pb-10">
-      <Link href="/library" className="inline-flex min-h-[40px] items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink"><ArrowLeft size={15} strokeWidth={1.75} aria-hidden /> Library</Link>
+      <Link href={competition ? "/compete" : "/library"} className="inline-flex min-h-[40px] items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink">
+        <ArrowLeft size={15} strokeWidth={1.75} aria-hidden /> {competition ? "Championship" : "Library"}
+      </Link>
 
       <div className="mt-2 grid gap-8 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start">
         <div className="min-w-0 space-y-8">
           <header className="flex items-start gap-4 sm:gap-5">
             <PersonaAvatar scenario={scenario} size={64} className="mt-1" />
             <div className="min-w-0 flex-1">
-              <p className="eyebrow">Pre-flight briefing</p>
+              <p className="eyebrow">{competition ? `Official championship · ${competition.track.label}` : "Pre-flight briefing"}</p>
               <h1 className="mt-1 text-2xl font-bold sm:text-3xl">{p.name}</h1>
               <p className="mt-0.5 text-sm text-ink-soft">{p.role}</p>
               <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] text-ink-soft">
@@ -264,11 +286,25 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, o
                 {industry && <><span className="h-3 w-px bg-line" aria-hidden /><span>{industry}</span></>}
                 <span className="h-3 w-px bg-line" aria-hidden />
                 <DifficultyBars level={scenario.difficulty} />
-                <span className="font-mono text-[11px] text-ink-muted">~{scenario.durationMin} min</span>
-                {scenario.status === "draft" && scenario.builtIn && <span className="chip !border-caution/40 !text-caution">Draft persona</span>}
+                <span className="font-mono text-[11px] text-ink-muted">{competition ? "6:00 limit" : `~${scenario.durationMin} min`}</span>
+                {scenario.status === "draft" && scenario.builtIn && !competition && <span className="chip !border-caution/40 !text-caution">Draft persona</span>}
               </div>
             </div>
           </header>
+
+          {competition && (
+            <div className="panel flex items-start gap-3 border-primary/40 bg-primary-soft/30 p-4" role="status">
+              <Trophy size={18} strokeWidth={1.75} className="mt-0.5 shrink-0 text-primary" aria-hidden />
+              <div className="min-w-0 space-y-1 text-sm">
+                <p className="font-semibold text-ink">
+                  Official attempt {competition.attemptNumber} of {competition.maxAttempts} · {competition.track.label}
+                </p>
+                <p className="text-xs text-ink-soft">
+                  Voice only, blind mode locked, 6:00 hard timer. Speak at least {COMPETITION_MIN_TRAINEE_TURNS} turns and {COMPETITION_MIN_DURATION_SECONDS} seconds to post an official ranked score. Does not use your regular plan voice minutes.
+                </p>
+              </div>
+            </div>
+          )}
 
           {notice && <p className="banner-warn" role="status">{notice} <Link href="/library" className="font-semibold underline underline-offset-2">Open the Library</Link></p>}
 
@@ -375,17 +411,17 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, o
             </div>
 
             <div className="border-t border-line pt-5">
-              <p className="label">Call mode</p>
-              <div className="grid grid-cols-2 gap-1 rounded-lg bg-sunken p-1 ring-1 ring-line" role="radiogroup" aria-label="Call mode" onKeyDown={radioKeys(CALL_MODES, mode, onModeChange, (m) => !!retryFrom && m === "voice")}>
+              <p className="label">{competition ? "Call mode · Voice locked" : "Call mode"}</p>
+              <div className="grid grid-cols-2 gap-1 rounded-lg bg-sunken p-1 ring-1 ring-line" role="radiogroup" aria-label="Call mode" onKeyDown={radioKeys(CALL_MODES, mode, onModeChange, (m) => (!!retryFrom && m === "voice") || (!!competition && m === "text"))}>
                 {CALL_MODES.map((m) => (
-                  <button key={m} type="button" role="radio" aria-checked={mode === m} tabIndex={mode === m ? 0 : -1} disabled={!!retryFrom && m === "voice"} aria-describedby={!!retryFrom && m === "voice" ? "retry-reason" : undefined} onClick={() => onModeChange(m)}
+                  <button key={m} type="button" role="radio" aria-checked={mode === m} tabIndex={mode === m ? 0 : -1} disabled={(!!retryFrom && m === "voice") || (!!competition && m === "text")} aria-describedby={!!retryFrom && m === "voice" ? "retry-reason" : undefined} onClick={() => onModeChange(m)}
                     className={`flex min-h-[40px] items-center justify-center gap-2 rounded-md text-sm font-semibold transition disabled:opacity-40 ${mode === m ? "bg-surface text-ink shadow-card ring-1 ring-line" : "text-ink-muted hover:text-ink"}`}>
                     {m === "voice" ? <Mic size={15} strokeWidth={1.75} aria-hidden /> : <Keyboard size={15} strokeWidth={1.75} aria-hidden />}{m === "voice" ? "Voice" : "Text"}
                   </button>
                 ))}
               </div>
-              {blocked && <p id="voice-blocked-reason" className="mt-2 text-xs text-caution">Voice calls need an OpenAI key or ElevenLabs keys on the server. Switch to Text to practice now.</p>}
-              {mode === "voice" && voiceReady && engines.length > 1 && (
+              {blocked && <p id="voice-blocked-reason" className="mt-2 text-xs text-caution">{competition ? "Competition voice calls require OpenAI voice to be configured on this server." : "Voice calls need an OpenAI key or ElevenLabs keys on the server. Switch to Text to practice now."}</p>}
+              {!competition && mode === "voice" && voiceReady && engines.length > 1 && (
                 <div className="mt-3">
                   <p className="label">Voice engine</p>
                   <div className="grid grid-cols-2 gap-1 rounded-lg bg-sunken p-1 ring-1 ring-line" role="radiogroup" aria-label="Voice engine" onKeyDown={radioKeys(engines, engine ?? engines[0], onEngineChange)}>
@@ -402,29 +438,44 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, o
             </div>
 
             <div>
-              <p className="label">Coach mode · {COACH_MODE_LABELS[coachMode]}</p>
-              <ModeDial mode={coachMode} onChange={onCoachModeChange} />
-              <p className="mt-2 text-xs text-ink-muted">{MODE_HELP[coachMode]}</p>
+              <p className="label">Coach mode · {COACH_MODE_LABELS[coachMode]}{competition ? " (locked)" : ""}</p>
+              <ModeDial mode={coachMode} onChange={onCoachModeChange} disabled={!!competition} />
+              <p className="mt-2 text-xs text-ink-muted">{competition ? "Official competition calls run blind with no live cues." : MODE_HELP[coachMode]}</p>
             </div>
 
             {/* A cap refusal while the usage panel shows no minutes left is not repeated: the panel has the count, the reset date and the right Upgrade link. */}
             {error && !(outOfMinutes && isCapMessage(error)) && <CallError message={error} canUpgrade={canUpgrade} />}
 
-            {/* Minutes near Start, in every state: voice keys set up or not. */}
-            <MinutesLeft usage={usage ?? null} mode={mode} canUpgrade={canUpgrade} />
-            {mode === "voice" && <PremiumMinutes premium={premium ?? null} />}
-            {mode === "voice" && premium && premiumChoiceAvailable(premium) && onVoiceChoiceChange && (
-              <VoiceChoiceField premium={premium} usage={usage ?? null} value={voiceChoice} onChange={onVoiceChoiceChange} />
-            )}
+            {competition ? (
+              <div className="space-y-2 border-t border-line pt-4">
+                <p className="text-xs text-ink-soft">
+                  <span className="font-semibold text-ink">{competition.attemptsRemaining} of {competition.maxAttempts}</span> official calls remaining · 6:00 limit · Standard voice
+                </p>
+                {competition.blockedReason && (
+                  <p id="competition-blocked-reason" className="rounded-md bg-caution-soft p-2.5 text-xs text-ink" role="alert">
+                    {competition.blockedReason}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <>
+                {/* Minutes near Start, in every state: voice keys set up or not. */}
+                <MinutesLeft usage={usage ?? null} mode={mode} canUpgrade={canUpgrade} />
+                {mode === "voice" && <PremiumMinutes premium={premium ?? null} />}
+                {mode === "voice" && premium && premiumChoiceAvailable(premium) && onVoiceChoiceChange && (
+                  <VoiceChoiceField premium={premium} usage={usage ?? null} value={voiceChoice} onChange={onVoiceChoiceChange} />
+                )}
 
-            {voiceLookupFailed && <VoiceUnavailable onUseText={switchToText} />}
-            {outOfMinutes && !voiceLookupFailed && <button type="button" className="btn-ghost btn-sm w-full" onClick={switchToText}>Switch to text practice</button>}
+                {voiceLookupFailed && <VoiceUnavailable onUseText={switchToText} />}
+                {outOfMinutes && !voiceLookupFailed && <button type="button" className="btn-ghost btn-sm w-full" onClick={switchToText}>Switch to text practice</button>}
+              </>
+            )}
 
             {/* From sm up Start sits here in the card. Below sm the same button lives in the sticky bar at the end of the page. */}
             <div className="hidden sm:block">{startButton}</div>
-            <p className="text-center text-xs text-ink-muted">The coach only talks to you. {p.name} never hears it.</p>
+            <p className="text-center text-xs text-ink-muted">{competition ? "Pre-connect failures are refunded automatically." : `The coach only talks to you. ${p.name} never hears it.`}</p>
           </div>
-          <Link href="/library" className="btn-ghost w-full">Change persona</Link>
+          <Link href={competition ? "/compete" : "/library"} className="btn-ghost w-full">{competition ? "Change industry track" : "Change persona"}</Link>
         </aside>
       </div>
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
+import { prisma } from "@/lib/db";
 import { ipLimitResponse, userLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { meteringEnabled } from "@/lib/serverConfig";
 import { endCall } from "@/lib/usage";
@@ -12,11 +13,12 @@ const Body = z.object({
   reason: z.enum(CLIENT_END_REASONS),
 });
 
-/** Ends and bills a voice call. Safe to repeat: a second end event returns the stored result and writes nothing. */
+/** Ends and bills a voice call (or refunds a never-connected competition attempt). Safe to repeat. */
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
-  if (!meteringEnabled()) return NextResponse.json({ error: "metering_off" }, { status: 404 });
+  const metered = meteringEnabled();
+  if (!metered && !process.env.DATABASE_URL) return NextResponse.json({ error: "metering_off" }, { status: 404 });
 
   const ipLimited = ipLimitResponse(req, "usage");
   if (ipLimited) return ipLimited;
@@ -28,6 +30,14 @@ export async function POST(req: NextRequest) {
     body = Body.parse(await readJsonLimited(req));
   } catch {
     return NextResponse.json({ error: "invalid_request", message: "Ending a call needs a call id and a reason." }, { status: 400 });
+  }
+
+  if (!metered) {
+    const ownedCompetition = await prisma.trainerSession.findFirst({
+      where: { id: body.callId, userId: auth.id, isCompetition: true },
+      select: { id: true },
+    });
+    if (!ownedCompetition) return NextResponse.json({ error: "metering_off" }, { status: 404 });
   }
 
   const result = await endCall(auth.id, body.callId, body.reason);

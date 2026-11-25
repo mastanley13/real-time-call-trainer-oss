@@ -8,6 +8,7 @@ import { transcriptDigest, verifySeal } from "@/lib/gradeSeal";
 import { hasGradedDuplicate, lockTranscript } from "@/lib/transcriptGrade";
 import { isReceiptReplay, receiptRowId, verifyMintReceipt } from "@/lib/mintReceipt";
 import { hasGradedSibling, isLegacyCall, lockCall } from "@/lib/callRow";
+import { finalizeCompetitionEntry } from "@/lib/competitionServer";
 import { HAS_TRANSCRIPT } from "@/lib/usage";
 import { tierOfModel } from "@/lib/voiceTierServer";
 import { sessionListItem } from "@/lib/sessionView";
@@ -85,7 +86,10 @@ export async function POST(req: NextRequest) {
     // realtimeModel is read only to tell whether the mint already logged this call (src/lib/voiceMintLog.ts); it is
     // never returned. Only a save of that very call fills it: its sessionId is the metering call id (the client saves a
     // metered call under it), so a save naming another call's callId never uses up that call's row.
-    const metered = body.callId ? await prisma.trainerSession.findUnique({ where: { id: body.callId }, select: { userId: true, transcript: true, realtimeModel: true } }) : null;
+    const metered = body.callId ? await prisma.trainerSession.findUnique({ where: { id: body.callId }, select: { userId: true, transcript: true, realtimeModel: true, isCompetition: true, scenarioId: true } }) : null;
+    if (metered?.isCompetition && metered.userId === dbUser.id && (body.scenario.id !== metered.scenarioId || body.sessionId !== body.callId)) {
+      return NextResponse.json({ error: "invalid_competition_session", message: "Save the official call with its original persona and session id." }, { status: 400 });
+    }
     const fillExisting = !!body.callId && body.callId === body.sessionId && !!metered && metered.userId === dbUser.id && Array.isArray(metered.transcript) && metered.transcript.length === 0;
     /** The row's fields, with the verified grade only on the one write that claims it. */
     const fieldsFor = (withGrade: boolean) => {
@@ -258,7 +262,11 @@ export async function POST(req: NextRequest) {
         },
       },
     });
-    return NextResponse.json({ id: created.id, graded });
+    const competition = filledOwnRow && metered?.isCompetition ? await finalizeCompetitionEntry({
+      userId: dbUser.id, trainerSessionId: created.id, durationSeconds: body.durationSeconds ?? 0,
+      transcript: body.transcript, evaluation: body.evaluation, graded,
+    }) : null;
+    return NextResponse.json({ id: created.id, graded, ...(competition ? { competition } : {}) });
   } catch (error) {
     console.error("[/api/transcripts] error:", error);
     return NextResponse.json({ error: "Failed to save session" }, { status: 500 });

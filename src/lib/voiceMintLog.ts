@@ -15,10 +15,16 @@ import type { VoiceTier } from "./voiceTier";
  * Unmetered calls have no row at mint, so their model reaches the database only through the sealed receipt on save
  * (src/lib/mintReceipt.ts, POST /api/transcripts).
  */
-export async function recordMintedVoice(userId: string, callId: string, minted: { model: string; tier: VoiceTier }): Promise<boolean> {
+export async function recordMintedVoice(
+  userId: string,
+  callId: string,
+  minted: { model: string; tier: VoiceTier },
+  opts: { competition?: boolean } = {},
+): Promise<boolean> {
   const tier = minted.tier === "premium" ? "premium" : "standard";
+  const scope = opts.competition ? { isCompetition: true } : { allowanceId: { not: null } };
   const r = await prisma.trainerSession.updateMany({
-    where: { id: callId, userId, allowanceId: { not: null }, realtimeModel: null },
+    where: { id: callId, userId, ...scope, realtimeModel: null },
     data: { realtimeModel: minted.model.slice(0, 80), voiceTier: tier },
   });
   return r.count === 1;
