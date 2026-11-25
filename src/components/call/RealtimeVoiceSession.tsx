@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Scenario } from "@/lib/scenarios";
+import type { CompetitionTrackSlug } from "@/lib/competition";
 import type { MintedCall, StoredTurn } from "@/lib/sessionStore";
 import type { AgentState } from "@/components/CallOrb";
 import type { MeterEndReason } from "@/lib/callMeter";
@@ -99,7 +100,12 @@ export class RealtimeCall {
   /** Aborts a pending SDP request when the call closes, so a closed call never finishes its connection. */
   private abort = new AbortController();
 
-  constructor(private scenario: Scenario, private h: Handlers, private voiceTier?: "premium" | "standard") {
+  constructor(
+    private scenario: Scenario,
+    private h: Handlers,
+    private voiceTier?: "premium" | "standard",
+    private competitionTrack?: CompetitionTrackSlug,
+  ) {
     this.attempt = new VoiceAttempt({ teardown: () => this.teardown(), onCancelled: (m) => this.h.onCancelled(m) });
   }
 
@@ -128,7 +134,15 @@ export class RealtimeCall {
     try {
       // The rep's Standard or Premium pick is a request; the server rechecks entitlement and decides.
       const session = storedSessionKey();
-      const res = await fetch("/api/realtime/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: this.scenario, ...(this.voiceTier ? { voiceTier: this.voiceTier } : {}) }) });
+      const res = await fetch("/api/realtime/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scenario: this.scenario,
+          ...(this.voiceTier ? { voiceTier: this.voiceTier } : {}),
+          ...(this.competitionTrack ? { competitionTrack: this.competitionTrack } : {}),
+        }),
+      });
       secret = await res.json().catch(() => ({}));
       // The meter exists as soon as the server answers, so every exit from here on reports the end. An attempt canceled
       // while the mint was pending reports this callId now and goes no further (row 7). Without a callId (unmetered) the
@@ -430,10 +444,12 @@ function iceGathered(pc: RTCPeerConnection, timeoutMs = 3000): Promise<void> {
 }
 
 /** Voice session on the OpenAI Realtime API, or GPT-Live when the server sets OPENAI_VOICE_API=live. Drop-in for the ElevenLabs VoiceSession. */
-export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onCancelled, onMinted, onVoiceInfo, registerEnd, render, voiceTier }: {
+export default function RealtimeVoiceSession({ scenario, active, grading, onTurn, onEnded, onError, onCancelled, onMinted, onVoiceInfo, registerEnd, render, voiceTier, competitionTrack }: {
   scenario: Scenario;
   /** The setup's Standard or Premium pick for this call, sent as a request. Read when the call starts. */
   voiceTier?: "premium" | "standard";
+  /** Official competition track slug; when set, the server claims a competition attempt and uses the canonical scenario. */
+  competitionTrack?: CompetitionTrackSlug;
   active: boolean;
   grading: boolean;
   onTurn: (t: StoredTurn) => void;
@@ -454,6 +470,8 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
   // The pick at the moment the call starts; changing it later never restarts or switches a running call.
   const tierRef = useRef(voiceTier);
   useEffect(() => { tierRef.current = voiceTier; });
+  const competitionRef = useRef(competitionTrack);
+  useEffect(() => { competitionRef.current = competitionTrack; });
 
   useEffect(() => {
     if (!active) return;
@@ -465,7 +483,7 @@ export default function RealtimeVoiceSession({ scenario, active, grading, onTurn
       onView: (v) => { if (callRef.current === call) setView(v); },
       onMinted: (c) => cb.current.onMinted?.(c),
       onVoiceInfo: (i) => cb.current.onVoiceInfo?.(i),
-    }, tierRef.current);
+    }, tierRef.current, competitionRef.current);
     callRef.current = call;
     setView({ phase: "mic", speaking: false, muted: false });
     void call.start();

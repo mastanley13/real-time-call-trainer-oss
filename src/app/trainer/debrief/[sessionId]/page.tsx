@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, CalendarDays, CheckCircle2, ChevronDown, Clock, FileQuestion, Loader2, Printer, Quote, RefreshCw, RotateCcw, TrendingUp, WifiOff } from "lucide-react";
+import { ArrowRight, CalendarDays, CheckCircle2, ChevronDown, Clock, FileQuestion, Loader2, Printer, Quote, RefreshCw, RotateCcw, Share2, TrendingUp, Trophy, WifiOff } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { COMPETITION_MAX_ATTEMPTS, type CompetitionFinalizeResult } from "@/lib/competition";
 import { getLocalSession, readLocalSessionsStrict, updateLocalEvaluation, type CoachLog } from "@/lib/sessionStore";
 import { listScenarios } from "@/lib/scenarioStore";
 import type { Scenario } from "@/lib/scenarios";
@@ -38,6 +39,8 @@ interface View {
   ownerId?: string;
   /** Voice tier the call ran on, for server-stored voice calls. Never a model id. */
   voiceUsed?: "premium" | "standard" | null;
+  /** Official championship result when this call was a competition attempt. */
+  competition?: CompetitionFinalizeResult | null;
 }
 
 /** Older heuristic sessions stored keyword-stem rationales; never show those to users. */
@@ -115,7 +118,7 @@ export default function DebriefPage() {
         if (!r.ok) throw new Error(r.status === 404 ? NOT_FOUND : "Could not load this session.");
         const { session } = await r.json();
         const sc = listScenarios().find((x) => x.id === session.scenarioId);
-        setView({ title: session.scenarioTitle ?? session.scenarioId, scenario: sc, scenarioId: session.scenarioId, role: sc?.role, createdAt: session.createdAt, durationSeconds: session.durationSeconds, transcript: session.transcript, evaluation: session.evaluation, supervisorNotes: session.supervisorNotes, callerName: sc?.aiPersona.name ?? "Caller", local: false, ownerId: session.userId, voiceUsed: await voice });
+        setView({ title: session.scenarioTitle ?? session.scenarioId, scenario: sc, scenarioId: session.scenarioId, role: sc?.role, createdAt: session.createdAt, durationSeconds: session.durationSeconds, transcript: session.transcript, evaluation: session.evaluation, supervisorNotes: session.supervisorNotes, callerName: sc?.aiPersona.name ?? "Caller", local: false, ownerId: session.userId, voiceUsed: await voice, competition: session.competition ?? null });
       })
       .catch((e) => setError(e instanceof TypeError ? "Couldn't reach the server. Check your connection and try again." : e.message));
   }, [sessionId, capabilities, isLoading, isAuthenticated, router, attempt]);
@@ -269,6 +272,38 @@ export default function DebriefPage() {
           </div>
         </div>
         {error && <p className="banner-warn">{error}</p>}
+
+        {view.competition && (
+          <section className={`panel flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5 print:hidden ${view.competition.qualified ? "border-primary/40 bg-primary-soft/25" : "border-caution/40 bg-caution-soft/25"}`} aria-label="Championship result">
+            <div className="flex min-w-0 items-start gap-3">
+              <Trophy size={20} strokeWidth={1.75} className={`mt-0.5 shrink-0 ${view.competition.qualified ? "text-primary" : "text-caution"}`} aria-hidden />
+              <div className="min-w-0">
+                <p className="font-mono text-[11px] font-medium uppercase tracking-wide text-ink-muted">
+                  Official Championship · Attempt {view.competition.attemptNumber} of {COMPETITION_MAX_ATTEMPTS} · {view.competition.trackLabel}
+                </p>
+                {view.competition.qualified ? (
+                  <p className="mt-0.5 font-heading text-base font-bold text-ink">
+                    Ranked #{view.competition.overallRank ?? 1} overall
+                    {view.competition.industryRank ? ` (#${view.competition.industryRank} in ${view.competition.trackLabel})` : ""}
+                  </p>
+                ) : (
+                  <>
+                    <p className="mt-0.5 font-heading text-base font-bold text-ink">Attempt did not qualify for the leaderboard</p>
+                    {view.competition.message && <p className="mt-0.5 text-xs text-ink-soft">{view.competition.message}</p>}
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {view.competition.qualified && (
+                <Link href={`/compete/card/${encodeURIComponent(view.competition.shareToken)}`} className="btn-primary btn-sm">
+                  <Share2 size={14} strokeWidth={1.75} aria-hidden /> Share score card
+                </Link>
+              )}
+              <Link href="/compete" className="btn-ghost btn-sm">View leaderboard</Link>
+            </div>
+          </section>
+        )}
 
         {!spoke ? (
           <div className="panel p-6 text-center sm:p-8">

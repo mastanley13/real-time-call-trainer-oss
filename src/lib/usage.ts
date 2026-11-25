@@ -1,6 +1,7 @@
 import "server-only";
 import type { Prisma, TrainerSession, UsageAllowance } from "@prisma/client";
 import { prisma } from "./db";
+import { COMPETITION_CALL_MAX_SECONDS } from "./competition";
 import { billingActive, premiumOnSale, premiumTrialSampleOn } from "./serverConfig";
 import { storedPlanEntitled } from "./subscriptionStatus";
 import { premiumMinutesCapFor, premiumMinutesLeft, premiumSeatsForUnits } from "./premiumVoice";
@@ -412,7 +413,7 @@ const RESERVE_ATTEMPTS = 5;
  * minutes), its maxSeconds is min(the existing deadline, 300) and it is marked premiumTrial so the heartbeat enforces
  * that deadline through the normal max_duration end.
  */
-export async function beginCall(userId: string, scenario: ScenarioInfo, now = new Date(), opts: { standardAvailable?: boolean; compedPremium?: boolean; offerTrialSample?: boolean; preferStandard?: boolean } = {}): Promise<BeginResult> {
+export async function beginCall(userId: string, scenario: ScenarioInfo, now = new Date(), opts: { standardAvailable?: boolean; compedPremium?: boolean; offerTrialSample?: boolean; preferStandard?: boolean; competition?: boolean } = {}): Promise<BeginResult> {
   return runMetered(async (tx) => {
     // The user row is locked first and held until this transaction commits, so concurrent starts for one user (two
     // tabs, a double click) run one after the other: each sees what the earlier one settled, reclaimed and created, so
@@ -431,7 +432,20 @@ export async function beginCall(userId: string, scenario: ScenarioInfo, now = ne
     const minted = await tx.trainerSession.count({
       where: { userId, createdAt: { gte: new Date(now.getTime() - 24 * 60 * 60 * 1000) }, allowanceId: { not: null } },
     });
-    if (minted >= DAILY_SESSION_MINT_CAP) return { ok: false, error: "daily_session_limit" } as const;
+    const officialMints = await tx.trainerSession.count({ where: { userId, createdAt: { gte: new Date(now.getTime() - 24 * 60 * 60 * 1000) }, isCompetition: true } });
+    if (minted + officialMints >= DAILY_SESSION_MINT_CAP) return { ok: false, error: "daily_session_limit" } as const;
+    if (opts.competition) {
+      if (!user.organizationId) return { ok: false, error: "no_organization" } as const;
+      const session = await tx.trainerSession.create({ data: {
+        userId, organizationId: user.organizationId, createdAt: now,
+        scenarioId: scenario.id, scenarioTitle: scenario.title, scenarioCategory: scenario.industry,
+        scenarioDifficulty: scenario.difficulty, transcript: [], isCompetition: true, allowanceId: null,
+        reservedMinutes: COMPETITION_CALL_MAX_SECONDS / 60, capEnforced: true,
+        engineTier: "standard", voiceTier: "standard", premiumTrial: false,
+      } });
+      return { ok: true, callId: session.id, remaining: 6, pooled: false, engine: "standard",
+        maxSeconds: COMPETITION_CALL_MAX_SECONDS, premium: { source: null, cap: 0, leftAfter: 0, fallback: null, nextCallStandard: false } } as const;
+    }
     for (let attempt = 0; attempt < RESERVE_ATTEMPTS; attempt++) {
       const r = await resolveAllowance(tx, userId, now);
       if (!r) return { ok: false, error: "user_not_found" } as const;
@@ -585,6 +599,10 @@ export async function heartbeat(userId: string, callId: string, state: Heartbeat
       return { found: true, stop: true, reason: "ended", settlement: null } as const;
     }
 
+    if (s.isCompetition && !s.connectedAt && !s.lastHeartbeatAt && now.getTime() - s.createdAt.getTime() > CONNECT_WINDOW_SECONDS * 1000) {
+      const settlement = await settleCompetition(tx, s, "failed_connect", now);
+      return { found: true, stop: true, reason: "ended", settlement } as const;
+    }
     const data: Prisma.TrainerSessionUpdateManyMutationInput = { lastHeartbeatAt: now };
     let connectedAt = s.connectedAt;
     if (!connectedAt && state === "connected" && now.getTime() - s.createdAt.getTime() <= CONNECT_WINDOW_SECONDS * 1000) {
@@ -602,6 +620,14 @@ export async function heartbeat(userId: string, callId: string, state: Heartbeat
     const written = await tx.trainerSession.updateMany({ where: { id: s.id, endedAt: null }, data });
     if (written.count === 0) return { found: true, stop: true, reason: "ended", settlement: null } as const;
 
+    if (s.isCompetition) {
+      const current = { ...s, connectedAt, lastHeartbeatAt: now };
+      const elapsed = Math.max(0, Math.floor((now.getTime() - billingStart(current).getTime()) / 1000));
+      const left = COMPETITION_CALL_MAX_SECONDS - elapsed;
+      if (left > 0) return { found: true, stop: false, secondsLeft: left } as const;
+      const settlement = await settleCompetition(tx, current, "max_duration", now);
+      return { found: true, stop: true, reason: "max_duration", settlement } as const;
+    }
     const { limit, capApplies, trialBound } = await limitSeconds(tx, s, now);
     const start = billingStart({ createdAt: s.createdAt, connectedAt });
     const elapsed = Math.max(0, Math.floor((now.getTime() - start.getTime()) / 1000));
@@ -706,6 +732,7 @@ async function settle(tx: Tx, original: OpenSession, requested: CallEndReasonId,
   // User row first, before chargeTarget/ensureAllowance touch the allowance (see lockUserFirst). Every caller already
   // took it as its transaction's first statement, so this is a re-entrant no-op that keeps the order for any new caller.
   await lockUserFirst(tx, original.userId);
+  if (original.isCompetition) return settleCompetition(tx, original, requested, now);
   const target = await chargeTarget(tx, original, now);
   if (!target) return null;
   const { allowance, samePeriod } = target;
@@ -848,7 +875,19 @@ async function flagOverrun(tx: Tx, s: OpenSession, now: Date): Promise<void> {
   });
 }
 
+/** Competition calls use the server clock but never a paid allowance or ledger. */
+async function settleCompetition(tx: Tx, s: OpenSession, requested: CallEndReasonId, now: Date): Promise<CallResult | null> {
+  const connected = !!(s.connectedAt || s.lastHeartbeatAt);
+  const billableSeconds = connected ? Math.min(COMPETITION_CALL_MAX_SECONDS, Math.max(0, Math.floor((now.getTime() - billingStart(s).getTime()) / 1000))) : 0;
+  const endReason = connected ? requested : "failed_connect";
+  const updated = await tx.trainerSession.updateMany({ where: { id: s.id, endedAt: null, ...(!connected ? { connectedAt: null, lastHeartbeatAt: null } : {}) }, data: { endedAt: now, endReason, billableSeconds, billedMinutes: 0 } });
+  if (!updated.count) return null;
+  if (!connected) await tx.competitionEntry.updateMany({ where: { trainerSessionId: s.id, status: "minted" }, data: { status: "refunded", attemptNumber: null } });
+  return { outcome: connected ? "billed" : "failed_connect", endReason, billableSeconds, billedMinutes: 0, creditedMinutes: 0 };
+}
+
 function storedResult(s: OpenSession): CallResult {
+  if (s.isCompetition) return { outcome: s.connectedAt || s.lastHeartbeatAt ? "billed" : "failed_connect", endReason: s.endReason ?? "failed_connect", billableSeconds: s.billableSeconds, billedMinutes: 0, creditedMinutes: 0 };
   const connected = !!s.connectedAt || s.billableSeconds > 0;
   const gross = connected ? Math.ceil(s.billableSeconds / 60) : 0;
   const credited = Math.max(0, gross - s.billedMinutes);
@@ -899,10 +938,31 @@ export async function endCall(userId: string, callId: string, reason: CallEndRea
  *   a long mic prompt never ends a live attempt. A call with any heartbeat or connectedAt is never touched by this rule.
  */
 export async function settleStale(tx: Tx, userId: string, now: Date, opts: { reclaimNeverConnected?: boolean } = {}): Promise<void> {
+  await settleStaleCompetition(tx, userId, now, opts);
   const open = await tx.trainerSession.findMany({ where: { userId, endedAt: null, allowanceId: { not: null } } });
   for (const s of open) {
     if (opts.reclaimNeverConnected && await reclaimNeverConnected(tx, s, now)) continue;
     await settleIfStale(tx, s, now);
+  }
+}
+
+/** Reclaim official calls without reading or changing an allowance. */
+export async function settleStaleCompetition(tx: Tx, userId: string, now: Date, opts: { reclaimNeverConnected?: boolean } = {}): Promise<void> {
+  const open = await tx.trainerSession.findMany({ where: { userId, endedAt: null, isCompetition: true } });
+  if (!open.length) return;
+  await lockUserFirst(tx, userId);
+  for (const candidate of open) {
+    const s = await tx.trainerSession.findUnique({ where: { id: candidate.id } });
+    if (!s || s.endedAt || !s.isCompetition) continue;
+    const connected = s.connectedAt || s.lastHeartbeatAt;
+    if (!connected) {
+      const window = opts.reclaimNeverConnected ? NEVER_CONNECTED_RECLAIM_SECONDS : CONNECT_WINDOW_SECONDS;
+      if (now.getTime() - s.createdAt.getTime() > window * 1000) await settleCompetition(tx, s, "failed_connect", now);
+    } else if (now.getTime() - (s.lastHeartbeatAt ?? connected).getTime() > HEARTBEAT_TIMEOUT_SECONDS * 1000) {
+      await settleCompetition(tx, s, "heartbeat_timeout", now);
+    } else if (now.getTime() - billingStart(s).getTime() >= COMPETITION_CALL_MAX_SECONDS * 1000) {
+      await settleCompetition(tx, s, "max_duration", now);
+    }
   }
 }
 

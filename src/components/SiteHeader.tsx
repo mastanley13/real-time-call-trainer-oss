@@ -18,6 +18,8 @@ export const NAV = [
 ];
 export const PRICING_NAV = { href: "/pricing", label: "Pricing", match: (p: string) => p.startsWith("/pricing") };
 export const TEAM_NAV = { href: "/team", label: "Team", match: (p: string) => p.startsWith("/team") };
+/** The launch championship. Public, so guests and signed-in users both see it, next to Pricing. */
+export const COMPETE_NAV = { href: "/compete", label: "Compete", match: (p: string) => p.startsWith("/compete") };
 
 /** Main links for this user. Team shows for managers, owners and platform admins; the server enforces access either way. */
 export function navFor(user: User | null) {
@@ -33,6 +35,8 @@ export default function SiteHeader() {
   const router = useRouter();
   const demo = capabilities?.demoMode;
   const links = navFor(user);
+  // Compete and Pricing are public, so every visitor gets them after the signed-in links.
+  const barLinks = [...(isAuthenticated ? links : []), COMPETE_NAV, PRICING_NAV];
   // Read the platform after mount so the server render and first client render match.
   const [mac, setMac] = useState(false);
   useEffect(() => {
@@ -64,15 +68,15 @@ export default function SiteHeader() {
           <LogoMark size={30} />
           {/* Guests have fewer header buttons so the wordmark fits at 375px; signed-in phones hide it below 440px to prevent horizontal overflow. */}
           <span className={isAuthenticated ? "sr-only min-[440px]:not-sr-only" : "sr-only min-[340px]:not-sr-only"}>Call Trainer</span>
-          <span className="hidden rounded border border-line bg-sunken px-1.5 py-px font-mono text-[10px] font-medium text-ink-muted sm:inline">OSS</span>
+          <span className={`hidden rounded border border-line bg-sunken px-1.5 py-px font-mono text-[10px] font-medium text-ink-muted sm:inline ${isAuthenticated ? "md:max-lg:hidden" : ""}`}>OSS</span>
         </Link>
 
         <nav className="hidden items-center gap-1 md:flex" aria-label="Main">
-            {[...(isAuthenticated ? links : []), PRICING_NAV].map((l) => {
+            {barLinks.map((l) => {
               const on = l.match(pathname);
               return (
                 <Link key={l.href} href={l.href} aria-current={on ? "page" : undefined}
-                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${on ? "bg-sunken text-ink shadow-[inset_0_-2px_0_rgb(var(--primary))]" : "text-ink-muted hover:bg-sunken hover:text-ink"}`}>
+                  className={`rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors lg:px-3 ${on ? "bg-sunken text-ink shadow-[inset_0_-2px_0_rgb(var(--primary))]" : "text-ink-muted hover:bg-sunken hover:text-ink"}`}>
                   {l.label}
                 </Link>
               );
@@ -92,7 +96,7 @@ export default function SiteHeader() {
               title={`Search and jump to anything (${mac ? "⌘K" : "Ctrl K"})`}
               className="btn-quiet !min-h-[40px] !min-w-[40px] !gap-2 !px-2 sm:!min-h-[36px] sm:!min-w-0 sm:border sm:border-line sm:!px-2.5">
               <Search size={16} strokeWidth={1.75} aria-hidden />
-              <span className="kbd hidden sm:inline-flex">{mac ? "⌘K" : "Ctrl K"}</span>
+              <span className="kbd hidden sm:inline-flex md:max-lg:hidden">{mac ? "⌘K" : "Ctrl K"}</span>
             </button>
           )}
           {isAuthenticated && (
@@ -119,7 +123,7 @@ export default function SiteHeader() {
             </>
           )}
           <MobileMenu pathname={pathname} guest={!isAuthenticated}
-            items={[...(isAuthenticated ? links : []), PRICING_NAV].map((l) => ({ href: l.href, label: l.label, active: l.match(pathname) }))} />
+            items={barLinks.map((l) => ({ href: l.href, label: l.label, active: l.match(pathname) }))} />
         </div>
       </div>
     </header>

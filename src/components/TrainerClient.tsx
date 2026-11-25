@@ -5,13 +5,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationProvider, useConversation } from "@elevenlabs/react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Scenario, ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
+import { LIBRARY } from "@/lib/personas";
+import { COMPETITION_CALL_MAX_SECONDS, COMPETITION_MAX_ATTEMPTS, competitionTrackBySlug, isCompetitionTrackSlug, type CompetitionStatusResponse, type CompetitionTrack } from "@/lib/competition";
 import { listScenarios } from "@/lib/scenarioStore";
 import { callSessionId, getLocalSession, saveSession, type CoachLog, type MintedCall, type StoredTurn } from "@/lib/sessionStore";
 import type { Evaluation } from "@/lib/grader-types";
 import type { CoachMode } from "@/lib/coach-types";
 import type { AgentState } from "@/components/CallOrb";
 import { PageSkeleton } from "@/components/ui/Skeleton";
-import Briefing from "@/components/call/Briefing";
+import Briefing, { type CompetitionBriefingInfo } from "@/components/call/Briefing";
 import Deck from "@/components/call/Deck";
 import { ElevenLabsStart } from "@/components/call/elevenLabsStart";
 import RealtimeVoiceSession, { voiceInfoFrom, type VoiceInfo, type VoiceRender } from "@/components/call/RealtimeVoiceSession";
@@ -146,6 +148,11 @@ export default function TrainerClient() {
   const [busy, setBusy] = useState(false);
   const [hungUp, setHungUp] = useState(false);
   const [retry, setRetry] = useState<{ seed: StoredTurn[]; turn: number; line: string } | null>(null);
+  const [competitionTrack, setCompetitionTrack] = useState<CompetitionTrack | null>(null);
+  const [compStatus, setCompStatus] = useState<CompetitionStatusResponse | null>(null);
+  const [compLoading, setCompLoading] = useState(false);
+  const [compError, setCompError] = useState("");
+  const autoEndedRef = useRef(false);
   const pendingRef = useRef(false);
   const [elapsed, setElapsed] = useState(0);
   const startedAt = useRef(0);
@@ -175,6 +182,22 @@ export default function TrainerClient() {
     const params = new URLSearchParams(query);
     let alive = true;
     setError("");
+    const competeParam = params.get("compete");
+    const track = isCompetitionTrackSlug(competeParam) ? competitionTrackBySlug(competeParam) ?? null : null;
+    if (track) {
+      const canonical = LIBRARY.find((s) => s.id === track.scenarioId);
+      if (canonical) {
+        setCompetitionTrack(track);
+        setRetry(null);
+        setScenario(canonical);
+        setNotice("");
+        setMode("voice");
+        setCoachModeState("blind");
+        modeChosen.current = true;
+        return () => { alive = false; };
+      }
+    }
+    setCompetitionTrack(null);
     try {
       const saved = localStorage.getItem(COACH_MODE);
       if (saved === "blind" || saved === "guided" || saved === "coached") setCoachModeState(saved);
@@ -252,16 +275,40 @@ export default function TrainerClient() {
     return () => { live = false; };
   }, [phase, isAuthenticated, stored]);
 
+  // Load competition season and viewer attempts while on the competition briefing.
+  useEffect(() => {
+    if (!competitionTrack || phase !== "idle" || !isAuthenticated) {
+      setCompStatus(null);
+      setCompLoading(false);
+      setCompError("");
+      return;
+    }
+    let alive = true;
+    setCompLoading(true);
+    setCompError("");
+    fetch("/api/competition", { credentials: "include", cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Could not load competition status."))))
+      .then((d: CompetitionStatusResponse) => { if (alive) { setCompStatus(d); setCompLoading(false); } })
+      .catch(() => { if (alive) { setCompStatus(null); setCompLoading(false); setCompError("Could not verify your remaining competition attempts. Reload and try again."); } });
+    return () => { alive = false; };
+  }, [competitionTrack, phase, isAuthenticated]);
+
   // Voice engine: the viewer's last pick if the server still offers it, else the server's first (OpenAI when a key is set).
   useEffect(() => {
     if (!capabilities) return;
     const engines = capabilities.voiceEngines ?? (capabilities.elevenlabs ? ["elevenlabs" as const] : []);
+    if (competitionTrack) {
+      setEngineState(engines.includes("openai") ? "openai" : null);
+      setMode("voice");
+      setCoachModeState("blind");
+      return;
+    }
     let saved: string | null = null;
     try { saved = localStorage.getItem(VOICE_ENGINE); } catch { /* storage unavailable */ }
     const pick = chooseVoiceEngine(engines, saved);
     setEngineState(pick);
     if (!pick) setMode("text");
-  }, [capabilities]);
+  }, [capabilities, competitionTrack]);
 
   // While a call is live, the page becomes the deck: site chrome hides (see globals.css).
   useEffect(() => {
@@ -271,10 +318,17 @@ export default function TrainerClient() {
   }, [phase]);
 
   useEffect(() => {
-    if (!live) return;
-    const t = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt.current) / 1000)), 1000);
+    if (!live) { autoEndedRef.current = false; return; }
+    const t = setInterval(() => {
+      const next = Math.floor((Date.now() - startedAt.current) / 1000);
+      setElapsed(next);
+      if (competitionTrack && next >= COMPETITION_CALL_MAX_SECONDS && !autoEndedRef.current) {
+        autoEndedRef.current = true;
+        endVoice.current();
+      }
+    }, 1000);
     return () => clearInterval(t);
-  }, [live]);
+  }, [live, competitionTrack]);
 
   const setEngine = (e: VoiceEngine) => {
     setEngineState(e);
@@ -283,11 +337,13 @@ export default function TrainerClient() {
 
   /** A Voice or Text pick on the briefing is the rep's own choice, so it is remembered for the next visit. */
   const chooseMode = (m: Mode) => {
+    if (competitionTrack) return;
     setMode(m);
     try { localStorage.setItem(CALL_MODE_KEY, m); } catch { /* ignore */ }
   };
 
   const setCoachMode = (m: CoachMode) => {
+    if (competitionTrack) return;
     setCoachModeState(m);
     try { localStorage.setItem(COACH_MODE, m); } catch { /* ignore */ }
   };
@@ -335,7 +391,13 @@ export default function TrainerClient() {
       const res = await fetch("/api/evaluate-call", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scenario, transcript, sessionId, ...(callId ? { callId } : {}) }),
+        body: JSON.stringify({
+          scenario,
+          transcript,
+          sessionId,
+          ...(callId ? { callId } : {}),
+          ...(competitionTrack ? { competitionTrack: competitionTrack.slug } : {}),
+        }),
       });
       if (res.ok) evaluation = await res.json();
       else if (res.status === 429) setError((await res.json().catch(() => ({}))).message || "Grading limit reached. The transcript was saved without a score; try again later.");
@@ -353,7 +415,7 @@ export default function TrainerClient() {
     const useServer = !!capabilities?.database && !capabilities?.demoMode;
     const id = await saveSession({ mode, durationSeconds: duration, scenario, transcript, evaluation, coach: coachLog }, useServer, { call, sessionId });
     router.push(`/trainer/debrief/${id}`);
-  }, [scenario, mode, capabilities, router, coachMode]);
+  }, [scenario, mode, capabilities, router, coachMode, competitionTrack]);
 
   const onVoiceEnded = useCallback(() => void finish(), [finish]);
 
@@ -456,6 +518,37 @@ export default function TrainerClient() {
     return `Coach: AI${latency}`;
   }, [coachMode, coach.result, coach.p50, capabilities]);
 
+  const competitionBriefing: CompetitionBriefingInfo | null = useMemo(() => {
+    if (!competitionTrack || !capabilities) return null;
+    const maxAttempts = compStatus?.season.maxAttempts ?? COMPETITION_MAX_ATTEMPTS;
+    const attemptsUsed = compStatus?.viewer.attemptsUsed ?? 0;
+    const attemptsRemaining = compStatus?.viewer.attemptsRemaining ?? maxAttempts;
+    const attemptNumber = Math.min(maxAttempts, attemptsUsed + 1);
+    let blockedReason: string | undefined;
+    if (capabilities.demoMode) {
+      blockedReason = "Sign in with a free account to take your 3 official competition calls.";
+    } else if (compError) {
+      blockedReason = compError;
+    } else if (compStatus) {
+      if (compStatus.season.phase === "upcoming") blockedReason = "This championship season has not started yet.";
+      else if (compStatus.season.phase === "ended") blockedReason = "This championship season has ended.";
+      else if (compStatus.season.phase === "disabled") blockedReason = "The championship is not active right now.";
+      else if (compStatus.season.globalCallsCap > 0 && compStatus.season.globalCallsUsed >= compStatus.season.globalCallsCap) {
+        blockedReason = "Every official call slot for this season has been claimed.";
+      } else if (attemptsRemaining <= 0) {
+        blockedReason = `You have used all ${maxAttempts} official attempts for this season.`;
+      }
+    }
+    return {
+      track: competitionTrack,
+      attemptNumber,
+      maxAttempts,
+      attemptsRemaining,
+      blockedReason,
+      loading: compLoading,
+    };
+  }, [competitionTrack, capabilities, compStatus, compError, compLoading]);
+
   if (!scenario || !capabilities) return <PageSkeleton rows={2} />;
 
   if (phase === "idle") {
@@ -463,16 +556,22 @@ export default function TrainerClient() {
       // Keyed by persona: revealed prep answers, "Got it" and the mic test belong to one buyer.
       <Briefing key={scenario.id} scenario={scenario} capabilities={capabilities} mode={mode} onModeChange={chooseMode} onUseText={() => setMode("text")} engine={engine} onEngineChange={setEngine} coachMode={coachMode} onCoachModeChange={setCoachMode}
         onStart={begin} retryFrom={retry ? { turn: retry.turn, line: retry.line } : null} error={error} notice={notice} usage={usage} canUpgrade={canUpgrade} usageUnavailable={usageUnavailable} premium={premium}
-        voiceChoice={voiceChoice} onVoiceChoiceChange={setVoiceChoice} />
+        voiceChoice={voiceChoice} onVoiceChoiceChange={setVoiceChoice} competition={competitionBriefing} />
     );
   }
 
   const gradingLabel = capabilities.llm ? "Graded by AI after the call" : "Rules-based estimate (no AI key)";
-  const shared = { scenario, turns, startedAt: startedAt.current, elapsed, grading, gradingLabel, coach, coachMode, onCoachModeChange: setCoachMode, coachLabel, inserted, onInsert: insertCue, error, canUpgrade };
+  const deckCompetition = competitionBriefing ? {
+    trackLabel: competitionBriefing.track.label,
+    attemptNumber: competitionBriefing.attemptNumber,
+    maxAttempts: competitionBriefing.maxAttempts,
+    maxSeconds: COMPETITION_CALL_MAX_SECONDS,
+  } : undefined;
+  const shared = { scenario, turns, startedAt: startedAt.current, elapsed, grading, gradingLabel, coach, coachMode, onCoachModeChange: setCoachMode, coachLabel, inserted, onInsert: insertCue, competition: deckCompetition, error, canUpgrade };
 
   if (mode === "voice" && engine) {
     const voiceProps = {
-      scenario, active: live, grading, onTurn: addTurn, onEnded: onVoiceEnded, onVoiceInfo, voiceTier: callTier,
+      scenario, active: live, grading, onTurn: addTurn, onEnded: onVoiceEnded, onVoiceInfo, voiceTier: competitionTrack ? ("standard" as const) : callTier,
       // With nothing from the rep there is nothing to grade: go back to the briefing, where the error explains what happened.
       onError: (m: string) => { setError(m); if (!turnsRef.current.some((t) => t.role === "user" && t.text.trim())) setPhase("idle"); },
       // The attempt ended before it connected (src/lib/voiceAttempt.ts): back to the briefing with the reason. Nothing is
@@ -485,7 +584,7 @@ export default function TrainerClient() {
       ),
     };
     // Coach cues stay on the trainee's screen: neither engine is ever sent coach output.
-    if (engine === "openai") return <RealtimeVoiceSession {...voiceProps} onMinted={(c) => { mintedCallRef.current = c; }} />;
+    if (engine === "openai") return <RealtimeVoiceSession {...voiceProps} competitionTrack={competitionTrack?.slug} onMinted={(c) => { mintedCallRef.current = c; }} />;
     return (
       <ConversationProvider>
         <VoiceSession {...voiceProps} />

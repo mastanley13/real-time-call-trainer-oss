@@ -101,6 +101,7 @@ function envInt(name: string, fallback: number): number {
  * Use a shared store (Upstash/Redis) if you need strict enforcement.
  */
 export const IP_LIMITS = {
+  competition: () => ({ limit: envInt("RATE_LIMIT_COMPETITION_MAX", 10), windowMs: envInt("RATE_LIMIT_COMPETITION_WINDOW_SEC", 86400) * 1000 }),
   caller: () => ({ limit: envInt("RATE_LIMIT_CALLER_MAX", 30), windowMs: envInt("RATE_LIMIT_CALLER_WINDOW_SEC", 300) * 1000 }),
   grading: () => ({ limit: envInt("RATE_LIMIT_GRADING_MAX", 10), windowMs: envInt("RATE_LIMIT_GRADING_WINDOW_SEC", 3600) * 1000 }),
   token: () => ({ limit: envInt("RATE_LIMIT_TOKEN_MAX", 10), windowMs: envInt("RATE_LIMIT_TOKEN_WINDOW_SEC", 3600) * 1000 }),
@@ -126,6 +127,7 @@ export const IP_LIMITS = {
  * them by switching networks. Fixed, not env-tunable: they cap one person.
  */
 export const USER_LIMITS = {
+  competition: { limit: 10, windowMs: 3_600_000 },
   /** Shared by /api/persona/generate and /api/persona/fetch-url. */
   wizard: { limit: 20, windowMs: 3_600_000 },
   /** Heartbeats (6 a minute per call), end events and usage reads. */

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { rateLimit, ipLimitResponse, readJsonLimited } from "@/lib/rateLimit";
 import { ScenarioSchema } from "@/lib/scenarios";
+import { COMPETITION_TRACK_SLUGS, competitionTrackBySlug } from "@/lib/competition";
 import { LIBRARY } from "@/lib/personas";
 import { evaluateCall, gradingFailureCode } from "@/lib/grader";
 import { sealEvaluation } from "@/lib/gradeSeal";
@@ -16,6 +17,7 @@ const TurnSchema = z.object({
 
 const Body = z.object({
   scenario: ScenarioSchema,
+  competitionTrack: z.enum(COMPETITION_TRACK_SLUGS).optional(),
   transcript: z.array(TurnSchema).min(1).max(2000),
   /**
    * The id the client will save this call under (POST /api/transcripts `sessionId`). The seal is bound to it, so the
@@ -54,7 +56,10 @@ export async function POST(request: NextRequest) {
   }
 
   // Library personas are graded on the server's own copy, so a client can't loosen the rubric (same rule as the PATCH re-grade).
-  const scenario = LIBRARY.find((s) => s.id === body.scenario.id) ?? body.scenario;
+  const canonicalId = body.competitionTrack ? competitionTrackBySlug(body.competitionTrack)?.scenarioId : body.scenario.id;
+  const canonical = LIBRARY.find((s) => s.id === canonicalId);
+  if (body.competitionTrack && !canonical) return NextResponse.json({ error: "invalid_scenario", message: "That competition track is unavailable." }, { status: 400 });
+  const scenario = canonical ?? body.scenario;
   // Long calls are graded on their opening turns and the note says so (same caps as the PATCH re-grade).
   const turns = gradable(body.transcript);
 

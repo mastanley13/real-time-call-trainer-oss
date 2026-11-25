@@ -10,6 +10,7 @@ import { evaluateCall, gradingFailureCode } from "@/lib/grader";
 import type { Evaluation } from "@/lib/grader-types";
 import { canRegrade, gradable, gradedNote, isAiGrade, withoutModelId } from "@/lib/gradable";
 import { getCapabilities, llmGradingModel, llmKey } from "@/lib/serverConfig";
+import { getCompetitionEntryForSession } from "@/lib/competitionServer";
 import { SESSION_VIEW_SELECT, sessionView } from "@/lib/sessionView";
 import { notifyFirstGradedCall } from "@/lib/ghlWebhook";
 import { hasCallRow, hasGradedSibling, isCallRow, lockCall } from "@/lib/callRow";
@@ -42,7 +43,8 @@ export async function GET(req: NextRequest, { params }: Params) {
   const session = await prisma.trainerSession.findUnique({ where: { id }, select: SESSION_VIEW_SELECT });
   if (!session) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (!(await canAccess(auth.id, session))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  return NextResponse.json({ session: sessionView(session) });
+  const competition = await getCompetitionEntryForSession(id, session.userId);
+  return NextResponse.json({ session: { ...sessionView(session), ...(competition ? { competition } : {}) }, ...(competition ? { competition } : {}) });
 }
 
 /**
