@@ -10,10 +10,13 @@ import {
   COMPETITION_MAX_ATTEMPTS,
   COMPETITION_MIN_DURATION_SECONDS,
   COMPETITION_MIN_TRAINEE_TURNS,
+  COMPETITION_PERIODS,
+  COMPETITION_PERIOD_LABELS,
   COMPETITION_PRIZES,
   COMPETITION_TRACKS,
   competitionTrackBySlug,
   type CompetitionLeaderboardRow,
+  type CompetitionPeriod,
   type CompetitionStatusResponse,
   type CompetitionTrack,
   type CompetitionTrackSlug,
@@ -126,9 +129,16 @@ function rankBadge(rank: number): string {
   return "bg-sunken text-ink-muted";
 }
 
-async function fetchStatus(board: BoardKey, signal?: AbortSignal): Promise<CompetitionStatusResponse> {
-  const url = board === "overall" ? "/api/competition" : `/api/competition?track=${encodeURIComponent(board)}`;
-  const r = await fetch(url, { cache: "no-store", signal });
+type CacheKey = `${CompetitionPeriod}:${BoardKey}`;
+
+function cacheKey(period: CompetitionPeriod, board: BoardKey): CacheKey {
+  return `${period}:${board}`;
+}
+
+async function fetchStatus(board: BoardKey, period: CompetitionPeriod, signal?: AbortSignal): Promise<CompetitionStatusResponse> {
+  const q = new URLSearchParams({ period });
+  if (board !== "overall") q.set("track", board);
+  const r = await fetch(`/api/competition?${q.toString()}`, { cache: "no-store", signal });
   if (!r.ok) throw new Error(`status ${r.status}`);
   return (await r.json()) as CompetitionStatusResponse;
 }
@@ -137,23 +147,24 @@ export default function CompeteClient() {
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [status, setStatus] = useState<CompetitionStatusResponse | null>(null);
   const [failed, setFailed] = useState(false);
-  const [boards, setBoards] = useState<Partial<Record<BoardKey, CompetitionLeaderboardRow[]>>>({});
+  const [boards, setBoards] = useState<Partial<Record<CacheKey, { rows: CompetitionLeaderboardRow[]; total: number; periodLabel: string }>>>({});
+  const [period, setPeriod] = useState<CompetitionPeriod>("month");
   const [board, setBoard] = useState<BoardKey>("overall");
   const [boardError, setBoardError] = useState(false);
   const [briefSlug, setBriefSlug] = useState<CompetitionTrackSlug | null>(null);
   const [now, setNow] = useState<number | null>(null);
-  const boardRef = useRef<BoardKey>("overall");
-  boardRef.current = board;
+  const activeRef = useRef<{ period: CompetitionPeriod; board: BoardKey }>({ period: "month", board: "overall" });
+  activeRef.current = { period, board };
 
-  const apply = useCallback((key: BoardKey, data: CompetitionStatusResponse) => {
+  const apply = useCallback((p: CompetitionPeriod, b: BoardKey, data: CompetitionStatusResponse) => {
     setStatus(data);
-    setBoards((b) => ({ ...b, [key]: data.leaderboard }));
+    setBoards((prev) => ({ ...prev, [cacheKey(p, b)]: { rows: data.leaderboard, total: data.totalQualifiedEntries, periodLabel: data.periodLabel } }));
   }, []);
 
   const loadOverall = useCallback(() => {
     setFailed(false);
-    fetchStatus("overall")
-      .then((d) => apply("overall", d))
+    fetchStatus("overall", "month")
+      .then((d) => apply("month", "overall", d))
       .catch(() => setFailed(true));
   }, [apply]);
 
@@ -166,24 +177,27 @@ export default function CompeteClient() {
     return () => window.clearInterval(t);
   }, []);
 
-  // Load a track board the first time its filter is picked.
+  const currentKey = cacheKey(period, board);
+  const currentBoard = boards[currentKey];
+
+  // Load any period/track slice the first time it is picked.
   useEffect(() => {
-    if (board === "overall" || boards[board]) return;
+    if (currentKey === "month:overall" || currentBoard) return;
     const ctl = new AbortController();
     setBoardError(false);
-    fetchStatus(board, ctl.signal)
-      .then((d) => apply(board, d))
+    fetchStatus(board, period, ctl.signal)
+      .then((d) => apply(period, board, d))
       .catch((e: unknown) => { if (!ctl.signal.aborted && !(e instanceof DOMException && e.name === "AbortError")) setBoardError(true); });
     return () => ctl.abort();
-  }, [board, boards, apply]);
+  }, [currentKey, currentBoard, board, period, apply]);
 
   // Keep the visible board live while the tab is in view.
   useEffect(() => {
     if (status?.season.phase !== "active") return;
     const t = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      const key = boardRef.current;
-      fetchStatus(key).then((d) => apply(key, d)).catch(() => { /* keep the last board; the next tick retries */ });
+      const cur = activeRef.current;
+      fetchStatus(cur.board, cur.period).then((d) => apply(cur.period, cur.board, d)).catch(() => { /* keep the last board; the next tick retries */ });
     }, REFRESH_MS);
     return () => window.clearInterval(t);
   }, [status?.season.phase, apply]);
@@ -206,17 +220,18 @@ export default function CompeteClient() {
     setStatus((s) => (s ? { ...s, viewer: { ...s.viewer, displayName, teamLabel } } : s));
     setBoards((b) => {
       const next: typeof b = {};
-      for (const [k, rows] of Object.entries(b) as [BoardKey, CompetitionLeaderboardRow[]][]) {
-        next[k] = rows.map((r) => (r.isCurrentUser ? { ...r, displayName, teamLabel } : r));
+      for (const [k, entry] of Object.entries(b) as [CacheKey, { rows: CompetitionLeaderboardRow[]; total: number; periodLabel: string } | undefined][]) {
+        if (!entry) continue;
+        next[k] = { ...entry, rows: entry.rows.map((r) => (r.isCurrentUser ? { ...r, displayName, teamLabel } : r)) };
       }
       return next;
     });
   }
 
   function retryBoard() {
-    if (board === "overall") { loadOverall(); return; }
+    if (currentKey === "month:overall") { loadOverall(); return; }
     setBoardError(false);
-    setBoards((b) => ({ ...b, [board]: undefined }));
+    setBoards((b) => ({ ...b, [currentKey]: undefined }));
   }
 
   const live = season?.phase === "active";
@@ -230,7 +245,7 @@ export default function CompeteClient() {
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
               <p className="eyebrow inline-flex items-center gap-2">
                 <span className={`lamp ${live ? "lamp-signal animate-lamp-pulse" : "lamp-caution"}`} aria-hidden />
-                30-day launch championship
+                Monthly sales call championship
               </p>
               {badge && (
                 <span className="chip mono !text-[11px]">
@@ -238,15 +253,15 @@ export default function CompeteClient() {
                 </span>
               )}
             </div>
-            <h1 className="mt-4 max-w-2xl text-4xl font-bold leading-[1.05] sm:text-5xl">3 calls. 7 industries. Prove it on the phone.</h1>
+            <h1 className="mt-4 max-w-2xl text-4xl font-bold leading-[1.05] sm:text-5xl">3 calls a month. 7 industries. Prove it on the phone.</h1>
             <p className="mt-4 max-w-xl text-lg leading-relaxed text-ink-soft">
-              Pick an industry, read a 30-second brief, and run a {Math.round(rules.maxSeconds / 60)}-minute blind voice call scored by our live AI grader.
+              Pick an industry, read a 30-second brief, and run a {Math.round(rules.maxSeconds / 60)}-minute blind voice call. Climb the day, week, month, and year leaderboards. Monthly #1 wins the prize.
             </p>
             <ul className="mt-5 flex flex-wrap gap-2" aria-label="Championship rules">
               <li className="chip"><Mic size={12} strokeWidth={1.75} aria-hidden /> Voice only</li>
               <li className="chip"><EyeOff size={12} strokeWidth={1.75} aria-hidden /> Blind mode</li>
               <li className="chip"><Timer size={12} strokeWidth={1.75} aria-hidden /> {clockLabel(rules.maxSeconds)} hard timer</li>
-              <li className="chip"><Phone size={12} strokeWidth={1.75} aria-hidden /> {rules.maxAttempts} official attempts</li>
+              <li className="chip"><Phone size={12} strokeWidth={1.75} aria-hidden /> {rules.maxAttempts} calls / month</li>
             </ul>
             <div className="mt-6 flex flex-wrap gap-3">
               <a href="#tracks" className="btn-primary btn-xl">Pick your industry <ArrowRight size={18} strokeWidth={1.75} aria-hidden /></a>
@@ -254,17 +269,17 @@ export default function CompeteClient() {
             </div>
           </div>
 
-          <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-1" aria-label="Prizes" role="group">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-1" aria-label="Monthly prizes" role="group">
             <PrizeTile
               icon={<Trophy size={18} strokeWidth={1.75} aria-hidden />}
-              eyebrow="Overall #1 (solo)"
+              eyebrow="Monthly #1 (solo prize)"
               headline={COMPETITION_PRIZES.soloHeadline}
               value={`$${COMPETITION_PRIZES.soloValueUsd} value`}
               detail={COMPETITION_PRIZES.soloDetail}
             />
             <PrizeTile
               icon={<Users size={18} strokeWidth={1.75} aria-hidden />}
-              eyebrow="Winner's team bonus"
+              eyebrow="Monthly winner's team bonus"
               headline={COMPETITION_PRIZES.teamHeadline.replace(/^Team winner bonus:\s*/i, "")}
               value={`$${COMPETITION_PRIZES.teamDiscountSeatYearUsd}/seat/yr vs $${COMPETITION_PRIZES.teamRegularSeatYearUsd}`}
               detail={COMPETITION_PRIZES.teamDetail}
@@ -307,12 +322,15 @@ export default function CompeteClient() {
         </section>
 
         <Leaderboard
+          period={period}
+          onPeriod={setPeriod}
+          periodLabel={currentBoard?.periodLabel ?? COMPETITION_PERIOD_LABELS[period]}
           board={board}
           onBoard={setBoard}
-          rows={boards[board]}
-          failed={board === "overall" ? failed : boardError}
+          rows={currentBoard?.rows}
+          failed={currentKey === "month:overall" ? failed : boardError}
           onRetry={retryBoard}
-          total={status?.totalQualifiedEntries ?? null}
+          total={currentBoard?.total ?? status?.totalQualifiedEntries ?? null}
           live={live}
         />
       </div>
@@ -635,7 +653,10 @@ function BriefCta({ cta }: { cta: CompeteCta }) {
   }
 }
 
-function Leaderboard({ board, onBoard, rows, failed, onRetry, total, live }: {
+function Leaderboard({ period, onPeriod, periodLabel, board, onBoard, rows, failed, onRetry, total, live }: {
+  period: CompetitionPeriod;
+  onPeriod: (p: CompetitionPeriod) => void;
+  periodLabel: string;
   board: BoardKey;
   onBoard: (b: BoardKey) => void;
   rows: CompetitionLeaderboardRow[] | undefined;
@@ -653,14 +674,32 @@ function Leaderboard({ board, onBoard, rows, failed, onRetry, total, live }: {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="eyebrow inline-flex items-center gap-2">
-            <span className={`lamp ${live ? "lamp-signal" : "lamp-off"} !h-1.5 !w-1.5`} aria-hidden /> {live ? "Live leaderboard" : "Leaderboard"}
+            <span className={`lamp ${live ? "lamp-signal" : "lamp-off"} !h-1.5 !w-1.5`} aria-hidden /> {live ? "Live leaderboard" : "Leaderboard"} · {periodLabel}
           </p>
           <h2 id="board-title" className="mt-1 text-2xl font-bold">{trackName ? `${trackName} standings` : "Overall standings"}</h2>
         </div>
         {total != null && <p className="mono text-sm text-ink-muted">{total} official {total === 1 ? "score" : "scores"} posted</p>}
       </div>
 
-      <div className="scroll-thin -mx-4 mt-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="segmented w-max" role="group" aria-label="Filter the leaderboard by time window">
+          {COMPETITION_PERIODS.map((p) => {
+            const on = p === period;
+            return (
+              <button key={p} type="button" aria-pressed={on} onClick={() => onPeriod(p)}
+                className={`segmented-btn whitespace-nowrap ${on ? "bg-surface text-ink shadow-card" : "text-ink-muted hover:text-ink"}`}>
+                {COMPETITION_PERIOD_LABELS[p]}
+                {p === "month" && <span className="ml-1.5 rounded bg-primary-soft px-1.5 py-px font-mono text-[10px] font-semibold text-primary">Prize</span>}
+              </button>
+            );
+          })}
+        </div>
+        {period === "month" && (
+          <p className="text-xs text-ink-muted">Monthly #1 wins 1 year of Pro free plus the Team upgrade bonus.</p>
+        )}
+      </div>
+
+      <div className="scroll-thin -mx-4 mt-3 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
         <div className="segmented w-max" role="group" aria-label="Filter the leaderboard by track">
           {filters.map((f) => {
             const on = f.key === board;
