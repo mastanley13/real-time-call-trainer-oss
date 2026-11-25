@@ -184,6 +184,17 @@ async function assertPublicHost(url: URL): Promise<void> {
 }
 
 /**
+ * Validates that a user-supplied URL is a public http(s) address on a default port
+ * whose DNS resolves only to public IPs. Throws FetchPageError on any private/internal host.
+ * Call this before passing a user URL to any secondary reader or web-search fallback.
+ */
+export async function validatePublicUrl(rawUrl: string): Promise<URL> {
+  const url = parsePublicUrl(rawUrl);
+  await assertPublicHost(url);
+  return url;
+}
+
+/**
  * Socket lookup hook. The connection resolves the name here, not in the OS resolver
  * behind our back, and only gets addresses that passed isBlockedIp. This is what pins
  * the connection to a checked address even if the DNS answer changed since assertPublicHost.

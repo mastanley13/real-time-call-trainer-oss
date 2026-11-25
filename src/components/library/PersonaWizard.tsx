@@ -456,7 +456,15 @@ export default function PersonaWizard() {
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-ok/35 bg-ok-soft/40 p-3">
                     <div className="min-w-0 flex-1">
                       <p className="font-mono text-[11px] font-medium text-ok">
-                        Imported {fetched.title || fetched.url} · {(fetched.bytes / 1024).toFixed(0)} KB · public pages only, private addresses are blocked
+                        Imported {fetched.title || fetched.url} · {(fetched.bytes / 1024).toFixed(0)} KB
+                        {fetched.source === "web_search"
+                          ? " · via web search"
+                          : fetched.source === "direct+web_search"
+                            ? " · page + web search"
+                            : fetched.source === "firecrawl"
+                              ? " · via Firecrawl"
+                              : ""}
+                        {" · public pages only, private addresses are blocked"}
                       </p>
                       <p className="mt-1 text-xs text-ink-soft">
                         Offer and sales job are filled in below. Press Build &amp; start call now, tweak any field below, or add CRM notes and ICP on the next step.
