@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { COMPETE_NAV, PRICING_NAV } from "@/components/SiteHeader";
 import { clockLabel, competeCta, countdownLabel, entryStatusLabel } from "@/components/compete/CompeteClient";
 import { linkedInShareUrl, xShareUrl } from "@/components/compete/ShareCardActions";
-import { COMPETITION_TRACKS, type CompetitionStatusResponse } from "@/lib/competition";
+import { COMPETITION_OPENING_BOARD_TARGET, COMPETITION_TRACKS, getOpeningBoardState, type CompetitionStatusResponse } from "@/lib/competition";
 import { COMPETE_CARD_IMAGE, isPublicPath } from "@/lib/publicPaths";
 
 type Season = CompetitionStatusResponse["season"];
@@ -138,6 +138,42 @@ describe("share links", () => {
     expect(xShareUrl(url, "I scored 89/100 (A) & more")).toBe(
       "https://x.com/intent/tweet?text=I%20scored%2089%2F100%20(A)%20%26%20more&url=https%3A%2F%2Fcalltrainer.tech%2Fcompete%2Fcard%2Fabc_123",
     );
+  });
+});
+
+describe("opening board gathering state", () => {
+  it("shows 5 open spots when no official calls are posted yet", () => {
+    const s = getOpeningBoardState(0, "November 2026");
+    expect(s.gathering).toBe(true);
+    expect(s.filledCount).toBe(0);
+    expect(s.targetCount).toBe(COMPETITION_OPENING_BOARD_TARGET);
+    expect(s.openRanks).toEqual([1, 2, 3, 4, 5]);
+    expect(s.headline).toContain("Gathering opening contenders");
+    expect(s.detail).toContain("november 2026");
+    expect(s.progressLabel).toBe("0 of 5 spots filled");
+  });
+
+  it("fills remaining open ranks between 1 and 4 contenders and names the track when filtered", () => {
+    const s0 = getOpeningBoardState(0, "Today", "Car Dealerships");
+    expect(s0.detail).toContain("Car Dealerships calls");
+
+    const s3 = getOpeningBoardState(3, "This month");
+    expect(s3.gathering).toBe(true);
+    expect(s3.openRanks).toEqual([4, 5]);
+    expect(s3.headline).toContain("2 spots open");
+    expect(s3.detail).toContain("#4");
+    expect(s3.progressLabel).toBe("3 of 5 spots filled");
+
+    const s4 = getOpeningBoardState(4, "This month");
+    expect(s4.openRanks).toEqual([5]);
+    expect(s4.headline).toContain("1 spot open");
+  });
+
+  it("switches to pure ranked leaderboard once 5 or more scores exist", () => {
+    const s5 = getOpeningBoardState(5, "November 2026");
+    expect(s5.gathering).toBe(false);
+    expect(s5.openRanks).toEqual([]);
+    expect(s5.headline).toBe("");
   });
 });
 
