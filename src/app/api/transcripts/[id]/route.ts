@@ -17,6 +17,9 @@ import { hasCallRow, hasGradedSibling, isCallRow, lockCall } from "@/lib/callRow
 import { transcriptDigest } from "@/lib/gradeSeal";
 import { hasGradedDuplicate, lockTranscript } from "@/lib/transcriptGrade";
 
+/** Allow up to 60 s for reasoning-model re-grading on long 20-60 minute calls (matches llm.ts timeout). */
+export const maxDuration = 60;
+
 type Params = { params: Promise<{ id: string }> };
 
 /** Managers/owners of the session's org, or a platform admin. */

@@ -9,6 +9,9 @@ import { evaluateCall, gradingFailureCode } from "@/lib/grader";
 import { sealEvaluation } from "@/lib/gradeSeal";
 import { gradable, gradedNote } from "@/lib/gradable";
 
+/** Allow up to 60 s for reasoning-model grading on long 20-60 minute calls (matches llm.ts timeout). */
+export const maxDuration = 60;
+
 const TurnSchema = z.object({
   role: z.enum(["user", "assistant", "system"]),
   text: z.string().min(1).max(8000),
