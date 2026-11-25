@@ -65,12 +65,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_request", message: "The request body was not valid JSON." }, { status: 400 });
   }
 
-  // Only library personas: the server grades them on its own copy of the rubric, so completion means the same for
-  // everyone. A custom persona's rubric lives in one browser, and a rep could write an easy one to complete it.
-  if (!LIBRARY_IDS.has(body.scenarioId)) {
-    return NextResponse.json({ error: "invalid_persona", message: "Only library personas can be assigned. Pick one from the list." }, { status: 400 });
-  }
-
   const now = new Date();
   const due = parseDueAt(body.dueAt, now);
   if (!due.ok) return NextResponse.json({ error: "invalid_due_date", message: due.message }, { status: 400 });
@@ -83,6 +77,17 @@ export async function POST(req: NextRequest) {
     }
     if (!actor.organizationId) return noOrganization();
     const orgId = actor.organizationId;
+
+    // Built-in library personas and team-shared custom personas stored in this org's database are assignable.
+    if (!LIBRARY_IDS.has(body.scenarioId)) {
+      const shared = await prisma.customScenario?.findFirst({
+        where: { id: body.scenarioId, organizationId: orgId, sharedWithOrg: true },
+        select: { id: true },
+      });
+      if (!shared) {
+        return NextResponse.json({ error: "invalid_persona", message: "Only library personas or team-shared custom personas can be assigned. Share the persona with your team first." }, { status: 400 });
+      }
+    }
 
     if (body.assigneeId) {
       const assignee = await prisma.user.findFirst({ where: { id: body.assigneeId, organizationId: orgId }, select: { id: true } });

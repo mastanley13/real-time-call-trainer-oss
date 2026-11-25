@@ -178,6 +178,7 @@ Every limit is a fixed window in memory, per server instance, and resets on rest
 | `/api/evaluate-call` (grading) and `PATCH /api/transcripts/[id]` (re-grade), shared | `RATE_LIMIT_GRADING_MAX` (10 per 3600 s) | Set 2 and grade three calls: the third shows "You're going a bit fast…" |
 | `/api/coach/turn` (live coach) | `RATE_LIMIT_COACH_MAX` (120 per 600 s) | Set 3 and keep talking: after the third turn the rail shows the wait message, and the call itself carries on |
 | `/api/persona/generate` + `/api/persona/fetch-url` (wizard, shared) | `RATE_LIMIT_WIZARD_MAX` (20 per 3600 s) | Set 2, import a URL twice, then **Draft persona** |
+| `/api/scenarios` + `/api/scenarios/[id]` (custom persona writes, shared) | `RATE_LIMIT_SCENARIOS_MAX` (60 per 3600 s) | Full mode only. Set 2 and save a custom persona three times |
 | `/api/realtime/session` (OpenAI Realtime voice) | `RATE_LIMIT_REALTIME_MAX` (10 per 3600 s) | Set 1 and start two voice calls |
 | `/api/elevenlabs/token` (ElevenLabs voice) | `RATE_LIMIT_TOKEN_MAX` (10 per 3600 s) | Set 1 and start two ElevenLabs calls |
 | `/api/usage/heartbeat`, `/api/usage/end`, `/api/usage/credit` (voice metering) | `RATE_LIMIT_USAGE_MAX` (1200 per 600 s) | Full mode only. Set 3, then `curl` `/api/usage/end` four times with a signed-in cookie |
