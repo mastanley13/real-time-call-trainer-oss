@@ -2,9 +2,15 @@
 
 export const VERTICAL_SLUGS = ["insurance", "solar", "staffing", "home-services", "saas-sdr", "coaches"] as const;
 
+/** The /vs comparison pages. Each is its own static route, so any other /vs path is a 404. */
+export const COMPARISON_SLUGS = ["second-nature", "hyperbound", "yoodli"] as const;
+export type ComparisonSlug = (typeof COMPARISON_SLUGS)[number];
+
 const EXACT = new Set([
   "/pricing", "/library", "/compete", "/api/competition", "/register", "/login", "/forgot-password", "/reset-password", "/auth/complete", "/robots.txt", "/sitemap.xml",
+  "/alternatives",
   ...VERTICAL_SLUGS.map((s) => `/for/${s}`),
+  ...COMPARISON_SLUGS.map((s) => `/vs/${s}`),
 ]);
 /**
  * "/try/" is a prefix on purpose: the four /try/[role] pages are public, and an unknown role still reaches the App
