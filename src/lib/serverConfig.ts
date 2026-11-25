@@ -161,6 +161,13 @@ export function llmGradingModel(): string {
   return process.env.LLM_MODEL_GRADING || llmModel();
 }
 
+/** Secondary AI model for grading fallback when LLM_MODEL_GRADING differs from LLM_MODEL, else undefined. */
+export function llmGradingFallbackModel(): string | undefined {
+  const primary = llmGradingModel();
+  const secondary = llmModel();
+  return secondary !== primary ? secondary : undefined;
+}
+
 /** Reasoning effort for final call grading on OpenAI reasoning models. Env-tunable via LLM_GRADING_REASONING. */
 export function llmGradingReasoningEffort(): "minimal" | "low" | "medium" | "high" {
   const raw = process.env.LLM_GRADING_REASONING?.trim().toLowerCase();

@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { APOLOGY_STEP_RE, isApology } from "./apology";
 import { chat, extractJson, type JsonSchemaFormat, type ReasoningEffort } from "./llm";
-import { llmGradingModel, llmGradingReasoningEffort, llmKey, llmModel } from "./serverConfig";
+import { llmGradingFallbackModel, llmGradingModel, llmGradingReasoningEffort, llmKey } from "./serverConfig";
 import { Scenario, normalizeWeights } from "./scenarios";
 
 export interface Turn {
@@ -366,22 +366,22 @@ export async function evaluateCall(scenario: Scenario, turns: Turn[]): Promise<E
   // No model configured: a plain rules-based grade, not a failure, so llmFailed stays unset.
   if (!llmKey()) return gradeHeuristically(scenario, turns);
   const primaryModel = llmGradingModel();
-  const fallbackModel = llmModel();
+  const fallbackModel = llmGradingFallbackModel();
+  let lastError: unknown;
   try {
     return await gradeWithLlm(scenario, turns, { model: primaryModel });
   } catch (e) {
-    console.error("[grader] primary LLM grading failed:", gradingFailureCode(e));
+    lastError = e;
     // If a dedicated grading model (e.g. reasoning model) failed or truncated, try the faster chat model once
     // before ever falling back to the rules-based keyword grader.
-    if (fallbackModel !== primaryModel) {
+    if (fallbackModel) {
       try {
         return await gradeWithLlm(scenario, turns, { model: fallbackModel, reasoningEffort: "low" });
       } catch (e2) {
-        console.error("[grader] fallback LLM grading failed, falling back to heuristic:", gradingFailureCode(e2));
+        lastError = e2;
       }
-    } else {
-      console.error("[grader] LLM grading failed, falling back to heuristic:", gradingFailureCode(e));
     }
+    console.error("[grader] LLM grading failed, falling back to heuristic:", gradingFailureCode(lastError));
     // llmFailed tells the debrief this estimate stands in for an AI grade that didn't finish, so it shows a retry, not a grade.
     return {
       ...gradeHeuristically(scenario, turns, "AI grading failed for this call, so this is a rules-based estimate. Re-grade with AI to try again."),
