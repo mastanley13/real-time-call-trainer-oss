@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationProvider, useConversation } from "@elevenlabs/react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Scenario, ScenarioSchema, buildAgentPrompt } from "@/lib/scenarios";
-import { listScenarios } from "@/lib/scenarioStore";
+import { fetchScenarioById, listScenarios } from "@/lib/scenarioStore";
 import { callSessionId, getLocalSession, saveSession, type CoachLog, type MintedCall, type StoredTurn } from "@/lib/sessionStore";
 import type { Evaluation } from "@/lib/grader-types";
 import type { CoachMode } from "@/lib/coach-types";
@@ -170,6 +170,7 @@ export default function TrainerClient() {
   phaseRef.current = phase;
   /** The starting call mode is decided once per page load, so a persona switch from the palette keeps the rep's pick. */
   const modeChosen = useRef(false);
+  const stored = !!capabilities?.database && !capabilities?.demoMode;
   useEffect(() => {
     if (phaseRef.current !== "idle") return;
     const params = new URLSearchParams(query);
@@ -205,7 +206,8 @@ export default function TrainerClient() {
         const r = await fetch(`/api/transcripts/${retryId}`);
         if (!r.ok) return null;
         const { session } = await r.json();
-        const sc = listScenarios().find((x) => x.id === session.scenarioId);
+        const sc = listScenarios().find((x) => x.id === session.scenarioId)
+          ?? (await fetchScenarioById(session.scenarioId, stored))?.scenario;
         return sc ? { scenario: sc, transcript: session.transcript as StoredTurn[] } : null;
       };
       // If the session cannot be loaded, start that persona from the beginning (?scenario=<id>, else the usual pick) and say so.
@@ -229,18 +231,41 @@ export default function TrainerClient() {
       }).catch(() => { if (alive) fallback(); });
       return () => { alive = false; };
     }
-    const picked = choose(listScenarios(), wanted());
+    const targetId = wanted();
+    const localMatch = listScenarios().find((s) => s.id === targetId);
+    if (localMatch) {
+      setRetry(null);
+      setScenario(localMatch);
+      setNotice("");
+      return;
+    }
+    if (targetId && stored && isAuthenticated) {
+      fetchScenarioById(targetId, true).then((found) => {
+        if (!alive) return;
+        if (found) {
+          setRetry(null);
+          setScenario(found.scenario);
+          setNotice("");
+        } else {
+          const picked = choose(listScenarios(), targetId);
+          setRetry(null);
+          setScenario(picked);
+          setNotice(missingNotice(asked, picked));
+        }
+      });
+      return () => { alive = false; };
+    }
+    const picked = choose(listScenarios(), targetId);
     setRetry(null);
     setScenario(picked);
     setNotice(missingNotice(asked, picked));
-  }, [query]);
+  }, [query, stored, isAuthenticated]);
 
   useEffect(() => {
     if (!isLoading && capabilities && !isAuthenticated) router.replace("/login");
   }, [isLoading, capabilities, isAuthenticated, router]);
 
   // Read the minutes left each time the briefing shows, so it is right after a call and after an upgrade.
-  const stored = !!capabilities?.database && !capabilities?.demoMode;
   useEffect(() => {
     if (phase !== "idle" || !isAuthenticated || !stored) { setUsage(null); setPremium(null); setUsageUnavailable(false); return; }
     let live = true;

@@ -4,12 +4,13 @@ import Link from "next/link";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
-import { Check, Copy, Lock, Plus, Trash2, Save, Play } from "lucide-react";
+import { Check, Copy, Loader2, Lock, Plus, Trash2, Save, Play, Users } from "lucide-react";
 import { PersonaAvatar } from "@/components/ui/Persona";
 import { FormSkeleton } from "@/components/ui/Skeleton";
 import { CALL_TYPES, CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, OBJECTION_TYPES, Scenario, ScenarioSchema, newBlankScenario } from "@/lib/scenarios";
 import { ZodIssue } from "zod";
-import { deleteCustomScenario, duplicateScenario, listScenarios, saveCustomScenario } from "@/lib/scenarioStore";
+import { duplicateScenario, fetchScenarios, listScenarios, persistCustomScenario, removeCustomScenario, type ScenarioMeta } from "@/lib/scenarioStore";
+import { useAuth } from "@/contexts/AuthContext";
 
 const DRAFT_KEY = "rtct.editor.draft.v1";
 
@@ -39,15 +40,22 @@ function friendlyIssue(i: ZodIssue, key: string): string {
 }
 
 export default function ScenarioEditor() {
+  const { user, capabilities, isAuthenticated } = useAuth();
   const [all, setAll] = useState<Scenario[]>([]);
+  const [meta, setMeta] = useState<Record<string, ScenarioMeta>>({});
   const [draft, setDraft] = useState<Scenario | null>(null);
+  const [sharedWithOrg, setSharedWithOrg] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [toast, setToast] = useState("");
   const editorRef = useRef<HTMLDivElement>(null);
+
+  const stored = !!capabilities?.database && !capabilities?.demoMode;
+  const canShareWithOrg = stored && (user?.role === "manager" || user?.role === "owner" || !!user?.isPlatformAdmin);
 
   useEffect(() => {
     if (!toast) return;
@@ -55,10 +63,17 @@ export default function ScenarioEditor() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  function duplicate() {
+  async function duplicate() {
     if (!draft) return;
     const c = duplicateScenario(draft);
-    refresh(c.id);
+    if (stored) {
+      try {
+        await persistCustomScenario({ scenario: c, useDatabase: true });
+      } catch {
+        /* localStorage copy already saved */
+      }
+    }
+    await refresh(c.id);
     setToast("Scenario duplicated");
     // Wait for the new draft to render, then bring the editor into view and focus the title.
     setTimeout(() => {
@@ -73,16 +88,20 @@ export default function ScenarioEditor() {
     setErrors((e) => (prefix ? Object.fromEntries(Object.entries(e).filter(([k]) => !k.startsWith(prefix))) : {}));
   };
 
-  const refresh = (selectId?: string) => {
-    const list = listScenarios();
-    setAll(list);
-    if (selectId) setDraft(structuredClone(list.find((s) => s.id === selectId) ?? list[0]));
+  const refresh = async (selectId?: string) => {
+    const res = await fetchScenarios(stored && isAuthenticated);
+    setAll(res.scenarios);
+    setMeta(res.meta);
+    if (selectId) {
+      const picked = res.scenarios.find((s) => s.id === selectId) ?? res.scenarios[0];
+      setDraft(structuredClone(picked));
+      setSharedWithOrg(!!res.meta[picked.id]?.sharedWithOrg);
+    }
   };
 
   useEffect(() => {
-    const list = listScenarios();
-    setAll(list);
-    // Restore unsaved work from before a reload; only after hydration do we start writing it back.
+    let alive = true;
+    const wanted = new URLSearchParams(window.location.search).get("id");
     let restored: Scenario | null = null;
     try {
       const raw = sessionStorage.getItem(DRAFT_KEY);
@@ -91,12 +110,23 @@ export default function ScenarioEditor() {
     } catch {
       /* ignore corrupt draft */
     }
-    // ?id=<scenario> (from the library's "Duplicate & edit") wins over a restored draft.
-    const wanted = new URLSearchParams(window.location.search).get("id");
-    const fromUrl = wanted ? list.find((s) => s.id === wanted) : undefined;
-    setDraft(fromUrl ? structuredClone(fromUrl) : restored ?? structuredClone(list.find((s) => !s.builtIn) ?? list[0]));
-    setHydrated(true);
-  }, []);
+    const apply = (list: Scenario[], nextMeta: Record<string, ScenarioMeta>) => {
+      if (!alive) return;
+      setAll(list);
+      setMeta(nextMeta);
+      const fromUrl = wanted ? list.find((s) => s.id === wanted) : undefined;
+      const picked = fromUrl ? structuredClone(fromUrl) : restored ?? structuredClone(list.find((s) => !s.builtIn) ?? list[0]);
+      setDraft(picked);
+      setSharedWithOrg(!!nextMeta[picked.id]?.sharedWithOrg);
+      setHydrated(true);
+    };
+    const localList = listScenarios();
+    apply(localList, {});
+    if (stored && isAuthenticated) {
+      fetchScenarios(true).then((res) => apply(res.scenarios, res.meta));
+    }
+    return () => { alive = false; };
+  }, [stored, isAuthenticated]);
 
   useEffect(() => {
     if (!hydrated || !draft) return;
@@ -108,7 +138,8 @@ export default function ScenarioEditor() {
   }, [hydrated, draft]);
 
   if (!draft) return <FormSkeleton />;
-  const readOnly = !!draft.builtIn;
+  const currentMeta = meta[draft.id];
+  const readOnly = !!draft.builtIn || (currentMeta?.stored === "database" && currentMeta.canEdit === false);
   const patch = (p: Partial<Scenario>) => {
     setDraft({ ...draft, ...p });
     setSaved(false);
@@ -124,7 +155,8 @@ export default function ScenarioEditor() {
   const bad = (k: string) => ({ "aria-invalid": err(k) ? (true as const) : undefined, "aria-describedby": err(k) ? `err-${k}` : undefined });
   const msg = (k: string) => err(k) && <p id={`err-${k}`} className="field-msg">{err(k)}</p>;
 
-  function save() {
+  async function save() {
+    if (saving) return;
     const candidate = {
       ...draft!,
       sampleReplies: draft!.sampleReplies.filter((l) => l.trim()),
@@ -146,9 +178,24 @@ export default function ScenarioEditor() {
       return;
     }
     clearErrors();
-    saveCustomScenario(parsed.data);
-    setSaved(true);
-    refresh(parsed.data.id);
+    setSaving(true);
+    try {
+      const existingMeta = meta[parsed.data.id];
+      const isDbUpdate = stored && existingMeta?.stored === "database";
+      const result = await persistCustomScenario({
+        scenario: parsed.data,
+        useDatabase: stored && isAuthenticated,
+        sharedWithOrg: canShareWithOrg ? sharedWithOrg : undefined,
+        expectedUpdatedAt: isDbUpdate ? existingMeta.updatedAt : undefined,
+        isUpdate: isDbUpdate,
+      });
+      setSaved(true);
+      await refresh(result.scenario.id);
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : "Could not save this persona. Try again.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   const field = "input";
@@ -166,12 +213,12 @@ export default function ScenarioEditor() {
             const current = draft.id === s.id;
             return (
               <li key={s.id}>
-                <button onClick={() => { setDraft(structuredClone(s)); clearErrors(); setSaved(false); }} aria-current={current ? "true" : undefined}
+                <button onClick={() => { setDraft(structuredClone(s)); setSharedWithOrg(!!meta[s.id]?.sharedWithOrg); clearErrors(); setSaved(false); }} aria-current={current ? "true" : undefined}
                   className={`flex min-h-[44px] w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${current ? "bg-primary-soft/60 font-semibold text-ink ring-1 ring-primary/30" : "hover:bg-sunken"}`}>
                   <PersonaAvatar scenario={s} size={28} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate">{s.title || "Untitled scenario"}</span>
-                    <span className="block font-mono text-[11px] font-normal text-ink-muted">{s.builtIn ? "Library · read-only" : "Mine"}</span>
+                    <span className="block font-mono text-[11px] font-normal text-ink-muted">{s.builtIn ? "Library · read-only" : meta[s.id]?.sharedWithOrg ? "Team · shared" : "Mine"}</span>
                   </span>
                 </button>
               </li>
@@ -188,28 +235,39 @@ export default function ScenarioEditor() {
             <PersonaAvatar scenario={draft} size={44} />
             <div className="min-w-0">
               <h1 className="truncate text-xl font-bold sm:text-2xl">{savedTitle}</h1>
-              <p className="mt-0.5 font-mono text-[12px] text-ink-muted">{readOnly ? "Library · read-only" : persisted ? "Mine · saved in this browser" : "Mine · not saved yet"}</p>
+              <p className="mt-0.5 font-mono text-[12px] text-ink-muted">
+                {draft.builtIn ? "Library · read-only" : readOnly ? "Team · read-only" : persisted ? (currentMeta?.stored === "database" ? (currentMeta.sharedWithOrg ? "Team · saved on account" : "Mine · saved on account") : "Mine · saved in this browser") : "Mine · not saved yet"}
+              </p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <Link href={`/trainer?scenario=${encodeURIComponent(draft.id)}`} className="btn-ghost"><Play size={16} strokeWidth={1.75} aria-hidden /> Practice</Link>
             {persisted && !readOnly && (
-              <button className="btn-ghost" onClick={duplicate}><Copy size={16} strokeWidth={1.75} aria-hidden /> Duplicate</button>
+              <button className="btn-ghost" onClick={() => void duplicate()}><Copy size={16} strokeWidth={1.75} aria-hidden /> Duplicate</button>
             )}
             {!readOnly && persisted && (
               <button className="btn-ghost !text-alert" onClick={() => setConfirmDelete(true)}><Trash2 size={16} strokeWidth={1.75} aria-hidden /> Delete</button>
             )}
-            {!readOnly && <button className="btn-primary" onClick={save}><Save size={16} strokeWidth={1.75} aria-hidden /> Save</button>}
+            {!readOnly && <button className="btn-primary" onClick={() => void save()} disabled={saving}>{saving ? <Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden /> : <Save size={16} strokeWidth={1.75} aria-hidden />} Save</button>}
           </div>
         </div>
         {readOnly && (
           <div className="banner-info flex flex-wrap items-center justify-between gap-3">
-            <p className="flex items-center gap-2"><Lock size={15} strokeWidth={1.75} className="shrink-0 text-ink-muted" aria-hidden />Library personas are read-only. Duplicate this one to make it yours.</p>
-            {persisted && <button className="btn-primary btn-sm" onClick={duplicate}><Copy size={14} strokeWidth={1.75} aria-hidden /> Duplicate to edit</button>}
+            <p className="flex items-center gap-2"><Lock size={15} strokeWidth={1.75} className="shrink-0 text-ink-muted" aria-hidden />{draft.builtIn ? "Library personas are read-only. Duplicate this one to make it yours." : "This team persona is read-only. Duplicate it to make your own editable copy."}</p>
+            {persisted && <button className="btn-primary btn-sm" onClick={() => void duplicate()}><Copy size={14} strokeWidth={1.75} aria-hidden /> Duplicate to edit</button>}
           </div>
         )}
+        {!readOnly && canShareWithOrg && (
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-line bg-sunken/50 p-3 text-sm">
+            <input type="checkbox" className="mt-0.5 accent-[rgb(var(--primary))]" checked={sharedWithOrg} onChange={(e) => { setSharedWithOrg(e.target.checked); setSaved(false); }} />
+            <span>
+              <span className="flex items-center gap-1.5 font-semibold text-ink"><Users size={14} strokeWidth={1.75} className="text-primary" aria-hidden /> Share with my team</span>
+              <span className="mt-0.5 block text-xs text-ink-soft">Lets everyone in your organization practice this persona and lets managers assign it.</span>
+            </span>
+          </label>
+        )}
         {formError && <p role="alert" className="banner-alert font-medium">{formError}</p>}
-        {saved && <p role="status" className="banner-ok flex items-center gap-2"><Check size={16} strokeWidth={1.75} className="shrink-0 text-ok" aria-hidden />Saved to this browser.</p>}
+        {saved && <p role="status" className="banner-ok flex items-center gap-2"><Check size={16} strokeWidth={1.75} className="shrink-0 text-ok" aria-hidden />{currentMeta?.stored === "database" ? "Saved to your account." : "Saved to this browser."}</p>}
 
         <fieldset disabled={readOnly} className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-3">
@@ -313,8 +371,13 @@ export default function ScenarioEditor() {
         </fieldset>
       </div>
       {confirmDelete && draft && (
-        <ConfirmDialog title="Delete this scenario?" message={`“${savedTitle}” will be removed from this browser.`} confirmLabel="Delete"
-          onConfirm={() => { setConfirmDelete(false); deleteCustomScenario(draft.id); clearErrors(); refresh(listScenarios()[0].id); }}
+        <ConfirmDialog title="Delete this scenario?" message={currentMeta?.stored === "database" ? `“${savedTitle}” will be removed from your account.` : `“${savedTitle}” will be removed from this browser.`} confirmLabel="Delete"
+          onConfirm={() => {
+            setConfirmDelete(false);
+            void removeCustomScenario(draft.id, stored && isAuthenticated, currentMeta?.stored)
+              .then(() => { clearErrors(); return refresh(listScenarios()[0].id); })
+              .catch((e) => setFormError(e instanceof Error ? e.message : "Could not delete this persona."));
+          }}
           onCancel={() => setConfirmDelete(false)} />
       )}
       {/* Below md the toast clears the bottom tab bar (56 px plus the safe-area inset). */}

@@ -26,8 +26,14 @@ export const WizardInputSchema = z.object({
   contexts: z
     .array(z.object({ kind: z.enum(CONTEXT_KINDS), text: z.string().max(8000), label: z.string().max(200).optional() }))
     .max(5),
+  /**
+   * Keep the rep's real company, product, pricing and domain details in the persona (it is saved privately to their
+   * account). False anonymizes every real name. Defaults to true, so callers that never send it still parse.
+   */
+  keepRealNames: z.boolean().default(true),
 });
-export type WizardInput = z.infer<typeof WizardInputSchema>;
+/** What a caller sends: keepRealNames may be left out (it defaults to true when parsed). */
+export type WizardInput = z.input<typeof WizardInputSchema>;
 
 /** Where a generated field came from: the context tab and the snippet that produced it. */
 export interface FieldSource {
@@ -46,6 +52,12 @@ export interface WizardOutput {
 export interface FetchedPage {
   url: string;
   title: string;
+  /** The page's meta, Open Graph or JSON-LD description, when it has one. */
+  description?: string;
+  /** A category or industry the page states about itself (JSON-LD), when present. */
+  suggestedIndustry?: string;
+  /** A 1-2 sentence pitch (at most 300 characters) built from the title and description, for the product line. */
+  suggestedProduct?: string;
   text: string;
   bytes: number;
 }

@@ -46,6 +46,10 @@ beforeAll(() => {
   // No key: generatePersona must take the template path.
   vi.stubEnv("LLM_API_KEY", "");
   vi.stubEnv("OPENAI_API_KEY", "");
+  vi.stubEnv("ANTHROPIC_API_KEY", "");
+  vi.stubEnv("WIZARD_API_KEY", "");
+  vi.stubEnv("WIZARD_PROVIDER", "");
+  vi.stubEnv("WIZARD_MODEL", "");
 });
 
 afterAll(() => {

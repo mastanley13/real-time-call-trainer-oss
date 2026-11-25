@@ -84,6 +84,10 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `LLM_BASE_URL` | Optional | Default `https://api.openai.com/v1` |
 | `LLM_MODEL` | Optional | Live coach, text simulation and other per-turn chat. Default `gpt-6-luna` |
 | `LLM_MODEL_GRADING` | Optional | Final grading and scoring (`/api/evaluate-call` and re-grades). Falls back to `LLM_MODEL` when unset. Hosted production uses `gpt-6.2-sol` |
+| `ANTHROPIC_API_KEY` | Optional | Dedicated Anthropic Messages API key for the AI Persona Wizard (`/api/persona/generate`). Default model `claude-opus-5-5` with automatic fallback to the chat provider |
+| `WIZARD_PROVIDER` | Optional | Force the persona wizard provider: `anthropic` or `openai` (auto-detects `anthropic` when `ANTHROPIC_API_KEY` is set) |
+| `WIZARD_API_KEY` | Optional | Dedicated API key for the persona wizard (Anthropic or OpenAI) |
+| `WIZARD_MODEL` | Optional | Model override for the persona wizard (default `claude-opus-5-5` on Anthropic; falls back to `LLM_MODEL_GRADING` / `LLM_MODEL` on OpenAI) |
 | `DATABASE_URL` | For accounts | Postgres connection string |
 | `JWT_SECRET` | For accounts | 32+ random bytes (`node generate-jwt-secret.js`). Also keys the grade seal and the access-code cookie |
 | `CRON_SECRET` | Optional | Bearer secret for `/api/cron/purge-expired` and `/api/cron/openai-keys` (OpenAI key slot health, also open to platform admins). The purge route accepts only `Authorization: Bearer $CRON_SECRET` (Vercel Cron sends it when the variable is set) and returns 401 without it |
@@ -99,6 +103,7 @@ Quick look without any keys: `DEMO_MODE=true npm run dev`. Demo mode skips login
 | `RATE_LIMIT_REALTIME_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/realtime/session` (one per voice call). Default 10 per 3600 s |
 | `RATE_LIMIT_COACH_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on `/api/coach/turn`. Default 120 per 600 s |
 | `RATE_LIMIT_WIZARD_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/persona/generate` and `/api/persona/fetch-url`. Default 20 per 3600 s |
+| `RATE_LIMIT_SCENARIOS_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on custom persona writes (`POST /api/scenarios`, `PUT`/`DELETE /api/scenarios/[id]`). Default 60 per 3600 s |
 | `RATE_LIMIT_USAGE_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit on the voice metering routes (`/api/usage/*`: a heartbeat every 10 s per call, plus end events). Default 1200 per 600 s |
 | `RATE_LIMIT_BILLING_MAX` / `_WINDOW_SEC` | Optional | Per-IP limit shared by `/api/billing/checkout`, `/api/billing/portal`, `/api/billing/premium` and `/api/billing/seats`. Default 20 per 3600 s |
 | `PREMIUM_VOICE_ON_SALE` | Optional | Exact string `true` puts the Premium Voice add-on on sale ($20 a month or $200 a year per Pro account or Team seat, on the base plan's interval): checkout with `premium:true`, adding it to an existing subscription (prorated preview, then confirm) and the buy controls. It also gates paid Premium at mint and the add-on quantity sync after portal seat changes. Default off: those are hidden, `premium:true` is rejected with `premium_not_available`, and every paid call mints Standard. Comped organizations keep Premium either way, and removal at period end always works. Each unit gets 40 Premium minutes a month from the plan's own minutes; no overages. Independent of `PREMIUM_TRIAL_SAMPLE_ON` |

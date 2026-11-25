@@ -148,14 +148,81 @@ export function cronAuthorized(authorization: string | null | undefined, secret:
   return safeEqual(auth.slice(7).trim(), want);
 }
 
+/** The built-in chat model when LLM_MODEL is unset. */
+const DEFAULT_CHAT_MODEL = "gpt-6-luna";
+
 /** Live coach, text simulation and other per-turn chat. Default gpt-6-luna. */
 export function llmModel(): string {
-  return process.env.LLM_MODEL || "gpt-6-luna";
+  return process.env.LLM_MODEL || DEFAULT_CHAT_MODEL;
 }
 
 /** Final grading and scoring. LLM_MODEL_GRADING, or LLM_MODEL when that is unset. */
 export function llmGradingModel(): string {
   return process.env.LLM_MODEL_GRADING || llmModel();
+}
+
+/*
+ * Persona wizard builder. Server-only: none of this is in getCapabilities(), so /api/config stays booleans and
+ * provider names only, and no key or model id reaches the browser.
+ *
+ * - WIZARD_PROVIDER: "anthropic" or "openai" (any case). Unset picks Anthropic when an Anthropic key is present.
+ * - WIZARD_API_KEY: a dedicated wizard key. It counts as an Anthropic key when WIZARD_PROVIDER=anthropic, or when the
+ *   provider is unset and the key starts with sk-ant-. Otherwise it is an OpenAI key, sent only to api.openai.com.
+ * - ANTHROPIC_API_KEY: the Anthropic key when WIZARD_API_KEY is not one.
+ * - WIZARD_MODEL: overrides the builder model for whichever provider runs it.
+ */
+export type WizardProvider = "anthropic" | "openai" | "none";
+
+/** Default builder model on the Anthropic Messages API. */
+const DEFAULT_WIZARD_ANTHROPIC_MODEL = "claude-opus-5-5";
+
+const wizardProviderSetting = (env: Env) => env.WIZARD_PROVIDER?.trim().toLowerCase() || undefined;
+
+/** The Anthropic key for the wizard, or undefined. Only ever sent to api.anthropic.com (src/lib/wizardLlm.ts). */
+export function anthropicKey(env: Env = process.env): string | undefined {
+  const setting = wizardProviderSetting(env);
+  const wizardKey = env.WIZARD_API_KEY?.trim();
+  if (wizardKey && (setting === "anthropic" || (!setting && wizardKey.startsWith("sk-ant-")))) return wizardKey;
+  if (setting === "openai") return undefined;
+  return env.ANTHROPIC_API_KEY?.trim() || undefined;
+}
+
+/**
+ * A dedicated OpenAI key for the wizard: WIZARD_API_KEY when it is not the Anthropic key. Never an sk-ant- key, so an
+ * Anthropic key can't go to OpenAI even when WIZARD_PROVIDER=openai is set by mistake.
+ */
+export function wizardOpenAiKey(env: Env = process.env): string | undefined {
+  const wizardKey = env.WIZARD_API_KEY?.trim();
+  if (!wizardKey || wizardKey === anthropicKey(env) || wizardKey.startsWith("sk-ant-")) return undefined;
+  return wizardKey;
+}
+
+/**
+ * Which provider builds wizard personas. WIZARD_PROVIDER=openai forces OpenAI (or the custom LLM base) when a key for
+ * it exists. Otherwise an Anthropic key wins, then a dedicated WIZARD_API_KEY or the chat key. "none" means the
+ * template draft.
+ */
+export function wizardProvider(env: Env = process.env): WizardProvider {
+  const openAiReady = Boolean(wizardOpenAiKey(env) || resolveLlmKey(env));
+  if (wizardProviderSetting(env) === "openai") return openAiReady ? "openai" : "none";
+  if (anthropicKey(env)) return "anthropic";
+  return openAiReady ? "openai" : "none";
+}
+
+/** The wizard model on the chat provider: LLM_MODEL_GRADING, then LLM_MODEL, then the built-in default. */
+export function wizardFallbackModel(env: Env = process.env): string {
+  return env.LLM_MODEL_GRADING || env.LLM_MODEL || DEFAULT_CHAT_MODEL;
+}
+
+/**
+ * The builder model: WIZARD_MODEL, else the Anthropic default on the Anthropic path, else the grading model
+ * (llmGradingModel() for process.env). Server-only; never returned to the browser.
+ */
+export function wizardModel(env: Env = process.env): string {
+  const set = env.WIZARD_MODEL?.trim();
+  if (set) return set;
+  if (wizardProvider(env) === "anthropic") return DEFAULT_WIZARD_ANTHROPIC_MODEL;
+  return env === process.env ? llmGradingModel() : wizardFallbackModel(env);
 }
 
 export function llmBaseUrl(): string {
