@@ -84,6 +84,8 @@ export const LIVE_CASTING: Record<string, LiveCastLine> = {
   "mortgage-first-time-buyer-preapproval": M("nervous", "First-time buyer new to lending: eager and a bit nervous, assumes things, asks basic questions; relieved when it is explained simply.", 29),
   "mortgage-refinance-loan-estimate-comparison": G("skeptical", "Careful homeowner comparing a Loan Estimate to a 'no closing costs' quote: analytical, polite but skeptical, wants numbers.", 44),
   "mortgage-locked-borrower-threatening-to-walk": M("stressed", "Stressed buyer with a rate lock about to expire: tense and short-tempered, voice tight; calms only with concrete action.", 38),
+  "mortgage-bank-heloc-account-review": MA("curious", "Loyal six-year branch customer caught slightly off guard by the call: warm and polite once reassured, protective of her 3.75% mortgage rate, and cautious about variable rates or credit pulls.", 43),
+  "mortgage-bank-business-loc-refi": M("busy", "Hands-on HVAC and electrical contractor taking the call between job sites: friendly, plain-spoken and pressed for time, skeptical of paperwork and unused debt, warms up to practical cash-flow talk.", 46),
   // ---- real estate ----
   "real-estate-portal-buyer-inquiry": M("curious", "Online inquirer, casually curious and a little noncommittal: relaxed, short answers, opens up as rapport builds.", 33),
   "real-estate-fsbo-seller-follow-up": MA("guarded", "Experienced homeowner selling the house herself: proud, a bit defensive and settled, slower and measured; wary of agents' pitches.", 61),

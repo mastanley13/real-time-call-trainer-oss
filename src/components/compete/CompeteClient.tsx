@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight, EyeOff, FileText, Lock, Mic, Pencil, Phone, Share2, Timer, Trophy, Users } from "lucide-react";
 import Sheet from "@/components/ui/Sheet";
+import RolePlayCard from "@/components/call/RolePlayCard";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   COMPETITION_CALL_MAX_SECONDS,
@@ -255,7 +256,7 @@ export default function CompeteClient() {
                 </span>
               )}
             </div>
-            <h1 className="mt-4 max-w-2xl text-4xl font-bold leading-[1.05] sm:text-5xl">3 calls a month. 7 industries. Prove it on the phone.</h1>
+            <h1 className="mt-4 max-w-2xl text-4xl font-bold leading-[1.05] sm:text-5xl">3 calls a month. {tracks.length} industries. Prove it on the phone.</h1>
             <p className="mt-4 max-w-xl text-lg leading-relaxed text-ink-soft">
               Pick an industry, read a 30-second brief, and run a {Math.round(rules.maxSeconds / 60)}-minute blind voice call. Climb the day, week, month, and year leaderboards. Monthly #1 wins the prize.
             </p>
@@ -564,6 +565,10 @@ function TrackCard({ track, onOpen }: { track: CompetitionTrack; onOpen: () => v
         {track.callTypeLabel} <span aria-hidden>·</span> vs. {track.buyerName}
       </p>
       <p className="text-sm leading-relaxed text-ink-soft">{track.shortPitch}</p>
+      <div className="rounded-lg border border-line bg-sunken/60 px-3 py-2 text-xs">
+        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-ink-muted">You&rsquo;re pitching</p>
+        <p className="mt-0.5 line-clamp-2 font-medium leading-snug text-ink">{track.roleCard.pitching}</p>
+      </div>
       <button type="button" className="btn-ghost mt-auto w-full" onClick={onOpen} aria-haspopup="dialog">
         Quick brief &amp; start <ArrowRight size={16} strokeWidth={1.75} aria-hidden />
         <span className="sr-only">: {track.label}</span>
@@ -586,7 +591,10 @@ function BriefSheet({ track, rules, cta, onClose }: {
         <span className="chip">{track.callTypeLabel}</span>
         <span className="chip">Buyer: {track.buyerName}</span>
       </div>
-      <p className="mt-4 text-sm leading-relaxed text-ink-soft">{track.shortPitch}</p>
+
+      <div className="mt-4">
+        <RolePlayCard card={track.roleCard} buyerName={track.buyerName} compact />
+      </div>
 
       <h3 className="label mt-6">Your goal</h3>
       <p className="text-[15px] leading-relaxed text-ink">{track.quickBriefGoal}</p>

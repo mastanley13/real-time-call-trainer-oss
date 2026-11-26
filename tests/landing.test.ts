@@ -108,7 +108,7 @@ describe("home page (Practice Desk layout, #90 copy)", () => {
       "View on GitHub",
       "Run it locally",
     ]) expect(text, s).toContain(s);
-    expect(LIBRARY.length).toBe(54);
+    expect(LIBRARY.length).toBe(56);
   });
 
   it("drops #70's old copy and the add-on price", () => {

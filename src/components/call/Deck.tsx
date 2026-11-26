@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronUp, Loader2, Mic, MicOff, PhoneOff, Send, Target, X } from "lucide-react";
+import { Briefcase, ChevronUp, Loader2, Mic, MicOff, PhoneOff, Send, Target, X } from "lucide-react";
 import { CUE_LABELS, type CoachMode } from "@/lib/coach-types";
+import { buildRolePlayCard } from "@/lib/callCard";
 import { talkTrackSteps, type Scenario } from "@/lib/scenarios";
 import type { StoredTurn } from "@/lib/sessionStore";
 import { formatDuration } from "@/lib/format";
@@ -147,6 +148,7 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
   }
 
   const chipsFor = (i: number): RubricChip[] => coach.chips[i] ?? [];
+  const roleCard = buildRolePlayCard(scenario);
   const source = voice ? (voice.engine === "openai" ? "Voice · OpenAI Realtime" : "Voice · ElevenLabs") : text?.caller ?? "Text simulation";
   const toneClass = { ok: "lamp-ok", signal: "lamp-signal", caution: "lamp-caution" }[status.tone];
   const remainingSec = competition ? Math.max(0, competition.maxSeconds - elapsed) : null;
@@ -200,10 +202,19 @@ export default function Deck({ scenario, turns, startedAt, elapsed, orbState, st
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_380px]">
         {/* Transcript column */}
         <section className="flex min-h-0 flex-col" aria-label="Call">
-          <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2.5 text-[13px] sm:px-6">
-            <Target size={14} className="shrink-0 text-primary" aria-hidden />
-            <p className="min-w-0 flex-1 truncate"><span className="font-semibold">Goal:</span> <span className="text-ink-soft">{scenario.traineeGoal}</span></p>
-            <span className="mono shrink-0 text-[11px] text-ink-muted">{turns.length} turns<span className="md:hidden"> · {source}</span></span>
+          <div className="shrink-0 space-y-1 border-b border-line px-4 py-2.5 text-[13px] sm:px-6">
+            <div className="flex items-center gap-2">
+              <Briefcase size={14} className="shrink-0 text-primary" aria-hidden />
+              <p className="min-w-0 flex-1 truncate">
+                <span className="font-semibold">{roleCard.yourRole}:</span>{" "}
+                <span className="text-ink-soft">{roleCard.pitching}</span>
+              </p>
+              <span className="mono shrink-0 text-[11px] text-ink-muted">{turns.length} turns<span className="md:hidden"> · {source}</span></span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Target size={14} className="shrink-0 text-ink-muted" aria-hidden />
+              <p className="min-w-0 flex-1 truncate text-xs"><span className="font-semibold text-ink-soft">Goal:</span> <span className="text-ink-muted">{scenario.traineeGoal}</span></p>
+            </div>
           </div>
 
           <ol ref={logRef} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}

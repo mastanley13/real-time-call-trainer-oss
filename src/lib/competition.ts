@@ -68,10 +68,22 @@ export const COMPETITION_TRACK_SLUGS = [
   "dealerships",
   "saas-sdr",
   "real-estate",
+  "banking",
   "price-objection",
 ] as const;
 
 export type CompetitionTrackSlug = (typeof COMPETITION_TRACK_SLUGS)[number];
+
+export interface CompetitionRoleCard {
+  /** Who the rep is playing on this call, e.g. "Account Executive · Operations Software". */
+  yourRole: string;
+  /** The exact offer, price, or proposal on the table in one crisp line. */
+  pitching: string;
+  /** How this call starts — only what a real rep knows before dialing (no hidden spoilers). */
+  situation: string;
+  /** Exact opening line the buyer speaks when the call connects. */
+  openingLine: string;
+}
 
 export interface CompetitionTrack {
   slug: CompetitionTrackSlug;
@@ -82,6 +94,7 @@ export interface CompetitionTrack {
   difficulty: "easy" | "medium" | "hard";
   callTypeLabel: string;
   shortPitch: string;
+  roleCard: CompetitionRoleCard;
   quickBriefGoal: string;
   watchOuts: readonly [string, string];
 }
@@ -100,11 +113,17 @@ export const COMPETITION_TRACKS: readonly CompetitionTrack[] = [
     buyerName: "Marcus Bell",
     difficulty: "medium",
     callTypeLabel: "Quote follow-up",
-    shortPitch: "$14,800 roof replacement quote gone quiet after a competing $12,900 bid.",
-    quickBriefGoal: "Uncover the competing quote and spouse concern, reinforce warranty and crew value without immediate discounting, and lock a dated next step.",
+    shortPitch: "$14,800 roof replacement quote gone quiet after your inspection last week.",
+    roleCard: {
+      yourRole: "Roofing Estimator",
+      pitching: "$14,800 full roof replacement (full tear-off + 25-year material warranty)",
+      situation: "You inspected Marcus's roof last week and emailed the $14,800 quote. He went quiet, so you are calling to follow up.",
+      openingLine: "Oh hey, yeah, I got the quote. I've just been really busy, honestly.",
+    },
+    quickBriefGoal: "Uncover what is holding him back, reinforce warranty and crew value without immediate discounting, and lock a dated next step.",
     watchOuts: [
-      "He will not mention the $12,900 competing quote unless you ask calm open questions.",
-      "Dropping your price immediately or pushing past the spouse concern costs points.",
+      "He will not volunteer his real hesitation unless you ask calm, open questions.",
+      "Dropping your price immediately or pushing past family concerns costs points.",
     ],
   },
   {
@@ -115,11 +134,17 @@ export const COMPETITION_TRACKS: readonly CompetitionTrack[] = [
     buyerName: "Imani Brooks",
     difficulty: "medium",
     callTypeLabel: "Renewal retention",
-    shortPitch: "Nine-year homeowner shocked by a 41% renewal jump ($1,640 to $2,310) with a $1,950 competing quote.",
+    shortPitch: "Nine-year homeowner calling in upset over a 41% renewal jump ($1,640 to $2,310).",
+    roleCard: {
+      yourRole: "Licensed Insurance Agent",
+      pitching: "Homeowners policy renewal ($2,310/yr, up from $1,640/yr · $1,000 deductible · due on the 15th)",
+      situation: "Imani has insured her home with your agency for 9 years. She just opened her renewal notice and called in asking if the 41% increase is a mistake.",
+      openingLine: "Hi, I just got my renewal notice and my premium jumped from sixteen-forty to twenty-three ten. Is that a mistake?",
+    },
     quickBriefGoal: "Acknowledge the jump first, break down the real rating drivers, review deductible and coverage trade-offs honestly, and book a dated comparison call.",
     watchOuts: [
       "Never promise a lower rate, rate match, or guaranteed approval, and never cut dwelling coverage below rebuild cost.",
-      "Ask what her $1,950 competing quote covers before reacting to the price.",
+      "If she mentions another quote, ask what deductible and roof terms it covers before reacting.",
     ],
   },
   {
@@ -130,7 +155,13 @@ export const COMPETITION_TRACKS: readonly CompetitionTrack[] = [
     buyerName: "Odalys Kruger",
     difficulty: "hard",
     callTypeLabel: "Skeptical discovery",
-    shortPitch: "Homeowner burned by a past 'free solar' pitch, stuck with a failing inverter from a closed installer.",
+    shortPitch: "Homeowner burned by a past 'free solar' pitch whose original installer shut down.",
+    roleCard: {
+      yourRole: "Solar Diagnostics Specialist",
+      pitching: "$149 written, no-obligation system and warranty review (not a new panel pitch)",
+      situation: "A neighbor passed Odalys's number to your company. She already has solar from a closed installer and expects you to launch into another sales pitch.",
+      openingLine: "Okay, I'll be blunt. My neighbor said you'd be calling, and if this is another free solar pitch, I'm hanging up.",
+    },
     quickBriefGoal: "De-escalate without pitching, gather her system and loan facts, answer guarantee and tax-credit questions honestly, and book a priced written review.",
     watchOuts: [
       "Never say solar is free or guarantee savings or tax credits; explain a tax credit lowers tax owed and depends on her tax situation.",
@@ -145,7 +176,13 @@ export const COMPETITION_TRACKS: readonly CompetitionTrack[] = [
     buyerName: "Ingrid Solberg",
     difficulty: "medium",
     callTypeLabel: "Vehicle negotiation",
-    shortPitch: "$38,400 midsize pickup shopper with a $36,900 rival quote, a trade-in gap, and her own bank pre-approval.",
+    shortPitch: "$38,400 pickup shopper calling back after Saturday's test drive to review the numbers.",
+    roleCard: {
+      yourRole: "Automotive Sales Specialist",
+      pitching: "2022 midsize pickup ($38,400 list, tow package) · $9,200 appraisal on her 2017 sedan",
+      situation: "Ingrid test-drove the pickup Saturday and liked it. She is calling back to go over the vehicle price, trade value, and financing before deciding.",
+      openingLine: "Hi, it's Ingrid. I drove the truck on Saturday and I liked it, but I need to understand the numbers before I decide anything.",
+    },
     quickBriefGoal: "Discover her priorities, explain the trade appraisal transparently, compare price, miles, and tow package line by line, and close on written numbers.",
     watchOuts: [
       "Never use false urgency, payment-only steering, or claim an extended warranty is required for financing.",
@@ -160,7 +197,13 @@ export const COMPETITION_TRACKS: readonly CompetitionTrack[] = [
     buyerName: "Gabriela Ostrowski",
     difficulty: "hard",
     callTypeLabel: "Cold call",
-    shortPitch: "Busy VP of Operations at a 40-person freight brokerage giving cold callers 20 seconds between carrier calls.",
+    shortPitch: "Busy VP of Operations at a 40-person freight brokerage giving cold callers 20 seconds.",
+    roleCard: {
+      yourRole: "Outbound SDR · Freight Visibility Software",
+      pitching: "Real-time load tracking and late-pickup alert software (goal: book a 15-minute intro)",
+      situation: "You are cold-calling the VP of Operations at Ketterhill Freight Partners (40-person brokerage). She answers her own direct line between carrier calls.",
+      openingLine: "Ketterhill, this is Gabi.",
+    },
     quickBriefGoal: "Earn 30 seconds with a researched opener, uncover how late-pickup exceptions hurt her dispatchers, handle brush-offs calmly, and book a 15-minute slot.",
     watchOuts: [
       "Skip generic 'how are you' small talk or feature dumps; she cuts off long pitches fast.",
@@ -175,11 +218,38 @@ export const COMPETITION_TRACKS: readonly CompetitionTrack[] = [
     buyerName: "Yusuf Demir",
     difficulty: "hard",
     callTypeLabel: "Expired listing",
-    shortPitch: "Frustrated homeowner whose $389,000 listing expired yesterday after 94 days and a dozen agent calls.",
+    shortPitch: "Frustrated homeowner whose $389,000 listing expired yesterday after 94 days.",
+    roleCard: {
+      yourRole: "Residential Listing Agent",
+      pitching: "No-obligation in-person pricing review and written weekly communication plan",
+      situation: "Yusuf's listing at 905 Sycamore Way ($389,000) expired yesterday after 94 days on market. You are cold-calling to see if he is still open to selling.",
+      openingLine: "Hello? Who is this? If you're another real estate agent, I'm really not interested.",
+    },
     quickBriefGoal: "Ask permission, confirm no active listing, uncover why it sat unsold, differentiate with a written communication plan, and earn a no-obligation visit.",
     watchOuts: [
       "Never disparage the previous agent or guarantee a sale price or timeline.",
       "If he asks to stop calling, honor it immediately and confirm removal.",
+    ],
+  },
+  {
+    slug: "banking",
+    label: "Banking",
+    shortLabel: "Banking",
+    scenarioId: "mortgage-bank-heloc-account-review",
+    buyerName: "Carmen Alvarez",
+    difficulty: "medium",
+    callTypeLabel: "Account review",
+    shortPitch: "Six-year bank customer with checking, savings, and an 8.9% auto loan who mentioned a home project.",
+    roleCard: {
+      yourRole: "Bank Branch Manager",
+      pitching: "Home Equity Line of Credit (HELOC) review that leaves her 3.75% mortgage untouched (subject to credit approval and equity)",
+      situation: "You reviewed Carmen's 6-year branch relationship before a courtesy check-in call. She mentioned a home project on her last visit and picks up wondering if anything is wrong with her accounts.",
+      openingLine: "Hi, yes, this is Carmen. Thanks for calling, is everything okay with my accounts?",
+    },
+    quickBriefGoal: "Put her at ease, uncover her home project and high-APR balances, explain HELOC options honestly with required disclosures, and book a branch review.",
+    watchOuts: [
+      "Never guarantee approval, a specific rate, or a credit limit, and never run a credit pull without permission.",
+      "Reassure her that a HELOC sits behind her existing 3.75% first mortgage rather than replacing it, and explain variable-rate risk plainly.",
     ],
   },
   {
@@ -190,11 +260,17 @@ export const COMPETITION_TRACKS: readonly CompetitionTrack[] = [
     buyerName: "Priya Raman",
     difficulty: "hard",
     callTypeLabel: "Price negotiation",
-    shortPitch: "Direct operations manager opening with 'this is twice what we pay now' plus a contract-length blocker.",
+    shortPitch: "Operations manager pushing back on your $1,200/mo software proposal and 24-month term.",
+    roleCard: {
+      yourRole: "Account Executive · Operations Software",
+      pitching: "$1,200/mo operations workflow & reporting suite (24-mo plan · 90-day pilot available)",
+      situation: "You sent Priya a $1,200/mo proposal for her 35-person ops team. She just picked up your follow-up call ready to challenge the price.",
+      openingLine: "I'll be straight with you: this is twice what we pay now. I don't see how it's worth it.",
+    },
     quickBriefGoal: "Validate without getting defensive, clarify what she compares against, reframe on concrete outcomes, solve the contract blocker, and ask for a commitment.",
     watchOuts: [
-      "Do not defend the price or drop into a vague feature list before clarifying her baseline.",
-      "Expect a second objection on the 24-month contract once you handle price.",
+      "Do not defend the price or drop into a vague feature list before clarifying her current baseline.",
+      "Expect a second objection on the 24-month contract once you handle price; a 90-day month-to-month pilot is on the table.",
     ],
   },
 ] as const;
