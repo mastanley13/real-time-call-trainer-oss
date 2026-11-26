@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowRight, EyeOff, FileText, Lock, Mic, Pencil, Phone, Share2, Timer, Trophy, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, EyeOff, FileText, Lock, Mic, Pencil, Phone, Share2, Timer, Trophy, Users } from "lucide-react";
 import Sheet from "@/components/ui/Sheet";
 import RolePlayCard from "@/components/call/RolePlayCard";
 import { useAuth } from "@/contexts/AuthContext";
@@ -584,43 +584,105 @@ function BriefSheet({ track, rules, cta, onClose }: {
   onClose: () => void;
 }) {
   const d = DIFFICULTY[track.difficulty];
+  const [card, setCard] = useState<0 | 1>(0);
+  const touchX = useRef<number | null>(null);
+
+  useEffect(() => { setCard(0); }, [track.slug]);
+
+  function onTouchStart(e: React.TouchEvent) {
+    touchX.current = e.touches[0]?.clientX ?? null;
+  }
+
+  function onTouchEnd(e: React.TouchEvent) {
+    if (touchX.current === null) return;
+    const delta = (e.changedTouches[0]?.clientX ?? touchX.current) - touchX.current;
+    touchX.current = null;
+    if (delta < -48 && card === 0) setCard(1);
+    if (delta > 48 && card === 1) setCard(0);
+  }
+
   return (
     <Sheet title={track.label} subtitle={`${track.buyerName} · ${track.callTypeLabel}`} onClose={onClose} footer={<BriefCta cta={cta} />}>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="chip"><span className={`lamp ${d.lamp} !h-1.5 !w-1.5`} aria-hidden />{d.label}</span>
-        <span className="chip">{track.callTypeLabel}</span>
-        <span className="chip">Buyer: {track.buyerName}</span>
-      </div>
-
-      <div className="mt-4">
-        <RolePlayCard card={track.roleCard} buyerName={track.buyerName} compact />
-      </div>
-
-      <h3 className="label mt-6">Your goal</h3>
-      <p className="text-[15px] leading-relaxed text-ink">{track.quickBriefGoal}</p>
-
-      <h3 className="label mt-6">Watch out for</h3>
-      <ul className="space-y-2.5">
-        {track.watchOuts.map((w) => (
-          <li key={w} className="flex gap-3 text-sm leading-relaxed text-ink">
-            <span className="lamp lamp-caution mt-[0.5em]" aria-hidden />
-            <span>{w}</span>
-          </li>
-        ))}
-      </ul>
-
-      <div className="mt-6 rounded-panel border border-line bg-sunken p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="label !mb-0 inline-flex items-center gap-1.5"><Lock size={12} strokeWidth={1.75} aria-hidden /> Competition rules</h3>
-          <span className="chip !text-[11px]">Locked</span>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="chip"><span className={`lamp ${d.lamp} !h-1.5 !w-1.5`} aria-hidden />{d.label}</span>
+          <span className="chip">{track.callTypeLabel}</span>
         </div>
-        <ul className="mt-3 flex flex-wrap gap-2">
-          <li className="chip bg-surface">Voice only</li>
-          <li className="chip bg-surface">Blind mode (no live cues)</li>
-          <li className="chip bg-surface mono">{clockLabel(rules.maxSeconds)} hard timer</li>
-          <li className="chip bg-surface">Min {rules.minSeconds}s &amp; {rules.minTurns} turns</li>
-          <li className="chip bg-surface">Counts as 1 of {rules.maxAttempts} attempts</li>
-        </ul>
+        <span className="font-mono text-[11px] text-ink-muted">Card {card + 1} of 2</span>
+      </div>
+
+      {/* 2-card slide stepper inside the Compete drawer so reps never have to scroll a wall of text. */}
+      <div className="mt-3 grid grid-cols-2 gap-1.5" role="tablist" aria-label="Quick brief cards">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={card === 0}
+          onClick={() => setCard(0)}
+          className={`min-h-[36px] rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${card === 0 ? "border-primary bg-primary-soft text-ink" : "border-line bg-sunken/50 text-ink-muted hover:text-ink"}`}
+        >
+          1. Setup &amp; opening
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={card === 1}
+          onClick={() => setCard(1)}
+          className={`min-h-[36px] rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${card === 1 ? "border-primary bg-primary-soft text-ink" : "border-line bg-sunken/50 text-ink-muted hover:text-ink"}`}
+        >
+          2. Goal &amp; rules
+        </button>
+      </div>
+
+      <div className="mt-4" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+        {card === 0 ? (
+          <div className="space-y-3">
+            <RolePlayCard card={track.roleCard} buyerName={track.buyerName} compact />
+            <div className="flex justify-end">
+              <button type="button" className="btn-ghost btn-sm" onClick={() => setCard(1)}>
+                Next: Goal &amp; rules <ArrowRight size={14} strokeWidth={1.75} aria-hidden />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            <div className="rounded-panel border border-l-4 border-primary/30 border-l-primary bg-primary-soft/40 p-4">
+              <h3 className="label !mb-1 !text-primary">Your goal</h3>
+              <p className="text-[15px] font-medium leading-relaxed text-ink">{track.quickBriefGoal}</p>
+            </div>
+
+            <div>
+              <h3 className="label">Watch out for</h3>
+              <ul className="space-y-2">
+                {track.watchOuts.map((w) => (
+                  <li key={w} className="flex gap-2.5 text-sm leading-relaxed text-ink">
+                    <span className="lamp lamp-caution mt-[0.5em] shrink-0" aria-hidden />
+                    <span>{w}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="rounded-panel border border-line bg-sunken p-3.5">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="label !mb-0 inline-flex items-center gap-1.5"><Lock size={12} strokeWidth={1.75} aria-hidden /> Competition rules</h3>
+                <span className="chip !text-[11px]">Locked</span>
+              </div>
+              <ul className="mt-2.5 flex flex-wrap gap-1.5">
+                <li className="chip bg-surface">Voice only</li>
+                <li className="chip bg-surface">Blind mode</li>
+                <li className="chip bg-surface mono">{clockLabel(rules.maxSeconds)} cap</li>
+                <li className="chip bg-surface">Min {rules.minSeconds}s &amp; {rules.minTurns} turns</li>
+                <li className="chip bg-surface">1 of {rules.maxAttempts} calls</li>
+              </ul>
+            </div>
+
+            <div>
+              <button type="button" className="btn-quiet btn-sm" onClick={() => setCard(0)}>
+                <ArrowLeft size={14} strokeWidth={1.75} aria-hidden /> Back to setup
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </Sheet>
   );
