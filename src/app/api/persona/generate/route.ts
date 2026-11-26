@@ -10,6 +10,8 @@ import { generatePersona } from "@/lib/personaWizard";
  * WizardOutput (a complete Scenario plus per-field sources). Uses the LLM when
  * configured and a template otherwise, so it always returns a usable scenario.
  */
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;

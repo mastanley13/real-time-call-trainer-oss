@@ -7,6 +7,7 @@ import { ArrowLeft, ArrowRight, Check, Copy, Globe, Library, Loader2, Lock, Play
 import { CALL_TYPES, CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, OBJECTION_TYPES, ScenarioSchema, type CallType, type ObjectionType, type Scenario } from "@/lib/scenarios";
 import { LIVE_CAST_VOICES } from "@/lib/liveCasting";
 import { CONTEXT_KINDS, CONTEXT_LABELS, type ContextKind, type FetchedPage, type FieldSource, type WizardInput, type WizardOutput } from "@/lib/wizard-types";
+import { buildQuickStartInput, formatFetchedPageContext, inferCallTypeForRole, inferRoleFromPage, normalizeWizardUrl } from "@/lib/wizardQuickStart";
 import { persistCustomScenario } from "@/lib/scenarioStore";
 import { useAuth } from "@/contexts/AuthContext";
 import { radioKeys } from "@/components/call/CopilotRail";
@@ -99,6 +100,9 @@ export default function PersonaWizard() {
   const [fetched, setFetched] = useState<FetchedPage | null>(null);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [quickStage, setQuickStage] = useState<"fetch" | "generate" | "save" | null>(null);
+  const [rolePicked, setRolePicked] = useState(false);
+  const [callTypePicked, setCallTypePicked] = useState(false);
   const [sharedWithOrg, setSharedWithOrg] = useState(false);
   const [savedStorage, setSavedStorage] = useState<"database" | "local" | null>(null);
   const [out, setOut] = useState<WizardOutput | null>(null);
@@ -110,9 +114,13 @@ export default function PersonaWizard() {
   const stored = !!capabilities?.database && !capabilities?.demoMode;
   const canShareWithOrg = stored && (user?.role === "manager" || user?.role === "owner" || !!user?.isPlatformAdmin);
   const wizardHasAi = !!capabilities?.llm;
+  const busy = fetching || generating || saving || quickStage !== null;
 
   useEffect(() => {
-    if (!isLoading && capabilities && !isAuthenticated) router.replace("/login");
+    if (!isLoading && capabilities && !isAuthenticated) {
+      const next = typeof window !== "undefined" ? `/library/new${window.location.search}` : "/library/new";
+      router.replace(`/login?next=${encodeURIComponent(next)}`);
+    }
   }, [isLoading, capabilities, isAuthenticated, router]);
 
   // Support /library/new?url=https://example.com so landing pages or links can drop a site straight in.
@@ -149,29 +157,38 @@ export default function PersonaWizard() {
     ? draft.rubric.length < 3 ? "Add at least 3 criteria to continue." : `Weights add up to ${total}%. Make them total 100% to continue.`
     : "";
 
-  const normalizedUrl = (raw: string) => {
-    const t = raw.trim();
-    if (!t) return "";
-    return /^[a-z][a-z0-9+.-]*:\/\//i.test(t) ? t : `https://${t}`;
-  };
+  async function fetchPage(rawUrl: string): Promise<FetchedPage> {
+    const target = normalizeWizardUrl(rawUrl);
+    if (!target) throw new Error("Paste a website URL first.");
+    setUrl(target);
+    const res = await fetch("/api/persona/fetch-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: target }),
+    });
+    const data = (await res.json()) as FetchedPage & { message?: string };
+    if (!res.ok) throw new Error(data.message || "That page couldn't be imported.");
+    setFetched(data);
+    setContexts((c) => ({ ...c, url: formatFetchedPageContext(data) }));
+    const inferredRole = rolePicked ? input.role : inferRoleFromPage(data);
+    const inferredCallType = callTypePicked ? input.callType : inferCallTypeForRole(inferredRole, input.callType);
+    setInput((prev) => ({
+      ...prev,
+      role: rolePicked ? prev.role : inferredRole,
+      callType: callTypePicked ? prev.callType : inferredCallType,
+      product: prev.product.trim() ? prev.product : (data.suggestedProduct || data.description || data.title || prev.product).slice(0, 400),
+      industry: prev.industry.trim() ? prev.industry : (data.suggestedIndustry || prev.industry).slice(0, 80),
+    }));
+    return data;
+  }
 
   async function importUrl() {
-    if (fetching) return;
-    const target = normalizedUrl(url);
-    if (!target) return;
-    setUrl(target);
-    setFetching(true); setError("");
+    if (busy) return;
+    if (!normalizeWizardUrl(url)) return;
+    setFetching(true);
+    setError("");
     try {
-      const res = await fetch("/api/persona/fetch-url", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: target }) });
-      const data = (await res.json()) as FetchedPage & { message?: string };
-      if (!res.ok) throw new Error(data.message || "That page couldn't be imported.");
-      setFetched(data);
-      setContexts((c) => ({ ...c, url: `${data.title ? `${data.title}\n\n` : ""}${data.text}` }));
-      setInput((prev) => ({
-        ...prev,
-        product: prev.product.trim() ? prev.product : (data.suggestedProduct || data.description || data.title || prev.product).slice(0, 400),
-        industry: prev.industry.trim() ? prev.industry : (data.suggestedIndustry || prev.industry).slice(0, 80),
-      }));
+      await fetchPage(url);
     } catch (e) {
       setError(e instanceof Error ? e.message : "That page couldn't be imported.");
     } finally {
@@ -179,18 +196,31 @@ export default function PersonaWizard() {
     }
   }
 
-  async function generate() {
-    if (generating) return;
-    setGenerating(true); setError("");
-    const body: WizardInput = {
+  function currentWizardBody(): WizardInput {
+    return {
       ...input,
       keepRealNames: input.keepRealNames ?? true,
       contexts: filled.map((k) => ({ kind: k, text: contexts[k].slice(0, 8000), ...(k === "url" && fetched ? { label: fetched.url } : {}) })),
     };
+  }
+
+  async function requestPersona(body: WizardInput): Promise<WizardOutput> {
+    const res = await fetch("/api/persona/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error || "The wizard couldn't draft this persona.");
+    return data as WizardOutput;
+  }
+
+  async function generate() {
+    if (busy) return;
+    setGenerating(true);
+    setError("");
     try {
-      const res = await fetch("/api/persona/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "The wizard couldn't draft this persona.");
+      const data = await requestPersona(currentWizardBody());
       setOut(data);
       setDraft(data.scenario);
       setSaved(false);
@@ -199,6 +229,86 @@ export default function PersonaWizard() {
       setError(e instanceof Error ? e.message : "The wizard couldn't draft this persona.");
     } finally {
       setGenerating(false);
+    }
+  }
+
+  /** One-click path: fetch URL (if needed) -> draft buyer and rubric -> save -> open the live call briefing. */
+  async function quickStartFromUrl() {
+    if (busy) return;
+    const target = normalizeWizardUrl(url);
+    if (!target) return;
+    setError("");
+    let generatedScenario: Scenario | null = null;
+    try {
+      let page = fetched;
+      if (!page || (page.url !== target && normalizeWizardUrl(page.url) !== target)) {
+        setQuickStage("fetch");
+        page = await fetchPage(target);
+      }
+      const extraContexts = CONTEXT_KINDS
+        .filter((k) => k !== "url" && contexts[k].trim().length > 0)
+        .map((k) => ({ kind: k, text: contexts[k].slice(0, 8000) }));
+      const body = buildQuickStartInput(page, input, { rolePicked, callTypePicked, extraContexts });
+
+      setQuickStage("generate");
+      const data = await requestPersona(body);
+      generatedScenario = data.scenario;
+      setOut(data);
+      setDraft(data.scenario);
+      setSaved(false);
+
+      setQuickStage("save");
+      const result = await persistCustomScenario({
+        scenario: { ...data.scenario, builtIn: false },
+        useDatabase: stored,
+        sharedWithOrg: canShareWithOrg ? sharedWithOrg : false,
+        keepRealNames: body.keepRealNames ?? true,
+        sourceUrl: page.url,
+      });
+      setDraft(result.scenario);
+      setSavedStorage(result.meta.stored);
+      setSaved(true);
+      router.push(`/trainer?scenario=${encodeURIComponent(result.scenario.id)}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not build a training call from that URL. Try importing and customizing it below.");
+      // If the persona was already generated before save failed, keep it open in Review so the user doesn't lose work.
+      if (generatedScenario) setStep(2);
+    } finally {
+      setQuickStage(null);
+    }
+  }
+
+  /** One-click launch from Step 2 after adding extra context tabs (CRM notes, ICP, job description, call). */
+  async function quickStartFromContext() {
+    if (busy || !canNext) return;
+    setError("");
+    let generatedScenario: Scenario | null = null;
+    try {
+      const body = currentWizardBody();
+      setQuickStage("generate");
+      const data = await requestPersona(body);
+      generatedScenario = data.scenario;
+      setOut(data);
+      setDraft(data.scenario);
+      setSaved(false);
+
+      setQuickStage("save");
+      const result = await persistCustomScenario({
+        scenario: { ...data.scenario, builtIn: false },
+        useDatabase: stored,
+        sharedWithOrg: canShareWithOrg ? sharedWithOrg : false,
+        keepRealNames: body.keepRealNames ?? true,
+        sourceUrl: fetched?.url ?? null,
+      });
+      setDraft(result.scenario);
+      setSavedStorage(result.meta.stored);
+      setSaved(true);
+      router.push(`/trainer?scenario=${encodeURIComponent(result.scenario.id)}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "The wizard couldn't build this persona.");
+      if (generatedScenario) setStep(2);
+    } finally {
+      setQuickStage(null);
     }
   }
 
@@ -293,38 +403,91 @@ export default function PersonaWizard() {
 
           {step === 0 && (
             <section className="card space-y-6">
-              <div className="rounded-panel border border-primary/35 bg-primary-soft/30 p-4">
-                <p className="label !mb-1 flex items-center gap-1.5 text-ink"><Globe size={14} strokeWidth={1.75} className="text-primary" aria-hidden /> Start from your website</p>
-                <p className="text-sm text-ink-soft">Paste your product or pricing page to import your offer automatically, then customize the buyer below.</p>
-                <div className="mt-3 flex flex-wrap gap-2 sm:flex-nowrap">
-                  <label className="relative flex-1">
+              <div className="rounded-panel border border-primary/35 bg-primary-soft/30 p-4 sm:p-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="label !mb-0 flex items-center gap-1.5 text-ink"><Globe size={14} strokeWidth={1.75} className="text-primary" aria-hidden /> Start a training call from one URL</p>
+                  <span className="font-mono text-[11px] text-ink-muted">1 click to call, or customize below</span>
+                </div>
+                <p className="mt-1.5 text-sm text-ink-soft">Paste any company, product, or pricing page. Launch a live call right away, or import it first to customize the buyer and add more context.</p>
+                <div className="mt-3 flex flex-col gap-2">
+                  <label className="relative min-w-0 flex-1">
                     <span className="sr-only">Website URL</span>
                     <Globe size={15} strokeWidth={1.75} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" aria-hidden />
                     <input
                       className="input !pl-9"
-                      type="url"
-                      placeholder="https://yourcompany.com/pricing"
+                      type="text"
+                      inputMode="url"
+                      placeholder="https://yourcompany.com"
                       value={url}
                       onChange={(e) => setUrl(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void importUrl(); } }}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void quickStartFromUrl(); } }}
                     />
                   </label>
-                  <button type="button" className="btn-primary shrink-0" onClick={importUrl} disabled={!fetching && !url.trim()} aria-disabled={fetching}>
-                    {fetching ? <Loader2 size={15} strokeWidth={1.75} className="animate-spin" aria-hidden /> : <Sparkles size={15} strokeWidth={1.75} aria-hidden />}
-                    {fetching ? "Importing…" : "Import website"}
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="btn-primary flex-1 sm:flex-initial"
+                      onClick={() => void quickStartFromUrl()}
+                      disabled={!busy && !url.trim()}
+                      aria-disabled={busy}
+                    >
+                      {quickStage ? <Loader2 size={15} strokeWidth={1.75} className="animate-spin" aria-hidden /> : <Play size={15} strokeWidth={1.75} aria-hidden />}
+                      {quickStage === "fetch"
+                        ? "Reading website…"
+                        : quickStage === "generate"
+                          ? "Building buyer…"
+                          : quickStage === "save"
+                            ? "Opening call…"
+                            : "Build & start call"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost flex-1 sm:flex-initial"
+                      onClick={() => void importUrl()}
+                      disabled={!busy && !url.trim()}
+                      aria-disabled={busy}
+                    >
+                      {fetching ? <Loader2 size={15} strokeWidth={1.75} className="animate-spin" aria-hidden /> : <Sparkles size={15} strokeWidth={1.75} aria-hidden />}
+                      {fetching ? "Importing…" : fetched ? "Re-import & customize" : "Import & customize"}
+                    </button>
+                  </div>
                 </div>
-                {fetched && (
-                  <p className="mt-2 font-mono text-[11px] text-ok">
-                    Imported {fetched.title || fetched.url} · {(fetched.bytes / 1024).toFixed(0)} KB · public pages only, private addresses are blocked
-                  </p>
+                {fetched && !quickStage && (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-ok/35 bg-ok-soft/40 p-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-mono text-[11px] font-medium text-ok">
+                        Imported {fetched.title || fetched.url} · {(fetched.bytes / 1024).toFixed(0)} KB
+                        {fetched.source === "web_search"
+                          ? " · via web search"
+                          : fetched.source === "direct+web_search"
+                            ? " · page + web search"
+                            : fetched.source === "firecrawl"
+                              ? " · via Firecrawl"
+                              : ""}
+                        {" · public pages only, private addresses are blocked"}
+                      </p>
+                      <p className="mt-1 text-xs text-ink-soft">
+                        Offer and sales job are filled in below. Press Build &amp; start call now, tweak any field below, or add CRM notes and ICP on the next step.
+                      </p>
+                    </div>
+                    <button type="button" className="btn-quiet btn-sm shrink-0" onClick={() => setStep(1)}>
+                      Add more context <ArrowRight size={14} strokeWidth={1.75} aria-hidden />
+                    </button>
+                  </div>
                 )}
               </div>
+
+              <div className="flex items-center gap-3" aria-hidden>
+                <span className="h-px flex-1 bg-line" />
+                <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-ink-muted">Or customize your buyer first (optional)</span>
+                <span className="h-px flex-1 bg-line" />
+              </div>
+
               <div>
                 <p className="label">Sales job</p>
                 <div className="flex flex-wrap gap-1.5">
                   {JOB_FAMILIES.map((f) => (
-                    <button key={f.id} aria-pressed={input.role === f.id} onClick={() => setInput({ ...input, role: f.id })}
+                    <button key={f.id} type="button" aria-pressed={input.role === f.id} onClick={() => { setRolePicked(true); setInput({ ...input, role: f.id }); }}
                       className={`chip ${input.role === f.id ? "!border-primary bg-primary-soft !text-ink" : "hover:border-ink-muted"}`}>{f.label}</button>
                   ))}
                 </div>
@@ -333,7 +496,7 @@ export default function PersonaWizard() {
                 <p className="label">Call type</p>
                 <div className="flex flex-wrap gap-1.5">
                   {CALL_TYPES.map((c) => (
-                    <button key={c} aria-pressed={input.callType === c} onClick={() => setInput({ ...input, callType: c as CallType })}
+                    <button key={c} type="button" aria-pressed={input.callType === c} onClick={() => { setCallTypePicked(true); setInput({ ...input, callType: c as CallType }); }}
                       className={`chip ${input.callType === c ? "!border-primary bg-primary-soft !text-ink" : "hover:border-ink-muted"}`}>{CALL_TYPE_LABELS[c]}</button>
                   ))}
                 </div>
@@ -353,6 +516,7 @@ export default function PersonaWizard() {
               <div><label className="label" htmlFor="w-prod">What are you selling?</label><textarea id="w-prod" rows={3} className="input" placeholder="e.g. RouteLoop automates freight invoice disputes for mid-size brokers. $1,200/month, 30-day pilot." value={input.product} onChange={(e) => setInput({ ...input, product: e.target.value })} /></div>
             </section>
           )}
+          {step === 0 && quickStage && <QuickBuildProgress stage={quickStage} targetUrl={url} />}
 
           {step === 1 && (
             <section className="card space-y-4">
@@ -401,11 +565,18 @@ export default function PersonaWizard() {
               </fieldset>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="font-mono text-[11px] text-ink-muted">{contexts[tab].length.toLocaleString()} / 8,000 chars · {filled.length} source{filled.length === 1 ? "" : "s"} added</p>
-                <button type="button" className="btn-primary" onClick={generate} disabled={!generating && !canNext} aria-disabled={generating}>{generating ? <><Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden /> Drafting persona…</> : <><Sparkles size={16} strokeWidth={1.75} aria-hidden /> Draft persona</>}</button>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" className="btn-ghost" onClick={generate} disabled={!busy && !canNext} aria-disabled={busy}>{generating ? <><Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden /> Drafting persona…</> : <><Sparkles size={16} strokeWidth={1.75} aria-hidden /> Draft &amp; review</>}</button>
+                  <button type="button" className="btn-primary" onClick={() => void quickStartFromContext()} disabled={!busy && !canNext} aria-disabled={busy}>
+                    {quickStage ? <Loader2 size={16} strokeWidth={1.75} className="animate-spin" aria-hidden /> : <Play size={16} strokeWidth={1.75} aria-hidden />}
+                    {quickStage === "save" ? "Opening call…" : quickStage ? "Building buyer…" : "Build & start call"}
+                  </button>
+                </div>
               </div>
             </section>
           )}
-          {step === 1 && generating && <DraftingPreview sources={filled.length} role={input.role} />}
+          {step === 1 && quickStage && <QuickBuildProgress stage={quickStage} targetUrl={fetched?.url || url} />}
+          {step === 1 && generating && !quickStage && <DraftingPreview sources={filled.length} role={input.role} />}
 
           {step === 2 && draft && (
             <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)]">
@@ -572,7 +743,12 @@ export default function PersonaWizard() {
                     </div>
                   )}
                   {rubricReason && <p id="next-reason" className="text-right text-sm font-medium text-caution">{rubricReason}</p>}
-                  <button type="button" className="btn-primary" onClick={() => setStep((s) => s + 1)} disabled={!canNext} aria-describedby={rubricReason ? "next-reason" : undefined}>Next <ArrowRight size={15} strokeWidth={1.75} aria-hidden /></button>
+                  {step === 2 && (
+                    <button type="button" className="btn-ghost" onClick={() => void savePrivate(true)} disabled={busy || !validation?.success}>
+                      {saving ? <Loader2 size={15} strokeWidth={1.75} className="animate-spin" aria-hidden /> : <Play size={15} strokeWidth={1.75} aria-hidden />} Save &amp; start call
+                    </button>
+                  )}
+                  <button type="button" className="btn-primary" onClick={() => setStep((s) => s + 1)} disabled={!canNext || busy} aria-describedby={rubricReason ? "next-reason" : undefined}>Next <ArrowRight size={15} strokeWidth={1.75} aria-hidden /></button>
                 </div>
               )}
             </div>
@@ -584,6 +760,45 @@ export default function PersonaWizard() {
 }
 
 const DRAFT_STAGES = ["Reading your sources", "Persona and behavior", "Objections and prep answers", "Talk track", "Rubric and weights"] as const;
+
+const QUICK_BUILD_STEPS: { id: "fetch" | "generate" | "save"; label: string }[] = [
+  { id: "fetch", label: "Reading website" },
+  { id: "generate", label: "Building buyer, objections, and rubric" },
+  { id: "save", label: "Saving and opening your training call" },
+];
+
+/** Live Flight Deck progress panel for the 1-URL quick-start pipeline. */
+function QuickBuildProgress({ stage, targetUrl }: { stage: "fetch" | "generate" | "save"; targetUrl: string }) {
+  const activeIdx = QUICK_BUILD_STEPS.findIndex((s) => s.id === stage);
+  const host = (() => {
+    try { return new URL(normalizeWizardUrl(targetUrl)).hostname; } catch { return targetUrl.trim() || "website"; }
+  })();
+  return (
+    <section className="deck overflow-hidden rounded-panel border border-line" aria-label="Building training call">
+      <div className="flex items-center justify-between gap-2 border-b border-line bg-surface px-3 py-2">
+        <p className="truncate font-mono text-[11px] text-ink-soft">{host}</p>
+        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-signal"><span className="lamp lamp-signal !h-1.5 !w-1.5 motion-safe:animate-lamp-pulse" aria-hidden />preparing call</span>
+      </div>
+      <ol className="space-y-2.5 p-4">
+        {QUICK_BUILD_STEPS.map((item, i) => {
+          const done = i < activeIdx;
+          const active = i === activeIdx;
+          return (
+            <li key={item.id} className={`flex items-center gap-2.5 text-[13px] ${active ? "font-semibold text-ink" : done ? "text-ok" : "text-ink-muted"}`}>
+              <span className={`lamp !h-1.5 !w-1.5 ${done ? "lamp-ok" : active ? "lamp-signal motion-safe:animate-lamp-pulse" : "lamp-off"}`} aria-hidden />
+              <span>{i + 1}. {item.label}</span>
+              {done && <span className="sr-only"> (done)</span>}
+              {active && <span className="sr-only"> (in progress)</span>}
+            </li>
+          );
+        })}
+      </ol>
+      <p role="status" className="border-t border-line px-3 py-2 font-mono text-[10px] text-ink-muted">
+        Generating a realistic buyer, objections, and grading rubric. You can customize any field afterward.
+      </p>
+    </section>
+  );
+}
 
 /** The pack preview while the persona is drafted: the same deck panel, with a pulsing signal lamp and placeholder lines. */
 function DraftingPreview({ sources, role }: { sources: number; role: string }) {

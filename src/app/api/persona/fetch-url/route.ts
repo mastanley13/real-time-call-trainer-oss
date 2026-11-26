@@ -2,14 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/apiAuth";
 import { ipLimitResponse, readJsonLimited, userLimitResponse } from "@/lib/rateLimit";
-import { FetchPageError, fetchPublicPage } from "@/lib/safeFetch";
+import { FetchPageError } from "@/lib/safeFetch";
+import { fetchAndResearchPublicPage } from "@/lib/webResearch";
 
-// Uses node:dns for the SSRF checks.
+// Uses node:dns for the SSRF checks and may run OpenAI web_search fallback.
 export const runtime = "nodejs";
+export const maxDuration = 45;
 
 const Body = z.object({ url: z.string().trim().min(1).max(2048) });
 
-/** Persona wizard "Product page" tab: fetches a public page and returns its readable text (FetchedPage). */
+/** Persona wizard URL import: SSRF-safe page fetch with Firecrawl / OpenAI web_search fallback and enrichment. */
 export async function POST(req: NextRequest) {
   const auth = requireAuth(req);
   if (auth instanceof NextResponse) return auth;
@@ -26,7 +28,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    return NextResponse.json(await fetchPublicPage(body.url));
+    return NextResponse.json(await fetchAndResearchPublicPage(body.url));
   } catch (e) {
     if (!(e instanceof FetchPageError)) console.error("[/api/persona/fetch-url] error:", e);
     const message = e instanceof FetchPageError ? e.message : "We couldn't read that page. Paste the text instead.";

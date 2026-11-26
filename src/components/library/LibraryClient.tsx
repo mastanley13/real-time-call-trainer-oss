@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, Copy, FileJson, Play, Search, SearchX, ShieldAlert, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { Check, Copy, FileJson, Globe, Play, Search, SearchX, ShieldAlert, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import {
   CALL_TYPE_LABELS, JOB_FAMILIES, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps,
   type CallType, type ObjectionType, type Scenario,
@@ -321,18 +321,46 @@ function FacetGroup({ title, values, counts, selected, onToggle, chips = false, 
   );
 }
 
-/** Full-width action strip on the deck surface: build a new persona instead of picking one. */
+/** Full-width action strip on the deck surface: start a training call from one URL or open the full wizard. */
 function CreateStrip() {
+  const router = useRouter();
+  const [siteUrl, setSiteUrl] = useState("");
+
+  function openWithUrl(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = siteUrl.trim();
+    router.push(trimmed ? `/library/new?url=${encodeURIComponent(trimmed)}` : "/library/new");
+  }
+
   return (
-    <div className="deck flex flex-col gap-4 rounded-panel border border-line p-4 sm:flex-row sm:items-center sm:gap-5 sm:p-5">
-      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-sunken">
-        <Sparkles size={18} strokeWidth={1.75} className="text-primary" aria-hidden />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-2 font-heading text-base font-bold"><span className="lamp lamp-signal !h-1.5 !w-1.5" aria-hidden />Create with AI</p>
-        <p className="mt-0.5 text-sm text-ink-soft">Paste a job description, product page, CRM notes or a call. The wizard drafts the persona, objections and rubric.</p>
+    <div className="deck flex flex-col gap-4 rounded-panel border border-line p-4 sm:p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-sunken">
+          <Sparkles size={18} strokeWidth={1.75} className="text-primary" aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="flex items-center gap-2 font-heading text-base font-bold"><span className="lamp lamp-signal !h-1.5 !w-1.5" aria-hidden />Start a call from any website</p>
+          <p className="mt-0.5 text-sm text-ink-soft">Paste one URL to build a realistic buyer and launch a training call, or add CRM notes, ICP, and a custom rubric.</p>
+        </div>
+        <Link href="/library/new" className="btn-ghost btn-sm shrink-0 self-start sm:self-center">Open full wizard</Link>
       </div>
-      <Link href="/library/new" className="btn-primary shrink-0">Open the wizard</Link>
+      <form onSubmit={openWithUrl} className="flex flex-col gap-2 sm:flex-row">
+        <label className="relative min-w-0 flex-1">
+          <span className="sr-only">Company or product URL</span>
+          <Globe size={15} strokeWidth={1.75} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted" aria-hidden />
+          <input
+            type="text"
+            inputMode="url"
+            className="input !pl-9"
+            placeholder="https://yourcompany.com"
+            value={siteUrl}
+            onChange={(e) => setSiteUrl(e.target.value)}
+          />
+        </label>
+        <button type="submit" className="btn-primary shrink-0">
+          <Play size={15} strokeWidth={1.75} aria-hidden /> Build from URL
+        </button>
+      </form>
     </div>
   );
 }

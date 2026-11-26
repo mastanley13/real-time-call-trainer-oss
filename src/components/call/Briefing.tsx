@@ -267,9 +267,16 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, o
 
   return (
     <div className="page enter pb-0 sm:pb-10">
-      <Link href={competition ? "/compete" : "/library"} className="inline-flex min-h-[40px] items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink">
-        <ArrowLeft size={15} strokeWidth={1.75} aria-hidden /> {competition ? "Championship" : "Library"}
-      </Link>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Link href={competition ? "/compete" : "/library"} className="inline-flex min-h-[40px] items-center gap-1.5 text-sm font-medium text-ink-muted hover:text-ink">
+          <ArrowLeft size={15} strokeWidth={1.75} aria-hidden /> {competition ? "Championship" : "Library"}
+        </Link>
+        {!scenario.builtIn && !competition && (
+          <Link href={`/trainer/scenarios?id=${encodeURIComponent(scenario.id)}`} className="btn-quiet btn-sm">
+            Customize persona
+          </Link>
+        )}
+      </div>
 
       <div className="mt-2 grid gap-8 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start">
         <div className="min-w-0 space-y-8">

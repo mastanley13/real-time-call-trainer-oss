@@ -60,4 +60,6 @@ export interface FetchedPage {
   suggestedProduct?: string;
   text: string;
   bytes: number;
+  /** How the page content was obtained. */
+  source?: "direct" | "firecrawl" | "web_search" | "direct+web_search";
 }

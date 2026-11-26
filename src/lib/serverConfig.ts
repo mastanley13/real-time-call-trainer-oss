@@ -250,6 +250,16 @@ export function llmBaseUrl(): string {
   return (process.env.LLM_BASE_URL || OPENAI_DEFAULT_BASE_URL).replace(/\/$/, "");
 }
 
+/** Optional model override for OpenAI web-search website research in the Persona Wizard. Defaults to llmModel(). */
+export function webResearchModel(env: Env = process.env): string {
+  return env.WEB_RESEARCH_MODEL?.trim() || llmModel();
+}
+
+/** Optional Firecrawl API key for headless JS page rendering in /api/persona/fetch-url. */
+export function firecrawlKey(env: Env = process.env): string | undefined {
+  return env.FIRECRAWL_API_KEY?.trim() || undefined;
+}
+
 export const DEMO_USER = {
   id: "demo-user",
   email: "demo@example.local",
