@@ -10,9 +10,11 @@ import { VOICE_ENGINE_LABELS, averageLevel, micErrorMessage, type VoiceEngine } 
 import type { Capabilities } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
 import { isCapMessage, premiumCallLimitMinutes, premiumCallLimitNotice, premiumChoiceAvailable, premiumLeftLabel, voiceLabel, type PremiumSnapshot, type UsageSnapshot, type VoiceChoice } from "@/lib/billingUi";
+import { buildRolePlayCard } from "@/lib/callCard";
 import CallError from "./CallError";
 import MinutesLeft from "./MinutesLeft";
 import PremiumMinutes from "./PremiumMinutes";
+import RolePlayCard from "./RolePlayCard";
 import VoiceUnavailable, { VOICE_UNAVAILABLE_ID } from "./VoiceUnavailable";
 import { ModeDial, radioKeys } from "./CopilotRail";
 
@@ -264,6 +266,7 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, o
     </button>
   );
   const industry = scenario.industry && scenario.industry.toLowerCase() !== jobFamilyLabel(scenario.role).toLowerCase() ? scenario.industry : null;
+  const roleCard = buildRolePlayCard(scenario, competition?.track.roleCard);
 
   return (
     <div className="page enter pb-0 sm:pb-10">
@@ -321,6 +324,9 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, o
               <span><strong>Retry from turn {retryFrom.turn}.</strong> The call picks up right after {p.name} says &ldquo;{retryFrom.line}&rdquo; Retries run in text mode.</span>
             </p>
           )}
+
+          {/* Role-play entry card: who you play, what you're pitching, the situation, and the buyer's first line. */}
+          <RolePlayCard card={roleCard} buyerName={p.name} />
 
           {/* The goal is the one thing to carry into the call, so it leads, set larger than everything around it. */}
           <section aria-labelledby="goal-h" className="rounded-panel border border-l-4 border-primary/30 border-l-primary bg-primary-soft/40 p-5 sm:p-6">
