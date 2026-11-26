@@ -2,19 +2,19 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Eye, Keyboard, Mic, PhoneCall, RotateCcw, ShieldAlert, Trophy } from "lucide-react";
+import { ArrowLeft, Keyboard, Mic, PhoneCall, RotateCcw, Trophy } from "lucide-react";
 import { COACH_MODE_LABELS, type CoachMode } from "@/lib/coach-types";
-import { CALL_TYPE_LABELS, OBJECTION_LABELS, jobFamilyLabel, talkTrackSteps, type Scenario } from "@/lib/scenarios";
+import { CALL_TYPE_LABELS, jobFamilyLabel, talkTrackSteps, type Scenario } from "@/lib/scenarios";
 import { COMPETITION_MIN_DURATION_SECONDS, COMPETITION_MIN_TRAINEE_TURNS, type CompetitionTrack } from "@/lib/competition";
 import { VOICE_ENGINE_LABELS, averageLevel, micErrorMessage, type VoiceEngine } from "@/lib/realtime";
 import type { Capabilities } from "@/contexts/AuthContext";
 import { DifficultyBars, PersonaAvatar } from "@/components/ui/Persona";
 import { isCapMessage, premiumCallLimitMinutes, premiumCallLimitNotice, premiumChoiceAvailable, premiumLeftLabel, voiceLabel, type PremiumSnapshot, type UsageSnapshot, type VoiceChoice } from "@/lib/billingUi";
 import { buildRolePlayCard } from "@/lib/callCard";
+import BriefingDeck from "./BriefingDeck";
 import CallError from "./CallError";
 import MinutesLeft from "./MinutesLeft";
 import PremiumMinutes from "./PremiumMinutes";
-import RolePlayCard from "./RolePlayCard";
 import VoiceUnavailable, { VOICE_UNAVAILABLE_ID } from "./VoiceUnavailable";
 import { ModeDial, radioKeys } from "./CopilotRail";
 
@@ -25,9 +25,6 @@ const MODE_HELP: Record<CoachMode, string> = {
 };
 
 type LampState = "ok" | "caution" | "off";
-
-/** Categorical criterion hue (--cat-1 to --cat-8), in the same order the Library strip and the Debrief use. */
-const critHue = (i: number) => `rgb(var(--cat-${(i % 8) + 1}))`;
 
 function Lamp({ state, label, detail }: { state: LampState; label: string; detail: string }) {
   return (
@@ -213,12 +210,8 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, o
 }) {
   const p = scenario.aiPersona;
   const steps = talkTrackSteps(scenario.callScript);
-  const total = scenario.rubric.reduce((a, c) => a + c.weight, 0) || 1;
   const [goalRead, setGoalRead] = useState(false);
-  const [revealed, setRevealed] = useState<Set<number>>(new Set());
   const [mic, setMic] = useState<MicResult | null>(null);
-  /** The prep answer just revealed takes focus, because the button that revealed it is gone. */
-  const focusPrep = useRef<number | null>(null);
   const engines = capabilities.voiceEngines ?? (capabilities.elevenlabs ? ["elevenlabs" as const] : []);
   const voiceReady = !!engine && engines.includes(engine);
   const blocked = mode === "voice" && !voiceReady;
@@ -325,89 +318,16 @@ export default function Briefing({ scenario, capabilities, mode, onModeChange, o
             </p>
           )}
 
-          {/* Role-play entry card: who you play, what you're pitching, the situation, and the buyer's first line. */}
-          <RolePlayCard card={roleCard} buyerName={p.name} />
-
-          {/* The goal is the one thing to carry into the call, so it leads, set larger than everything around it. */}
-          <section aria-labelledby="goal-h" className="rounded-panel border border-l-4 border-primary/30 border-l-primary bg-primary-soft/40 p-5 sm:p-6">
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-              <h2 id="goal-h" className="label !mb-0 !text-primary">Your goal</h2>
-              <label className="-my-2 flex min-h-[44px] shrink-0 cursor-pointer items-center gap-2 text-sm font-medium text-ink-soft">
-                <input type="checkbox" className="h-4 w-4 accent-[rgb(var(--primary))]" checked={goalRead} onChange={(e) => setGoalRead(e.target.checked)} /> Got it
-              </label>
-            </div>
-            <p className="mt-2 max-w-[60ch] font-heading text-lg font-semibold leading-snug text-ink sm:text-xl">{scenario.traineeGoal}</p>
-          </section>
-
-          <section className="card" aria-labelledby="rubric-h">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 id="rubric-h" className="label !mb-0">Success criteria · how you&rsquo;re graded</h2>
-              <span className="font-mono text-[11px] text-ink-muted">{scenario.rubric.length} criteria</span>
-            </div>
-            <ul className="mt-2 divide-y divide-line">
-              {scenario.rubric.map((c, i) => {
-                const pct = Math.round((c.weight / total) * 100);
-                const hue = critHue(i);
-                return (
-                  <li key={c.id} className="py-3">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <p className="flex items-center gap-2 text-sm font-medium"><span className="h-2 w-2 shrink-0 rounded-full" style={{ background: hue }} aria-hidden />{c.name}</p>
-                        {c.description && <p className="mt-0.5 pl-4 text-xs text-ink-muted">{c.description}</p>}
-                      </div>
-                      <span className="mono shrink-0 text-sm text-ink-soft">{pct}%</span>
-                    </div>
-                    <div className="tape ml-4 mt-2" aria-hidden><span style={{ width: `${pct}%`, background: hue }} /></div>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-
-          {scenario.objections.length > 0 && (
-            <section aria-labelledby="obj-h">
-              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-                <h2 id="obj-h" className="label !mb-0">Expect these objections</h2>
-                <span className="text-xs text-ink-muted">The coach cues you when one lands.</span>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {scenario.objections.map((o, i) => (
-                  <article key={i} className="rounded-panel border-l-2 border-alert/60 bg-sunken p-3.5 shadow-inner-top">
-                    <div className="flex items-start gap-2">
-                      <ShieldAlert size={18} strokeWidth={1.75} className="mt-0.5 shrink-0 text-alert" aria-hidden />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-mono text-[10px] font-medium uppercase tracking-[0.1em] text-ink-muted">{OBJECTION_LABELS[o.type]}</p>
-                        <p className="mt-0.5 text-sm font-semibold text-ink">&ldquo;{o.line}&rdquo;</p>
-                      </div>
-                    </div>
-                    {o.prepAnswer && (revealed.has(i) ? (
-                      <div tabIndex={-1} className="mt-2.5 rounded-md border border-dashed border-line bg-surface p-2.5 outline-none focus-visible:outline-2"
-                        ref={(el) => { if (el && focusPrep.current === i) { focusPrep.current = null; el.focus(); } }}>
-                        <p className="font-mono text-[10px] uppercase tracking-wide text-ink-muted">Prep answer</p>
-                        <p className="mt-0.5 text-[13px] text-ink">{o.prepAnswer}</p>
-                      </div>
-                    ) : (
-                      <button type="button" className="btn-quiet btn-sm mt-2 !min-h-[40px] !px-2 !text-primary" onClick={() => { focusPrep.current = i; setRevealed((r) => new Set(r).add(i)); }}>
-                        <Eye size={14} strokeWidth={1.75} aria-hidden /> Think first, then show a prep answer
-                      </button>
-                    ))}
-                  </article>
-                ))}
-              </div>
-            </section>
-          )}
-
-          <section className="card" aria-labelledby="track-h">
-            <h2 id="track-h" className="label">Talk track · ticks live during the call</h2>
-            <ol className="relative mt-3 space-y-3 pl-8 before:absolute before:bottom-2 before:left-[10px] before:top-2 before:w-px before:bg-line">
-              {steps.map((s, i) => (
-                <li key={i} className="relative text-sm leading-relaxed">
-                  <span className="absolute -left-8 top-0.5 flex h-[21px] w-[21px] items-center justify-center rounded-full border border-line bg-surface font-mono text-[10px] text-ink-muted">{i + 1}</span>
-                  {s}
-                </li>
-              ))}
-            </ol>
-          </section>
+          {/* Slide-deck pre-call brief: 4 short plain-language cards (Setup -> How you win -> Watch out -> Game plan). */}
+          <BriefingDeck
+            scenario={scenario}
+            roleCard={roleCard}
+            steps={steps}
+            watchOuts={competition?.track.watchOuts}
+            isCompetition={!!competition}
+            goalRead={goalRead}
+            onGoalReadChange={setGoalRead}
+          />
         </div>
 
         <aside className="space-y-3 lg:sticky lg:top-[calc(var(--header-h,3.5rem)+1.5rem)]" aria-label="Systems check and call setup">
