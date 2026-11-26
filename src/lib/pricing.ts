@@ -106,6 +106,30 @@ export interface SignupIntent {
 }
 
 const TAG = /^[a-z0-9_-]{1,40}$/;
+
+/**
+ * The src tags the site's own sign-up links send today, for analytics (signupSrc and the GHL signup `source`). This is
+ * a reference list, not a gate: sanitizeSignupIntent still keeps any src that matches TAG, so campaign tags that are
+ * not listed here keep working. Add a value here when a new page links to /register with a new src.
+ */
+export const KNOWN_SIGNUP_SRCS = [
+  "home_hero",
+  "pricing",
+  "checkout",
+  "library",
+  "compete",
+  "insurance",
+  "solar",
+  "staffing",
+  "home-services",
+  "saas-sdr",
+  "coaches",
+  "vs-second-nature",
+  "vs-hyperbound",
+  "vs-yoodli",
+  "alternatives",
+] as const;
+export type KnownSignupSrc = (typeof KNOWN_SIGNUP_SRCS)[number];
 /** Accepted interval spellings. The stored and emitted value is always month or year. */
 const INTERVAL_ALIASES = new Map<string, Billing>([
   ["month", "month"], ["monthly", "month"], ["year", "year"], ["yearly", "year"], ["annual", "year"],

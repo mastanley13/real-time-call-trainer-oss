@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { checkoutStartHref, PREMIUM_COMING_SOON, planSummary, registerHref, sanitizeSignupIntent } from "@/lib/pricing";
+import { ALL_COMPARE_PAGES } from "@/lib/comparisons";
+import { checkoutStartHref, KNOWN_SIGNUP_SRCS, PREMIUM_COMING_SOON, planSummary, registerHref, sanitizeSignupIntent } from "@/lib/pricing";
 
 describe("sanitizeSignupIntent", () => {
   it("keeps whitelisted values", () => {
@@ -37,6 +38,34 @@ describe("sanitizeSignupIntent", () => {
   it("lowercases tags and accepts exactly 40 chars", () => {
     expect(sanitizeSignupIntent({ src: "Pricing" })).toEqual({ src: "pricing" });
     expect(sanitizeSignupIntent({ src: "a".repeat(40) }).src).toHaveLength(40);
+  });
+});
+
+describe("known signup src values", () => {
+  const SEO_SRCS = ["vs-second-nature", "vs-hyperbound", "vs-yoodli", "alternatives"];
+  const EXISTING_SRCS = ["home_hero", "pricing", "checkout", "library", "compete", "insurance", "solar", "staffing", "home-services", "saas-sdr", "coaches"];
+
+  it("lists the comparison and alternatives src values with the existing ones", () => {
+    expect(KNOWN_SIGNUP_SRCS).toEqual(expect.arrayContaining([...SEO_SRCS, ...EXISTING_SRCS]));
+    expect(new Set(KNOWN_SIGNUP_SRCS).size).toBe(KNOWN_SIGNUP_SRCS.length);
+  });
+
+  it("sanitizeSignupIntent keeps every known src, including the four SEO values", () => {
+    for (const src of KNOWN_SIGNUP_SRCS) expect(sanitizeSignupIntent({ src })).toEqual({ src });
+    for (const src of SEO_SRCS) expect(sanitizeSignupIntent({ src, seg: src }).src).toBe(src);
+  });
+
+  it("is not a gate: unlisted tags that match the pattern still pass", () => {
+    expect(sanitizeSignupIntent({ src: "for-saas-sdr" })).toEqual({ src: "for-saas-sdr" });
+    expect(sanitizeSignupIntent({ src: "newsletter_2026" })).toEqual({ src: "newsletter_2026" });
+  });
+
+  it("every src the comparison pages send is known and survives sanitizing", () => {
+    for (const page of ALL_COMPARE_PAGES) {
+      expect(KNOWN_SIGNUP_SRCS).toContain(page.src);
+      expect(sanitizeSignupIntent({ src: page.src }).src).toBe(page.src);
+    }
+    expect(ALL_COMPARE_PAGES.map((p) => p.src).sort()).toEqual([...SEO_SRCS].sort());
   });
 });
 
