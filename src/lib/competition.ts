@@ -236,15 +236,15 @@ export const COMPETITION_TRACKS: readonly CompetitionTrack[] = [
     label: "Banking",
     shortLabel: "Banking",
     scenarioId: "mortgage-bank-heloc-account-review",
-    buyerName: "Nadia Alvarez",
+    buyerName: "Carmen Alvarez",
     difficulty: "medium",
     callTypeLabel: "Account review",
     shortPitch: "Six-year bank customer with checking, savings, and an 8.9% auto loan who mentioned a home project.",
     roleCard: {
       yourRole: "Bank Branch Manager",
       pitching: "Home Equity Line of Credit (HELOC) review that leaves her 3.75% mortgage untouched (subject to credit approval and equity)",
-      situation: "You reviewed Nadia's 6-year branch relationship before a courtesy check-in call. She mentioned a home project on her last visit and picks up wondering if anything is wrong with her accounts.",
-      openingLine: "Hi, yes, this is Nadia. Thanks for calling, is everything okay with my accounts?",
+      situation: "You reviewed Carmen's 6-year branch relationship before a courtesy check-in call. She mentioned a home project on her last visit and picks up wondering if anything is wrong with her accounts.",
+      openingLine: "Hi, yes, this is Carmen. Thanks for calling, is everything okay with my accounts?",
     },
     quickBriefGoal: "Put her at ease, uncover her home project and high-APR balances, explain HELOC options honestly with required disclosures, and book a branch review.",
     watchOuts: [

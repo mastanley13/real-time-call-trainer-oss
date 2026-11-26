@@ -201,7 +201,7 @@ describe("landing hero line", () => {
     expect(text).toContain("Hosted AI sales call practice, no setup.");
     expect(hero).toMatch(/<h1 id="hero-h"[^>]*>\s*Hosted AI sales call practice, no setup\.\s*<\/h1>/);
     expect(text).not.toContain("no setup required");
-    expect(text).toContain("Your reps practice against 54 AI buyers who push back. You read a graded debrief that quotes their own words, so you can see who is ready and what to coach next. Free to start, no card.");
+    expect(text).toContain("Your reps practice against 56 AI buyers who push back. You read a graded debrief that quotes their own words, so you can see who is ready and what to coach next. Free to start, no card.");
     expect(hrefs(hero)).toEqual(expect.arrayContaining(["/register?src=home_hero", "/pricing"]));
     expect(hero).toContain(">Start free, no card</a>");
     expect(hero).toContain(">See pricing<");

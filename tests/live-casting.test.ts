@@ -43,7 +43,7 @@ describe("official GPT-Live voices", () => {
 
 describe("every active library persona is cast", () => {
   it("has exactly one casting line per persona, with no orphans", () => {
-    expect(LIBRARY.length).toBe(54);
+    expect(LIBRARY.length).toBe(56);
     expect(Object.keys(LIVE_CASTING).sort()).toEqual(LIBRARY.map((s) => s.id).sort());
   });
 
@@ -82,8 +82,8 @@ describe("every active library persona is cast", () => {
     for (const s of LIBRARY.filter((x) => x.aiPersona.gender === "female")) expect(["gleam", "marin"], s.id).toContain(s.aiPersona.liveVoice);
     for (const s of LIBRARY.filter((x) => x.aiPersona.gender === "male")) expect(["meridian", "cedar"], s.id).toContain(s.aiPersona.liveVoice);
     expect(count("female", "gleam")).toBe(13);
-    expect(count("female", "marin")).toBe(14);
-    expect(count("male", "meridian")).toBe(13);
+    expect(count("female", "marin")).toBe(15);
+    expect(count("male", "meridian")).toBe(14);
     expect(count("male", "cedar")).toBe(8);
     expect(LIBRARY.filter((s) => !s.aiPersona.gender && s.aiPersona.liveVoice === "marin")).toHaveLength(6);
   });
