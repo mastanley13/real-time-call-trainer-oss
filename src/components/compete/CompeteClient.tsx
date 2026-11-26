@@ -256,7 +256,7 @@ export default function CompeteClient() {
                 </span>
               )}
             </div>
-            <h1 className="mt-4 max-w-2xl text-4xl font-bold leading-[1.05] sm:text-5xl">3 calls a month. 7 industries. Prove it on the phone.</h1>
+            <h1 className="mt-4 max-w-2xl text-4xl font-bold leading-[1.05] sm:text-5xl">3 calls a month. {tracks.length} industries. Prove it on the phone.</h1>
             <p className="mt-4 max-w-xl text-lg leading-relaxed text-ink-soft">
               Pick an industry, read a 30-second brief, and run a {Math.round(rules.maxSeconds / 60)}-minute blind voice call. Climb the day, week, month, and year leaderboards. Monthly #1 wins the prize.
             </p>

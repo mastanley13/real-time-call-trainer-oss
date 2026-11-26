@@ -68,6 +68,7 @@ export const COMPETITION_TRACK_SLUGS = [
   "dealerships",
   "saas-sdr",
   "real-estate",
+  "banking",
   "price-objection",
 ] as const;
 
@@ -228,6 +229,27 @@ export const COMPETITION_TRACKS: readonly CompetitionTrack[] = [
     watchOuts: [
       "Never disparage the previous agent or guarantee a sale price or timeline.",
       "If he asks to stop calling, honor it immediately and confirm removal.",
+    ],
+  },
+  {
+    slug: "banking",
+    label: "Banking",
+    shortLabel: "Banking",
+    scenarioId: "mortgage-bank-heloc-account-review",
+    buyerName: "Nadia Alvarez",
+    difficulty: "medium",
+    callTypeLabel: "Account review",
+    shortPitch: "Six-year bank customer with checking, savings, and an 8.9% auto loan who mentioned a home project.",
+    roleCard: {
+      yourRole: "Bank Branch Manager",
+      pitching: "Home Equity Line of Credit (HELOC) review that leaves her 3.75% mortgage untouched (subject to credit approval and equity)",
+      situation: "You reviewed Nadia's 6-year branch relationship before a courtesy check-in call. She mentioned a home project on her last visit and picks up wondering if anything is wrong with her accounts.",
+      openingLine: "Hi, yes, this is Nadia. Thanks for calling, is everything okay with my accounts?",
+    },
+    quickBriefGoal: "Put her at ease, uncover her home project and high-APR balances, explain HELOC options honestly with required disclosures, and book a branch review.",
+    watchOuts: [
+      "Never guarantee approval, a specific rate, or a credit limit, and never run a credit pull without permission.",
+      "Reassure her that a HELOC sits behind her existing 3.75% first mortgage rather than replacing it, and explain variable-rate risk plainly.",
     ],
   },
   {

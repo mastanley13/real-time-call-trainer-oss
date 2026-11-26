@@ -24,9 +24,9 @@ export default function RolePlayCard({
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-sunken/70 px-4 py-2.5">
         <p className="eyebrow inline-flex items-center gap-1.5 !text-ink">
           <Sparkles size={12} strokeWidth={1.75} className="text-primary" aria-hidden />
-          Role-play brief
+          Your role-play card
         </p>
-        <span className="font-mono text-[11px] text-ink-muted">Read before dialing</span>
+        <span className="font-mono text-[11px] text-ink-muted">Quick setup before you dial</span>
       </div>
 
       <div className={compact ? "space-y-3 p-4" : "space-y-4 p-4 sm:p-5"}>
@@ -34,7 +34,7 @@ export default function RolePlayCard({
           <div className="min-w-0 rounded-lg border border-line bg-sunken/50 p-3">
             <dt className="flex items-center gap-1.5 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-ink-muted">
               <UserCheck size={12} strokeWidth={1.75} className="text-primary" aria-hidden />
-              You play
+              Who you are
             </dt>
             <dd className="mt-1 text-sm font-semibold leading-snug text-ink">{card.yourRole}</dd>
           </div>
@@ -49,7 +49,7 @@ export default function RolePlayCard({
         </dl>
 
         <div>
-          <p className="font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-ink-muted">The situation</p>
+          <p className="font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-ink-muted">What&rsquo;s happening</p>
           <p className="mt-1 text-sm leading-relaxed text-ink-soft">{card.situation}</p>
         </div>
 
@@ -57,7 +57,7 @@ export default function RolePlayCard({
           <div className="rounded-lg border border-line border-l-2 border-l-primary bg-sunken/60 p-3">
             <p className="flex items-center gap-1.5 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-ink-muted">
               <MessageSquareQuote size={12} strokeWidth={1.75} className="text-primary" aria-hidden />
-              {buyerName} opens with
+              {buyerName} will answer with
             </p>
             <p className="mt-1 text-sm font-medium italic leading-relaxed text-ink">&ldquo;{card.openingLine}&rdquo;</p>
           </div>

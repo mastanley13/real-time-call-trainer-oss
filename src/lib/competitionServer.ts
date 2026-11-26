@@ -55,8 +55,8 @@ function rankOf(rows: Ranked[], userId: string, track?: string): number | null {
   return index < 0 ? null : index + 1;
 }
 
-const demoNames = ["Avery Quill", "Rowan Finch", "Tess Wren", "Jules Moss", "Kai Linden", "Mara Vale", "Remy Slate"];
-const demoTeams = ["Apex Auto", "Harbor Solar", "Northstar Freight", "Beacon Roofing", "Summit Realty", "Ridgeway Mutual", "Clearpath Ops"];
+const demoNames = ["Avery Quill", "Rowan Finch", "Tess Wren", "Jules Moss", "Kai Linden", "Mara Vale", "Nolan Brook", "Remy Slate"];
+const demoTeams = ["Apex Auto", "Harbor Solar", "Northstar Freight", "Beacon Roofing", "Summit Realty", "Ridgeway Mutual", "Oakridge Bank", "Clearpath Ops"];
 function demoEntries(cfg: ReturnType<typeof competitionConfig>, now = new Date()): Ranked[] {
   const dayStart = competitionPeriodBounds("day", now).start.getTime();
   const weekStart = competitionPeriodBounds("week", now).start.getTime();
@@ -68,8 +68,9 @@ function demoEntries(cfg: ReturnType<typeof competitionConfig>, now = new Date()
     new Date(dayStart + 2 * 3_600_000),
     new Date(dayStart + 1 * 3_600_000),
     new Date(Math.max(weekStart, now.getTime() - 2 * 86_400_000)),
-    new Date(Math.max(monthStart, now.getTime() - 6 * 86_400_000)),
-    new Date(Math.max(monthStart, now.getTime() - 9 * 86_400_000)),
+    new Date(Math.max(monthStart, now.getTime() - 5 * 86_400_000)),
+    new Date(Math.max(monthStart, now.getTime() - 8 * 86_400_000)),
+    new Date(Math.max(monthStart, now.getTime() - 10 * 86_400_000)),
     new Date(Math.max(yearStart, monthStart - 15 * 86_400_000)),
   ];
   return COMPETITION_TRACKS.map((track, i) => {

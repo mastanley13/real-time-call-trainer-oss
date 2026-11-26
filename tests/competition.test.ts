@@ -90,10 +90,11 @@ async function mint(sec = 0) {
 }
 
 describe("shared competition contract", () => {
-  it("maps all seven tracks to canonical personas", () => {
-    expect(COMPETITION_TRACKS).toHaveLength(7);
+  it("maps all eight tracks to canonical personas", () => {
+    expect(COMPETITION_TRACKS).toHaveLength(8);
     for (const track of COMPETITION_TRACKS) expect(LIBRARY.some((s) => s.id === track.scenarioId)).toBe(true);
     expect(COMPETITION_TRACKS.find((t) => t.slug === "dealerships")?.scenarioId).toBe("auto-pickup-negotiation-rival-quote");
+    expect(COMPETITION_TRACKS.find((t) => t.slug === "banking")?.scenarioId).toBe("mortgage-bank-heloc-account-review");
   });
   it("uses the configured phase and handles the end boundary", () => {
     const window = { enabled: true, startAt: now, endAt: at(30) };
@@ -254,7 +255,7 @@ describe("public rankings and share cards", () => {
     vi.stubEnv("DEMO_MODE", "true");
     expect(competitionConfig()).toMatchObject({ enabled: true, demoMode: true, phase: "active" });
     const yearStatus = await getCompetitionStatus({ period: "year" });
-    expect(yearStatus.leaderboard).toHaveLength(7);
+    expect(yearStatus.leaderboard).toHaveLength(8);
     expect(yearStatus.viewer.authenticated).toBe(false);
     const monthStatus = await getCompetitionStatus({ period: "month" });
     expect(monthStatus.leaderboard.length).toBeGreaterThanOrEqual(4);

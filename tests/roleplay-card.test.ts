@@ -8,7 +8,7 @@ import { BUILT_IN_SCENARIOS } from "@/lib/scenarios";
 
 describe("competition role-play entry cards", () => {
   it("gives every competition track a complete roleCard whose openingLine matches its canonical LIBRARY scenario", () => {
-    expect(COMPETITION_TRACKS).toHaveLength(7);
+    expect(COMPETITION_TRACKS).toHaveLength(8);
     for (const track of COMPETITION_TRACKS) {
       const scenario = LIBRARY.find((s) => s.id === track.scenarioId);
       expect(scenario, track.slug).toBeDefined();
@@ -17,6 +17,29 @@ describe("competition role-play entry cards", () => {
       expect(track.roleCard.situation.trim().length, `${track.slug} situation`).toBeGreaterThan(20);
       expect(track.roleCard.openingLine, `${track.slug} openingLine`).toBe(scenario!.aiPersona.openingLine);
     }
+  });
+
+  it("keeps AI buyer personas aligned with key numbers and context shown on the rep's role-play card", () => {
+    const byId = (id: string) => LIBRARY.find((s) => s.id === id)!;
+    expect(byId("quote-follow-up").aiPersona.behavior).toContain("$14,800");
+    expect(byId("quote-follow-up").aiPersona.behavior).toContain("25-year");
+    expect(byId("insurance-renewal-premium-jump").aiPersona.behavior).toContain("$2,310");
+    expect(byId("solar-burned-homeowner-discovery").aiPersona.behavior).toContain("$149");
+    expect(byId("auto-pickup-negotiation-rival-quote").aiPersona.behavior).toContain("$38,400");
+    expect(byId("sdr-busy-ops-vp-freight-broker").aiPersona.behavior).toContain("Ketterhill Freight Partners");
+    expect(byId("real-estate-expired-listing-cold-call").aiPersona.behavior).toContain("$389,000");
+    expect(byId("mortgage-bank-heloc-account-review").aiPersona.behavior).toContain("3.75%");
+    expect(byId("objection-handling").aiPersona.behavior).toContain("$1,200/month");
+  });
+
+  it("includes both retail HELOC and small-business banking scenarios without naming real banks", () => {
+    const heloc = LIBRARY.find((s) => s.id === "mortgage-bank-heloc-account-review");
+    const biz = LIBRARY.find((s) => s.id === "mortgage-bank-business-loc-refi");
+    expect(heloc).toBeDefined();
+    expect(biz).toBeDefined();
+    expect(heloc!.status).toBe("draft");
+    expect(biz!.status).toBe("draft");
+    expect(JSON.stringify([heloc, biz])).not.toMatch(/first citizens/i);
   });
 
   it("grounds the Open Price Objection scenario (Priya Raman) in concrete proposal details", () => {

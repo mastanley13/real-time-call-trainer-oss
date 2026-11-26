@@ -190,9 +190,9 @@ export const BUILT_IN_SCENARIOS: Scenario[] = [
     ].join("\n"),
     aiPersona: {
       name: "Marcus Bell",
-      role: "Homeowner who received a $14,800 roof replacement quote and has gone quiet",
+      role: "Homeowner who received your $14,800 roof replacement quote last week and has gone quiet",
       behavior:
-        "Polite but noncommittal. You liked the crew but another contractor quoted $12,900. You never volunteer that unless asked a good open question. You say you need to talk with your spouse. You respond well to curiosity and value, poorly to pressure.",
+        "Polite but noncommittal. Last week the rep inspected your roof and emailed a $14,800 quote for a full roof replacement (full tear-off and 25-year material warranty). You liked the crew, but another contractor quoted $12,900 with a shorter 10-year warranty. You never volunteer the competing quote unless asked a calm, open question. You say you need to talk it over with your wife first. You respond well to curiosity and clear value comparisons on the warranty and tear-off, and poorly to pressure or immediate discounting.",
       openingLine: "Oh hey, yeah, I got the quote. I've just been really busy, honestly.",
     },
     traineeGoal: "Uncover the true objection and agree on a dated next step.",

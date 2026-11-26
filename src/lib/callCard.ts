@@ -37,6 +37,15 @@ function topicFromTitle(title: string): string {
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
 
+const EXTRA_ROLE_CARDS: Record<string, CompetitionRoleCard> = {
+  "mortgage-bank-business-loc-refi": {
+    yourRole: "Bank Branch Manager",
+    pitching: "Revolving business line of credit and vehicle/equipment refinance review (subject to underwriting)",
+    situation: "You reviewed 4-year business checking customer Devon Okafor (owner of an 8-person HVAC and electrical shop) and are calling for a relationship check-in.",
+    openingLine: "Devon speaking. Hey, I saw the branch number pop up, what's going on?",
+  },
+};
+
 /**
  * Returns a clean, spoiler-free RolePlayCard for any scenario.
  * Canonical competition scenarios use their hand-crafted track roleCard;
@@ -49,6 +58,7 @@ export function buildRolePlayCard(
   if (explicitCard) return explicitCard;
   const track = competitionTrackByScenarioId(scenario.id);
   if (track) return track.roleCard;
+  if (EXTRA_ROLE_CARDS[scenario.id]) return EXTRA_ROLE_CARDS[scenario.id];
 
   const baseRole = ROLE_TITLES[scenario.role] ?? jobFamilyLabel(scenario.role);
   const industry = scenario.industry.trim();
