@@ -367,17 +367,31 @@ describe("Premium voice limit", () => {
   });
 
   describe("ElevenLabs tokens", () => {
+    const EL_KEY = "xi-test-not-real";
     let urls: string[];
+    let n = 0;
     beforeEach(() => {
       urls = [];
-      vi.stubEnv("ELEVENLABS_API_KEY", "xi-test-not-real");
+      n += 1;
+      vi.stubEnv("ELEVENLABS_API_KEY", EL_KEY);
       vi.stubEnv("ELEVENLABS_AGENT_ID", "agent-main");
+      vi.stubEnv("RATE_LIMIT_TOKEN_MAX", "1000");
       vi.stubGlobal("fetch", vi.fn(async (url: string) => {
         urls.push(url);
         return new Response(JSON.stringify({ token: "tok_test" }), { status: 200 });
       }));
     });
-    const mint = () => elevenLabsToken(new NextRequest("http://localhost/api/elevenlabs/token?scenarioId=quote-follow-up"));
+    const mint = (userId = "u-1") => {
+      mocks.authId = userId;
+      return elevenLabsToken(new NextRequest("http://localhost/api/elevenlabs/token?scenarioId=quote-follow-up", {
+        headers: { "x-forwarded-for": `198.51.100.${(n % 200) + 1}` },
+      }));
+    };
+    const assertNoSecrets = (text: string) => {
+      expect(text).not.toContain(EL_KEY);
+      expect(text).not.toContain("agent-main");
+      expect(text).not.toContain("tok_should_not_leak");
+    };
 
     it("switches to the standard agent once the Premium minutes are used, and records the engine", async () => {
       vi.stubEnv("ELEVENLABS_AGENT_ID_STANDARD", "agent-std");
@@ -419,6 +433,88 @@ describe("Premium voice limit", () => {
       allowanceOf("u-1").premiumMinutesUsed = 40;
       expect((await mint()).status).toBe(503);
       expect(urls).toHaveLength(0);
+    });
+
+    it("maps a timeout to 502 without leaking the API key, and releases the reservation", async () => {
+      addUser("u-el-timeout", PRO_PREMIUM);
+      vi.stubGlobal("fetch", vi.fn(async () => {
+        throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      }));
+      const errors: string[] = [];
+      vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+        errors.push(args.map((a) => (a instanceof Error ? `${a.name}: ${a.message}` : String(a))).join(" "));
+      });
+      const res = await mint("u-el-timeout");
+      const text = await res.text();
+      expect(res.status).toBe(502);
+      expect(JSON.parse(text)).toEqual({
+        error: "elevenlabs_upstream_error",
+        message: "Could not reach ElevenLabs.",
+      });
+      assertNoSecrets(text);
+      expect(errors.join("\n")).not.toContain(EL_KEY);
+      const [row] = fake.rows("trainerSession");
+      expect(row).toMatchObject({ userId: "u-el-timeout", endReason: "failed_connect", billedMinutes: 0 });
+      expect(allowanceOf("u-el-timeout")).toMatchObject({ minutesReserved: 0, premiumMinutesReserved: 0, minutesUsed: 0 });
+    });
+
+    it("maps a 200 with no token to 502 and releases the reservation", async () => {
+      addUser("u-el-empty", PRO_PREMIUM);
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ token: "" }), { status: 200 })));
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const res = await mint("u-el-empty");
+      const text = await res.text();
+      expect(res.status).toBe(502);
+      expect(JSON.parse(text).error).toBe("elevenlabs_upstream_error");
+      assertNoSecrets(text);
+      expect(session(fake.rows("trainerSession")[0]!.id as string)).toMatchObject({
+        endReason: "failed_connect",
+        billedMinutes: 0,
+      });
+      expect(allowanceOf("u-el-empty")).toMatchObject({ minutesReserved: 0, premiumMinutesReserved: 0 });
+    });
+
+    it("maps an upstream 500 to 502 without forwarding the body, and releases the reservation", async () => {
+      addUser("u-el-500", PRO_PREMIUM);
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(
+        JSON.stringify({ error: "internal", token: "tok_should_not_leak", key: EL_KEY }),
+        { status: 500 },
+      )));
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const res = await mint("u-el-500");
+      const text = await res.text();
+      expect(res.status).toBe(502);
+      expect(JSON.parse(text)).toEqual({
+        error: "elevenlabs_upstream_error",
+        message: "ElevenLabs returned 500. Check your API key and agent id.",
+      });
+      assertNoSecrets(text);
+      expect(text).not.toContain("internal");
+      expect(session(fake.rows("trainerSession")[0]!.id as string)).toMatchObject({
+        endReason: "failed_connect",
+        billedMinutes: 0,
+      });
+      expect(allowanceOf("u-el-500")).toMatchObject({ minutesReserved: 0, premiumMinutesReserved: 0 });
+    });
+
+    it("after a mint timeout, the next mint works because the reservation was released", async () => {
+      addUser("u-el-retry", PRO_PREMIUM);
+      vi.stubGlobal("fetch", vi.fn(async () => {
+        throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      }));
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      expect((await mint("u-el-retry")).status).toBe(502);
+      expect(allowanceOf("u-el-retry")).toMatchObject({ minutesReserved: 0, premiumMinutesReserved: 0 });
+
+      vi.setSystemTime(at(5));
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ token: "tok_retry" }), { status: 200 })));
+      const retry = await mint("u-el-retry");
+      expect(retry.status).toBe(200);
+      const body = await retry.json();
+      expect(body).toMatchObject({ token: "tok_retry", callId: expect.any(String) });
+      expect(session(body.callId).endedAt).toBeNull();
+      expect(allowanceOf("u-el-retry").minutesReserved).toBeGreaterThan(0);
+      expect(allowanceOf("u-el-retry").premiumMinutesReserved).toBeGreaterThan(0);
     });
   });
 });
