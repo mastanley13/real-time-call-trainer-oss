@@ -126,3 +126,36 @@ describe("safeNextPath keeps look-alike page paths", () => {
     expect(signInHref(ok)).toBe(`/login?next=${encodeURIComponent(ok)}`);
   });
 });
+
+// Protocol-relative and absolute URLs never pass as a post-login next, even when they name a page we would
+// otherwise keep. The early "//" check is what stops "//evil.com" before the origin test; encoded look-alikes
+// that stay on the same origin ("/%2F%2Fevil.com") are ordinary paths and are kept.
+const PROTOCOL_RELATIVE = [
+  "//evil.com",
+  "//evil.com/trainer",
+  "///trainer",
+  "////api",
+  "//google.com",
+  "https://evil.com",
+  "http://evil.com",
+  "https://calltrainer.tech/trainer",
+  "//evil.com/%2Fapi",
+  "/\\evil.com",
+  "javascript:alert(1)",
+  "trainer",
+];
+
+describe("safeNextPath rejects protocol-relative and off-site next values", () => {
+  it.each(PROTOCOL_RELATIVE)("rejects %j", (bad) => {
+    expect(safeNextPath(bad)).toBe("/trainer");
+    expect(safeNextPath(bad, "/dashboard")).toBe("/dashboard");
+    expect(validNextPath(bad)).toBeNull();
+    expect(loginDestination(bad)).toBe("/trainer");
+    expect(signInHref(bad)).toBe("/login");
+  });
+
+  it("keeps an encoded look-alike that stays on this origin", () => {
+    expect(safeNextPath("/%2F%2Fevil.com")).toBe("/%2F%2Fevil.com");
+    expect(validNextPath("/%2F%2Fevil.com")).toBe("/%2F%2Fevil.com");
+  });
+});
