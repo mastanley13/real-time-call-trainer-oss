@@ -14,10 +14,14 @@ describe("isPublicPath", () => {
     "/library", "/library/", "/library?x=1",
     "/alternatives", "/alternatives/", "/alternatives?utm_source=x",
     "/vs/second-nature", "/vs/hyperbound", "/vs/yoodli", "/vs/yoodli/", "/vs/hyperbound?src=x#faq",
+    "/alternatives/hyperbound", "/alternatives/yoodli", "/alternatives/hyperbound/", "/alternatives/yoodli?utm_source=x",
+    "/ai-sales-roleplay", "/ai-sales-roleplay/", "/ai-sales-roleplay?src=x",
+    "/use-cases/alarm-monitoring", "/use-cases/911-dispatch", "/use-cases/alarm-monitoring/", "/use-cases/911-dispatch#faq",
   ])("allows %s",(p) => expect(isPublicPath(p)).toBe(true));
 
   it.each([
     "/vs", "/vs/", "/vs/unknown", "/vs/second-nature/x", "/vsx/yoodli", "/alternatives/x", "/alternativesx", "/dashboard?next=/vs/yoodli",
+    "/ai-sales-roleplay/x", "/use-cases", "/use-cases/", "/use-cases/unknown", "/use-cases/alarm-monitoring/x",
   ])("keeps the unlisted comparison path %s gated", (p) => expect(isPublicPath(p)).toBe(false));
 
   it.each([
@@ -111,6 +115,16 @@ describe("proxy with TRAINER_ACCESS_CODE set", () => {
       expect(res.status, p).toBe(200);
     }
     expect((await run("/vs/unknown")).status).toBe(307);
+  });
+
+  it("serves the new SEO landings without a cookie, and gates unknown alternative and use-case paths", async () => {
+    for (const p of ["/ai-sales-roleplay", "/alternatives/hyperbound", "/alternatives/yoodli", "/use-cases/alarm-monitoring", "/use-cases/911-dispatch"]) {
+      const res = await run(p);
+      expect(res.headers.get("location"), p).toBeNull();
+      expect(res.status, p).toBe(200);
+    }
+    expect((await run("/alternatives/unknown")).status).toBe(307);
+    expect((await run("/use-cases/unknown")).status).toBe(307);
   });
 
   it("every sitemap URL is reachable through the gate", async () => {

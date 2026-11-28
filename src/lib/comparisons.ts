@@ -32,8 +32,10 @@ export interface FaqEntry {
   ld: string;
 }
 
+export type CompareKind = "vs" | "hub" | "alt" | "topic";
+
 export interface ComparePageCopy {
-  kind: "vs" | "hub";
+  kind: CompareKind;
   path: string;
   title: string;
   description: string;
@@ -43,6 +45,12 @@ export interface ComparePageCopy {
   src: string;
   sections: Section[];
   faq: FaqEntry[];
+  /** Breadcrumb label for this page. Hubs default to "Alternatives" when omitted. */
+  crumb?: string;
+  /** Parent crumb. `/vs` and `/alternatives/*` default to the alternatives hub. */
+  parent?: { name: string; path: string };
+  /** Defaults to CollectionPage on hubs and WebPage everywhere else. */
+  jsonLdType?: "WebPage" | "CollectionPage";
 }
 
 export const ALTERNATIVES_PATH = "/alternatives";
@@ -231,6 +239,7 @@ export const VS_PAGES: Record<ComparisonSlug, ComparePageCopy> = {
         blocks: [
           { p: "Hyperbound may fit a sales team that wants roleplay plus, on Perform, real-call scoring and CRM-connected coaching, and that is ready to book a demo for a paid plan. That is how the public pricing page is set up." },
           { p: "Call Trainer may fit a manager or individual who wants a published per-seat or per-month price, a free start with no card, unlimited text practice, a live in-call coach, and a first call the same day." },
+          { p: "If you searched for a Hyperbound alternative rather than a line-by-line comparison, start at [Hyperbound alternative](/alternatives/hyperbound)." },
           { p: "If you need conversation intelligence on live sales calls, look carefully at Hyperbound Perform and at whatever else you already use for call recording. Call Trainer's public site is about practice calls, not a live-call recording suite." },
         ],
       },
@@ -339,6 +348,7 @@ export const VS_PAGES: Record<ComparisonSlug, ComparePageCopy> = {
         blocks: [
           { p: "Yoodli may fit an individual who wants speaking, interview, or pitch practice, or an enablement team that wants tutors, certifications, and a broader human-skills platform, and that is ready to talk about a Business plan. That is how the public pages present it." },
           { p: "Call Trainer may fit a sales manager, SDR lead, or individual seller who wants call practice first, a published Team or Pro price, a live coach on the call, and a try page for a specific industry call." },
+          { p: "If you searched for a Yoodli alternative for sales calls rather than a line-by-line comparison, start at [Yoodli alternative](/alternatives/yoodli)." },
           { p: "If you need video presence, a buying committee, or screen-share demos, read Yoodli's Roleplays page carefully. Call Trainer's public site is about the call itself: talk or type, get coached, read a debrief." },
         ],
       },
@@ -422,6 +432,18 @@ export const ALTERNATIVES_PAGE: ComparePageCopy = {
       ],
     },
     {
+      heading: "Hyperbound alternative and Yoodli alternative",
+      blocks: [
+        {
+          ul: [
+            "[Hyperbound alternative](/alternatives/hyperbound). For teams that want a published price and a first practice call the same day, without booking an enterprise demo first.",
+            "[Yoodli alternative](/alternatives/yoodli). For sales and call-center practice, with a Team plan you can start without a demo.",
+          ],
+        },
+        { p: "For a broader look at AI sales roleplay software, including alarm-monitoring and 911 dispatch use cases, see [AI sales roleplay software](/ai-sales-roleplay)." },
+      ],
+    },
+    {
       heading: "What this page does not claim",
       blocks: [
         { p: "This is not an independent review, and it is not a ranked list. We do not invent competitor prices, and we do not cite review counts or customer results. Feature lists change. Recheck each site before you buy. Some teams will want to try more than one tool, and that is a reasonable way to decide." },
@@ -436,8 +458,8 @@ export const ALTERNATIVES_PAGE: ComparePageCopy = {
     },
     {
       q: "Where can I compare Call Trainer with Hyperbound, Second Nature, or Yoodli?",
-      a: "Use [/vs/hyperbound](/vs/hyperbound), [/vs/second-nature](/vs/second-nature), or [/vs/yoodli](/vs/yoodli).",
-      ld: "Use https://calltrainer.tech/vs/hyperbound, https://calltrainer.tech/vs/second-nature, or https://calltrainer.tech/vs/yoodli.",
+      a: "Use [/vs/hyperbound](/vs/hyperbound), [/vs/second-nature](/vs/second-nature), or [/vs/yoodli](/vs/yoodli). For a Hyperbound alternative or Yoodli alternative, see [/alternatives/hyperbound](/alternatives/hyperbound) and [/alternatives/yoodli](/alternatives/yoodli).",
+      ld: "Use https://calltrainer.tech/vs/hyperbound, https://calltrainer.tech/vs/second-nature, or https://calltrainer.tech/vs/yoodli. For a Hyperbound alternative or Yoodli alternative, see https://calltrainer.tech/alternatives/hyperbound and https://calltrainer.tech/alternatives/yoodli.",
     },
     {
       q: "Does Call Trainer publish its prices?",
@@ -504,18 +526,29 @@ export function faqJsonLd(page: ComparePageCopy) {
   };
 }
 
-/** WebPage (CollectionPage on the hub) with a self-referencing URL, plus Home > Alternatives (> comparison) breadcrumbs. */
+/** Parent crumb and current-page label for breadcrumbs and JSON-LD. */
+export function pageCrumbs(page: ComparePageCopy): { parent?: { name: string; path: string }; current: string } {
+  const parent =
+    page.parent ??
+    (page.kind === "vs" || page.kind === "alt" ? { name: "Alternatives", path: ALTERNATIVES_PATH } : undefined);
+  const current = page.crumb ?? (page.kind === "hub" && !parent ? "Alternatives" : page.h1);
+  return { parent, current };
+}
+
+/** WebPage (CollectionPage on hubs) with a self-referencing URL and breadcrumbs. */
 export function pageJsonLd(page: ComparePageCopy, origin: string) {
   const url = `${origin}${page.path}`;
+  const { parent, current } = pageCrumbs(page);
   const crumbs = [
     { name: "Home", item: `${origin}/` },
-    { name: "Alternatives", item: `${origin}${ALTERNATIVES_PATH}` },
-    ...(page.kind === "vs" ? [{ name: page.h1, item: url }] : []),
+    ...(parent ? [{ name: parent.name, item: `${origin}${parent.path}` }] : []),
+    { name: current, item: url },
   ];
+  const pageType = page.jsonLdType ?? (page.kind === "hub" ? "CollectionPage" : "WebPage");
   return {
     "@context": "https://schema.org",
     "@graph": [
-      { "@type": page.kind === "hub" ? "CollectionPage" : "WebPage", "@id": url, url, name: page.title, description: page.description },
+      { "@type": pageType, "@id": url, url, name: page.title, description: page.description },
       {
         "@type": "BreadcrumbList",
         itemListElement: crumbs.map((c, i) => ({ "@type": "ListItem", position: i + 1, name: c.name, item: c.item })),

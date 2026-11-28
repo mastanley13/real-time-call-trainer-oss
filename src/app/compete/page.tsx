@@ -19,7 +19,10 @@ export default function CompetePage() {
     <div>
       <CompeteClient />
       <p className="page !py-6 text-sm text-ink-muted">
-        Comparing tools? See <Link href="/alternatives" className={COMPARE_LINK}>AI sales roleplay alternatives</Link>, or Call Trainer vs{" "}
+        Comparing tools? See <Link href="/ai-sales-roleplay" className={COMPARE_LINK}>AI sales roleplay software</Link>,{" "}
+        <Link href="/alternatives" className={COMPARE_LINK}>AI sales roleplay alternatives</Link>, a{" "}
+        <Link href="/alternatives/hyperbound" className={COMPARE_LINK}>Hyperbound alternative</Link>, a{" "}
+        <Link href="/alternatives/yoodli" className={COMPARE_LINK}>Yoodli alternative</Link>, or Call Trainer vs{" "}
         <Link href="/vs/hyperbound" className={COMPARE_LINK}>Hyperbound</Link>,{" "}
         <Link href="/vs/second-nature" className={COMPARE_LINK}>Second Nature</Link>, and{" "}
         <Link href="/vs/yoodli" className={COMPARE_LINK}>Yoodli</Link>.

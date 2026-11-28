@@ -3,7 +3,7 @@ import { ArrowRight, ExternalLink } from "lucide-react";
 import PublicFooter from "@/components/landing/PublicFooter";
 import FaqList from "@/components/ui/FaqList";
 import {
-  ALTERNATIVES_LINK_LABEL, ALTERNATIVES_PATH, PRIMARY_CTA_LABEL, SECONDARY_CTA, faqJsonLd, jsonLdScript, pageJsonLd, parseRich,
+  ALTERNATIVES_LINK_LABEL, ALTERNATIVES_PATH, PRIMARY_CTA_LABEL, SECONDARY_CTA, faqJsonLd, jsonLdScript, pageCrumbs, pageJsonLd, parseRich,
   type Block, type ComparePageCopy, type Rich,
 } from "@/lib/comparisons";
 import { registerHref } from "@/lib/pricing";
@@ -62,10 +62,12 @@ function BlockView({ block }: { block: Block }) {
   );
 }
 
-/** A /vs comparison page or the /alternatives hub, fully server-rendered from lib/comparisons.ts. */
+/** A public SEO page: /vs comparisons, /alternatives, /ai-sales-roleplay, and use-case landings. Copy is fully server-rendered. */
 export default function ComparePage({ page }: { page: ComparePageCopy }) {
   const origin = siteUrl();
   const signup = registerHref({ src: page.src });
+  const { parent, current } = pageCrumbs(page);
+  const showAlternativesLink = page.kind === "vs" || page.kind === "alt";
   return (
     <div>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(faqJsonLd(page)) }} />
@@ -76,15 +78,18 @@ export default function ComparePage({ page }: { page: ComparePageCopy }) {
           <nav aria-label="Breadcrumb">
             <ol className="flex flex-wrap items-center gap-x-2 font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-ink-muted">
               <li><Link href="/" className="rounded transition-colors hover:text-ink">Home</Link></li>
-              <li aria-hidden>/</li>
-              {page.kind === "vs" ? (
+              {parent ? (
                 <>
-                  <li><Link href={ALTERNATIVES_PATH} className="rounded transition-colors hover:text-ink">Alternatives</Link></li>
                   <li aria-hidden>/</li>
-                  <li aria-current="page" className="text-ink-soft">{page.h1}</li>
+                  <li><Link href={parent.path} className="rounded transition-colors hover:text-ink">{parent.name}</Link></li>
+                  <li aria-hidden>/</li>
+                  <li aria-current="page" className="text-ink-soft">{current}</li>
                 </>
               ) : (
-                <li aria-current="page" className="text-ink-soft">Alternatives</li>
+                <>
+                  <li aria-hidden>/</li>
+                  <li aria-current="page" className="text-ink-soft">{current}</li>
+                </>
               )}
             </ol>
           </nav>
@@ -94,7 +99,7 @@ export default function ComparePage({ page }: { page: ComparePageCopy }) {
             <Link href={signup} className="btn-primary btn-xl">{PRIMARY_CTA_LABEL}<ArrowRight size={18} strokeWidth={1.75} aria-hidden /></Link>
             <Link href={SECONDARY_CTA.href} className="btn-ghost btn-xl">{SECONDARY_CTA.label}</Link>
           </div>
-          {page.kind === "vs" && (
+          {showAlternativesLink && (
             <p className="mt-5 text-sm text-ink-muted">
               <Link href={ALTERNATIVES_PATH} className="underline underline-offset-2 transition-colors hover:text-ink">{ALTERNATIVES_LINK_LABEL}</Link>
             </p>

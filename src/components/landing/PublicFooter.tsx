@@ -3,7 +3,14 @@ import LogoMark from "@/components/LogoMark";
 import { CONTACT_LINK, LEGAL_LINKS } from "@/lib/legalLinks";
 import { GITHUB_URL } from "@/lib/seo";
 
-const LINKS = [{ href: "/pricing", label: "Pricing" }, { href: "/alternatives", label: "Alternatives" }, ...LEGAL_LINKS];
+const LINKS = [
+  { href: "/pricing", label: "Pricing" },
+  { href: "/alternatives", label: "Alternatives" },
+  { href: "/ai-sales-roleplay", label: "AI sales roleplay" },
+  { href: "/use-cases/alarm-monitoring", label: "Alarm monitoring" },
+  { href: "/use-cases/911-dispatch", label: "911 dispatch" },
+  ...LEGAL_LINKS,
+];
 
 /** Shared Flight Deck footer for public and legal pages: brand mark, links, and optional attribution. */
 export default function PublicFooter({ children }: { children?: React.ReactNode }) {

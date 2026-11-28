@@ -6,11 +6,24 @@ export const VERTICAL_SLUGS = ["insurance", "solar", "staffing", "home-services"
 export const COMPARISON_SLUGS = ["second-nature", "hyperbound", "yoodli"] as const;
 export type ComparisonSlug = (typeof COMPARISON_SLUGS)[number];
 
+/** The /alternatives/[slug] pages. Unknown slugs stay gated and 404 in the App Router. */
+export const ALTERNATIVE_SLUGS = ["hyperbound", "yoodli"] as const;
+export type AlternativeSlug = (typeof ALTERNATIVE_SLUGS)[number];
+
+/** The /use-cases/[slug] pages. Unknown slugs stay gated and 404 in the App Router. */
+export const USE_CASE_SLUGS = ["alarm-monitoring", "911-dispatch"] as const;
+export type UseCaseSlug = (typeof USE_CASE_SLUGS)[number];
+
+export const ROLEPLAY_HUB_PATH = "/ai-sales-roleplay";
+
 const EXACT = new Set([
   "/pricing", "/library", "/compete", "/api/competition", "/register", "/login", "/forgot-password", "/reset-password", "/auth/complete", "/robots.txt", "/sitemap.xml",
   "/alternatives",
+  ROLEPLAY_HUB_PATH,
   ...VERTICAL_SLUGS.map((s) => `/for/${s}`),
   ...COMPARISON_SLUGS.map((s) => `/vs/${s}`),
+  ...ALTERNATIVE_SLUGS.map((s) => `/alternatives/${s}`),
+  ...USE_CASE_SLUGS.map((s) => `/use-cases/${s}`),
 ]);
 /**
  * "/try/" is a prefix on purpose: the four /try/[role] pages are public, and an unknown role still reaches the App
